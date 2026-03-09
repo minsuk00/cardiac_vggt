@@ -196,10 +196,10 @@ def camera_loss_single(pred_pose_enc, gt_pose_enc, loss_type="l1"):
     return loss_T, loss_R, loss_FL
 
 
-def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_fn = None, valid_range=-1, **kwargs):
+def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_fn = None, valid_range=-1, grad_weight=1.0, **kwargs):
     """
     Compute point loss.
-    
+
     Args:
         predictions: Dict containing 'world_points' and 'world_points_conf'
         batch: Dict containing ground truth 'world_points' and 'point_masks'
@@ -207,14 +207,15 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         alpha: Weight for confidence regularization
         gradient_loss_fn: Type of gradient loss to apply
         valid_range: Quantile range for outlier filtering
+        grad_weight: Weight for gradient loss
     """
     pred_points = predictions['world_points']
     pred_points_conf = predictions['world_points_conf']
     gt_points = batch['world_points']
     gt_points_mask = batch['point_masks']
-    
+
     gt_points = check_and_fix_inf_nan(gt_points, "gt_points")
-    
+
     if gt_points_mask.sum() < 100:
         # If there are less than 100 valid points, skip this batch
         dummy_loss = (0.0 * pred_points).mean()
@@ -222,19 +223,18 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
                     f"loss_reg_point": dummy_loss,
                     f"loss_grad_point": dummy_loss,}
         return loss_dict
-    
+
     # Compute confidence-weighted regression loss with optional gradient loss
     loss_conf, loss_grad, loss_reg = regression_loss(pred_points, gt_points, gt_points_mask, conf=pred_points_conf,
                                              gradient_loss_fn=gradient_loss_fn, gamma=gamma, alpha=alpha, valid_range=valid_range)
-    
+
     loss_dict = {
         f"loss_conf_point": loss_conf,
         f"loss_reg_point": loss_reg,
-        f"loss_grad_point": loss_grad,
+        f"loss_grad_point": loss_grad * grad_weight,
     }
-    
-    return loss_dict
 
+    return loss_dict
 
 def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_fn = None, valid_range=-1, **kwargs):
     """

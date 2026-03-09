@@ -59,6 +59,7 @@ logging:
   tensorboard_writer:
     _target_: train_utils.tb_writer.TensorBoardLogger
     path: ${logging.log_dir}/tensorboard
+  wandb_writer: null
   scalar_keys_to_log:
     train:
       keys_to_log:

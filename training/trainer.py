@@ -6,10 +6,9 @@
 
 import os
 
-
 # --- Environment Variable Setup for Performance and Debugging ---
 # Helps with memory fragmentation in PyTorch's memory allocator.
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # Specifies the threading layer for MKL, can prevent hangs in some environments.
 os.environ["MKL_THREADING_LAYER"] = "GNU"
 # Provides full Hydra stack traces on error for easier debugging.
@@ -33,7 +32,7 @@ import torch.nn as nn
 import torchvision
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
-
+from omegaconf import OmegaConf
 from train_utils.checkpoint import DDPCheckpointSaver
 from train_utils.distributed import get_machine_local_and_dist_rank
 from train_utils.freeze import freeze_modules
@@ -120,7 +119,7 @@ class Trainer:
         self.limit_train_batches = limit_train_batches
         self.limit_val_batches = limit_val_batches
         self.seed_value = seed_value
-        
+
         # 'where' tracks training progress from 0.0 to 1.0 for schedulers
         self.where = 0.0
 
@@ -156,14 +155,14 @@ class Trainer:
         # Load checkpoint if available or specified
         if self.checkpoint_conf.resume_checkpoint_path is not None:
             self._load_resuming_checkpoint(self.checkpoint_conf.resume_checkpoint_path)
-        else:   
+        else:
             ckpt_path = get_resume_checkpoint(self.checkpoint_conf.save_dir)
             if ckpt_path is not None:
                 self._load_resuming_checkpoint(ckpt_path)
 
         # Wrap the model with DDP
         self._setup_ddp_distributed_training(distributed, device)
-        
+
         # Barrier to ensure all processes are synchronized before starting
         dist.barrier()
 
@@ -189,10 +188,7 @@ class Trainer:
             torch.backends.cudnn.allow_tf32 = cuda_conf.allow_tf32
 
         # Initialize the DDP process group
-        dist.init_process_group(
-            backend=distributed_conf.backend,
-            timeout=timedelta(minutes=distributed_conf.timeout_mins)
-        )
+        dist.init_process_group(backend=distributed_conf.backend, timeout=timedelta(minutes=distributed_conf.timeout_mins))
         self.rank = dist.get_rank()
 
     def _load_resuming_checkpoint(self, ckpt_path: str):
@@ -201,14 +197,12 @@ class Trainer:
 
         with g_pathmgr.open(ckpt_path, "rb") as f:
             checkpoint = torch.load(f, map_location="cpu")
-        
+
         # Load model state
         model_state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
-        missing, unexpected = self.model.load_state_dict(
-            model_state_dict, strict=self.checkpoint_conf.strict
-        )
+        missing, unexpected = self.model.load_state_dict(model_state_dict, strict=self.checkpoint_conf.strict)
         if self.rank == 0:
-            logging.info(f"Model state loaded. Missing keys: {missing or 'None'}. Unexpected keys: {unexpected or 'None'}.")
+            logging.info(f"Model state loaded. Missing keys count: {len(missing) if missing else 0}. Unexpected keys count: {len(unexpected) if unexpected else 0}.")
 
         # Load optimizer state if available and in training mode
         if "optimizer" in checkpoint:
@@ -240,10 +234,14 @@ class Trainer:
         """Initializes all core training components using Hydra configs."""
         logging.info("Setting up components: Model, Loss, Logger, etc.")
         self.epoch = 0
-        self.steps = {'train': 0, 'val': 0}
+        self.steps = {"train": 0, "val": 0}
 
         # Instantiate components from configs
         self.tb_writer = instantiate(self.logging_conf.tensorboard_writer, _recursive_=False)
+        self.wandb_writer = None
+        if hasattr(self.logging_conf, "wandb_writer") and self.logging_conf.wandb_writer is not None:
+            self.wandb_writer = instantiate(self.logging_conf.wandb_writer, _recursive_=False)
+
         self.model = instantiate(self.model_conf, _recursive_=False)
         self.loss = instantiate(self.loss_conf, _recursive_=False)
         self.gradient_clipper = instantiate(self.optim_conf.gradient_clip)
@@ -251,21 +249,17 @@ class Trainer:
 
         # Freeze specified model parameters if any
         if getattr(self.optim_conf, "frozen_module_names", None):
-            logging.info(
-                f"[Start] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}"
-            )
+            logging.info(f"[Start] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}")
             self.model = freeze_modules(
                 self.model,
                 patterns=self.optim_conf.frozen_module_names,
             )
-            logging.info(
-                f"[Done] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}"
-            )
+            logging.info(f"[Done] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}")
 
         # Log model summary on rank 0
         if self.rank == 0:
             model_summary_path = os.path.join(self.logging_conf.log_dir, "model.txt")
-            model_summary(self.model, log_file=model_summary_path)
+            model_summary(self.model, log_file=model_summary_path, logging_func=logging.info)
             logging.info(f"Model summary saved to {model_summary_path}")
 
         logging.info("Successfully initialized training components.")
@@ -276,9 +270,7 @@ class Trainer:
         self.val_dataset = None
 
         if self.mode in ["train", "val"]:
-            self.val_dataset = instantiate(
-                self.data_conf.get('val', None), _recursive_=False
-            )
+            self.val_dataset = instantiate(self.data_conf.get("val", None), _recursive_=False)
             if self.val_dataset is not None:
                 self.val_dataset.seed = self.seed_value
 
@@ -316,11 +308,7 @@ class Trainer:
         safe_makedirs(checkpoint_folder)
         if checkpoint_names is None:
             checkpoint_names = ["checkpoint"]
-            if (
-                self.checkpoint_conf.save_freq > 0
-                and int(epoch) % self.checkpoint_conf.save_freq == 0
-                and (int(epoch) > 0 or self.checkpoint_conf.save_freq == 1)
-            ):
+            if self.checkpoint_conf.save_freq > 0 and int(epoch) % self.checkpoint_conf.save_freq == 0 and (int(epoch) > 0 or self.checkpoint_conf.save_freq == 1):
                 checkpoint_names.append(f"checkpoint_{int(epoch)}")
 
         checkpoint_content = {
@@ -329,7 +317,7 @@ class Trainer:
             "time_elapsed": self.time_elapsed_meter.val,
             "optimizer": [optim.optimizer.state_dict() for optim in self.optims],
         }
-        
+
         if len(self.optims) == 1:
             checkpoint_content["optimizer"] = checkpoint_content["optimizer"][0]
         if self.optim_conf.amp.enabled:
@@ -348,19 +336,30 @@ class Trainer:
 
         saver.save_checkpoint(
             model=model,
-            ema_models = None,
+            ema_models=None,
             skip_saving_parameters=[],
             **checkpoint_content,
         )
-
-
-
 
     def _get_scalar_log_keys(self, phase: str) -> List[str]:
         """Retrieves keys for scalar values to be logged for a given phase."""
         if self.logging_conf.scalar_keys_to_log:
             return self.logging_conf.scalar_keys_to_log[phase].keys_to_log
         return []
+
+    def _log_scalar(self, name: str, value: Any, step: int):
+        """Logs a scalar value to both TensorBoard and WandB."""
+        if self.tb_writer:
+            self.tb_writer.log(name, value, step)
+        if self.wandb_writer:
+            self.wandb_writer.log(name, value, step)
+
+    def _log_visuals(self, name: str, data: Any, step: int, fps: int = 4):
+        """Logs visual data to both TensorBoard and WandB."""
+        if self.tb_writer:
+            self.tb_writer.log_visuals(name, data, step, fps)
+        if self.wandb_writer:
+            self.wandb_writer.log_visuals(name, data, step, fps)
 
     def run(self):
         """Main entry point to start the training or validation process."""
@@ -378,10 +377,10 @@ class Trainer:
         """Runs the main training loop over all epochs."""
         while self.epoch < self.max_epochs:
             set_seeds(self.seed_value + self.epoch * 100, self.max_epochs, self.distributed_rank)
-            
+
             dataloader = self.train_dataset.get_loader(epoch=int(self.epoch + self.distributed_rank))
             self.train_epoch(dataloader)
-            
+
             # Save checkpoint after each training epoch
             self.save_checkpoint(self.epoch)
 
@@ -395,9 +394,9 @@ class Trainer:
             # Skips validation after the last training epoch, as it can be run separately.
             if self.epoch % self.val_epoch_freq == 0 and self.epoch < self.max_epochs - 1:
                 self.run_val()
-            
+
             self.epoch += 1
-        
+
         self.epoch -= 1
 
     def run_val(self):
@@ -408,12 +407,11 @@ class Trainer:
 
         dataloader = self.val_dataset.get_loader(epoch=int(self.epoch + self.distributed_rank))
         self.val_epoch(dataloader)
-        
+
         del dataloader
         gc.collect()
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-
 
     @torch.no_grad()
     def val_epoch(self, val_loader):
@@ -421,14 +419,12 @@ class Trainer:
         data_time = AverageMeter("Data Time", self.device, ":.4f")
         mem = AverageMeter("Mem (GB)", self.device, ":.4f")
         data_times = []
-        phase = 'val'
-        
+        phase = "val"
+
         loss_names = self._get_scalar_log_keys(phase)
         loss_names = [f"Loss/{phase}_{name}" for name in loss_names]
-        loss_meters = {
-            name: AverageMeter(name, self.device, ":.4f") for name in loss_names
-        }
-        
+        loss_meters = {name: AverageMeter(name, self.device, ":.4f") for name in loss_names}
+
         progress = ProgressMeter(
             num_batches=len(val_loader),
             meters=[
@@ -446,20 +442,16 @@ class Trainer:
         end = time.time()
 
         iters_per_epoch = len(val_loader)
-        limit_val_batches = (
-            iters_per_epoch
-            if self.limit_val_batches is None
-            else self.limit_val_batches
-        )
+        limit_val_batches = iters_per_epoch if self.limit_val_batches is None else self.limit_val_batches
 
         for data_iter, batch in enumerate(val_loader):
             if data_iter > limit_val_batches:
                 break
-            
+
             # measure data loading time
             data_time.update(time.time() - end)
             data_times.append(data_time.val)
-            
+
             with torch.cuda.amp.autocast(enabled=False):
                 batch = self._process_batch(batch)
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
@@ -470,24 +462,20 @@ class Trainer:
                 amp_type = torch.bfloat16
             else:
                 amp_type = torch.float16
-            
+
             # compute output
             with torch.no_grad():
                 with torch.cuda.amp.autocast(
                     enabled=self.optim_conf.amp.enabled,
                     dtype=amp_type,
                 ):
-                    val_loss_dict = self._step(
-                        batch, self.model, phase, loss_meters
-                    )
+                    val_loss_dict = self._step(batch, self.model, phase, loss_meters)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
-            self.time_elapsed_meter.update(
-                time.time() - self.start_time + self.ckpt_time_elapsed
-            )
+            self.time_elapsed_meter.update(time.time() - self.start_time + self.ckpt_time_elapsed)
 
             if torch.cuda.is_available():
                 mem.update(torch.cuda.max_memory_allocated() // 1e9)
@@ -495,26 +483,22 @@ class Trainer:
             if data_iter % self.logging_conf.log_freq == 0:
                 progress.display(data_iter)
 
-
         return True
 
-    def train_epoch(self, train_loader):        
+    def train_epoch(self, train_loader):
         batch_time = AverageMeter("Batch Time", self.device, ":.4f")
         data_time = AverageMeter("Data Time", self.device, ":.4f")
         mem = AverageMeter("Mem (GB)", self.device, ":.4f")
         data_times = []
-        phase = 'train'
-        
+        phase = "train"
+
         loss_names = self._get_scalar_log_keys(phase)
         loss_names = [f"Loss/{phase}_{name}" for name in loss_names]
-        loss_meters = {
-            name: AverageMeter(name, self.device, ":.4f") for name in loss_names
-        }
-        
-        for config in self.gradient_clipper.configs: 
-            param_names = ",".join(config['module_names'])
-            loss_meters[f"Grad/{param_names}"] = AverageMeter(f"Grad/{param_names}", self.device, ":.4f")
+        loss_meters = {name: AverageMeter(name, self.device, ":.4f") for name in loss_names}
 
+        for config in self.gradient_clipper.configs:
+            param_names = ",".join(config["module_names"])
+            loss_meters[f"Grad/{param_names}"] = AverageMeter(f"Grad/{param_names}", self.device, ":.4f")
 
         progress = ProgressMeter(
             num_batches=len(train_loader),
@@ -533,12 +517,8 @@ class Trainer:
         end = time.time()
 
         iters_per_epoch = len(train_loader)
-        limit_train_batches = (
-            iters_per_epoch
-            if self.limit_train_batches is None
-            else self.limit_train_batches
-        )
-        
+        limit_train_batches = iters_per_epoch if self.limit_train_batches is None else self.limit_train_batches
+
         if self.gradient_clipper is not None:
             # setup gradient clipping at the beginning of training
             self.gradient_clipper.setup_clipping(self.model)
@@ -546,12 +526,11 @@ class Trainer:
         for data_iter, batch in enumerate(train_loader):
             if data_iter > limit_train_batches:
                 break
-            
+
             # measure data loading time
             data_time.update(time.time() - end)
             data_times.append(data_time.val)
 
-            
             with torch.cuda.amp.autocast(enabled=False):
                 batch = self._process_batch(batch)
 
@@ -559,49 +538,37 @@ class Trainer:
 
             accum_steps = self.accum_steps
 
-            if accum_steps==1:
+            if accum_steps == 1:
                 chunked_batches = [batch]
             else:
                 chunked_batches = chunk_batch_for_accum_steps(batch, accum_steps)
 
-            self._run_steps_on_batch_chunks(
-                chunked_batches, phase, loss_meters
-            )
+            self._run_steps_on_batch_chunks(chunked_batches, phase, loss_meters)
 
             # compute gradient and do SGD step
             assert data_iter <= limit_train_batches  # allow for off by one errors
             exact_epoch = self.epoch + float(data_iter) / limit_train_batches
             self.where = float(exact_epoch) / self.max_epochs
-            
+
             assert self.where <= 1 + self.EPSILON
             if self.where < 1.0:
                 for optim in self.optims:
                     optim.step_schedulers(self.where)
             else:
-                logging.warning(
-                    f"Skipping scheduler update since the training is at the end, i.e, {self.where} of [0,1]."
-                )
-                    
+                logging.warning(f"Skipping scheduler update since the training is at the end, i.e, {self.where} of [0,1].")
+
             # Log schedulers
             if self.steps[phase] % self.logging_conf.log_freq == 0:
                 for i, optim in enumerate(self.optims):
                     for j, param_group in enumerate(optim.optimizer.param_groups):
                         for option in optim.schedulers[j]:
-                            optim_prefix = (
-                                f"{i}_"
-                                if len(self.optims) > 1
-                                else (
-                                    "" + f"{j}_"
-                                    if len(optim.optimizer.param_groups) > 1
-                                    else ""
-                                )
-                            )
-                            self.tb_writer.log(
+                            optim_prefix = f"{i}_" if len(self.optims) > 1 else ("" + f"{j}_" if len(optim.optimizer.param_groups) > 1 else "")
+                            self._log_scalar(
                                 os.path.join("Optim", f"{optim_prefix}", option),
                                 param_group[option],
                                 self.steps[phase],
                             )
-                self.tb_writer.log(
+                self._log_scalar(
                     os.path.join("Optim", "where"),
                     self.where,
                     self.steps[phase],
@@ -618,16 +585,14 @@ class Trainer:
                     loss_meters[f"Grad/{key}"].update(grad_norm)
 
             # Optimizer step
-            for optim in self.optims:   
+            for optim in self.optims:
                 self.scaler.step(optim.optimizer)
             self.scaler.update()
 
             # Measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
-            self.time_elapsed_meter.update(
-                time.time() - self.start_time + self.ckpt_time_elapsed
-            )
+            self.time_elapsed_meter.update(time.time() - self.start_time + self.ckpt_time_elapsed)
             mem.update(torch.cuda.max_memory_allocated() // 1e9)
 
             if data_iter % self.logging_conf.log_freq == 0:
@@ -644,9 +609,9 @@ class Trainer:
         """
         Run the forward / backward as many times as there are chunks in the batch,
         accumulating the gradients on each backward
-        """        
-        
-        for optim in self.optims:   
+        """
+
+        for optim in self.optims:
             optim.zero_grad(set_to_none=True)
 
         accum_steps = len(chunked_batches)
@@ -657,23 +622,16 @@ class Trainer:
             amp_type = torch.bfloat16
         else:
             amp_type = torch.float16
-        
+
         for i, chunked_batch in enumerate(chunked_batches):
-            ddp_context = (
-                self.model.no_sync()
-                if i < accum_steps - 1
-                else contextlib.nullcontext()
-            )
+            ddp_context = self.model.no_sync() if i < accum_steps - 1 else contextlib.nullcontext()
 
             with ddp_context:
                 with torch.cuda.amp.autocast(
                     enabled=self.optim_conf.amp.enabled,
                     dtype=amp_type,
                 ):
-                    loss_dict = self._step(
-                        chunked_batch, self.model, phase, loss_meters
-                    )
-
+                    loss_dict = self._step(chunked_batch, self.model, phase, loss_meters)
 
                 loss = loss_dict["objective"]
                 loss_key = f"Loss/{phase}_loss_objective"
@@ -688,44 +646,45 @@ class Trainer:
                 self.scaler.scale(loss).backward()
                 loss_meters[loss_key].update(loss.item(), batch_size)
 
-
     def _apply_batch_repetition(self, batch: Mapping) -> Mapping:
         """
         Applies a data augmentation by concatenating the original batch with a
         flipped version of itself.
         """
         tensor_keys = [
-            "images", "depths", "extrinsics", "intrinsics", 
-            "cam_points", "world_points", "point_masks", 
-        ]        
+            "images",
+            "depths",
+            "extrinsics",
+            "intrinsics",
+            "cam_points",
+            "world_points",
+            "point_masks",
+        ]
         string_keys = ["seq_name"]
-        
+
         for key in tensor_keys:
             if key in batch:
                 original_tensor = batch[key]
-                batch[key] = torch.concatenate([original_tensor, 
-                                                torch.flip(original_tensor, dims=[1])], 
-                                                dim=0)
-        
+                batch[key] = torch.concatenate([original_tensor, torch.flip(original_tensor, dims=[1])], dim=0)
+
         for key in string_keys:
             if key in batch:
                 batch[key] = batch[key] * 2
-        
+
         return batch
 
-    def _process_batch(self, batch: Mapping):      
+    def _process_batch(self, batch: Mapping):
         if self.data_conf.train.common_config.repeat_batch:
             batch = self._apply_batch_repetition(batch)
-        
+
         # Normalize camera extrinsics and points. The function returns new tensors.
-        normalized_extrinsics, normalized_cam_points, normalized_world_points, normalized_depths = \
-            normalize_camera_extrinsics_and_points_batch(
-                extrinsics=batch["extrinsics"],
-                cam_points=batch["cam_points"],
-                world_points=batch["world_points"],
-                depths=batch["depths"],
-                point_masks=batch["point_masks"],
-            )
+        normalized_extrinsics, normalized_cam_points, normalized_world_points, normalized_depths = normalize_camera_extrinsics_and_points_batch(
+            extrinsics=batch["extrinsics"],
+            cam_points=batch["cam_points"],
+            world_points=batch["world_points"],
+            depths=batch["depths"],
+            point_masks=batch["point_masks"],
+        )
 
         # Replace the original values in the batch with the normalized ones.
         batch["extrinsics"] = normalized_extrinsics
@@ -738,18 +697,19 @@ class Trainer:
     def _step(self, batch, model: nn.Module, phase: str, loss_meters: dict):
         """
         Performs a single forward pass, computes loss, and logs results.
-        
+
         Returns:
             A dictionary containing the computed losses.
         """
         # Forward pass
         y_hat = model(images=batch["images"])
-        
+
         # Loss computation
         loss_dict = self.loss(y_hat, batch)
-        
+        loss_dict["loss_objective"] = loss_dict["objective"]
+
         # Combine all data for logging
-        log_data = {**y_hat, **loss_dict, **batch}
+        log_data = {**{f"pred_{k}": v for k, v in y_hat.items()}, **loss_dict, **batch}
 
         self._update_and_log_scalars(log_data, phase, self.steps[phase], loss_meters)
         self._log_tb_visuals(log_data, phase, self.steps[phase])
@@ -760,14 +720,14 @@ class Trainer:
     def _update_and_log_scalars(self, data: Mapping, phase: str, step: int, loss_meters: dict):
         """Updates average meters and logs scalar values to TensorBoard."""
         keys_to_log = self._get_scalar_log_keys(phase)
-        batch_size = data['extrinsics'].shape[0]
-        
+        batch_size = data["extrinsics"].shape[0]
+
         for key in keys_to_log:
             if key in data:
                 value = data[key].item() if torch.is_tensor(data[key]) else data[key]
                 loss_meters[f"Loss/{phase}_{key}"].update(value, batch_size)
                 if step % self.logging_conf.log_freq == 0 and self.rank == 0:
-                    self.tb_writer.log(f"Values/{phase}/{key}", value, step)
+                    self._log_scalar(f"Values/{phase}/{key}", value, step)
 
     def _log_tb_visuals(self, batch: Mapping, phase: str, step: int) -> None:
         """Logs image or video visualizations to TensorBoard."""
@@ -781,15 +741,9 @@ class Trainer:
             return
 
         if phase in self.logging_conf.visuals_keys_to_log:
-            keys_to_log = self.logging_conf.visuals_keys_to_log[phase][
-                "keys_to_log"
-            ]
-            assert (
-                len(keys_to_log) > 0
-            ), "Need to include some visual keys to log"
-            modality = self.logging_conf.visuals_keys_to_log[phase][
-                "modality"
-            ]
+            keys_to_log = self.logging_conf.visuals_keys_to_log[phase]["keys_to_log"]
+            assert len(keys_to_log) > 0, "Need to include some visual keys to log"
+            modality = self.logging_conf.visuals_keys_to_log[phase]["modality"]
             assert modality in [
                 "image",
                 "video",
@@ -797,27 +751,79 @@ class Trainer:
 
             name = f"Visuals/{phase}"
 
-            visuals_to_log = torchvision.utils.make_grid(
-                [
-                    torchvision.utils.make_grid(
-                        batch[key][0],  # Ensure batch[key][0] is tensor and has at least 3 dimensions
-                        nrow=self.logging_conf.visuals_per_batch_to_log,
-                    )
-                    for key in keys_to_log if key in batch and batch[key][0].dim() >= 3
-                ],
-                nrow=1,
-            ).clamp(-1, 1)
+            def prepare_visual(key, v):
+                # If it's world points (S, H, W, 3), permute to (S, 3, H, W)
+                if v.dim() == 4 and v.shape[-1] == 3:
+                    v = v.permute(0, 3, 1, 2)
 
-            visuals_to_log = visuals_to_log.cpu()
-            if visuals_to_log.dtype == torch.bfloat16:
-                visuals_to_log = visuals_to_log.to(torch.float16)
-            visuals_to_log = visuals_to_log.numpy()
+                if "world_points" in key:
+                    # Rescale coordinates [-1, 1] to [0, 1]
+                    v = (v + 1.0) / 2.0
+                elif key == "images":
+                    # Images are [0, 1]. If they were normalized to [-1, 1], shift to [0, 1]
+                    if v.min() < 0:
+                        v = (v + 1.0) / 2.0
+                return v.clamp(0, 1)
 
-            self.tb_writer.log_visuals(
-                name, visuals_to_log, step, self.logging_conf.video_logging_fps
-            )
+            # Log input images separately
+            if "images" in batch and batch["images"][0].dim() >= 3:
+                img_grid = torchvision.utils.make_grid(prepare_visual("images", batch["images"][0]), nrow=self.logging_conf.visuals_per_batch_to_log)
+                img_grid = img_grid.cpu()
+                if img_grid.dtype == torch.bfloat16:
+                    img_grid = img_grid.to(torch.float16)
+                self._log_visuals(f"{name}_images", img_grid.numpy(), step, self.logging_conf.video_logging_fps)
 
+            # Assemble gradient grids (GT and Pred) together
+            grad_grids = []
+            for key in ["world_points", "pred_world_points"]:
+                if key in keys_to_log and key in batch and batch[key][0].dim() >= 3:
+                    grad_grids.append(torchvision.utils.make_grid(prepare_visual(key, batch[key][0]), nrow=self.logging_conf.visuals_per_batch_to_log))
 
+            if grad_grids:
+                grad_visuals = torch.cat(grad_grids, dim=1)  # Stack vertically: Top=GT, Bot=Pred
+                grad_visuals = grad_visuals.cpu()
+                if grad_visuals.dtype == torch.bfloat16:
+                    grad_visuals = grad_visuals.to(torch.float16)
+                self._log_visuals(f"{name}_gradients_GT_Top_Pred_Bot", grad_visuals.numpy(), step, self.logging_conf.video_logging_fps)
+
+            # --- Added 3D Point Cloud Logging ---
+            if self.wandb_writer and "pred_world_points" in batch and "images" in batch and "point_masks" in batch:
+                # Flatten the entire batch to ensure all Z-slices (S dimension) are included
+                pred_pts = batch["pred_world_points"].cpu().reshape(-1, 3)  # (B*S*H*W, 3)
+                gt_pts = batch["world_points"].cpu().reshape(-1, 3)  # (B*S*H*W, 3)
+                masks = batch["point_masks"].cpu().reshape(-1)  # (B*S*H*W)
+
+                images = batch["images"].cpu()  # (B, S, 3, H, W)
+                # Images are usually [0, 1] or [-1, 1]. Ensure [0, 255]
+                if images.min() < 0:
+                    images = (images + 1.0) / 2.0
+                images = (images * 255).clamp(0, 255).to(torch.uint8)
+                # Permute channels to last dimension, then flatten
+                images = images.permute(0, 1, 3, 4, 2).reshape(-1, 3)  # (B*S*H*W, 3)
+
+                # Filter by mask
+                valid_pred_pts = pred_pts[masks].detach()  # (N, 3)
+                valid_gt_pts = gt_pts[masks].detach()  # (N, 3)
+                valid_colors = images[masks].detach()  # (N, 3)
+
+                import numpy as np
+
+                # Subsample if there are too many points to render smoothly
+                max_pts = 100000
+                total_valid = valid_pred_pts.shape[0]
+                if total_valid > max_pts:
+                    indices = np.random.choice(total_valid, max_pts, replace=False)
+                    valid_pred_pts = valid_pred_pts[indices]
+                    valid_gt_pts = valid_gt_pts[indices]
+                    valid_colors = valid_colors[indices]
+
+                # Create (N, 6) arrays for WandB: [x, y, z, r, g, b]
+                pred_cloud = torch.cat([valid_pred_pts, valid_colors], dim=-1).numpy()
+                gt_cloud = torch.cat([valid_gt_pts, valid_colors], dim=-1).numpy()
+
+                self.wandb_writer.log_3d_point_cloud(f"Visuals/{phase}_pred_cloud", pred_cloud, step)
+                self.wandb_writer.log_3d_point_cloud(f"Visuals/{phase}_gt_cloud", gt_cloud, step)
+            # ------------------------------------
 
 
 def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mapping]:
@@ -826,14 +832,11 @@ def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mappin
         return [batch]
     return [get_chunk_from_data(batch, i, accum_steps) for i in range(accum_steps)]
 
+
 def is_sequence_of_primitives(data: Any) -> bool:
     """Checks if data is a sequence of primitive types (str, int, float, bool)."""
-    return (
-        isinstance(data, Sequence)
-        and not isinstance(data, str)
-        and len(data) > 0
-        and isinstance(data[0], (str, int, float, bool))
-    )
+    return isinstance(data, Sequence) and not isinstance(data, str) and len(data) > 0 and isinstance(data[0], (str, int, float, bool))
+
 
 def get_chunk_from_data(data: Any, chunk_id: int, num_chunks: int) -> Any:
     """
@@ -854,10 +857,7 @@ def get_chunk_from_data(data: Any, chunk_id: int, num_chunks: int) -> Any:
         end = (len(data) // num_chunks) * (chunk_id + 1)
         return data[start:end]
     elif isinstance(data, Mapping):
-        return {
-            key: get_chunk_from_data(value, chunk_id, num_chunks)
-            for key, value in data.items()
-        }
+        return {key: get_chunk_from_data(value, chunk_id, num_chunks) for key, value in data.items()}
     elif isinstance(data, str):
         # NOTE: this is a hack to support string keys in the batch
         return data
@@ -865,4 +865,3 @@ def get_chunk_from_data(data: Any, chunk_id: int, num_chunks: int) -> Any:
         return [get_chunk_from_data(value, chunk_id, num_chunks) for value in data]
     else:
         return data
-
