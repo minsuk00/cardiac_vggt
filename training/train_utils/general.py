@@ -313,7 +313,8 @@ def pretty_int(n: int) -> str:
 def model_summary(model: torch.nn.Module,
                   *,
                   log_file = None,
-                  prefix: str = '') -> None:
+                  prefix: str = '',
+                  logging_func = None) -> None:
     """
     Print / save a compact parameter summary.
 
@@ -324,6 +325,7 @@ def model_summary(model: torch.nn.Module,
                  lists are written there (three separate *.txt files).
     prefix     : Optional string printed at the beginning of every log line
                  (handy when several models share the same stdout).
+    logging_func: Optional logging function (e.g. logging.info)
     """
     if get_rank():          # only rank-0 prints
         return
@@ -333,12 +335,18 @@ def model_summary(model: torch.nn.Module,
     total     = sum(p.numel() for p in model.parameters())
     frozen    = total - trainable
 
-    print(prefix + '='*60)
-    print(prefix + f'Model type : {model.__class__.__name__}')
-    print(prefix + f'Total      : {pretty_int(total)} parameters')
-    print(prefix + f'  trainable: {pretty_int(trainable)}')
-    print(prefix + f'  frozen   : {pretty_int(frozen)}')
-    print(prefix + '='*60)
+    summary = []
+    summary.append('='*60)
+    summary.append(f'Model type : {model.__class__.__name__}')
+    summary.append(f'Total      : {pretty_int(total)} parameters')
+    summary.append(f'  trainable: {pretty_int(trainable)}')
+    summary.append(f'  frozen   : {pretty_int(frozen)}')
+    summary.append('='*60)
+
+    for line in summary:
+        print(prefix + line)
+        if logging_func:
+            logging_func(line)
 
     # --- optional file dump -------------------------------------------------
     if log_file is None:

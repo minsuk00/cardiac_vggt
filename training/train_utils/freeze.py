@@ -51,6 +51,12 @@ def freeze_modules(model: nn.Module, patterns: List[str], recursive: bool = True
             matched.add(name)
             _freeze(mod, recursive)
 
+    # Also check named parameters for patterns that might not match a module
+    for name, param in model.named_parameters():
+        if any(fnmatch.fnmatch(name, p, flags=GLOB_FLAGS) for p in patterns):
+            matched.add(name)
+            param.requires_grad = False
+
     _check_every_pattern_used(matched, patterns)
     return model
 

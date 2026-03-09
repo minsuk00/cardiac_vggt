@@ -1,0 +1,6 @@
+_target_: data.MRIDataset
+data_root: ${data_root}
+split: ${split}
+mode: ${mode}
+num_slices: 5
+target_size: ${img_size}
