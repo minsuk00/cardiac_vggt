@@ -1,0 +1,144 @@
+# PYTHONUNBUFFERED=1 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 training/launch.py --config mri_finetune
+defaults:
+  - default
+  - _self_
+
+# Global overrides
+data_root: "./scratch/nifti/cardiac_1sec_10phase/nifti/card_3.125x3.125x3.125mm_256x256x70x10x4_snr20_fa60_bh"
+split: "train"
+mode: "train"
+mri_mode: "axial" 
+mri_data_mode: "dynamic" # "static" or "dynamic"
+
+# Unique timestamped folder (Reverse Seconds _ DataMode _ MRI_Mode _ Human readable)
+# Reverse Seconds makes newest runs appear at the TOP alphabetically.
+exp_name: "mri_finetune_${rev_ts:}_${mri_data_mode}_${mri_mode}_${now:%Y-%m-%d_%H-%M-%S}"
+num_workers: 4
+max_img_per_gpu: 10
+accum_steps: 1
+
+# Redirect Logging and Checkpoints to Scratch
+logging:
+  log_dir: "./scratch/logs/${exp_name}"
+  log_freq: 5
+  log_visuals: True
+  log_visual_frequency:
+    train: 20
+  visuals_per_batch_to_log: 4
+  video_logging_fps: 4
+  tensorboard_writer:
+    path: ${logging.log_dir}/tensorboard
+  wandb_writer:
+    _target_: train_utils.wandb_writer.WandbLogger
+    project: "vggt-mri"
+    name: ${exp_name}
+    dir: ${logging.log_dir}/wandb
+  scalar_keys_to_log:
+    train:
+      keys_to_log:
+        - loss_objective
+        - loss_conf_point
+        - loss_reg_point
+        - loss_grad_point
+  visuals_keys_to_log:
+    train:
+      modality: "image"
+      keys_to_log:
+        - images
+        - world_points
+        - pred_world_points
+
+checkpoint:
+  save_dir: "${logging.log_dir}/ckpts"
+  save_freq: 1
+  resume_checkpoint_path: "./scratch/torch_cache/model.pt"
+  strict: false
+
+# Override data to use ONLY MRIDataset via ComposedDataset
+data:
+  train:
+    _target_: data.dynamic_dataloader.DynamicTorchDataset
+    num_workers: ${num_workers}
+    max_img_per_gpu: ${max_img_per_gpu}
+    shuffle: True
+    pin_memory: False
+    common_config:
+      fix_img_num: -1
+      fix_aspect_ratio: 1.0
+      load_track: False
+      track_num: 1024
+      training: True
+      inside_random: True
+      img_size: ${img_size}
+      patch_size: ${patch_size}
+      rescale: True
+      rescale_aug: True
+      landscape_check: False
+      debug: False
+      get_nearby: True
+      load_depth: False
+      img_nums: [2, 10] 
+      max_img_per_gpu: ${max_img_per_gpu}
+      allow_duplicate_img: True
+      repeat_batch: False
+      augs:
+        cojitter: True
+        cojitter_ratio: 0.0
+        scales: [1.0, 1.0]
+        aspects: [1.0, 1.0]
+        color_jitter:
+          p: 0.0
+        gray_scale: False
+        gau_blur: False
+    dataset:
+      _target_: data.composed_dataset.ComposedDataset
+      dataset_configs:
+        - _target_: data.MRIDataset
+          data_root: ${data_root}
+          split: ${split}
+          mode: ${mri_data_mode}
+          mri_mode: ${mri_mode}
+          num_slices: 10
+          target_size: ${img_size}
+  val: null
+
+# Training behavior: 10 epochs, 100 batches per epoch
+limit_train_batches: 100
+max_epochs: 10
+
+# Enable Point Head, disable others
+model:
+  enable_camera: false
+  enable_depth: false
+  enable_point: true
+  enable_track: false
+
+# Configure Loss
+loss:
+  camera:
+    weight: 0.0
+  depth:
+    weight: 0.0
+  point:
+    weight: 1.0
+    gradient_loss_fn: "normal" 
+    valid_range: 0.98
+    grad_weight: 1.0
+
+# Configure Optim
+optim:
+  frozen_module_names: ["*patch_embed*", "*camera_token*"]
+  amp:
+    enabled: true
+    amp_dtype: bfloat16
+  gradient_clip:
+    configs:
+      - module_name: ["aggregator"]
+        max_norm: 1.0
+        norm_type: 2
+      - module_name: ["point"]
+        max_norm: 1.0
+        norm_type: 2
+
+optimizer:
+  lr: 5e-5

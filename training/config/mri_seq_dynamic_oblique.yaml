@@ -1,0 +1,12 @@
+defaults:
+  - mri_finetune
+  - _self_
+
+mode: "dynamic"
+mri_mode: "oblique"
+data:
+  train:
+    dataset:
+      dataset_configs:
+        - mode: "dynamic"
+          mri_mode: "oblique"

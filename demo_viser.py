@@ -4,31 +4,30 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import os
-import glob
-import time
-import threading
 import argparse
+import glob
+import os
+import threading
+import time
 from typing import List, Optional
 
+import cv2
 import numpy as np
 import torch
-from tqdm.auto import tqdm
 import viser
 import viser.transforms as viser_tf
-import cv2
-
+from tqdm.auto import tqdm
 
 try:
     import onnxruntime
 except ImportError:
     print("onnxruntime not found. Sky segmentation may not work.")
 
-from visual_util import segment_sky, download_file_from_url
 from vggt.models.vggt import VGGT
-from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.geometry import closed_form_inverse_se3, unproject_depth_map_to_point_map
+from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from visual_util import download_file_from_url, segment_sky
 
 
 def viser_wrapper(
@@ -112,16 +111,15 @@ def viser_wrapper(
     frame_indices = np.repeat(np.arange(S), H * W)
 
     # Build the viser GUI
-    gui_show_frames = server.gui.add_checkbox("Show Cameras", initial_value=True)
+    with server.gui.add_folder("Controls"):
+        gui_show_frames = server.gui.add_checkbox("Show Cameras", initial_value=True)
 
-    # Now the slider represents percentage of points to filter out
-    gui_points_conf = server.gui.add_slider(
-        "Confidence Percent", min=0, max=100, step=0.1, initial_value=init_conf_threshold
-    )
+        # Now the slider represents percentage of points to filter out
+        gui_points_conf = server.gui.add_slider("Confidence Percent", min=0, max=100, step=0.1, initial_value=init_conf_threshold)
 
-    gui_frame_selector = server.gui.add_dropdown(
-        "Show Points from Frames", options=["All"] + [str(i) for i in range(S)], initial_value="All"
-    )
+        gui_point_size = server.gui.add_slider("Point Size", min=0.001, max=0.05, step=0.001, initial_value=0.01)
+
+        gui_frame_selector = server.gui.add_dropdown("Show Points from Frames", options=["All"] + [str(i) for i in range(S)], initial_value="All")
 
     # Create the main point cloud handle
     # Compute the threshold value as the given percentile
@@ -131,7 +129,7 @@ def viser_wrapper(
         name="viser_pcd",
         points=points_centered[init_conf_mask],
         colors=colors_flat[init_conf_mask],
-        point_size=0.001,
+        point_size=gui_point_size.value,
         point_shape="circle",
     )
 
@@ -190,9 +188,7 @@ def viser_wrapper(
             fov = 2 * np.arctan2(h / 2, fy)
 
             # Add the frustum
-            frustum_cam = server.scene.add_camera_frustum(
-                f"frame_{img_id}/frustum", fov=fov, aspect=w / h, scale=0.05, image=img, line_width=1.0
-            )
+            frustum_cam = server.scene.add_camera_frustum(f"frame_{img_id}/frustum", fov=fov, aspect=w / h, scale=0.05, image=img, line_width=1.0)
             frustums.append(frustum_cam)
             attach_callback(frustum_cam, frame_axis)
 
@@ -215,8 +211,13 @@ def viser_wrapper(
         combined_mask = conf_mask & frame_mask
         point_cloud.points = points_centered[combined_mask]
         point_cloud.colors = colors_flat[combined_mask]
+        point_cloud.point_size = gui_point_size.value
 
     @gui_points_conf.on_update
+    def _(_) -> None:
+        update_point_cloud()
+
+    @gui_point_size.on_update
     def _(_) -> None:
         update_point_cloud()
 
@@ -306,15 +307,11 @@ def apply_sky_segmentation(conf: np.ndarray, image_folder: str) -> np.ndarray:
 
 
 parser = argparse.ArgumentParser(description="VGGT demo with viser for 3D visualization")
-parser.add_argument(
-    "--image_folder", type=str, default="examples/kitchen/images/", help="Path to folder containing images"
-)
+parser.add_argument("--image_folder", type=str, default="examples/kitchen/images/", help="Path to folder containing images")
 parser.add_argument("--use_point_map", action="store_true", help="Use point map instead of depth-based points")
 parser.add_argument("--background_mode", action="store_true", help="Run the viser server in background mode")
 parser.add_argument("--port", type=int, default=8080, help="Port number for the viser server")
-parser.add_argument(
-    "--conf_threshold", type=float, default=25.0, help="Initial percentage of low-confidence points to filter out"
-)
+parser.add_argument("--conf_threshold", type=float, default=25.0, help="Initial percentage of low-confidence points to filter out")
 parser.add_argument("--mask_sky", action="store_true", help="Apply sky segmentation to filter out sky points")
 
 
