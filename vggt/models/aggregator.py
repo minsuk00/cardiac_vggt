@@ -70,6 +70,7 @@ class Aggregator(nn.Module):
         init_values=0.01,
     ):
         super().__init__()
+        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}")
 
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
