@@ -1,3 +1,10 @@
+_XCAT
+scratch
+setup.md
+.vscode/
+_archive/
+
+
 .hydra/
 output/
 ckpt/
@@ -147,3 +154,6 @@ skyseg.onnx
 # pixi environments
 .pixi
 *.egg-info
+
+
+
