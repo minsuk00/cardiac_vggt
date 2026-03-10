@@ -874,8 +874,20 @@ class Trainer:
                     # Visualize the first dynamic frame (index 1 if S > 1, else 0)
                     s_idx = min(1, pred_dvf.shape[0] - 1)
                     
-                    fig = plot_dvf_grid(img_tx, gt_dvf, pred_dvf, seq_idx=s_idx, v_min=-3.0, v_max=3.0)
-                    self.wandb_writer.log(f"Visuals/{phase}_DVF", wandb.Image(fig), step)
+                    # Create a descriptive caption
+                    caption = f"Phase: {phase}, Step: {step}"
+                    if "timesteps" in batch:
+                        t_idx = batch["timesteps"][0][s_idx].item()
+                        caption += f", Frame (t): {t_idx+1}"
+                    if "slice_indices" in batch:
+                        s_val = batch["slice_indices"][0][s_idx].item()
+                        caption += f", Slice: {s_val}"
+                    if "rotations" in batch:
+                        rot = batch["rotations"][0][s_idx]
+                        caption += f", Rot: [{rot[0]:.0f},{rot[1]:.0f},{rot[2]:.0f}]"
+                    
+                    fig = plot_dvf_grid(img_tx, gt_dvf, pred_dvf, seq_idx=s_idx, v_min=-2.0, v_max=2.0)
+                    self.wandb_writer.log(f"Visuals/{phase}_DVF", wandb.Image(fig, caption=caption), step)
                     
                     import matplotlib.pyplot as plt
                     plt.close(fig)
