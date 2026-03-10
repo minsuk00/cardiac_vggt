@@ -54,8 +54,8 @@ class MRIDataset(BaseDataset):
         res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids", "timesteps", "slice_indices", "gt_dvfs", "scale_factors", "z_indices"]}
 
         for i in range(S):
-            # Static: always frame 1. Dynamic: random frame.
-            if self.mode == "static":
+            # i=0 is always the reference (t=1). Static mode is also always t=1.
+            if self.mode == "static" or i == 0:
                 t_idx = 1
             else:
                 t_idx = random.randint(1, T_total)
