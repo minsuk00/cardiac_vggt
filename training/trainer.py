@@ -842,9 +842,9 @@ class Trainer:
                 
                 if wandb is not None:
                     # Get the first sequence in the batch
-                    pred_dvf = batch["pred_dvfs"][0].cpu().numpy()  # (S, H, W, 3)
-                    gt_dvf = batch["gt_dvfs_unnorm"][0].cpu().numpy()  # (S, H, W, 3)
-                    img_tx = batch["images"][0].cpu().numpy() # (S, 3, H, W)
+                    pred_dvf = batch["pred_dvfs"][0].detach().cpu().numpy()  # (S, H, W, 3)
+                    gt_dvf = batch["gt_dvfs_unnorm"][0].detach().cpu().numpy()  # (S, H, W, 3)
+                    img_tx = batch["images"][0].detach().cpu().numpy() # (S, 3, H, W)
                     
                     # Visualize the first dynamic frame (index 1 if S > 1, else 0)
                     s_idx = min(1, pred_dvf.shape[0] - 1)
