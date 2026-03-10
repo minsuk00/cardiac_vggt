@@ -22,20 +22,18 @@ class MRIDataset(BaseDataset):
         super().__init__(common_conf=common_conf)
         self.data_root = os.path.abspath(data_root)
         logging.info(f"MRIDataset: data_root = {self.data_root}")
-        self.mode, self.num_slices, self.target_size, self.mri_mode = mode, num_slices, target_size, mri_mode
+        self.mode, self.num_slices, self.target_size, self.mri_mode, self.split = mode, num_slices, target_size, mri_mode, split
         self.subjects = self._find_subjects()
         logging.info(f"MRIDataset: Found {len(self.subjects)} subjects.")
         self.len_train = 1000
         # self.heart_center = (127, 148, 34)
 
     def _find_subjects(self):
-        if not os.path.isdir(self.data_root):
+        search_root = os.path.join(self.data_root, self.split)
+        if not os.path.isdir(search_root):
             return []
-        if glob.glob(os.path.join(self.data_root, "img_t*.nii.gz")):
-            return [self.data_root]
-        return sorted(
-            [os.path.join(self.data_root, d) for d in os.listdir(self.data_root) if os.path.isdir(os.path.join(self.data_root, d)) and glob.glob(os.path.join(self.data_root, d, "img_t*.nii.gz"))]
-        )
+        # Return all subdirectories under data_root/split
+        return sorted([os.path.join(search_root, d) for d in os.listdir(search_root) if os.path.isdir(os.path.join(search_root, d))])
 
     def __len__(self):
         return self.len_train
@@ -44,14 +42,15 @@ class MRIDataset(BaseDataset):
         S = max(2, img_per_seq or self.num_slices)
         sub_dir = self.subjects[seq_index % len(self.subjects)]
 
-        # Determine paths
-        nii_files = sorted(glob.glob(os.path.join(sub_dir, "img_t*.nii.gz")))
+        # Determine paths (Images are in sub_dir/nifti/*/img_t*.nii.gz)
+        nii_pattern = os.path.join(sub_dir, "nifti", "*", "img_t*.nii.gz")
+        nii_files = sorted(glob.glob(nii_pattern))
         T_total = len(nii_files)
+        
+        # DVF files are in sub_dir root
+        dvf_root = sub_dir
 
-        # DVF root is two levels up from subject folder (../../)
-        dvf_root = os.path.dirname(os.path.dirname(sub_dir))
-
-        res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids", "timesteps", "slice_indices", "gt_dvfs", "scale_factors", "z_indices"]}
+        res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids", "timesteps", "slice_indices", "gt_dvfs", "scale_factors", "z_indices", "rotations"]}
 
         for i in range(S):
             # i=0 is always the reference (t=1). Static mode is also always t=1.
@@ -59,7 +58,9 @@ class MRIDataset(BaseDataset):
                 t_idx = 1
             else:
                 t_idx = random.randint(1, T_total)
-            img_path = os.path.join(sub_dir, f"img_t{t_idx:03d}.nii.gz")
+            
+            # Find the specific image file path for t_idx
+            img_path = [f for f in nii_files if f.endswith(f"img_t{t_idx:03d}.nii.gz")][0]
             img_obj = nib.load(img_path)
             vol = img_obj.get_fdata()
             v_min, v_max = np.min(vol), np.max(vol)
@@ -75,21 +76,25 @@ class MRIDataset(BaseDataset):
                 raw = vol[:, :, idx]
                 r, c = np.meshgrid(np.arange(W), np.arange(H), indexing="ij")
                 coords = np.stack([r, c, np.full_like(r, idx)], axis=-1).astype(np.float32)
+                res["rotations"].append(np.zeros(3, dtype=np.float32))
             elif axis == "coronal":
                 idx = random.randint(0, H - 1)
                 raw = vol[:, idx, :]
                 r, c = np.meshgrid(np.arange(W), np.arange(Z), indexing="ij")
                 coords = np.stack([r, np.full_like(r, idx), c], axis=-1).astype(np.float32)
                 rot = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], dtype=np.float32)
+                res["rotations"].append(np.zeros(3, dtype=np.float32))
             elif axis == "sagittal":
                 idx = random.randint(0, W - 1)
                 raw = vol[idx, :, :]
                 r, c = np.meshgrid(np.arange(H), np.arange(Z), indexing="ij")
                 coords = np.stack([np.full_like(r, idx), r, c], axis=-1).astype(np.float32)
                 rot = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=np.float32)
+                res["rotations"].append(np.zeros(3, dtype=np.float32))
             elif axis == "oblique":
                 out_h, out_w = 256, 256
                 angles = tuple(np.random.uniform(0, 360, 3))
+                res["rotations"].append(np.array(angles, dtype=np.float32))
                 rot = Rotation.from_euler("xyz", angles, degrees=True).as_matrix()
                 gx, gy = np.meshgrid(np.arange(-out_h // 2, out_h // 2), np.arange(-out_w // 2, out_w // 2), indexing="ij")
                 flat_coords = rot @ np.stack([gx.flatten(), gy.flatten(), np.zeros_like(gx).flatten()])
@@ -170,4 +175,6 @@ class MRIDataset(BaseDataset):
             res["original_sizes"].append(np.array([h, w], np.float32))
             # res["frame_ids"] already handled earlier in loop
 
-        return {**res, "seq_name": f"mri_{self.mri_mode}_{os.path.basename(sub_dir)}", "ids": np.array(res["frame_ids"], np.int64), "frame_num": S, "tracks": np.zeros((1, 1, 2), np.float32)}
+        rel_path = os.path.relpath(sub_dir, self.data_root)
+        seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
+        return {**res, "seq_name": seq_name, "ids": np.array(res["frame_ids"], np.int64), "frame_num": S, "tracks": np.zeros((1, 1, 2), np.float32)}
