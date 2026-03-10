@@ -677,20 +677,22 @@ class Trainer:
         if self.data_conf.train.common_config.repeat_batch:
             batch = self._apply_batch_repetition(batch)
 
-        # Normalize camera extrinsics and points. The function returns new tensors.
-        normalized_extrinsics, normalized_cam_points, normalized_world_points, normalized_depths = normalize_camera_extrinsics_and_points_batch(
-            extrinsics=batch["extrinsics"],
-            cam_points=batch["cam_points"],
-            world_points=batch["world_points"],
-            depths=batch["depths"],
-            point_masks=batch["point_masks"],
-        )
+        # Normalize camera extrinsics and points if enabled (default: True)
+        if self.data_conf.train.common_config.get("normalize_points", True):
+            # Normalize camera extrinsics and points. The function returns new tensors.
+            normalized_extrinsics, normalized_cam_points, normalized_world_points, normalized_depths = normalize_camera_extrinsics_and_points_batch(
+                extrinsics=batch["extrinsics"],
+                cam_points=batch["cam_points"],
+                world_points=batch["world_points"],
+                depths=batch["depths"],
+                point_masks=batch["point_masks"],
+            )
 
-        # Replace the original values in the batch with the normalized ones.
-        batch["extrinsics"] = normalized_extrinsics
-        batch["cam_points"] = normalized_cam_points
-        batch["world_points"] = normalized_world_points
-        batch["depths"] = normalized_depths
+            # Replace the original values in the batch with the normalized ones.
+            batch["extrinsics"] = normalized_extrinsics
+            batch["cam_points"] = normalized_cam_points
+            batch["world_points"] = normalized_world_points
+            batch["depths"] = normalized_depths
 
         return batch
 
@@ -731,11 +733,16 @@ class Trainer:
 
     def _log_tb_visuals(self, batch: Mapping, phase: str, step: int) -> None:
         """Logs image or video visualizations to TensorBoard."""
+        
+        # Scale frequency by accum_steps to prevent redundant logging of chunks
+        freq = self.logging_conf.log_visual_frequency.get(phase, 0)
+        if phase == "train":
+            freq *= self.accum_steps
+            
         if not (
             self.logging_conf.log_visuals
-            and (phase in self.logging_conf.log_visual_frequency)
-            and self.logging_conf.log_visual_frequency[phase] > 0
-            and (step % self.logging_conf.log_visual_frequency[phase] == 0)
+            and freq > 0
+            and (step % freq == 0)
             and (self.logging_conf.visuals_keys_to_log is not None)
         ):
             return
@@ -788,18 +795,18 @@ class Trainer:
 
             # --- Added 3D Point Cloud Logging ---
             if self.wandb_writer and "pred_world_points" in batch and "images" in batch and "point_masks" in batch:
-                # Flatten the entire batch to ensure all Z-slices (S dimension) are included
-                pred_pts = batch["pred_world_points"].cpu().reshape(-1, 3)  # (B*S*H*W, 3)
-                gt_pts = batch["world_points"].cpu().reshape(-1, 3)  # (B*S*H*W, 3)
-                masks = batch["point_masks"].cpu().reshape(-1)  # (B*S*H*W)
+                # To prevent "ghosting", we only take the FIRST item in the batch (B=0)
+                pred_pts = batch["pred_world_points"][0].cpu().reshape(-1, 3)  # (S*H*W, 3)
+                gt_pts = batch["world_points"][0].cpu().reshape(-1, 3)  # (S*H*W, 3)
+                masks = batch["point_masks"][0].cpu().reshape(-1)  # (S*H*W)
 
-                images = batch["images"].cpu()  # (B, S, 3, H, W)
+                images = batch["images"][0].cpu()  # (S, 3, H, W)
                 # Images are usually [0, 1] or [-1, 1]. Ensure [0, 255]
                 if images.min() < 0:
                     images = (images + 1.0) / 2.0
                 images = (images * 255).clamp(0, 255).to(torch.uint8)
                 # Permute channels to last dimension, then flatten
-                images = images.permute(0, 1, 3, 4, 2).reshape(-1, 3)  # (B*S*H*W, 3)
+                images = images.permute(0, 2, 3, 1).reshape(-1, 3)  # (S*H*W, 3)
 
                 # Filter by mask
                 valid_pred_pts = pred_pts[masks].detach()  # (N, 3)
@@ -823,6 +830,29 @@ class Trainer:
 
                 self.wandb_writer.log_3d_point_cloud(f"Visuals/{phase}_pred_cloud", pred_cloud, step)
                 self.wandb_writer.log_3d_point_cloud(f"Visuals/{phase}_gt_cloud", gt_cloud, step)
+                
+            # --- Added DVF Visualization ---
+            if self.wandb_writer and "pred_dvfs" in batch and "gt_dvfs_unnorm" in batch:
+                try:
+                    import wandb
+                    from visual_util import plot_dvf_grid
+                except ImportError:
+                    wandb = None
+                
+                if wandb is not None:
+                    # Get the first sequence in the batch
+                    pred_dvf = batch["pred_dvfs"][0].cpu().numpy()  # (S, H, W, 3)
+                    gt_dvf = batch["gt_dvfs_unnorm"][0].cpu().numpy()  # (S, H, W, 3)
+                    img_tx = batch["images"][0].cpu().numpy() # (S, 3, H, W)
+                    
+                    # Visualize the first dynamic frame (index 1 if S > 1, else 0)
+                    s_idx = min(1, pred_dvf.shape[0] - 1)
+                    
+                    fig = plot_dvf_grid(img_tx, gt_dvf, pred_dvf, seq_idx=s_idx, v_min=-10.0, v_max=10.0)
+                    self.wandb_writer.log(f"Visuals/{phase}_DVF", wandb.Image(fig), step)
+                    
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
             # ------------------------------------
 
 

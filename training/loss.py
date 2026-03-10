@@ -234,6 +234,21 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         f"loss_grad_point": loss_grad * grad_weight,
     }
 
+    if "gt_dvfs" in batch and "scale_factors" in batch:
+        B, S = gt_points.shape[:2]
+        scale = batch["scale_factors"].view(B, S, 1, 1, 1)  # Correct dimensions for (B, S, H, W, 3)
+        diff_wp = (gt_points - pred_points) * scale
+        gt_dvf = batch["gt_dvfs"]  # (B, S, H, W, 3)
+        pred_dvf = gt_dvf + diff_wp
+        
+        # metric calculation
+        mae_voxel = torch.abs(diff_wp)[gt_points_mask].mean()
+        loss_dict["metric_dvf_mae_voxel"] = mae_voxel
+        
+        # Keep un-normalized DVFs for visualization
+        loss_dict["pred_dvfs"] = pred_dvf
+        loss_dict["gt_dvfs_unnorm"] = gt_dvf
+
     return loss_dict
 
 def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_fn = None, valid_range=-1, **kwargs):

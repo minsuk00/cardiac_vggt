@@ -455,3 +455,68 @@ def download_file_from_url(url, filename):
 
     except requests.exceptions.RequestException as e:
         print(f"Error downloading file: {e}")
+
+def plot_dvf_grid(image, gt_dvf, pred_dvf, seq_idx=None, v_min=-10.0, v_max=10.0):
+    """
+    Plots a 2x4 grid comparing GT DVF and Predicted DVF for X, Y, Z channels, alongside the target image.
+    
+    Args:
+        image: (S, 3, H, W) or (3, H, W) Target image array (t=x)
+        gt_dvf: (S, H, W, 3) or (H, W, 3) Ground truth DVF array
+        pred_dvf: (S, H, W, 3) or (H, W, 3) Predicted DVF array
+        seq_idx: Optional index if input has sequence dimension S
+        v_min, v_max: Bounds for the colormap to keep zero centered
+    
+    Returns:
+        matplotlib Figure object
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Handle sequence dimension if present
+    if seq_idx is not None and gt_dvf.ndim == 4:
+        s_idx = min(seq_idx, gt_dvf.shape[0] - 1)
+        g_dvf = gt_dvf[s_idx]
+        p_dvf = pred_dvf[s_idx]
+        img = image[s_idx] if image.ndim == 4 else image
+    else:
+        s_idx = "N/A"
+        g_dvf = gt_dvf
+        p_dvf = pred_dvf
+        img = image
+        
+    def format_img(i):
+        if i.shape[0] == 3 or i.shape[0] == 1:
+            i = np.transpose(i, (1, 2, 0))
+        if i.max() > 2.0:
+            i = i / 255.0
+        return np.clip(i, 0, 1)
+
+    img = format_img(img)
+        
+    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+    fig.suptitle(f"DVF Visualization (Sequence Frame {s_idx})")
+    
+    # Plot Target Image in first row, first column
+    axes[0, 0].imshow(img, cmap='gray' if img.shape[-1] == 1 else None)
+    axes[0, 0].set_title("Input Image (Target)")
+    axes[0, 0].axis('off')
+    
+    # Leave bottom left empty
+    axes[1, 0].axis('off')
+    
+    axis_names = ['X', 'Y', 'Z']
+    for i in range(3):
+        col = i + 1
+        im_g = axes[0, col].imshow(g_dvf[..., i], cmap='RdBu', vmin=v_min, vmax=v_max)
+        axes[0, col].set_title(f"GT DVF {axis_names[i]}")
+        plt.colorbar(im_g, ax=axes[0, col])
+        axes[0, col].axis('off')
+        
+        im_p = axes[1, col].imshow(p_dvf[..., i], cmap='RdBu', vmin=v_min, vmax=v_max)
+        axes[1, col].set_title(f"Pred DVF {axis_names[i]}")
+        plt.colorbar(im_p, ax=axes[1, col])
+        axes[1, col].axis('off')
+        
+    plt.tight_layout()
+    return fig
