@@ -4,17 +4,18 @@ defaults:
   - _self_
 
 # Global overrides
-data_root: "./scratch/nifti/cardiac_1sec_10phase/nifti/card_3.125x3.125x3.125mm_256x256x70x10x4_snr20_fa60_bh"
+# data_root: "./scratch/data/cardiac_1sec_10phase/nifti/card_3.125x3.125x3.125mm_256x256x70x10x4_snr20_fa60_bh"
+data_root: "./scratch/data/free_breathing_1sec_20frames/nifti/card_3.125x3.125x3.125mm_256x256x70x20x4_snr20_fa60_fb"
 split: "train"
 mode: "train"
-mri_mode: "axial" 
+mri_mode: "oblique" 
 mri_data_mode: "dynamic" # "static" or "dynamic"
 
 # Unique timestamped folder (Reverse Seconds _ DataMode _ MRI_Mode _ Human readable)
 # Reverse Seconds makes newest runs appear at the TOP alphabetically.
 exp_name: "mri_finetune_${rev_ts:}_${mri_data_mode}_${mri_mode}_${now:%Y-%m-%d_%H-%M-%S}"
 num_workers: 4
-max_img_per_gpu: 10
+max_img_per_gpu: 24
 accum_steps: 1
 
 # Redirect Logging and Checkpoints to Scratch
@@ -40,6 +41,7 @@ logging:
         - loss_conf_point
         - loss_reg_point
         - loss_grad_point
+        - metric_dvf_mae_voxel
   visuals_keys_to_log:
     train:
       modality: "image"
@@ -77,10 +79,11 @@ data:
       debug: False
       get_nearby: True
       load_depth: False
-      img_nums: [2, 10] 
+      img_nums: [2, 12] 
       max_img_per_gpu: ${max_img_per_gpu}
       allow_duplicate_img: True
       repeat_batch: False
+      normalize_points: false
       augs:
         cojitter: True
         cojitter_ratio: 0.0
@@ -98,7 +101,7 @@ data:
           split: ${split}
           mode: ${mri_data_mode}
           mri_mode: ${mri_mode}
-          num_slices: 10
+          num_slices: 12
           target_size: ${img_size}
   val: null
 
