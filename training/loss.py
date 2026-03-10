@@ -238,6 +238,7 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         B, S = gt_points.shape[:2]
         scale = batch["scale_factors"].view(B, S, 1, 1, 1)  # Correct dimensions for (B, S, H, W, 3)
         diff_wp = (gt_points - pred_points) * scale
+        diff_wp = diff_wp * gt_points_mask.unsqueeze(-1)
         gt_dvf = batch["gt_dvfs"]  # (B, S, H, W, 3)
         pred_dvf = gt_dvf + diff_wp
         

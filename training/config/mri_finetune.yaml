@@ -5,17 +5,19 @@ defaults:
 
 # Global overrides
 # data_root: "./scratch/data/cardiac_1sec_10phase/nifti/card_3.125x3.125x3.125mm_256x256x70x10x4_snr20_fa60_bh"
-data_root: "./scratch/data/free_breathing_1sec_20frames/nifti/card_3.125x3.125x3.125mm_256x256x70x20x4_snr20_fa60_fb"
+data_root: "_XCAT/dataset_single_subject_free_breathing_1sec_20frame"
 split: "train"
 mode: "train"
-mri_mode: "oblique" 
+# mri_mode: "oblique" 
+mri_mode: "axial" 
 mri_data_mode: "dynamic" # "static" or "dynamic"
 
 # Unique timestamped folder (Reverse Seconds _ DataMode _ MRI_Mode _ Human readable)
 # Reverse Seconds makes newest runs appear at the TOP alphabetically.
-exp_name: "mri_finetune_${rev_ts:}_${mri_data_mode}_${mri_mode}_${now:%Y-%m-%d_%H-%M-%S}"
+dataset_name: "${basename:${data_root}}"
+exp_name: "${rev_ts:}_mri_${mri_data_mode}_${mri_mode}_${dataset_name}"
 num_workers: 4
-max_img_per_gpu: 20
+max_img_per_gpu: 12
 accum_steps: 1
 
 # Redirect Logging and Checkpoints to Scratch
@@ -104,9 +106,53 @@ data:
           num_slices: 12
           target_size: ${img_size}
   val: null
+  # val:
+  #   _target_: data.dynamic_dataloader.DynamicTorchDataset
+  #   num_workers: ${num_workers}
+  #   max_img_per_gpu: ${max_img_per_gpu}
+  #   shuffle: False
+  #   pin_memory: False
+  #   common_config:
+  #     fix_img_num: -1
+  #     fix_aspect_ratio: 1.0
+  #     load_track: False
+  #     track_num: 1024
+  #     training: False
+  #     inside_random: True
+  #     img_size: ${img_size}
+  #     patch_size: ${patch_size}
+  #     rescale: True
+  #     rescale_aug: False
+  #     landscape_check: False
+  #     debug: False
+  #     get_nearby: True
+  #     load_depth: False
+  #     img_nums: [2, 12] 
+  #     max_img_per_gpu: ${max_img_per_gpu}
+  #     allow_duplicate_img: True
+  #     repeat_batch: False
+  #     normalize_points: false
+  #     augs:
+  #       cojitter: False
+  #       cojitter_ratio: 0.5
+  #       scales: null
+  #       aspects: [1.0, 1.0]
+  #       color_jitter: null
+  #       gray_scale: False
+  #       gau_blur: False
+  #   dataset:
+  #     _target_: data.composed_dataset.ComposedDataset
+  #     dataset_configs:
+  #       - _target_: data.MRIDataset
+  #         data_root: ${data_root}
+  #         split: "val"
+  #         mode: ${mri_data_mode}
+  #         mri_mode: ${mri_mode}
+  #         num_slices: 12
+  #         target_size: ${img_size}
 
 # Training behavior: 10 epochs, 100 batches per epoch
-limit_train_batches: 100
+limit_train_batches: 300
 max_epochs: 10
 
 # Enable Point Head, disable others
