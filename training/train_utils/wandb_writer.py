@@ -41,9 +41,11 @@ class WandbLogger:
             run = wandb.init(project=project, name=name, config=wandb_config, dir=dir, **kwargs)
             if run is not None:
                 logging.info(f"WandB Run URL: {run.get_url()}")
-                # Exclude large directories from code logging
-
-                run.log_code(".", exclude_fn=lambda path: "scratch" in path or "logs" in path or ".git" in path)
+                # Exclude large directories and specifically include .py and .yaml files
+                run.log_code(".", 
+                    include_fn=lambda path: path.endswith(".py") or path.endswith(".yaml"),
+                    exclude_fn=lambda path: "scratch" in path or "logs" in path or ".git" in path
+                )
         elif wandb is None and self._rank == 0:
             logging.warning("WandB is not installed. Skipping initialization.")
 
@@ -55,7 +57,7 @@ class WandbLogger:
         if self._rank == 0 and wandb is not None and wandb.run is not None:
             wandb.log(payload, step=step)
 
-    def log_visuals(self, name: str, data: Union[torch.Tensor, np.ndarray], step: int, fps: int = 4) -> None:
+    def log_visuals(self, name: str, data: Union[torch.Tensor, np.ndarray], step: int, fps: int = 4, caption: Optional[str] = None) -> None:
         if self._rank == 0 and wandb is not None and wandb.run is not None:
             import matplotlib.pyplot as plt
 
@@ -76,10 +78,10 @@ class WandbLogger:
                 ax.imshow(data, vmin=0, vmax=v_max)
                 ax.axis("off")
 
-                wandb.log({name: wandb.Image(fig)}, step=step)
+                wandb.log({name: wandb.Image(fig, caption=caption)}, step=step)
                 plt.close(fig)
             elif data.ndim == 5:  # Video: (B, T, C, H, W)
-                wandb.log({name: wandb.Image(data)}, step=step)
+                wandb.log({name: wandb.Image(data, caption=caption)}, step=step)
             else:
                 logging.warning(f"Unsupported visual dimensions for WandB: {data.ndim}")
 

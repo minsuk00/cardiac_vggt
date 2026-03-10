@@ -32,7 +32,7 @@ import torch.nn as nn
 import torchvision
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from train_utils.checkpoint import DDPCheckpointSaver
 from train_utils.distributed import get_machine_local_and_dist_rank
 from train_utils.freeze import freeze_modules
@@ -354,12 +354,12 @@ class Trainer:
         if self.wandb_writer:
             self.wandb_writer.log(name, value, step)
 
-    def _log_visuals(self, name: str, data: Any, step: int, fps: int = 4):
+    def _log_visuals(self, name: str, data: Any, step: int, fps: int = 4, caption: Optional[str] = None):
         """Logs visual data to both TensorBoard and WandB."""
         if self.tb_writer:
             self.tb_writer.log_visuals(name, data, step, fps)
         if self.wandb_writer:
-            self.wandb_writer.log_visuals(name, data, step, fps)
+            self.wandb_writer.log_visuals(name, data, step, fps, caption=caption)
 
     def run(self):
         """Main entry point to start the training or validation process."""
@@ -760,6 +760,26 @@ class Trainer:
 
             name = f"Visuals/{phase}"
 
+            # Prepare MRI metadata for caption
+            caption = None
+            if "slice_indices" in batch and "timesteps" in batch:
+                try:
+                    s0, t0 = batch["slice_indices"][0][0].item(), batch["timesteps"][0][0].item()
+                    s1, t1 = batch["slice_indices"][0][1].item(), batch["timesteps"][0][1].item()
+                    
+                    # Determine label (z for axial, s for others)
+                    seq_name = batch["seq_name"][0] if "seq_name" in batch else ""
+                    label = "z" if "mri_axial" in seq_name else "s"
+                    
+                    caption = f"f0: {label}={s0}, t={t0} | f1: {label}={s1}, t={t1}"
+                    
+                    # Add rotation info for oblique
+                    if "rotations" in batch and "mri_oblique" in seq_name:
+                        r1 = batch["rotations"][0][1] # Euler angles for frame 1
+                        caption += f" | rot=[{r1[0]:.0f},{r1[1]:.0f},{r1[2]:.0f}]"
+                except:
+                    pass
+
             def prepare_visual(key, v):
                 # If it's world points (S, H, W, 3), permute to (S, 3, H, W)
                 if v.dim() == 4 and v.shape[-1] == 3:
@@ -780,20 +800,25 @@ class Trainer:
                 img_grid = img_grid.cpu()
                 if img_grid.dtype == torch.bfloat16:
                     img_grid = img_grid.to(torch.float16)
-                self._log_visuals(f"{name}_images", img_grid.numpy(), step, self.logging_conf.video_logging_fps)
+                self._log_visuals(f"{name}_images", img_grid.numpy(), step, self.logging_conf.video_logging_fps, caption=caption)
 
             # Assemble gradient grids (GT and Pred) together
             grad_grids = []
             for key in ["world_points", "pred_world_points"]:
                 if key in keys_to_log and key in batch and batch[key][0].dim() >= 3:
-                    grad_grids.append(torchvision.utils.make_grid(prepare_visual(key, batch[key][0]), nrow=self.logging_conf.visuals_per_batch_to_log))
+                    v = batch[key][0]
+                    if key == "pred_world_points":
+                        # Mask out padded regions in the prediction to match GT
+                        mask = batch["point_masks"][0].unsqueeze(-1)
+                        v = v * mask
+                    grad_grids.append(torchvision.utils.make_grid(prepare_visual(key, v), nrow=self.logging_conf.visuals_per_batch_to_log))
 
             if grad_grids:
                 grad_visuals = torch.cat(grad_grids, dim=1)  # Stack vertically: Top=GT, Bot=Pred
                 grad_visuals = grad_visuals.cpu()
                 if grad_visuals.dtype == torch.bfloat16:
                     grad_visuals = grad_visuals.to(torch.float16)
-                self._log_visuals(f"{name}_gradients_GT_Top_Pred_Bot", grad_visuals.numpy(), step, self.logging_conf.video_logging_fps)
+                self._log_visuals(f"{name}_gradients_GT_Top_Pred_Bot", grad_visuals.numpy(), step, self.logging_conf.video_logging_fps, caption=caption)
 
             # --- Added 3D Point Cloud Logging ---
             if self.wandb_writer and "pred_world_points" in batch and "images" in batch and "point_masks" in batch:
@@ -849,7 +874,7 @@ class Trainer:
                     # Visualize the first dynamic frame (index 1 if S > 1, else 0)
                     s_idx = min(1, pred_dvf.shape[0] - 1)
                     
-                    fig = plot_dvf_grid(img_tx, gt_dvf, pred_dvf, seq_idx=s_idx, v_min=-10.0, v_max=10.0)
+                    fig = plot_dvf_grid(img_tx, gt_dvf, pred_dvf, seq_idx=s_idx, v_min=-3.0, v_max=3.0)
                     self.wandb_writer.log(f"Visuals/{phase}_DVF", wandb.Image(fig), step)
                     
                     import matplotlib.pyplot as plt
