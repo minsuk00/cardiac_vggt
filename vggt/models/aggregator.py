@@ -5,21 +5,41 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
-from typing import Optional, Tuple, Union, List, Dict, Any
 
 from vggt.layers import PatchEmbed
 from vggt.layers.block import Block
-from vggt.layers.rope import RotaryPositionEmbedding2D, PositionGetter
-from vggt.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2
+from vggt.layers.rope import PositionGetter, RotaryPositionEmbedding2D
+from vggt.layers.vision_transformer import vit_base, vit_giant2, vit_large, vit_small
 
 logger = logging.getLogger(__name__)
 
 _RESNET_MEAN = [0.485, 0.456, 0.406]
 _RESNET_STD = [0.229, 0.224, 0.225]
+
+
+class ZIndexEmbedder(nn.Module):
+    def __init__(self, embed_dim=1024, num_freqs=6):
+        super().__init__()
+        self.num_freqs = num_freqs
+        in_dim = 1 + 2 * num_freqs
+        self.proj = nn.Linear(in_dim, embed_dim)
+
+    def forward(self, z_idx_normalized):  # z_idx_normalized shape: (B, S, 1) or (B*S, 1)
+        freqs = [z_idx_normalized]
+        for i in range(self.num_freqs):
+            freqs.append(torch.sin((2**i) * torch.pi * z_idx_normalized))
+            freqs.append(torch.cos((2**i) * torch.pi * z_idx_normalized))
+
+        # Shape: (..., in_dim)
+        z_feats = torch.cat(freqs, dim=-1)
+        # We need to add the sequence dimension for the token: shape (..., 1, embed_dim)
+        return self.proj(z_feats).unsqueeze(-2)
 
 
 class Aggregator(nn.Module):
@@ -47,6 +67,7 @@ class Aggregator(nn.Module):
         qk_norm (bool): Whether to apply QK normalization.
         rope_freq (int): Base frequency for rotary embedding. -1 to disable.
         init_values (float): Init scale for layer scale.
+        use_z_pose_embedding (bool): Whether to replace camera token with sinusoidal z index embedding.
     """
 
     def __init__(
@@ -68,9 +89,14 @@ class Aggregator(nn.Module):
         qk_norm=True,
         rope_freq=100,
         init_values=0.01,
+        use_z_pose_embedding=False,
     ):
         super().__init__()
-        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}")
+        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}")
+
+        self.use_z_pose_embedding = use_z_pose_embedding
+        if self.use_z_pose_embedding:
+            self.z_embedder = ZIndexEmbedder(embed_dim=embed_dim)
 
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
@@ -139,7 +165,7 @@ class Aggregator(nn.Module):
         for name, value in (("_resnet_mean", _RESNET_MEAN), ("_resnet_std", _RESNET_STD)):
             self.register_buffer(name, torch.FloatTensor(value).view(1, 1, 3, 1, 1), persistent=False)
 
-        self.use_reentrant = False # hardcoded to False
+        self.use_reentrant = False  # hardcoded to False
 
     def __build_patch_embed__(
         self,
@@ -182,11 +208,13 @@ class Aggregator(nn.Module):
             if hasattr(self.patch_embed, "mask_token"):
                 self.patch_embed.mask_token.requires_grad_(False)
 
-    def forward(self, images: torch.Tensor) -> Tuple[List[torch.Tensor], int]:
+    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
                 B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
+            z_indices (torch.Tensor, optional): Normalized z-index values for sinusoidal embedding.
+                Shape [B, S, 1].
 
         Returns:
             (list[torch.Tensor], int):
@@ -210,8 +238,21 @@ class Aggregator(nn.Module):
 
         _, P, C = patch_tokens.shape
 
-        # Expand camera and register tokens to match batch size and sequence length
-        camera_token = slice_expand_and_flatten(self.camera_token, B, S)
+        if getattr(self, "use_z_pose_embedding", False):
+            if z_indices is None:
+                raise ValueError("use_z_pose_embedding is True but z_indices not provided in batch.")
+
+            # Warn if non-axial mode is being used (indicated by all zeros in z_indices)
+            if (z_indices == 0.0).all():
+                logger.warning("z_indices are all 0.0! Sinusoidal embedding is only meaningful for 'axial' MRI mode.")
+
+            # z_indices shape: [B, S, 1] -> [B*S, 1]
+            z_indices_flat = z_indices.view(B * S, 1).to(images.device)
+            camera_token = self.z_embedder(z_indices_flat)  # shape [B*S, 1, C]
+        else:
+            # Expand camera and register tokens to match batch size and sequence length
+            camera_token = slice_expand_and_flatten(self.camera_token, B, S)
+
         register_token = slice_expand_and_flatten(self.register_token, B, S)
 
         # Concatenate special tokens with patch tokens
@@ -238,13 +279,9 @@ class Aggregator(nn.Module):
         for _ in range(self.aa_block_num):
             for attn_type in self.aa_order:
                 if attn_type == "frame":
-                    tokens, frame_idx, frame_intermediates = self._process_frame_attention(
-                        tokens, B, S, P, C, frame_idx, pos=pos
-                    )
+                    tokens, frame_idx, frame_intermediates = self._process_frame_attention(tokens, B, S, P, C, frame_idx, pos=pos)
                 elif attn_type == "global":
-                    tokens, global_idx, global_intermediates = self._process_global_attention(
-                        tokens, B, S, P, C, global_idx, pos=pos
-                    )
+                    tokens, global_idx, global_intermediates = self._process_global_attention(tokens, B, S, P, C, global_idx, pos=pos)
                 else:
                     raise ValueError(f"Unknown attention type: {attn_type}")
 
