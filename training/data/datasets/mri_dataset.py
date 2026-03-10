@@ -46,11 +46,31 @@ class MRIDataset(BaseDataset):
         nii_pattern = os.path.join(sub_dir, "nifti", "*", "img_t*.nii.gz")
         nii_files = sorted(glob.glob(nii_pattern))
         T_total = len(nii_files)
-        
+
         # DVF files are in sub_dir root
         dvf_root = sub_dir
 
-        res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids", "timesteps", "slice_indices", "gt_dvfs", "scale_factors", "z_indices", "rotations"]}
+        res = {
+            k: []
+            for k in [
+                "images",
+                "world_points",
+                "cam_points",
+                "point_masks",
+                "depths",
+                "extrinsics",
+                "intrinsics",
+                "original_sizes",
+                "frame_ids",
+                "timesteps",
+                "slice_indices",
+                "gt_dvfs",
+                "scale_factors",
+                "z_indices",
+                "rotations",
+                "scanner_coords",
+            ]
+        }
 
         for i in range(S):
             # i=0 is always the reference (t=1). Static mode is also always t=1.
@@ -58,7 +78,7 @@ class MRIDataset(BaseDataset):
                 t_idx = 1
             else:
                 t_idx = random.randint(1, T_total)
-            
+
             # Find the specific image file path for t_idx
             img_path = [f for f in nii_files if f.endswith(f"img_t{t_idx:03d}.nii.gz")][0]
             img_obj = nib.load(img_path)
@@ -137,23 +157,30 @@ class MRIDataset(BaseDataset):
             img = np.clip(np.repeat(((raw - v_min) / (v_max - v_min + 1e-8))[..., None], 3, -1) * 255.0, 0, 255).astype(np.float32)
             wp = coords.astype(np.float32).copy()
 
+            # Store scanner_coords (position of pixels at t=N before DVF mapping)
+            sc_wp = coords.astype(np.float32).copy()
+
             # Isotropic and Centered Normalization
             max_dim = max(W, H, Z) - 1
             scale_factor = max_dim / 2
-            wp[..., 0] = (wp[..., 0] - (W - 1) / 2) / scale_factor
-            wp[..., 1] = (wp[..., 1] - (H - 1) / 2) / scale_factor
-            wp[..., 2] = (wp[..., 2] - (Z - 1) / 2) / scale_factor
+
+            for p_map in [wp, sc_wp]:
+                p_map[..., 0] = (p_map[..., 0] - (W - 1) / 2) / scale_factor
+                p_map[..., 1] = (p_map[..., 1] - (H - 1) / 2) / scale_factor
+                p_map[..., 2] = (p_map[..., 2] - (Z - 1) / 2) / scale_factor
 
             h, w = raw.shape
             sc = self.target_size / max(h, w)
             nw, nh = int(w * sc), int(h * sc)
             img_r = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_CUBIC)
             wp_r = cv2.resize(wp, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            sc_wp_r = cv2.resize(sc_wp, (nw, nh), interpolation=cv2.INTER_LINEAR)
             gt_dvf_r = cv2.resize(gt_dvf.astype(np.float32), (nw, nh), interpolation=cv2.INTER_LINEAR)
 
             vol_mask = (coords[..., 0] >= 0) & (coords[..., 0] < W) & (coords[..., 1] >= 0) & (coords[..., 1] < H) & (coords[..., 2] >= 0) & (coords[..., 2] < Z)
             vol_mask_r = cv2.resize(vol_mask.astype(np.float32), (nw, nh), interpolation=cv2.INTER_NEAREST) > 0.5
             wp_r[~vol_mask_r] = -2.0
+            sc_wp_r[~vol_mask_r] = -2.0
 
             hp, wp_p = self.target_size - nh, self.target_size - nw
             pt, pb, pl, pr = hp // 2, hp - hp // 2, wp_p // 2, wp_p - wp_p // 2
@@ -161,6 +188,7 @@ class MRIDataset(BaseDataset):
             res["images"].append(np.clip(np.pad(img_r, ((pt, pb), (pl, pr), (0, 0))), 0, 255))
             res["world_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=-2.0))
             res["cam_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=-2.0))
+            res["scanner_coords"].append(np.pad(sc_wp_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=-2.0))
             res["gt_dvfs"].append(np.pad(gt_dvf_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=0.0))
             res["scale_factors"].append(np.array([scale_factor], dtype=np.float32))
 

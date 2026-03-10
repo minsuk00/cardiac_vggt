@@ -148,10 +148,10 @@ class ComposedDataset(Dataset, ABC):
             sample["scale_factors"] = torch.from_numpy(np.stack(batch["scale_factors"]).astype(np.float32))
         if "z_indices" in batch:
             sample["z_indices"] = torch.from_numpy(np.stack(batch["z_indices"]).astype(np.float32))
-        if "slice_indices" in batch:
-            sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.int64))
         if "timesteps" in batch:
             sample["timesteps"] = torch.from_numpy(np.stack(batch["timesteps"]).astype(np.int64))
+        if "slice_indices" in batch:
+            sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.int64))
         if "rotations" in batch:
             sample["rotations"] = torch.from_numpy(np.stack(batch["rotations"]).astype(np.float32))
         # --- Track Processing (if enabled) ---
