@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
+import os
 
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
@@ -15,6 +16,7 @@ import time
 # Use a fixed value per-run so all config accesses match
 REVERSE_TS = str(2000000000 - int(time.time()))
 OmegaConf.register_new_resolver("rev_ts", lambda: REVERSE_TS)
+OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p))
 
 
 def main():
