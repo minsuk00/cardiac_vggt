@@ -583,6 +583,8 @@ class Trainer:
 
                 for key, grad_norm in grad_norm_dict.items():
                     loss_meters[f"Grad/{key}"].update(grad_norm)
+                    if self.steps[phase] % self.logging_conf.log_freq == 0:
+                        self._log_scalar(f"Grad/{key}", grad_norm, self.steps[phase])
 
             # Optimizer step
             for optim in self.optims:
@@ -704,7 +706,7 @@ class Trainer:
             A dictionary containing the computed losses.
         """
         # Forward pass
-        y_hat = model(images=batch["images"])
+        y_hat = model(images=batch["images"], batch=batch)
 
         # Loss computation
         loss_dict = self.loss(y_hat, batch)
@@ -801,9 +803,8 @@ class Trainer:
                 masks = batch["point_masks"][0].cpu().reshape(-1)  # (S*H*W)
 
                 images = batch["images"][0].cpu()  # (S, 3, H, W)
-                # Images are usually [0, 1] or [-1, 1]. Ensure [0, 255]
-                if images.min() < 0:
-                    images = (images + 1.0) / 2.0
+                # Images are usually [0, 1] (from ComposedDataset)
+                # Ensure [0, 255] for WandB
                 images = (images * 255).clamp(0, 255).to(torch.uint8)
                 # Permute channels to last dimension, then flatten
                 images = images.permute(0, 2, 3, 1).reshape(-1, 3)  # (S*H*W, 3)
