@@ -51,7 +51,7 @@ class MRIDataset(BaseDataset):
         # DVF root is two levels up from subject folder (../../)
         dvf_root = os.path.dirname(os.path.dirname(sub_dir))
 
-        res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids", "timesteps", "slice_indices", "gt_dvfs", "scale_factors"]}
+        res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids", "timesteps", "slice_indices", "gt_dvfs", "scale_factors", "z_indices"]}
 
         for i in range(S):
             # Static: always frame 1. Dynamic: random frame.
@@ -103,6 +103,13 @@ class MRIDataset(BaseDataset):
                 raw = map_coordinates(vol, flat_coords, order=1, mode="constant", cval=v_min).reshape((out_h, out_w))
                 coords = flat_coords.T.reshape((out_h, out_w, 3)).astype(np.float32)
                 idx = i
+
+            # Silently provide z_indices for potential sinusoidal embedding
+            if axis == "axial":
+                z_idx_norm = (idx / max(1, Z - 1)) * 2.0 - 1.0
+            else:
+                z_idx_norm = 0.0
+            res["z_indices"].append(np.array([z_idx_norm], dtype=np.float32))
 
             # 2. Dynamic DVF Ground Truth (Phase 3)
             gt_dvf = np.zeros_like(coords)
