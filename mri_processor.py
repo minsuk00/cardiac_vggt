@@ -77,11 +77,13 @@ class MRIProcessor:
 
     def _get_oblique(self, file_path, center, angles, v_min, v_max, output_shape=(256, 256)):
         """Internal helper for 3D interpolation at arbitrary angles."""
-        if center is None:
-            raise ValueError("Oblique mode requires a 3D center tuple (x, y, z)")
-
         img = nib.load(file_path)
         data = img.get_fdata()  # Full load required for interpolation
+
+        if center is None:
+            # Default to volume center if not provided
+            W, H, Z = data.shape
+            center = (W // 2, H // 2, Z // 2)
 
         if angles is None:
             angles = tuple(np.random.uniform(0, 360, 3).round(1))
@@ -90,7 +92,7 @@ class MRIProcessor:
         h, w = output_shape
         grid_x, grid_y = np.meshgrid(np.arange(-h // 2, h // 2), np.arange(-w // 2, w // 2), indexing="ij")
 
-        # Combine grid, rotate, and translate to the heart center
+        # Combine grid, rotate, and translate to the sampling center
         coords = rot @ np.stack([grid_x.flatten(), grid_y.flatten(), np.zeros_like(grid_x).flatten()])
         for i, c in enumerate(center):
             coords[i, :] += c
@@ -110,5 +112,6 @@ if __name__ == "__main__":
     # Comprehensive Self-Test
     s, idx, ang = mri.get_slice(DATA_DIR, 1, mode="axial")
     print(f"Self-test: Mode Axial -> Shape {s.shape}, Index {idx}")
-    s, idx, ang = mri.get_slice(DATA_DIR, 1, mode="oblique", center=(127, 148, 34))
+    # s, idx, ang = mri.get_slice(DATA_DIR, 1, mode="oblique", center=(127, 148, 34))
+    s, idx, ang = mri.get_slice(DATA_DIR, 1, mode="oblique") # Uses volume center
     print(f"Self-test: Mode Oblique -> Shape {s.shape}, Angles {ang}")
