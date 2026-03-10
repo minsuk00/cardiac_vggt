@@ -15,7 +15,7 @@ mri_data_mode: "dynamic" # "static" or "dynamic"
 # Reverse Seconds makes newest runs appear at the TOP alphabetically.
 exp_name: "mri_finetune_${rev_ts:}_${mri_data_mode}_${mri_mode}_${now:%Y-%m-%d_%H-%M-%S}"
 num_workers: 4
-max_img_per_gpu: 24
+max_img_per_gpu: 20
 accum_steps: 1
 
 # Redirect Logging and Checkpoints to Scratch
@@ -115,6 +115,7 @@ model:
   enable_depth: false
   enable_point: true
   enable_track: false
+  use_z_pose_embedding: false
 
 # Configure Loss
 loss:
