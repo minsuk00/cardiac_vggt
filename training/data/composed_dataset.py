@@ -116,6 +116,7 @@ class ComposedDataset(Dataset, ABC):
         intrinsics = torch.from_numpy(np.stack(batch["intrinsics"]).astype(np.float32))
         cam_points = torch.from_numpy(np.stack(batch["cam_points"]).astype(np.float32))
         world_points = torch.from_numpy(np.stack(batch["world_points"]).astype(np.float32))
+        scanner_coords = torch.from_numpy(np.stack(batch["scanner_coords"]).astype(np.float32)) if "scanner_coords" in batch else None
         point_masks = torch.from_numpy(np.stack(batch["point_masks"]))  # Mask indicating valid depths / world points / cam points per frame
         ids = torch.from_numpy(batch["ids"])  # Frame indices sampled from the original sequence
 
@@ -141,6 +142,8 @@ class ComposedDataset(Dataset, ABC):
             "world_points": world_points,
             "point_masks": point_masks,
         }
+        if scanner_coords is not None:
+            sample["scanner_coords"] = scanner_coords
 
         if "gt_dvfs" in batch:
             sample["gt_dvfs"] = torch.from_numpy(np.stack(batch["gt_dvfs"]).astype(np.float32))
@@ -148,12 +151,18 @@ class ComposedDataset(Dataset, ABC):
             sample["scale_factors"] = torch.from_numpy(np.stack(batch["scale_factors"]).astype(np.float32))
         if "z_indices" in batch:
             sample["z_indices"] = torch.from_numpy(np.stack(batch["z_indices"]).astype(np.float32))
+        if "t_indices" in batch:
+            sample["t_indices"] = torch.from_numpy(np.stack(batch["t_indices"]).astype(np.float32))
         if "timesteps" in batch:
             sample["timesteps"] = torch.from_numpy(np.stack(batch["timesteps"]).astype(np.int64))
         if "slice_indices" in batch:
             sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.int64))
+        if "geom_masks" in batch:
+            sample["geom_masks"] = torch.from_numpy(np.stack(batch["geom_masks"]))
         if "rotations" in batch:
             sample["rotations"] = torch.from_numpy(np.stack(batch["rotations"]).astype(np.float32))
+        if "gt_phase0_volume" in batch:
+            sample["gt_phase0_volume"] = torch.from_numpy(batch["gt_phase0_volume"].astype(np.float32))
         # --- Track Processing (if enabled) ---
         if self.load_track:
             if batch["tracks"] is not None:

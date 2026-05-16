@@ -9,19 +9,20 @@ split: "train"
 mode: "train"
 
 # --- Main Controls ---
-data_root: "_XCAT/dataset_single_subject_free_breathing_1sec_20frame"
-# mri_mode: "oblique" 
-mri_mode: "axial" 
+data_root: "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
+split_file: "training/splits/random_8_1_1.txt"
+mri_mode: "axial"
 mri_data_mode: "dynamic" # "static" or "dynamic"
 
-train_on_residual_dvf: false
-use_z_pose_embedding: false
-limit_train_batches: 300
-max_epochs: 10
+train_on_residual_dvf: true
+use_z_pose_embedding: true
+use_t_pose_embedding: true
+limit_train_batches: 1000
+limit_val_batches: 200
+max_epochs: 200
+val_epoch_freq: 1
 # ---------------------
 
-# Unique timestamped folder (Reverse Seconds _ DataMode _ MRI_Mode _ Human readable)
-# Reverse Seconds makes newest runs appear at the TOP alphabetically.
 dataset_name: "${basename:${data_root}}"
 exp_name: "${rev_ts:}_mri_${mri_data_mode}_${mri_mode}_${dataset_name}"
 num_workers: 4
@@ -34,7 +35,8 @@ logging:
   log_freq: 5
   log_visuals: True
   log_visual_frequency:
-    train: 20
+    train: 100
+    val: 40
   visuals_per_batch_to_log: 4
   video_logging_fps: 4
   tensorboard_writer:
@@ -51,9 +53,24 @@ logging:
         - loss_conf_point
         - loss_reg_point
         - loss_grad_point
-        - metric_dvf_mae_voxel
+        - metric_dvf_mae_mm
+        - metric_dvf_mae_mm_dyn
+    val:
+      keys_to_log:
+        - loss_objective
+        - loss_conf_point
+        - loss_reg_point
+        - loss_grad_point
+        - metric_dvf_mae_mm
+        - metric_dvf_mae_mm_dyn
   visuals_keys_to_log:
     train:
+      modality: "image"
+      keys_to_log:
+        - images
+        - world_points
+        - pred_world_points
+    val:
       modality: "image"
       keys_to_log:
         - images
@@ -62,7 +79,7 @@ logging:
 
 checkpoint:
   save_dir: "${logging.log_dir}/ckpts"
-  save_freq: 1
+  save_freq: 200
   resume_checkpoint_path: "./scratch/torch_cache/model.pt"
   strict: false
 
@@ -89,7 +106,7 @@ data:
       debug: False
       get_nearby: True
       load_depth: False
-      img_nums: [2, 12] 
+      img_nums: [12, 12]  # fixed S=12 (capped per-subject by min(T_total, Z_total))
       max_img_per_gpu: ${max_img_per_gpu}
       allow_duplicate_img: True
       repeat_batch: False
@@ -109,59 +126,57 @@ data:
         - _target_: data.MRIDataset
           data_root: ${data_root}
           split: ${split}
+          split_file: ${split_file}
           mode: ${mri_data_mode}
           mri_mode: ${mri_mode}
           num_slices: 12
           target_size: ${img_size}
-  val: null
-  # val:
-  #   _target_: data.dynamic_dataloader.DynamicTorchDataset
-  #   num_workers: ${num_workers}
-  #   max_img_per_gpu: ${max_img_per_gpu}
-  #   shuffle: False
-  #   pin_memory: False
-  #   common_config:
-  #     fix_img_num: -1
-  #     fix_aspect_ratio: 1.0
-  #     load_track: False
-  #     track_num: 1024
-  #     training: False
-  #     inside_random: True
-  #     img_size: ${img_size}
-  #     patch_size: ${patch_size}
-  #     rescale: True
-  #     rescale_aug: False
-  #     landscape_check: False
-  #     debug: False
-  #     get_nearby: True
-  #     load_depth: False
-  #     img_nums: [2, 12] 
-  #     max_img_per_gpu: ${max_img_per_gpu}
-  #     allow_duplicate_img: True
-  #     repeat_batch: False
-  #     normalize_points: false
-  #     augs:
-  #       cojitter: False
-  #       cojitter_ratio: 0.5
-  #       scales: null
-  #       aspects: [1.0, 1.0]
-  #       color_jitter: null
-  #       gray_scale: False
-  #       gau_blur: False
-  #   dataset:
-  #     _target_: data.composed_dataset.ComposedDataset
-  #     dataset_configs:
-  #       - _target_: data.MRIDataset
-  #         data_root: ${data_root}
-  #         split: "val"
-  #         mode: ${mri_data_mode}
-  #         mri_mode: ${mri_mode}
-  #         num_slices: 12
-  #         target_size: ${img_size}
-
-# Training behavior
-limit_train_batches: ${limit_train_batches}
-max_epochs: ${max_epochs}
+  val:
+    _target_: data.dynamic_dataloader.DynamicTorchDataset
+    num_workers: ${num_workers}
+    max_img_per_gpu: ${max_img_per_gpu}
+    shuffle: False
+    pin_memory: False
+    common_config:
+      fix_img_num: -1
+      fix_aspect_ratio: 1.0
+      load_track: False
+      track_num: 1024
+      training: False
+      inside_random: True
+      img_size: ${img_size}
+      patch_size: ${patch_size}
+      rescale: True
+      rescale_aug: False
+      landscape_check: False
+      debug: False
+      get_nearby: True
+      load_depth: False
+      img_nums: [12, 12]  # fixed S=12 (capped per-subject by min(T_total, Z_total))
+      max_img_per_gpu: ${max_img_per_gpu}
+      allow_duplicate_img: True
+      repeat_batch: False
+      normalize_points: false
+      augs:
+        cojitter: False
+        cojitter_ratio: 0.0
+        scales: [1.0, 1.0]
+        aspects: [1.0, 1.0]
+        color_jitter:
+          p: 0.0
+        gray_scale: False
+        gau_blur: False
+    dataset:
+      _target_: data.composed_dataset.ComposedDataset
+      dataset_configs:
+        - _target_: data.MRIDataset
+          data_root: ${data_root}
+          split: "val"
+          split_file: ${split_file}
+          mode: ${mri_data_mode}
+          mri_mode: ${mri_mode}
+          num_slices: 12
+          target_size: ${img_size}
 
 # Enable Point Head, disable others
 model:
@@ -170,6 +185,7 @@ model:
   enable_point: true
   enable_track: false
   use_z_pose_embedding: ${use_z_pose_embedding}
+  use_t_pose_embedding: ${use_t_pose_embedding}
   train_on_residual_dvf: ${train_on_residual_dvf}
 
 # Configure Loss
@@ -180,14 +196,18 @@ loss:
     weight: 0.0
   point:
     weight: 1.0
+    # gamma/alpha=0 disables confidence weighting; cardiac mask replaces it (see CLAUDE.md)
+    gamma: 0.0
+    alpha: 0.0
     gradient_loss_fn: "normal" # Automatically becomes "grad" if train_on_residual_dvf=True
     valid_range: 0.98
-    grad_weight: 1.0
+    grad_weight: 0.0
+    tv_weight: 0.1
     train_on_residual_dvf: ${model.train_on_residual_dvf}
 
-# Configure Optim
+# Configure Optim — aggregator frozen, only point head trains
 optim:
-  frozen_module_names: ["*patch_embed*", "*camera_token*"]
+  frozen_module_names: ["*patch_embed*", "*camera_token*", "*aggregator*"]
   amp:
     enabled: true
     amp_dtype: bfloat16

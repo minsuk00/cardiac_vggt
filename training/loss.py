@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from train_utils.general import check_and_fix_inf_nan
 
 from vggt.utils.pose_enc import extri_intri_to_pose_encoding
+from vggt.utils.splat import sample_volume, splat_to_volume
 
 
 @dataclass(eq=False)
@@ -23,15 +24,17 @@ class MultitaskLoss(torch.nn.Module):
     - Camera loss
     - Depth loss
     - Point loss
+    - Volume intensity loss (unsupervised slice-to-volume)
     - Tracking loss (not cleaned yet, dirty code is at the bottom of this file)
     """
 
-    def __init__(self, camera=None, depth=None, point=None, track=None, **kwargs):
+    def __init__(self, camera=None, depth=None, point=None, volume=None, track=None, **kwargs):
         super().__init__()
         # Loss configuration dictionaries for each task
         self.camera = camera
         self.depth = depth
         self.point = point
+        self.volume = volume
         self.track = track
 
     def forward(self, predictions, batch) -> torch.Tensor:
@@ -64,14 +67,19 @@ class MultitaskLoss(torch.nn.Module):
             loss_dict.update(depth_loss_dict)
 
         # 3D point reconstruction loss - if world points are predicted
-        if "world_points" in predictions:
-            # Check for residual flag in config or default to False
-            train_on_residual_dvf = self.point.get("train_on_residual_dvf", False)
-            point_loss_dict = compute_point_loss(predictions, batch, train_on_residual_dvf=train_on_residual_dvf, **self.point)
-            point_loss = point_loss_dict["loss_conf_point"] + point_loss_dict["loss_reg_point"] + point_loss_dict["loss_grad_point"]
+        if "world_points" in predictions and self.point is not None and self.point.get("weight", 0) > 0:
+            point_loss_dict = compute_point_loss(predictions, batch, **self.point)
+            point_loss = point_loss_dict["loss_conf_point"] + point_loss_dict["loss_reg_point"] + point_loss_dict["loss_grad_point"] + point_loss_dict.get("loss_tv_point", 0)
             point_loss = point_loss * self.point["weight"]
             total_loss = total_loss + point_loss
             loss_dict.update(point_loss_dict)
+
+        # Direct volume-to-volume loss against the GT phase-0 volume loaded from disk.
+        if "world_points" in predictions and self.volume is not None and self.volume.get("weight", 0) > 0:
+            vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **self.volume)
+            vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]) * self.volume["weight"]
+            total_loss = total_loss + vol_loss
+            loss_dict.update(vol_loss_dict)
 
         # Tracking loss - not cleaned yet, dirty code is at the bottom of this file
         if "track" in predictions:
@@ -214,6 +222,7 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
 
     if gt_points_mask.sum() < 100:
         # If there are less than 100 valid points, skip this batch
+        print("Skipping batch with insufficient valid points. (loss.py) ---> gt_points_mask.sum() =", gt_points_mask.sum())
         dummy_loss = (0.0 * pred_points).mean()
         loss_dict = {
             f"loss_conf_point": dummy_loss,
@@ -222,19 +231,9 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         }
         return loss_dict
 
-    # Determine targets based on mode
-    if train_on_residual_dvf and "gt_dvfs" in batch and "scale_factors" in batch:
-        B, S = gt_points.shape[:2]
-        scale = batch["scale_factors"].view(B, S, 1, 1, 1)
-        # Target is the normalized DVF
-        target_points = batch["gt_dvfs"] / scale
-    else:
-        # Target is absolute coordinates
-        target_points = gt_points
-
     # Compute confidence-weighted regression loss with optional gradient loss
     loss_conf, loss_grad, loss_reg = regression_loss(
-        pred_points, target_points, gt_points_mask, conf=pred_points_conf, gradient_loss_fn=gradient_loss_fn, gamma=gamma, alpha=alpha, valid_range=valid_range
+        pred_points, gt_points, gt_points_mask, conf=pred_points_conf, gradient_loss_fn=gradient_loss_fn, gamma=gamma, alpha=alpha, valid_range=valid_range
     )
 
     loss_dict = {
@@ -243,31 +242,130 @@ def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
         f"loss_grad_point": loss_grad * grad_weight,
     }
 
+    # TV loss (self-smoothness) on the predicted displacement field (DVF)
+    if train_on_residual_dvf and "dvfs" in predictions:
+        tv_weight = kwargs.get("tv_weight", 0.0)
+        if tv_weight > 0:
+            loss_tv = tv_loss(predictions["dvfs"], gt_points_mask)
+            loss_dict["loss_tv_point"] = loss_tv * tv_weight
+
     if "gt_dvfs" in batch and "scale_factors" in batch:
         B, S = gt_points.shape[:2]
         scale = batch["scale_factors"].view(B, S, 1, 1, 1)  # Correct dimensions for (B, S, H, W, 3)
-
-        if train_on_residual_dvf:
-            # Model outputted normalized DVF, convert to pixel DVF
-            pred_dvf = pred_points * scale
-            diff_wp = (target_points - pred_points) * scale
-        else:
-            # Model outputted absolute world coordinates
-            diff_wp = (gt_points - pred_points) * scale
-            pred_dvf = batch["gt_dvfs"] + diff_wp
-
-        diff_wp = diff_wp * gt_points_mask.unsqueeze(-1)
+        diff_wp = (gt_points - pred_points) * scale  # error in mm, unmasked
         gt_dvf = batch["gt_dvfs"]  # (B, S, H, W, 3)
 
-        # metric calculation
+        # pred_dvf for visualization: unmasked so model predictions show over full volume
+        pred_dvf = gt_dvf - diff_wp
+
+        # metric calculation — apply cardiac mask only for MAE
         mae_voxel = torch.abs(diff_wp)[gt_points_mask].mean()
-        loss_dict["metric_dvf_mae_voxel"] = mae_voxel
+        loss_dict["metric_dvf_mae_mm"] = mae_voxel
+
+        # dynamic-frame-only MAE: exclude frames where GT DVF is all zero (reference frames)
+        if "timesteps" in batch:
+            dynamic_mask = (batch["timesteps"] > 0)  # (B, S) — True for non-reference frames
+            dyn_pt_mask = gt_points_mask & dynamic_mask.unsqueeze(-1).unsqueeze(-1)  # (B, S, H, W)
+            if dyn_pt_mask.sum() > 0:
+                loss_dict["metric_dvf_mae_mm_dyn"] = torch.abs(diff_wp)[dyn_pt_mask].mean()
 
         # Keep un-normalized DVFs for visualization
         loss_dict["pred_dvfs"] = pred_dvf
         loss_dict["gt_dvfs_unnorm"] = gt_dvf
 
     return loss_dict
+
+
+def tv_loss(prediction, mask):
+    """
+    Total Variation loss (self-smoothness) on a predicted field.
+    Simply calculates the L1 spatial gradient of the field itself.
+    """
+    bb, ss, hh, ww, nc = prediction.shape
+    # Flatten batch and sequence dimensions for gradient computation
+    pred_flat = prediction.reshape(bb * ss, hh, ww, nc)
+    mask_flat = mask.reshape(bb * ss, hh, ww)
+
+    # Reuse gradient_loss with zero target for self-smoothness
+    return gradient_loss(pred_flat, torch.zeros_like(pred_flat), mask_flat)
+
+
+def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256), tv_weight=0.1, **kwargs):
+    """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
+
+    Pipeline:
+        input slices → per-pixel predicted positions → splat into V_canon (B, D, H, W)
+        loss = |V_canon - V_gt|  averaged over voxels with GT anatomy.
+
+    V_gt is the phase-0 NIfTI loaded from disk by the dataset (`batch["gt_phase0_volume"]`),
+    resampled to the canonical grid in the same per-axis normalized [-1, 1] frame as scanner_coords.
+
+    Args:
+        predictions: dict with "world_points" (B, S, H, W, 3) — per-pixel canonical position in [-1, 1].
+        batch: dict with "images" (B, S, 3, H, W), "gt_phase0_volume" (B, D, H, W).
+        grid_shape: (D, H_v, W_v) canonical volume resolution; must match gt_phase0_volume.
+        tv_weight: weight for the spatial smoothness regularizer on pos_pred.
+    """
+    if "gt_phase0_volume" not in batch:
+        raise RuntimeError("compute_volume_intensity_loss requires batch['gt_phase0_volume'].")
+
+    pos_pred = predictions["world_points"]
+    images = batch["images"]
+    V_gt = batch["gt_phase0_volume"]
+
+    B, S, H, W, _ = pos_pred.shape
+    intensity = images.float().mean(dim=2)
+    if intensity.max() > 2.0:
+        intensity = intensity / 255.0
+
+    pos_flat = pos_pred.reshape(B, S * H * W, 3)
+    int_flat = intensity.reshape(B, S * H * W)
+
+    grid_shape = tuple(grid_shape)
+    V_canon, coverage = splat_to_volume(pos_flat, int_flat, grid_shape)
+
+    if V_gt.shape != V_canon.shape:
+        raise RuntimeError(f"gt_phase0_volume {tuple(V_gt.shape)} must match V_canon {tuple(V_canon.shape)}")
+
+    # Main loss: V_canon vs V_gt, restricted to where GT has anatomy.
+    valid = (V_gt > 1e-3).float()
+    denom = valid.sum().clamp(min=1.0)
+    loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
+
+    # Spatial smoothness on pos_pred (keep motion fields locally coherent).
+    pos_dh = (pos_pred[:, :, 1:, :, :] - pos_pred[:, :, :-1, :, :]).abs().sum(-1)
+    pos_dw = (pos_pred[:, :, :, 1:, :] - pos_pred[:, :, :, :-1, :]).abs().sum(-1)
+    loss_pos_tv = (pos_dh.mean() + pos_dw.mean()) * tv_weight
+
+    out = {
+        "loss_volume": loss_volume,
+        "loss_pos_tv": loss_pos_tv,
+        "V_canon": V_canon,
+        "V_gt": V_gt,
+        "coverage": coverage,
+    }
+    with torch.no_grad():
+        sq3d = ((V_canon - V_gt) ** 2) * valid
+        mse3d = sq3d.sum() / denom
+        psnr3d = 10.0 * torch.log10(torch.tensor(1.0, device=mse3d.device) / mse3d.clamp(min=1e-10))
+        out["metric_mae_3d"] = loss_volume.detach()
+        out["metric_mse_3d"] = mse3d
+        out["metric_psnr_3d"] = psnr3d
+        out["metric_gt_coverage_frac"] = valid.mean()
+        out["metric_coverage_frac"] = (coverage > 1e-3).float().mean()
+        out["metric_coverage_mean"] = coverage.mean()
+        if "scanner_coords" in batch:
+            out["metric_mean_disp_norm"] = (pos_pred - batch["scanner_coords"]).abs().sum(-1).mean()
+        if V_canon.is_cuda:
+            try:
+                from fused_ssim import fused_ssim3d
+                pred_m = (V_canon * valid).unsqueeze(1).float().contiguous()
+                targ_m = (V_gt * valid).unsqueeze(1).float().contiguous()
+                out["metric_ssim_3d"] = fused_ssim3d(pred_m, targ_m, train=False)
+            except Exception:
+                pass
+
+    return out
 
 
 def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_fn=None, valid_range=-1, **kwargs):
