@@ -28,6 +28,7 @@ class WandbLogger:
         name: Optional[str] = None,
         wandb_config: Optional[Dict[str, Any]] = None,
         dir: Optional[str] = None,
+        resume_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         self._rank = 0
@@ -38,6 +39,9 @@ class WandbLogger:
             msg = f"Initializing WandB: project={project}, name={name}"
             print(msg)
             logging.info(msg)
+            if resume_id is not None:
+                kwargs["id"] = resume_id
+                kwargs["resume"] = "allow"
             run = wandb.init(project=project, name=name, config=wandb_config, dir=dir, **kwargs)
             if run is not None:
                 logging.info(f"WandB Run URL: {run.get_url()}")
