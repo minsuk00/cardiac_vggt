@@ -53,7 +53,8 @@ class MRIDataset(BaseDataset):
         nii_file = nii_files[0]
         img_obj = nib.load(nii_file)
         vol = img_obj.get_fdata()
-        v_min, v_max = np.min(vol), np.max(vol)
+        v_min = np.percentile(vol, 1)
+        v_max = np.percentile(vol, 99.5)
         W, H, Z = vol.shape
 
         res = {k: [] for k in ["images", "world_points", "cam_points", "point_masks", "depths", "extrinsics", "intrinsics", "original_sizes", "frame_ids"]}
