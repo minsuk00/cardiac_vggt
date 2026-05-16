@@ -42,6 +42,24 @@ class ZIndexEmbedder(nn.Module):
         return self.proj(z_feats).unsqueeze(-2)
 
 
+class TIndexEmbedder(nn.Module):
+    """Sinusoidal embedding for normalized cardiac phase index t ∈ [-1, 1]."""
+    def __init__(self, embed_dim=1024, num_freqs=6):
+        super().__init__()
+        self.num_freqs = num_freqs
+        in_dim = 1 + 2 * num_freqs
+        self.proj = nn.Linear(in_dim, embed_dim)
+
+    def forward(self, t_idx_normalized):  # t_idx_normalized shape: (B*S, 1)
+        freqs = [t_idx_normalized]
+        for i in range(self.num_freqs):
+            freqs.append(torch.sin((2**i) * torch.pi * t_idx_normalized))
+            freqs.append(torch.cos((2**i) * torch.pi * t_idx_normalized))
+
+        t_feats = torch.cat(freqs, dim=-1)
+        return self.proj(t_feats).unsqueeze(-2)
+
+
 class Aggregator(nn.Module):
     """
     The Aggregator applies alternating-attention over input frames,
@@ -90,13 +108,18 @@ class Aggregator(nn.Module):
         rope_freq=100,
         init_values=0.01,
         use_z_pose_embedding=False,
+        use_t_pose_embedding=False,
     ):
         super().__init__()
-        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}")
+        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}, use_t_pose_embedding={use_t_pose_embedding}")
 
         self.use_z_pose_embedding = use_z_pose_embedding
         if self.use_z_pose_embedding:
             self.z_embedder = ZIndexEmbedder(embed_dim=embed_dim)
+
+        self.use_t_pose_embedding = use_t_pose_embedding
+        if self.use_t_pose_embedding:
+            self.t_embedder = TIndexEmbedder(embed_dim=embed_dim)
 
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
@@ -208,7 +231,7 @@ class Aggregator(nn.Module):
             if hasattr(self.patch_embed, "mask_token"):
                 self.patch_embed.mask_token.requires_grad_(False)
 
-    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
+    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None, t_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
@@ -249,6 +272,12 @@ class Aggregator(nn.Module):
             # z_indices shape: [B, S, 1] -> [B*S, 1]
             z_indices_flat = z_indices.view(B * S, 1).to(images.device)
             camera_token = self.z_embedder(z_indices_flat)  # shape [B*S, 1, C]
+
+            if getattr(self, "use_t_pose_embedding", False):
+                if t_indices is None:
+                    raise ValueError("use_t_pose_embedding is True but t_indices not provided in batch.")
+                t_indices_flat = t_indices.view(B * S, 1).to(images.device)
+                camera_token = camera_token + self.t_embedder(t_indices_flat)  # [B*S, 1, C]
         else:
             # Expand camera and register tokens to match batch size and sequence length
             camera_token = slice_expand_and_flatten(self.camera_token, B, S)
