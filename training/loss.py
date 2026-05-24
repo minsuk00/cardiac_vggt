@@ -298,12 +298,18 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     pos_flat = pos_pred.reshape(B, S * H * W, 3)
     int_flat = intensity.reshape(B, S * H * W)
 
-    # Mask B (intensity gate): exclude zero-intensity input pixels (padding around
-    # the native FOV) from BOTH the numerator and the coverage denominator of
-    # splat_to_volume. Without this, padding pixels carry intensity=0 but still
-    # contribute weight, diluting V_canon wherever they co-splat with anatomy.
-    # Loss is still evaluated over the full canonical volume — this only changes
-    # how V_canon is constructed.
+    # Intensity gate: exclude zero-intensity input pixels from BOTH the numerator
+    # and the coverage denominator of splat_to_volume.
+    #
+    # Why kept under the canonical-grid pipeline: padded-Z slots produce
+    # all-zero 256×256 slices (the entire z plane was outside the subject's
+    # native FOV). Pixels in those slots have valid scanner_coords pointing to
+    # their canonical Z plane — which is fine if the model's Δ stays small
+    # (predictions stay in the padded plane, splat write 0 into V_canon where
+    # V_gt is also 0, loss = 0). But once the model learns non-trivial Δ that
+    # crosses Z planes, those zero-intensity pixels CAN reach content planes
+    # and dilute V_canon there. The gate costs nothing and protects against
+    # that failure mode regardless of model state.
     splat_weight = (int_flat > 1e-3).to(int_flat.dtype)
 
     grid_shape = tuple(grid_shape)
@@ -341,13 +347,16 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
         "coverage": coverage,
     }
     with torch.no_grad():
-        # Metrics are computed over the full volume to match the unmasked loss.
-        mse3d = ((V_canon - V_gt) ** 2).mean()
-        psnr3d = 10.0 * torch.log10(torch.tensor(1.0, device=mse3d.device) / mse3d.clamp(min=1e-10))
-        out["metric_mae_3d"] = loss_volume.detach()
-        out["metric_mse_3d"] = mse3d
-        out["metric_psnr_3d"] = psnr3d
-        out["metric_gt_coverage_frac"] = (V_gt > 1e-3).float().mean()  # data property, kept for visibility
+        # ── Full-volume metrics (over all D*H*W voxels of the canonical cube) ──
+        # These match what `loss_volume` averages over and what the L1 loss is
+        # actually optimizing. For small-FOV subjects the cube has many (V_gt=0,
+        # V_canon≈0) padded voxels that inflate PSNR — see `_bbox` companion below.
+        mse_full = ((V_canon - V_gt) ** 2).mean()
+        psnr_full = 10.0 * torch.log10(torch.tensor(1.0, device=mse_full.device) / mse_full.clamp(min=1e-10))
+        out["metric_mae_3d_full"] = loss_volume.detach()
+        out["metric_mse_3d_full"] = mse_full
+        out["metric_psnr_3d_full"] = psnr_full
+        out["metric_gt_coverage_frac"] = (V_gt > 1e-3).float().mean()  # data property
         out["metric_coverage_frac"] = (coverage > 1e-3).float().mean()
         out["metric_coverage_mean"] = coverage.mean()
         if "scanner_coords" in batch:
@@ -357,9 +366,38 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                 from fused_ssim import fused_ssim3d
                 pred_m = V_canon.unsqueeze(1).float().contiguous()
                 targ_m = V_gt.unsqueeze(1).float().contiguous()
-                out["metric_ssim_3d"] = fused_ssim3d(pred_m, targ_m, train=False)
+                out["metric_ssim_3d_full"] = fused_ssim3d(pred_m, targ_m, train=False)
             except Exception:
                 pass
+
+        # ── Bbox-cropped metrics (only voxels inside the subject's native FOV) ──
+        # Each subject's `anatomy_bbox` was derived geometrically from a content
+        # mask propagated through the same spatial transforms as the data — not
+        # from intensity thresholding. For small-FOV subjects this excludes the
+        # padded zeros that inflate the full-volume PSNR; for large-FOV subjects
+        # (bbox = full cube) bbox metrics ≡ full metrics. Bbox SSIM is skipped
+        # because per-sample shape varies and `fused_ssim3d` wants a fixed size.
+        if "anatomy_bbox" in batch:
+            bboxes = batch["anatomy_bbox"]   # (B, 6) int64
+            psnr_bbox_list, mae_bbox_list, mse_bbox_list = [], [], []
+            for b in range(B):
+                z0, z1, y0, y1, x0, x1 = [int(v) for v in bboxes[b].tolist()]
+                # Empty bbox safety: fall back to full cube (matches the
+                # full-volume metric for that sample). Can happen after
+                # aggressive aug clears the volume.
+                if (z1 <= z0) or (y1 <= y0) or (x1 <= x0):
+                    Vc = V_canon[b]
+                    Vg = V_gt[b]
+                else:
+                    Vc = V_canon[b, z0:z1, y0:y1, x0:x1]
+                    Vg = V_gt[b, z0:z1, y0:y1, x0:x1]
+                mse_b = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
+                psnr_bbox_list.append(10.0 * torch.log10(1.0 / mse_b))
+                mae_bbox_list.append((Vc - Vg).abs().mean())
+                mse_bbox_list.append(mse_b)
+            out["metric_mae_3d_bbox"] = torch.stack(mae_bbox_list).mean()
+            out["metric_mse_3d_bbox"] = torch.stack(mse_bbox_list).mean()
+            out["metric_psnr_3d_bbox"] = torch.stack(psnr_bbox_list).mean()
 
     return out
 

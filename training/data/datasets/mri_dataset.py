@@ -1,33 +1,109 @@
+"""MRIDataset — VGGT-MRI dataset, canonical-grid edition.
+
+Each subject's 12 cine phases live on disk as `sax_frame_{tt:02d}.nii.gz`. A
+monai `PersistentDataset` preprocess pipeline (see `training/data/preprocess.py`)
+resamples every native NIfTI to a fixed (1.4, 1.4, 8.0) mm spacing and crops
+/zero-pads to (256, 256, 12) voxels, geometric-center-aligned. The cached
+output is a single `(T=12, 1, X=256, Y=256, Z=12)` float16 tensor per subject,
+plus a `(1, X, Y, Z)` content mask that tracks which voxels came from native
+data vs zero-pad. Cache lives in `/tmp` (node-local NVMe, fast).
+
+At training time `get_data` just looks up the cached bundle, permutes to splat
+order `(T, D=12, H=256, W=256)`, samples (t_target, S=(t,z)-slots) per the
+multi-phase contract, and produces:
+
+    images          (S, 518, 518, 3)  float32, [0, 255]   — bilinear-upsampled
+                                                            canonical slices, no
+                                                            letterbox, no padding
+    scanner_coords  (S, 518, 518, 3)  float32, [-1, +1]   — purely geometric:
+                                                            (px, py, z_i) →
+                                                            (x_norm, y_norm, z_norm)
+                                                            same formula for every
+                                                            subject
+    world_points    same as scanner_coords (DVF supervision removed)
+    cam_points      same as scanner_coords (legacy field)
+    z_indices       (S, 1)   z_i / (D-1) * 2 - 1, D=12
+    t_indices       (S, 1)   t_i / T * 2 - 1, T=12  (cyclic — wraps at +1)
+    gt_target_volume (D, H, W) = phases_splat[t_target]
+    anatomy_bbox    (6,) int64  — (z0, z1, y0, y1, x0, x1) from content_mask
+    content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad
+    phases          (T, D, H, W) float16 — full canonical bundle, needed by
+                                          the Phase 4 GPU aug to augment all 12
+                                          phases consistently then re-extract
+                                          slices + V_gt + bbox.
+    t_target        (1,) int64
+    point_masks     (S, 518, 518) bool  all True (no letterbox padding region)
+    geom_masks      (S, 518, 518) bool  all True (legacy field, kept for compat)
+
+Drops (vs the legacy implementation):
+    - scipy.ndimage.map_coordinates / cv2.resize / np.pad of inputs
+    - per-subject `half_extent` / `center_mm` normalization
+    - DVF NIfTI loading + `gt_dvfs` / `scale_factors` (deprecated)
+    - cardiac_mask_vol loading (intensity mask was a side-effect of letterbox)
+"""
+
+from __future__ import annotations
+
 import glob
 import logging
 import os
 import random
-import zlib
 
-import cv2
 import nibabel as nib
 import numpy as np
 import torch
+import torch.nn.functional as F
+
 from data.base_dataset import BaseDataset
-from scipy.ndimage import map_coordinates
-from scipy.spatial.transform import Rotation
+from data.preprocess import (
+    NUM_PHASES,
+    TARGET_SHAPE,
+    TARGET_SPACING,
+    build_data_dicts,
+    compute_geometric_bbox,
+    default_cache_dir,
+    get_canonical_transforms,
+)
+
+try:
+    from monai.data import PersistentDataset
+except ImportError:  # pragma: no cover — monai is a hard dep after this refactor
+    PersistentDataset = None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Canonical-grid constants (single source of truth; mirror preprocess.py)
+# ──────────────────────────────────────────────────────────────────────────────
+# Splat-order shape (D, H, W) — used internally and by the splat. monai stores
+# in (X, Y, Z) order, which transposes to splat (D=Z, H=Y, W=X).
+GRID_SHAPE_SPLAT = (TARGET_SHAPE[2], TARGET_SHAPE[1], TARGET_SHAPE[0])  # (12, 256, 256)
+INPUT_IMG_SIZE = 518  # DINOv2 patch_embed expects 518×518 (37 × 14)
 
 
 class MRIDataset(BaseDataset):
-    def __init__(self, common_conf, data_root, split="train", split_file=None, mode="static", num_slices=5, target_size=518, mri_mode="axial", gt_grid_shape=(12, 256, 256), t_target_fixed=None):
+    def __init__(
+        self,
+        common_conf,
+        data_root,
+        split="train",
+        split_file=None,
+        mode="static",
+        num_slices=12,
+        target_size=INPUT_IMG_SIZE,
+        mri_mode="axial",
+        dvf_dirname="dvf_elastix",     # legacy — accepted but unused
+        gt_grid_shape=GRID_SHAPE_SPLAT,  # legacy override; must match preprocess.py
+        t_target_fixed=None,
+        cache_dir=None,
+    ):
         """
-        MRI Dataset for VGGT — CMRxRecon2024 Cine_combined format.
-
-        Data layout:
-            data_root/
-              {SubjectName}/sax/3d_recon/sax_frame_{t:02d}.nii.gz   (0-indexed)
-
-        split_file: path to a .txt file with [train]/[val]/[test] sections listing subject folder names.
-        mode: 'static' (all slots at t_target) or 'dynamic' (slot 0 at t_target + other slots at varying t).
-        mri_mode: 'axial' only (coronal/sagittal/oblique not used currently).
-        t_target_fixed: if None (default), sample t_target uniformly per call (train: random; val: rng-seeded).
-                        If int, force t_target to that fixed phase every call — use 0 to reproduce the
-                        original ED-only pipeline.
+        Args mirrors the legacy MRIDataset for Hydra-config compatibility.
+        New args:
+            cache_dir: where monai PersistentDataset stores cached tensors.
+                       Defaults to /tmp/vggt-mri_<USER>_monai_cache.
+        Legacy args kept but no longer load anything:
+            dvf_dirname: DVF supervision was removed; this is ignored.
+            gt_grid_shape: must equal `GRID_SHAPE_SPLAT` (canonical grid is fixed).
         """
         super().__init__(common_conf=common_conf)
         self.data_root = os.path.abspath(data_root)
@@ -37,15 +113,53 @@ class MRIDataset(BaseDataset):
         self.num_slices = num_slices
         self.target_size = target_size
         self.mri_mode = mri_mode
-        self.gt_grid_shape = tuple(gt_grid_shape)  # (D, H, W) canonical-grid shape for GT volume
-        self.t_target_fixed = None if t_target_fixed is None else int(t_target_fixed)
+        self.t_target_fixed = t_target_fixed
 
+        if tuple(gt_grid_shape) != GRID_SHAPE_SPLAT:
+            raise ValueError(
+                f"gt_grid_shape must match canonical {GRID_SHAPE_SPLAT}; got {tuple(gt_grid_shape)}. "
+                "The canonical grid is fixed by training/data/preprocess.py."
+            )
+        # Stored for trainer diagnostics (identity baseline, cardiac filmstrip) that
+        # read mri_ds.gt_grid_shape. Always equals the canonical GRID_SHAPE_SPLAT.
+        self.gt_grid_shape = tuple(gt_grid_shape)
+
+        # Legacy ignored arg — surface a warning so people don't think it does something.
+        if dvf_dirname not in (None, "dvf_elastix"):
+            logging.info(
+                f"MRIDataset [{split}]: dvf_dirname={dvf_dirname!r} ignored "
+                f"(DVF supervision was removed from the live data path)."
+            )
+
+        # ── Subject discovery (same split-file format as before) ──────────
         self.subjects = self._find_subjects()
         logging.info(f"MRIDataset [{split}]: {len(self.subjects)} subjects from {self.split_file}")
         self.len_train = 1000
 
+        # ── monai PersistentDataset cache ─────────────────────────────────
+        if PersistentDataset is None:
+            raise RuntimeError(
+                "monai is required for canonical-grid MRIDataset — pip install monai>=1.4,<1.5"
+            )
+        cache_dir = cache_dir or default_cache_dir()
+        os.makedirs(cache_dir, exist_ok=True)
+        data_dicts = build_data_dicts(self.subjects, num_phases=NUM_PHASES)
+        self.cache = PersistentDataset(
+            data=data_dicts,
+            transform=get_canonical_transforms(
+                target_spacing=TARGET_SPACING,
+                target_shape=TARGET_SHAPE,
+                num_phases=NUM_PHASES,
+            ),
+            cache_dir=cache_dir,
+        )
+        logging.info(
+            f"MRIDataset [{split}]: PersistentDataset cache_dir={cache_dir}  "
+            f"target_spacing={TARGET_SPACING}  target_shape={TARGET_SHAPE}"
+        )
+
+    # ── Subject discovery ────────────────────────────────────────────────
     def _find_subjects(self):
-        """Parse split_file and return list of subject/sax paths for self.split."""
         if self.split_file is None or not os.path.exists(self.split_file):
             logging.warning(f"MRIDataset: split_file not found: {self.split_file}. No subjects loaded.")
             return []
@@ -64,57 +178,76 @@ class MRIDataset(BaseDataset):
                         subjects.append(path)
                     else:
                         logging.warning(f"MRIDataset: subject path not found, skipping: {path}")
-        return subjects  # preserves file order — user controls ordering
+        return subjects
 
     def __len__(self):
         return self.len_train
 
+    # ── Main get_data ────────────────────────────────────────────────────
     def get_data(self, seq_index=0, img_per_seq=None, **kwargs):
-        sub_dir = self.subjects[seq_index % len(self.subjects)]
+        subj_idx = seq_index % len(self.subjects)
+        sub_dir = self.subjects[subj_idx]
 
-        # For val/test, fix randomness per (subject, seq_index) so metrics are reproducible
-        if self.split != "train":
-            # zlib.crc32 (not Python's hash()) so the seed is deterministic across processes.
-            rng = random.Random(seq_index * 1000 + zlib.crc32(sub_dir.encode()) % 100000)
-        else:
-            rng = None  # use global random for train
+        # Val/test determinism: the val branch below makes NO random calls (the
+        # (t, z) slots are a pure function of seq_index + the subject's fixed
+        # bbox) and the val loader runs shuffle=False, so val get_data is fully
+        # reproducible across epochs and runs without any per-sample seeding.
 
-        # Discover image files: sax_frame_00.nii.gz ... sax_frame_{T-1:02d}.nii.gz
-        nii_pattern = os.path.join(sub_dir, "3d_recon", "sax_frame_*.nii.gz")
-        nii_files = sorted(glob.glob(nii_pattern))
-        T_total = len(nii_files)
+        # ── Cache lookup → splat-order tensors ────────────────────────────
+        cached = self.cache[subj_idx]
+        # ConcatItemsd(dim=0) stacks 12 × (1, X, Y, Z) → (T=12, X=256, Y=256, Z=12)
+        # (the per-phase channel dim is absorbed into T). content_mask keeps its
+        # channel dim: (1, X=256, Y=256, Z=12).
+        phases = cached["phases"]                # (T, X, Y, Z)  [or (T, 1, X, Y, Z) if shape ever changes]
+        content_mask = cached["content_mask"]    # (1, X, Y, Z)
+        if phases.ndim == 5:                     # defensive: tolerate a channel dim
+            phases = phases.squeeze(1)
+        # Axis-order conversion site (ONLY here). monai (X,Y,Z) → splat (D=Z,H=Y,W=X).
+        phases_splat = phases.permute(0, 3, 2, 1).contiguous()              # (T, D=12, H=256, W=256)
+        mask_splat = content_mask.squeeze(0).permute(2, 1, 0).contiguous()  # (D, H, W)
+        T_total, D, H_can, W_can = phases_splat.shape
+        assert (D, H_can, W_can) == GRID_SHAPE_SPLAT, (D, H_can, W_can)
 
-        # ── Determine S = min(T_total, Z_total, img_per_seq) ─────────────
-        # img_per_seq is set by the dataloader from max_img_per_gpu to prevent OOM.
-        # Get Z_total from first file header (cheap, no full volume load)
-        _hdr = nib.load(nii_files[0]).header
-        Z_total = int(_hdr.get_data_shape()[2])
-        S = min(T_total, Z_total, img_per_seq or self.num_slices)
+        # ── Geometric anatomy bbox (computed BEFORE z sampling) ───────────
+        # Used to restrict z sampling to canonical planes that carry real data
+        # (i.e., inside the subject's native FOV). Without this, small-Z subjects
+        # waste many slots on zero-padded Z planes — see explanation in the
+        # `z_sequence` block below.
+        anatomy_bbox = compute_geometric_bbox(mask_splat).cpu().numpy().astype(np.int64)  # (6,)
+        bbox_z0, bbox_z1 = int(anatomy_bbox[0]), int(anatomy_bbox[1])
+        bbox_z_size = max(1, bbox_z1 - bbox_z0)  # at least 1 for fallback
 
-        # ── Sample target phase ───────────────────────────────────────────
-        # Slot 0 is anchored to t_target; V_gt is loaded from the t_target NIfTI.
-        # If t_target_fixed is set, use it (e.g., 0 reproduces the original ED-only pipeline).
-        # Otherwise — train: uniform random; val/test: STRATIFIED via seq_index % T_total
-        #   so per-phase val metrics get balanced sample counts (e.g., 30 val subjects ÷ 12
-        #   phases ≈ 3 subjects/phase for t=0..5, 2 subjects/phase for t=6..11). Deterministic.
+        # ── Pick t_target ─────────────────────────────────────────────────
         if self.t_target_fixed is not None:
-            t_target = self.t_target_fixed % max(1, T_total)
+            t_target = int(self.t_target_fixed) % T_total
         elif self.split != "train":
             t_target = seq_index % T_total
         else:
             t_target = random.randrange(T_total)
 
-        # ── Pre-sample t and z without replacement ────────────────────────
-        # Train: random t/z per slot (subject to slot 0 = t_target).
-        # Val/test: diagonal acquisition pattern — slot i = ((t_target + i) mod T, z=i).
-        #   This matches real-life sequential slice acquisition (one slice per heartbeat,
-        #   scanner walks through z while cardiac phase advances). Deterministic given t_target.
+        # ── S = min(T, D, requested) ──────────────────────────────────────
+        S = min(T_total, D, img_per_seq or self.num_slices)
+
+        # ── Build (t, z) slot sequences ───────────────────────────────────
+        # IMPORTANT: z is sampled from WITHIN the anatomy bbox (in-FOV z planes
+        # only). Otherwise small-Z subjects (e.g., native Z=6 → bbox z=[3,9])
+        # waste up to half their slots on zero-padded Z planes, where input
+        # intensity = 0 → splat writes 0 → matches V_gt = 0 → loss = 0 (harmless
+        # but useless compute, and uneven data efficiency across subjects).
+        #
+        # Train: slot 0 = (t_target, random in-bbox z); slots 1..S-1 = distinct
+        #   non-target t with random in-bbox z (independent of t). If bbox_z_size
+        #   < S, z is sampled with replacement (different t per duplicate z, so
+        #   the model still sees diverse (t, z) pairs).
+        # Val/test: cyclic-within-bbox diagonal — slot i = ((t_target+i)%T,
+        #   bbox_z0 + (i mod bbox_z_size)). Deterministic per (subject, t_target)
+        #   so per-phase val metrics remain stable across runs.
         if self.split != "train":
             if self.mode == "static":
                 t_sequence = [t_target] * S
             else:
                 t_sequence = [(t_target + i) % T_total for i in range(S)]
-            z_sequence = list(range(S))
+            z_sequence = [bbox_z0 + (i % bbox_z_size) for i in range(S)]
         else:
             if self.mode == "static":
                 t_sequence = [t_target] * S
@@ -122,215 +255,134 @@ class MRIDataset(BaseDataset):
                 dynamic_ts = [t for t in range(T_total) if t != t_target]
                 random.shuffle(dynamic_ts)
                 t_sequence = [t_target] + dynamic_ts[: S - 1]
-            all_z = list(range(Z_total))
-            random.shuffle(all_z)
-            z_sequence = all_z[:S]
+            in_bbox_z = list(range(bbox_z0, bbox_z1))
+            if len(in_bbox_z) >= S:
+                random.shuffle(in_bbox_z)
+                z_sequence = in_bbox_z[:S]
+            else:
+                # Fewer in-bbox z planes than requested slots → sample with
+                # replacement. Different t per duplicate z (t_sequence is
+                # already distinct), so the model still gets diverse (t, z)
+                # coverage at each content plane.
+                z_sequence = random.choices(in_bbox_z, k=S)
 
-        res = {
-            k: []
-            for k in [
-                "images",
-                "world_points",
-                "cam_points",
-                "point_masks",
-                "geom_masks",
-                "depths",
-                "extrinsics",
-                "intrinsics",
-                "original_sizes",
-                "frame_ids",
-                "timesteps",
-                "slice_indices",
-                "z_indices",
-                "t_indices",
-                "rotations",
-                "scanner_coords",
-            ]
-        }
+        # ── Build per-slot tensors ────────────────────────────────────────
+        images_list = []
+        scanner_coords_list = []
+        z_indices_list = []
+        t_indices_list = []
+        rotations_list = []
+        frame_ids_list = []
+        timesteps_list = []
+        slice_indices_list = []
+        depths_list = []
+        extrinsics_list = []
+        intrinsics_list = []
+        original_sizes_list = []
 
-        gt_target_volume = None  # built once per sample when slot 0 (t=t_target) is processed
-        ref_v_min = ref_v_max = None  # cached t_target percentiles, reused for every slot
+        # Per-pixel canonical (x, y, z) coords for a 518×518 input image.
+        # Bilinear resize 256→518 with align_corners semantics: pixel (py, px) of
+        # 518×518 corresponds to source 256×256 voxel index (py·255/517, px·255/517).
+        # Normalized [-1, +1]: y_norm = py/517·2 - 1; same for x. Constant across
+        # subjects → compute once.
+        py_grid, px_grid = np.meshgrid(np.arange(INPUT_IMG_SIZE), np.arange(INPUT_IMG_SIZE), indexing="ij")
+        x_norm = (px_grid.astype(np.float32) / (INPUT_IMG_SIZE - 1)) * 2.0 - 1.0
+        y_norm = (py_grid.astype(np.float32) / (INPUT_IMG_SIZE - 1)) * 2.0 - 1.0
+
+        # Pre-resize ALL S canonical slices in one batched F.interpolate call.
+        # `to_resize` shape (S, 1, 256, 256) float32; output (S, 1, 518, 518).
+        slot_indices = torch.tensor(z_sequence, dtype=torch.long)
+        slot_ts = torch.tensor(t_sequence, dtype=torch.long)
+        # phases_splat[slot_ts, slot_indices] would do fancy indexing; use it.
+        canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
+        canon_slices = canon_slices.unsqueeze(1)                    # (S, 1, 256, 256)
+        upsampled = F.interpolate(
+            canon_slices, size=(INPUT_IMG_SIZE, INPUT_IMG_SIZE),
+            mode="bilinear", align_corners=True,
+        )                                                            # (S, 1, 518, 518)
+        # Match ComposedDataset's `/255` contract — keep images in [0, 255].
+        upsampled = (upsampled.squeeze(1) * 255.0).clamp(0, 255).cpu().numpy()  # (S, 518, 518)
+
         for i in range(S):
             t_idx = t_sequence[i]
-            idx = z_sequence[i]
+            z_i = z_sequence[i]
+            # RGB-replicate to match VGGT model contract (3-channel input).
+            img = np.repeat(upsampled[i, ..., None], 3, axis=-1).astype(np.float32)
+            images_list.append(img)
 
-            img_path = [f for f in nii_files if f.endswith(f"sax_frame_{t_idx:02d}.nii.gz")][0]
-            img_obj = nib.load(img_path)
-            vol = img_obj.get_fdata()
-            spacing = np.array(img_obj.header.get_zooms()[:3], dtype=np.float32)  # (sx, sy, sz) mm/voxel
-            # Use t_target percentiles for V_gt AND every input slot so the unsupervised
-            # |V_canon - V_gt| loss isn't biased by per-phase intensity drift.
-            # Slot 0 is always t=t_target (see t_sequence construction above), so the cache
-            # is populated before any other slot needs it.
-            if ref_v_min is None:
-                assert t_idx == t_target, "slot 0 must be t=t_target so reference percentiles come from the GT frame"
-                ref_v_min = np.percentile(vol, 1)
-                ref_v_max = np.percentile(vol, 99.5)
-            v_min, v_max = ref_v_min, ref_v_max
-            W, H, Z = vol.shape
+            # scanner_coords: per-pixel canonical (x_norm, y_norm, z_norm) for this z.
+            z_val = (z_i / max(1, D - 1)) * 2.0 - 1.0
+            sc = np.stack([x_norm, y_norm, np.full_like(x_norm, z_val)], axis=-1).astype(np.float32)
+            scanner_coords_list.append(sc)
 
-            # ── GT canonical volume (t_target only): load full vol, resample once to gt_grid_shape ──
-            # Same per-axis normalized [-1, 1] frame as scanner_coords so V_canon and V_gt are voxel-aligned.
-            # Each canonical axis's [-1, 1] spans exactly that axis's native physical extent →
-            # the canonical grid voxel sizes match native acquisition (~8mm Z, ~1.34mm X/Y).
-            if t_idx == t_target and gt_target_volume is None:
-                D_t, H_t, W_t = self.gt_grid_shape
-                half_t = np.array(
-                    [W * spacing[0] / 2, H * spacing[1] / 2, Z * spacing[2] / 2],
-                    dtype=np.float32,
-                )
-                center_t = np.array(
-                    [(W - 1) / 2 * spacing[0], (H - 1) / 2 * spacing[1], (Z - 1) / 2 * spacing[2]],
-                    dtype=np.float32,
-                )
-                d_canon = np.linspace(-1, 1, D_t, dtype=np.float32)
-                h_canon = np.linspace(-1, 1, H_t, dtype=np.float32)
-                w_canon = np.linspace(-1, 1, W_t, dtype=np.float32)
-                dd, hh, ww = np.meshgrid(d_canon, h_canon, w_canon, indexing="ij")
-                x_vox = (center_t[0] + half_t[0] * ww) / spacing[0]
-                y_vox = (center_t[1] + half_t[1] * hh) / spacing[1]
-                z_vox = (center_t[2] + half_t[2] * dd) / spacing[2]
-                # vol is (W, H, Z); map_coordinates needs coords in (W, H, Z) order.
-                # Option A (current): mode='nearest' for boundary canonical voxels.
-                #   half_extent uses N·spacing/2 (full physical FOV), so canonical
-                #   d=0 and d=D-1 query z_vox = -0.5 and Z-0.5 — half a voxel past
-                #   the native data on each side. With the previous cval=0 fill,
-                #   scipy returned literal 0 (no partial interpolation), creating
-                #   phantom V_gt=0 boundary voxels that the splat (working off
-                #   scanner_coords with the SAME half_extent) does write into.
-                #   'nearest' replicates the edge native voxel instead, so V_gt
-                #   has real anatomy at the boundaries — consistent with what the
-                #   splat puts there.
-                # TODO Option B (cleaner, next retrain): shrink half_extent to
-                #   (N-1)/2·spacing for ALL three axes here AND in the scanner_coords
-                #   normalization at the bottom of get_data. Canonical [-1,+1] then
-                #   spans native voxel centers exactly; no phantom region; input z=0
-                #   maps exactly to canonical d=0. Invalidates current checkpoints
-                #   because it changes the scanner_coords scale the model trained on.
-                vox_coords = np.stack([x_vox.ravel(), y_vox.ravel(), z_vox.ravel()])
-                gt_target_volume = map_coordinates(vol, vox_coords, order=1, mode="nearest").reshape(D_t, H_t, W_t)
-                gt_target_volume = np.clip((gt_target_volume - v_min) / (v_max - v_min + 1e-8), 0, 1).astype(np.float32)
+            # z / t indices (per-slot scalar embeddings).
+            z_indices_list.append(np.array([z_val], dtype=np.float32))
+            t_val = (t_idx / max(1, T_total)) * 2.0 - 1.0  # cyclic, wrap at +1
+            t_indices_list.append(np.array([t_val], dtype=np.float32))
 
-            # ── Axial slicing only ──────────────────────────────────────────
-            raw = vol[:, :, idx]
-            r, c = np.meshgrid(np.arange(W), np.arange(H), indexing="ij")
-            coords_vox = np.stack([r, c, np.full_like(r, idx)], axis=-1).astype(np.float32)
-            res["rotations"].append(np.zeros(3, dtype=np.float32))
-            z_idx_norm = (idx / max(1, Z - 1)) * 2.0 - 1.0
-            res["z_indices"].append(np.array([z_idx_norm], dtype=np.float32))
-            # Cyclic encoding: divide by T_total (not T_total-1) so the wrap point
-            # lands at +1 (outside the data range). With sin/cos(2^i · π · t_norm),
-            # t=0 and t=T-1 are now close-but-distinct rather than collapsed to the
-            # same feature point. See TIndexEmbedder in vggt/models/aggregator.py.
-            t_idx_norm = (t_idx / max(1, T_total)) * 2.0 - 1.0
-            res["t_indices"].append(np.array([t_idx_norm], dtype=np.float32))
+            rotations_list.append(np.zeros(3, dtype=np.float32))
+            frame_ids_list.append(i)
+            timesteps_list.append(t_idx)
+            slice_indices_list.append(z_i)
 
-            # ── Convert voxel coords → physical mm ────────────────────────
-            # Elastix registered in mm space; DVF is in mm. Working in mm gives
-            # isotropic normalization and consistent DVF units across subjects.
-            coords = coords_vox * spacing  # (H, W, 3) in mm
-
-            # scanner_coords = physical position of each pixel in frame_t.
-            # world_points is identical (GT DVF supervision was removed; the model's
-            # predicted Δ is added to scanner_coords inside vggt.py, then splatted).
-            sc_wp = coords.copy()
-
-            # ── Physical (mm) normalization ────────────────────────────────
-            # Use physical extent so all axes are treated consistently regardless
-            # of voxel anisotropy or per-subject differences in spacing/FOV.
-            # Per-axis normalization: each axis's [-1, 1] spans that axis's full physical extent,
-            # so canonical voxels match native acquisition resolution (~8mm Z, ~1.34mm X/Y).
-            half_extent = np.array(
-                [W * spacing[0] / 2, H * spacing[1] / 2, Z * spacing[2] / 2],
-                dtype=np.float32,
-            )
-            center_mm = np.array(
-                [(W - 1) / 2 * spacing[0], (H - 1) / 2 * spacing[1], (Z - 1) / 2 * spacing[2]],
-                dtype=np.float32,
-            )
-
-            wp = coords.copy()
-            for p_map in [wp, sc_wp]:
-                p_map[..., 0] = (p_map[..., 0] - center_mm[0]) / half_extent[0]
-                p_map[..., 1] = (p_map[..., 1] - center_mm[1]) / half_extent[1]
-                p_map[..., 2] = (p_map[..., 2] - center_mm[2]) / half_extent[2]
-
-            # ── Volume mask ────────────────────────────────────────────────
-            # coords_vox is constructed entirely inside the native volume
-            # ([0, W-1] × [0, H-1] × {idx}), so the per-pixel bounds check is
-            # trivially True. point_masks/geom_masks are kept in the batch
-            # because downstream code (compute_point_loss, _apply_batch_repetition,
-            # visualizations) still reads them.
-            geom_mask = np.ones(coords_vox.shape[:-1], dtype=bool)
-            vol_mask = geom_mask.copy()
-
-            # ── Resize to target_size ──────────────────────────────────────
-            h, w = raw.shape
-            sc = self.target_size / max(h, w)
-            nw, nh = int(w * sc), int(h * sc)
-
-            img_norm = np.clip(
-                np.repeat(((raw - v_min) / (v_max - v_min + 1e-8))[..., None], 3, -1) * 255.0,
-                0,
-                255,
-            ).astype(np.float32)
-
-            img_r = cv2.resize(img_norm, (nw, nh), interpolation=cv2.INTER_CUBIC)
-            wp_r = cv2.resize(wp, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            sc_wp_r = cv2.resize(sc_wp, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            vol_mask_r = cv2.resize(vol_mask.astype(np.float32), (nw, nh), interpolation=cv2.INTER_NEAREST) > 0.5
-            geom_mask_r = cv2.resize(geom_mask.astype(np.float32), (nw, nh), interpolation=cv2.INTER_NEAREST) > 0.5
-
-            wp_r[~geom_mask_r] = -2.0
-            sc_wp_r[~geom_mask_r] = -2.0
-
-            # ── Pad to target_size × target_size ──────────────────────────
-            hp = self.target_size - nh
-            wp_p = self.target_size - nw
-            pt, pb = hp // 2, hp - hp // 2
-            pl, pr = wp_p // 2, wp_p - wp_p // 2
-
-            # Pad with 0 (interior point). Padded pixels are dropped by the splat's
-            # intensity gate (Mask B) since image padding is also 0, so the position
-            # value at padded pixels has no effect on V_canon. The earlier -2.0
-            # sentinel was vestige from the supervised point-loss pipeline and only
-            # served to inflate the TV penalty at anatomy/padding boundaries.
-            res["images"].append(np.clip(np.pad(img_r, ((pt, pb), (pl, pr), (0, 0))), 0, 255))
-            res["world_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0))))
-            res["cam_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0))))
-            res["scanner_coords"].append(np.pad(sc_wp_r, ((pt, pb), (pl, pr), (0, 0))))
-
-            m = np.zeros((self.target_size, self.target_size), bool)
-            m[pt : pt + nh, pl : pl + nw] = vol_mask_r
-            res["point_masks"].append(m)
-
-            gm = np.zeros((self.target_size, self.target_size), bool)
-            gm[pt : pt + nh, pl : pl + nw] = geom_mask_r
-            res["geom_masks"].append(gm)
-
-            res["depths"].append(np.zeros((self.target_size, self.target_size), np.float32))
-            res["extrinsics"].append(np.eye(3, 4, dtype=np.float32))
-            res["intrinsics"].append(
+            # Legacy-shape filler fields (kept so ComposedDataset and downstream
+            # code paths don't have to special-case the MRI dataset).
+            depths_list.append(np.zeros((self.target_size, self.target_size), np.float32))
+            extrinsics_list.append(np.eye(3, 4, dtype=np.float32))
+            intrinsics_list.append(
                 np.array(
-                    [[self.target_size, 0, self.target_size / 2], [0, self.target_size, self.target_size / 2], [0, 0, 1]],
+                    [[self.target_size, 0, self.target_size / 2],
+                     [0, self.target_size, self.target_size / 2],
+                     [0, 0, 1]],
                     np.float32,
                 )
             )
-            res["original_sizes"].append(np.array([h, w], np.float32))
-            res["frame_ids"].append(i)
-            res["timesteps"].append(t_idx)
-            res["slice_indices"].append(idx)
+            original_sizes_list.append(np.array([H_can, W_can], np.float32))
+
+        # ── Masks (all-True; no letterbox padding region in the new pipeline) ─
+        all_true = np.ones((INPUT_IMG_SIZE, INPUT_IMG_SIZE), dtype=bool)
+        point_masks_list = [all_true.copy() for _ in range(S)]
+        geom_masks_list = [all_true.copy() for _ in range(S)]
+
+        # ── world_points = cam_points = scanner_coords (DVF supervision removed) ─
+        world_points_list = [sc.copy() for sc in scanner_coords_list]
+        cam_points_list = [sc.copy() for sc in scanner_coords_list]
+
+        # ── V_gt + full phases bundle (for Phase 4 aug) ───────────────────
+        # `anatomy_bbox` was already computed above (used to constrain z sampling).
+        gt_target_volume = phases_splat[t_target].float().cpu().numpy()  # (D, H, W) [0, 1] float32
+        # phases_full is the full (T, D, H, W) canonical bundle. Kept in float16 to
+        # keep batch transfer cheap; the trainer casts to float32 inside aug.
+        phases_full = phases_splat.cpu().numpy()  # (T, D, H, W) float16
+        content_mask_np = mask_splat.cpu().numpy().astype(np.uint8)  # (D, H, W)
 
         rel_path = os.path.relpath(sub_dir, self.data_root)
         seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
-        out = {
-            **res,
+
+        return {
+            "images": images_list,
+            "world_points": world_points_list,
+            "cam_points": cam_points_list,
+            "scanner_coords": scanner_coords_list,
+            "point_masks": point_masks_list,
+            "geom_masks": geom_masks_list,
+            "depths": depths_list,
+            "extrinsics": extrinsics_list,
+            "intrinsics": intrinsics_list,
+            "original_sizes": original_sizes_list,
+            "frame_ids": frame_ids_list,
+            "timesteps": timesteps_list,
+            "slice_indices": slice_indices_list,
+            "z_indices": z_indices_list,
+            "t_indices": t_indices_list,
+            "rotations": rotations_list,
             "seq_name": seq_name,
-            "ids": np.array(res["frame_ids"], np.int64),
+            "ids": np.array(frame_ids_list, np.int64),
             "frame_num": S,
             "tracks": np.zeros((1, 1, 2), np.float32),
+            "gt_target_volume": gt_target_volume,
+            "t_target": np.array([t_target], dtype=np.int64),
+            "anatomy_bbox": anatomy_bbox,
+            "content_mask": content_mask_np,
+            "phases": phases_full,
         }
-        if gt_target_volume is not None:
-            out["gt_target_volume"] = gt_target_volume  # (D, H, W) float32 in [0, 1]
-        out["t_target"] = np.array([t_target], dtype=np.int64)
-        return out

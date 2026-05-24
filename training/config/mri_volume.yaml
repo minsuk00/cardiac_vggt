@@ -19,10 +19,20 @@ logging:
         - loss_objective
         - loss_volume
         - loss_pos_tv
-        - metric_mae_3d
-        - metric_mse_3d
-        - metric_psnr_3d
-        - metric_ssim_3d
+        # Full-volume metrics (averaged over all D·H·W = 786K voxels).
+        # Matches what the L1 loss is optimizing.
+        - metric_mae_3d_full
+        - metric_mse_3d_full
+        - metric_psnr_3d_full
+        - metric_ssim_3d_full
+        # Bbox-cropped metrics (only voxels inside the subject's geometric
+        # native-FOV region — derived from a content mask propagated through
+        # the canonical resample/pad/crop transforms, not from intensity).
+        # For small-FOV subjects this excludes the padded zeros that inflate
+        # full-volume PSNR. For full-FOV subjects bbox == full.
+        - metric_mae_3d_bbox
+        - metric_mse_3d_bbox
+        - metric_psnr_3d_bbox
         - metric_gt_coverage_frac
         - metric_mean_disp_norm
         - metric_coverage_frac
@@ -32,10 +42,13 @@ logging:
         - loss_objective
         - loss_volume
         - loss_pos_tv
-        - metric_mae_3d
-        - metric_mse_3d
-        - metric_psnr_3d
-        - metric_ssim_3d
+        - metric_mae_3d_full
+        - metric_mse_3d_full
+        - metric_psnr_3d_full
+        - metric_ssim_3d_full
+        - metric_mae_3d_bbox
+        - metric_mse_3d_bbox
+        - metric_psnr_3d_bbox
         - metric_gt_coverage_frac
         - metric_mean_disp_norm
         - metric_coverage_frac
@@ -55,3 +68,23 @@ loss:
     weight: 1.0
     grid_shape: ${gt_grid_shape}  # (D, H, W); shared with MRIDataset.gt_grid_shape
     tv_weight: 0.1
+
+# ── GPU augmentation (batchaug) ─────────────────────────────────────────────
+# Off by default. Flip `enable: true` to opt in. Augmentation is applied to the
+# (B, T=12, D=12, H=256, W=256) canonical phases tensor in the trainer between
+# `copy_data_to_device` and forward — one affine per subject, shared across
+# all 12 T-phases so cardiac motion stays consistent. After aug:
+#   - `gt_target_volume` is re-derived as `phases_aug[b, t_target[b]]`
+#   - input slices are re-extracted at the original (t, z) pairs
+#   - `anatomy_bbox` is recomputed from the augmented content mask
+# Val never augments regardless of this flag.
+#
+# `tier`:
+#   "conservative" — H-flip, ±5° in-plane rotate, small translate/scale,
+#                    light noise, gamma, mild bias field. No through-plane
+#                    rotation (Z is 8 mm anisotropic), no elastic.
+#   "moderate"     — reserved; not implemented yet.
+data:
+  augmentation:
+    enable: false
+    tier: "conservative"
