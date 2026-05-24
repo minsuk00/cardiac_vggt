@@ -1,220 +1,167 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repo.
 
-## Project Overview
+## Project
 
-VGGT (Visual Geometry Grounded Transformer) — CVPR 2025 Best Paper. This repo adapts VGGT for **cardiac 4D MRI reconstruction** using the CMRxRecon2024 dataset. The model predicts 3D geometry (camera pose, depth, 3D world coordinates, DVF) from multi-frame images/MRI slices.
+VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D MRI slice-to-volume reconstruction** on CMRxRecon2024 (`Cine_combined`).
 
-This is adapting the vggt framework for cardiac mri slice to volume reconstruction/registration.
+**Active pipeline: unsupervised intensity-based, multi-phase** (`mri_volume*` configs). No GT DVF. Each sample picks a target cardiac phase `t_target ∈ {0..T-1}`; loss compares splatted predicted volume `V_canon` against the on-disk NIfTI at that target phase (`V_gt`). The model can query any of the 12 discrete training phases — discrete-only; continuous-phase query (Option B) is not implemented (see Future enhancements).
+
+The old supervised-DVF pipeline (`compute_cine_dvf_elastix.py`, cardiac-mask logic) is **deprecated** — kept for reproducibility, don't extend.
 
 - MRI data: `/scratch/data/CMRxRecon2024/` (symlinked, GPFS)
-- Micromamba env: `svr`
-- SLURM cluster: `standard` partition (CPU), `gpu` partition (training), account `jjparkcv98`
+- Env: `micromamba activate svr`
+- SLURM: `gpu` partition for training, `standard` for CPU jobs, account `jjparkcv98`
 
----
-
-## Environment
+## Setup
 
 ```bash
 micromamba activate svr
-pip install -e .                    # install vggt package
+pip install -e .
 pip install -r requirements.txt
-pip install -r requirements_demo.txt  # for demo scripts (gradio, viser, pycolmap)
+pip install -r requirements_demo.txt  # demos only
 ```
-
----
 
 ## Training
 
-Entry point: `training/launch.py` (Hydra-based config).
+Entry point: `training/launch.py` (Hydra).
 
 ```bash
-# MRI fine-tuning (main use case)
+# Active config
 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
-    training/launch.py --config mri_finetune
+    training/launch.py --config mri_volume
 
 # Multi-GPU
-PYTHONPATH=training:. torchrun --nproc_per_node=4 \
-    training/launch.py --config mri_finetune
+PYTHONPATH=training:. torchrun --nproc_per_node=4 training/launch.py --config mri_volume
 
-# With overrides
-PYTHONPATH=training:. torchrun --nproc_per_node=1 \
-    training/launch.py --config mri_finetune optim.base_lr=1e-4
+# Resume from the 4-day baseline checkpoint (multi-phase fine-tune)
+PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
+    --config mri_volume \
+    checkpoint.resume_checkpoint_path=./scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt
+
+# ED-only fallback (matches original pre-multi-phase behavior)
+PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
+    --config mri_volume t_target_fixed=0
+
+# Override
+PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
+    --config mri_volume optim.base_lr=1e-4
 ```
 
-**Config files** (`training/config/`):
-- `mri_finetune.yaml` — MRI dynamic (DVF prediction, residual mode) — OLD supervised pipeline
-- `mri_finetune_general.yaml` — multi-subject general MRI
-- `mri_p001_overfit.yaml` — overfit sanity for OLD supervised DVF pipeline
-- `mri_volume.yaml` — NEW unsupervised volume pipeline (V_canon vs disk V_gt)
-- `mri_volume_overfit.yaml` — single-subject overfit for new volume pipeline
-- `default.yaml` — original Co3D training
+**Configs** (`training/config/`):
+- `mri_volume.yaml` — **active** unsupervised intensity pipeline.
+- `mri_volume_overfit.yaml` — single-subject sanity check.
+- `mri_finetune*.yaml` — old supervised DVF (deprecated).
+- `default.yaml` — original Co3D.
 
-**Key config parameters:**
-- `max_img_per_gpu`: controls memory (default 48); reduce if OOM
-- `model.enable_camera/depth/point/track`: toggle which heads are active
-- `model.train_on_residual_dvf`: predict DVF residual from internal reconstruction
-- `optim.frozen_module_names`: glob patterns to freeze (e.g., `["*aggregator*"]`)
+**Key knobs:**
+- `max_img_per_gpu: 12` → one slice per slot at S=12. Reduce on OOM.
+- `t_target_fixed: null` (default → multi-phase, uniform per train call) | `0` (reproduces ED-only behavior) | any int K (force `t_target=K`).
+- `optim.frozen_module_names`: enumerates the heavy aggregator subparts (`aggregator.patch_embed*`, `frame_blocks*`, `global_blocks*`, `rope*`, `camera_token`, `register_token`). **`aggregator.z_embedder` and `aggregator.t_embedder` MUST stay OUT of this list** — they are tiny `Linear(13, 1024)` Fourier projections (~14K params each) that need to learn to encode (z, t) into the 1024-d token. Previously a `*aggregator*` wildcard accidentally swept them up, leaving them at random init the whole 4-day baseline run; `tests/test_freeze_pattern.py` guards against regression. Trainable total: ~32.68M (point_head + z/t embedders) / 941M.
+- `model.train_on_residual_dvf: true` → point head outputs Δ; `world_points = scanner_coords + Δ`.
+- `logging.filmstrip_every_n_val_epochs: 5` → cadence for the multi-phase cardiac-cycle visualization.
 
----
+## Volume pipeline (one forward pass)
 
-## Inference
+1. **Sample.** S ≤ 12 slices.
+   - **Train:** slot 0 = `(t_target, random z)` where `t_target = random.randrange(T)`; slots 1..S-1 = `(random t ≠ t_target, distinct random z)`.
+   - **Val:** `t_target = seq_index % T_total` (stratified — ~2–3 val subjects per phase across 30 subjects). Slots use **diagonal** acquisition: slot i = `((t_target + i) mod T, z=i)` — mimics real-life sequential slice acquisition. Deterministic across runs (crc32-seeded; no `PYTHONHASHSEED` dependency).
+   - **Fixed-phase fallback:** `t_target_fixed=K` overrides both → every sample at phase K.
+2. **Aggregator.** DINOv2 patch_embed + 24× alternating frame/global attention. Replaces the camera token with `z_embedder(z_norm) + t_embedder(t_norm)` — sinusoidal Fourier on per-axis normalized indices. `t_embedder` is **cyclic** (`t_norm = t/T * 2 - 1` — divides by T, not T-1, so wrap point sits at +1 outside the data); `z_embedder` is linear. Heavy attention/embed blocks frozen; **z/t Fourier projections trainable**.
+3. **Point head (trainable, DPT).** Outputs per-pixel residual Δ (3 channels) + confidence (1, unused). `world_points = scanner_coords + Δ`, all in normalized [-1, 1].
+4. **Splat.** `splat_to_volume(world_points, intensity, (12,256,256))` → `V_canon`. Differentiable trilinear scatter; divides by accumulated coverage (`vggt/utils/splat.py`). Mask B: zero-intensity (padding) pixels get `splat_weight=0` so they don't dilute V_canon.
+5. **Loss.** `loss_volume = (V_canon - V_gt).abs().mean()` + `0.1 * TV(pos_pred)` — **full-volume L1**, no anatomy mask. Anatomy-masked variant is commented in `loss.py` (kept giving free-pass over-prediction outside the heart; switched on user request).
 
-```python
-from vggt.models.vggt import VGGT
-from vggt.utils.load_fn import load_and_preprocess_images
+`V_gt` is the on-disk NIfTI at `t_target` resampled to (12, 256, 256) once per sample via `scipy.ndimage.map_coordinates(order=1, mode="nearest")` in the same per-axis normalized frame as `V_canon`. Batch key: `gt_target_volume` (was `gt_phase0_volume` in the ED-only pipeline; renamed).
 
-model = VGGT.from_pretrained("facebook/VGGT-1B").cuda()
-images = load_and_preprocess_images(["img1.png", "img2.png"]).cuda()
-with torch.no_grad():
-    predictions = model(images)
-# Keys: pose_enc, depth, depth_conf, world_points, world_points_conf, track (optional)
-```
+## CMR data notes
 
-**Demo scripts:**
-- `demo_viser.py` — interactive 3D point cloud viewer
-- `demo_colmap.py` — export to COLMAP format
-- `demo_gradio.py` — Gradio web UI
+Native cine shapes vary: W=256 fixed, H∈{162,204,246}, Z∈{8..12}, T=12, spacing ≈ (1.34, 1.34, 8.0) mm.
 
----
+`mri_dataset.py:222–240` does **per-axis normalization** — each subject's physical FOV maps independently onto its own `[-1,1]³` cube. The canonical 12×256×256 grid has the same shape for every subject but different physical voxel sizes. The model only ever sees normalized coordinates.
 
-## CMR Data Shape Notes
-
-Native CMRxRecon2024 subject shapes vary: W=256 (fixed), H ∈ {162, 204, 246}, Z ∈ {8..12}, T=12 phases. Don't assume fixed (D, H, W) across subjects. `mri_dataset.py` uses **per-axis normalization** (each axis's `[-1, 1]` spans that axis's own physical extent), not cubic max-axis.
-
----
-
-## MRI Pipeline Scripts
-
-```bash
-# GPU-accelerated MRI reconstruction (sigpy + cupy)
-micromamba run -n svr python batch_reconstruct_cmrxrecon2024.py
-
-# Elastix-based DVF computation (groupwise 4D BSpline registration)
-micromamba run -n svr python compute_cine_dvf_elastix.py
-# SLURM array job (10 parallel workers):
-sbatch sbatch/compute_dvf_elastix.sh
-
-# Analyze DVF statistics across dataset
-micromamba run -n svr python analyze_dvf_stats.py
-```
-
-DVFs are stored per-subject at `<subject>/sax/dvf_elastix/`:
-- `dvf.npy` — shape `(T, D, H, W, 3)`, convention **T→0** (displacement at frame_T pointing to frame_0)
-- `stats.json` — per-frame and summary Jacobian/magnitude statistics
-
----
+`mri_mode: "axial"` means **native SAX z-slicing** (`vol[:, :, idx]`) — not anatomical axial. The slices are short-axis views.
 
 ## Architecture
 
-### Model (`vggt/`)
-
 ```
-VGGT (vggt/models/vggt.py)
-├── Aggregator (vggt/models/aggregator.py)
-│   └── Alternating attention: per-frame ViT + cross-frame global attention
-│   └── Optional z-index embedding for slice ordering (use_z_pose_embedding)
-├── CameraHead (vggt/heads/camera_head.py) — 9-dim pose encoding (quat + translation)
-├── DPTHead for depth (vggt/heads/dpt_head.py) — depth + confidence
-├── DPTHead for world points — 3D coords + confidence (used for DVF in MRI)
-└── TrackHead (vggt/heads/track_head.py) — optical flow / point tracking
-```
+VGGT (vggt/models/vggt.py) — ~941M total, base weights at ./scratch/torch_cache/model.pt
+├── Aggregator
+│   ├── DINOv2 patch_embed (518² inputs, patch=14 → 37² tokens)    [FROZEN, ~304M]
+│   ├── 24× frame_blocks + 24× global_blocks (alternating attn)    [FROZEN, ~605M]
+│   ├── rope / camera_token / register_token                        [FROZEN, ~10K]
+│   └── ZIndexEmbedder, TIndexEmbedder (sinusoidal Fourier)         [TRAINABLE, ~28K]
+└── point_head — DPT upsampler → 4-channel (Δ, conf)                [TRAINABLE, ~32.65M]
 
-Camera convention: OpenCV (camera-from-world). Pose encoding decoded via `vggt/utils/pose_enc.py`.
-
-### Training pipeline (`training/`)
-
-```
-launch.py → Trainer (trainer.py)
-         → ComposedDataset (data/composed_dataset.py)
-              → MRIDataset / Co3dDataset / VKittiDataset
-              → DynamicTorchDataset (variable seq length, memory-aware batching)
-         → MultitaskLoss (loss.py)
-              → camera L1 (weight 5.0), depth conf+grad (1.0), point/DVF (1.0)
-         → AdamW + linear warmup + cosine decay
+Camera / depth / track heads disabled in mri_volume config.
+Trainable total = ~32.68M / 941M.
 ```
 
-**Batch sizing**: `batch_size = max_img_per_gpu / seq_len` — auto-adjusts per sequence length to prevent OOM.
+Checkpoints save the **full 941M state dict** (~3.8 GB each), not just the trainable head. Optimizer + scaler state included.
 
-### Datasets (`training/data/datasets/`)
+## Inference / inspection
 
-- `mri_dataset.py` — dynamic MRI with pre-computed DVFs; modes: `axial`, `oblique`, `mixed`
-- `mri_dataset_static.py` — static MRI (no DVF), for phase 1/2 training
-- `co3d.py` — CO3D (images + COLMAP cameras + depth)
-- `vkitti.py` — Virtual KITTI synthetic scenes
+```python
+from vggt.models.vggt import VGGT
+model = VGGT.from_pretrained("facebook/VGGT-1B").cuda().eval()
+preds = model(images, batch=batch)  # batch needs: z_indices, t_indices, scanner_coords
+# To use compute_volume_intensity_loss: batch must also include gt_target_volume + t_target.
+```
 
-### Volume utilities (`vggt/utils/splat.py`)
+Tools:
+- `tools/render_volume_example.py` — random val sample, per-z V_gt/V_canon/diff panel.
+- `tools/test_sequential_sampling.py` — diagonal `(t=k+offset, z=k)` for one subject; PNGs to `result/`.
+- `baselines/eval_*.py` — identity-Δ / elastix-Δ / carmen-Δ PSNR sweeps over the val set.
 
-- `splat_to_volume(pos, intensity, grid_shape, weight=None)` — differentiable trilinear scatter into a 3D grid.
-- `sample_volume(volume, pos)` — thin wrapper around 3D `F.grid_sample`.
-- Used by `mri_volume` pipeline to assemble per-pixel predictions into a canonical volume.
+## Logging (wandb, project `vggt-mri`)
 
----
+**At trainer startup (logged once at step 0):**
+- `baseline/identity_PSNR_mean` — splat scanner_coords directly (Δ=0) across the val set; gives a "no motion correction" reference.
+- `baseline/identity_PSNR_t0 .. _t11` — per-phase identity baseline (multi-phase mode only).
+- Persisted to `${log_dir}/baseline_identity.json`.
 
-## Unsupervised Volume Pipeline (`mri_volume*` configs)
+**Every train visual step (`log_visual_frequency.train = 100`):**
+- `Train_Visuals_Volume` — 4-row × (max S,D)+1 col grid: input slices, V_gt, V_canon, signed diff (per z, ±0.05).
+- `Train_Visuals_DVF` — 4-row × S+1 col grid: input intensity + per-slot Δx/Δy/Δz (±0.05).
 
-**Goal:** reconstruct the phase-0 (ED) volume from a stack of slices acquired at mixed cardiac phases, without using GT DVF.
+**Per val epoch:**
+- `Val_Loss/*` — averaged val metrics (loss_volume, psnr_3d, ssim_3d, mae, …).
+- `Val_Visuals_subj{0,1,2}_Volume` and `_DVF` — three fixed val subjects (subjects 0, 1, 2 deterministically). Distinct wandb keys so they don't overwrite.
+- `per_phase/PSNR_t{0..11}` and `per_phase/n_t{0..11}` — per-phase val PSNR + sample counts (multi-phase mode only). With stratified sampling, n_t = 3 for t=0..5 and 2 for t=6..11.
 
-**Pipeline (single forward pass):**
-1. `S` slices in `(B, S, 3, H, W)` enter the aggregator (frozen).
-2. Point head (DPTHead, ~32M trainable params) outputs a per-pixel canonical 3D position `(B, S, H, W, 3)` in normalized [-1, 1].
-3. `vggt/utils/splat.py:splat_to_volume` scatters per-pixel `(position, intensity)` pairs into `V_canon` of shape `(B, 12, 256, 256)`.
-4. Loss: `|V_canon - V_gt|` masked to voxels where the loaded phase-0 NIfTI has anatomy (`V_gt > 0`), plus a small TV regularizer on `pos_pred`. See `compute_volume_intensity_loss` in `training/loss.py`.
+**Every N val epochs** (`logging.filmstrip_every_n_val_epochs`, default 5):
+- `Val_Visuals_cardiac_cycle` — 2×12 grid: V_gt (top) and V_canon (bot) reconstructed at all 12 cardiac phases for val subject 0. The qualitative proof of multi-phase reconstruction.
 
-**Why this works:** V_gt is the actual phase-0 volume loaded from disk and resampled by the dataset to the canonical grid. The model can't trivially collapse (which it could with a self-consistency loss) — V_gt is fixed, so the only way to lower loss is to predict canonical positions where the input pixel's intensity matches the GT anatomy.
+**Gating.** In `t_target_fixed=K` mode (single-phase), `per_phase/*` and `Val_Visuals_cardiac_cycle` are skipped (meaningless when all samples share one phase); the mean baseline is still logged. All diagnostic logging is wrapped in `try/except` — a failure logs a warning but never raises into training.
 
-**GT volume in the batch:** `batch["gt_phase0_volume"]` shape `(B, 12, 256, 256)`. Loaded by `MRIDataset` and resampled at load time using the subject's own `center_mm` and per-axis `half_extent`.
+**PSNR caveat.** Pre-loss-switch logs reported anatomy-masked PSNR (over `V_gt > 1e-3`); current `compute_volume_intensity_loss` returns full-volume PSNR. Same model, ~7–9 dB lower number — don't compare across the switchover. Likewise, multi-phase val PSNR averages across all 12 phases and will be ~1–3 dB lower than the old ED-only val PSNR.
 
-**Sampling:** random `(z, t)` pairs per batch (no repeats within a batch). Slot 0 always has `t=0` so GT volume loading happens at the first slot of the loop.
+## SLURM
 
----
+- Stagger mamba activations in array jobs: `sleep $((SLURM_ARRAY_TASK_ID * 15))`.
+- Logs: `/home/minsukc/vggt/slurm_logs/`.
 
-## Logging & Checkpoints
+## Local gotchas
 
-- W&B project: `vggt-mri`. Logs DVF visualizations, per-frame metrics, config backup.
-- Checkpoints saved every 5 epochs under `checkpoints/<run_name>/`.
-
----
-
-## Known Limitation: Cardiac Mask Logic (OLD SUPERVISED DVF PIPELINE ONLY)
-
-The section below applies to the `mri_finetune*` configs (supervised DVF regression). The new `mri_volume*` pipeline does NOT use the cardiac mask in its loss — `loss_volume` is masked only by `V_gt > 0` (where the loaded phase-0 anatomy exists).
-
-**`mask_frame_00.nii.gz`** is an Otsu body mask computed from frame 0 (the reference). It is used in two places:
-
-1. **During DVF generation** (`compute_cine_dvf_elastix.py`): elastix registration zeroes the DVF outside this mask, so background pixels have DVF = 0.0 mm exactly.
-2. **During training** (`mri_dataset.py`): the mask is loaded and AND-ed into `point_masks` to restrict loss/MAE computation to cardiac tissue pixels only (~8–24% of each slice).
-
-**Why the mask is necessary**: Without it, ~80–90% of each axial slice is background with DVF = 0. The model can achieve a very low MAE (e.g. 0.18mm) and low loss by simply predicting DVF = 0 everywhere, exploiting the confidence weighting to assign low confidence to cardiac pixels. The mask forces all loss/metric signal to come from cardiac pixels, preventing this trivial solution.
-
-**The fundamental mismatch (known limitation)**: The mask is computed from frame-0 anatomy but is applied at frame-T voxel positions. Boundary cardiac voxels that moved *outside* the frame-0 body mask boundary during systole lose their DVF supervision. This is self-consistent — those voxels also have zeroed DVF (from registration) so no wrong gradients — but it means boundary cardiac motion is not supervised.
-
-**`vol_mask`** is a separate, purely geometric bounds check: after applying the DVF to frame-T positions, does the resulting position still fall within `[0,W)×[0,H)×[0,Z)` in voxel space? With only 11 z-slices × 8mm = 88mm coverage, through-plane cardiac motion (~5mm) can push edge-slice voxels outside the scanned stack. These pixels are excluded from training but not wrong — they just don't exist in frame 0.
-
-**To fix properly**: Re-run DVF generation with a union-of-all-frames mask (or dilated mask) so boundary cardiac voxels always have valid DVF values and supervision. Not yet done — accepted as a known limitation.
-
----
-
-## SLURM Notes
-
-- Always stagger mamba activations in array jobs to avoid lock contention:
-  ```bash
-  sleep $((SLURM_ARRAY_TASK_ID * 15))
-  ```
-- Logs: `/home/minsukc/vggt/slurm_logs/`
-
-## Local Training Gotchas
-
-- Don't pipe `torchrun` through `| tail -N` in background bash — output is buffered until the process exits. Redirect to file: `... > /tmp/run.log 2>&1 &`, then `tail -F /tmp/run.log`.
-- Initial VGGT-1B checkpoint load (`./scratch/torch_cache/model.pt`, 941M params) takes ~9 min cold, ~1 min cached.
-- Local pilots use `WANDB_MODE=offline`; cluster scripts (`sbatch/train_mri_volume*.sh`) export `WANDB_MODE=online`.
-- Hydra configs use custom resolvers (`rev_ts:`, `basename:`) registered in `training/launch.py`. For `compose()` testing without launch.py, register manually: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`.
+- Don't pipe `torchrun` through `| tail -N` in background — buffering. Redirect to file: `... > /tmp/run.log 2>&1 &`, then `tail -F /tmp/run.log`.
+- Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
+- Local pilots: `WANDB_MODE=offline`. Cluster scripts in `sbatch/train_mri_volume*.sh` set `WANDB_MODE=online`.
+- Hydra custom resolvers (`rev_ts:`, `basename:`) are registered in `training/launch.py`. For standalone `compose()`: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`.
 
 ## Testing
-
-`tests/` uses a synthetic in-memory CMR dataset (`tests/conftest.py`, W=32, H=30, Z=4) — no real data needed.
 
 ```bash
 micromamba run -n svr python -m pytest tests/
 ```
+Synthetic in-memory CMR dataset (`tests/conftest.py`, W=32, H=30, Z=4) — no real data needed.
+
+## Future enhancements (not implemented)
+
+Notes for follow-up work. None of these are in the current pipeline.
+
+- **Option B — continuous-phase query.** Add an explicit `target_t_embedder` alongside `TIndexEmbedder` in `vggt/models/aggregator.py` to let the model decode any `t_target ∈ [0, 1)`, not just the discrete training phases. Requires a new sinusoidal embedder, `target_t` broadcast as a batch field consumed in `aggregator.forward`, and a light fine-tune of `point_head` + `register_token`. Option A (current pipeline) only covers discrete-phase queries.
+
+- **Free-breathing extension.** Add a second cyclic Fourier embedder for respiratory phase (analogous to `TIndexEmbedder`). The architecture scales trivially (~14K extra params per added phase). Bigger blockers: (1) need a motion-resolved 5D reference for supervision or move to self-supervised reconstruction loss; (2) need cardiac + respiratory phase tags per slice; (3) domain shift from breath-hold gated cines to real-time acquisitions.
+
+- **Ungated extension.** Phase must be recovered, not measured. Standard solution: k-space center self-gating, image-based PCA, or manifold learning preprocessing producing `(cardiac_phase, respiratory_phase)` per slice. Pipeline downstream is unchanged — phases plug in exactly like gated data. To harden against estimation noise, add `c_norm += noise` augmentation during training. A research-level extension would replace preprocessing with a learned auxiliary phase head.
