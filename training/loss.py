@@ -324,10 +324,14 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     # loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
     loss_volume = (V_canon - V_gt).abs().mean()
 
-    # Spatial smoothness on pos_pred (keep motion fields locally coherent).
-    pos_dh = (pos_pred[:, :, 1:, :, :] - pos_pred[:, :, :-1, :, :]).abs().sum(-1)
-    pos_dw = (pos_pred[:, :, :, 1:, :] - pos_pred[:, :, :, :-1, :]).abs().sum(-1)
-    loss_pos_tv = (pos_dh.mean() + pos_dw.mean()) * tv_weight
+    # Plain TV on pos_pred — mean absolute difference between H/W neighbors. fp32-forced
+    # so the reduction stays accurate under autocast(bf16).
+    with torch.cuda.amp.autocast(enabled=False):
+        pos_fp = pos_pred.float()
+        loss_pos_tv = (
+            (pos_fp[:, :, 1:, :, :] - pos_fp[:, :, :-1, :, :]).abs().mean()
+            + (pos_fp[:, :, :, 1:, :] - pos_fp[:, :, :, :-1, :]).abs().mean()
+        ) * tv_weight
 
     out = {
         "loss_volume": loss_volume,
