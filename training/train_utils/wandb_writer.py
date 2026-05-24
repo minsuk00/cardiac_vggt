@@ -42,6 +42,11 @@ class WandbLogger:
             if resume_id is not None:
                 kwargs["id"] = resume_id
                 kwargs["resume"] = "allow"
+            if "tags" in kwargs and kwargs["tags"] is not None:
+                tags = kwargs["tags"]
+                if isinstance(tags, str):
+                    tags = [tags]
+                kwargs["tags"] = [str(t) for t in tags]
             run = wandb.init(project=project, name=name, config=wandb_config, dir=dir, **kwargs)
             if run is not None:
                 logging.info(f"WandB Run URL: {run.get_url()}")

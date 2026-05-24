@@ -49,6 +49,9 @@ logging:
   # Multi-phase cardiac-cycle filmstrip (val-only, gated on t_target_fixed is None).
   # Logged every N val epochs to amortize the ~72s cost (12 model forwards on A40).
   filmstrip_every_n_val_epochs: 5
+  # Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val epoch.
+  # Overwrites in place (constant ~360 MB disk). Identity affine (canonical voxel space).
+  save_val_volumes: true
   tensorboard_writer:
     path: ${logging.log_dir}/tensorboard
   wandb_writer:
@@ -56,6 +59,9 @@ logging:
     project: "vggt-mri"
     name: ${exp_name}
     dir: ${logging.log_dir}/wandb
+    tags:
+      - ${oc.select:config_name,mri}
+      - ${phase_mode:${t_target_fixed}}
   scalar_keys_to_log:
     train:
       keys_to_log:
@@ -151,7 +157,7 @@ data:
       load_track: False
       track_num: 1024
       training: False
-      inside_random: True
+      inside_random: False
       img_size: ${img_size}
       patch_size: ${patch_size}
       rescale: True

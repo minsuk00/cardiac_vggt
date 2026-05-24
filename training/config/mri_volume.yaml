@@ -7,6 +7,7 @@ defaults:
   - _self_
 
 exp_name: "${rev_ts:}_mri_volume_${mri_data_mode}_${mri_mode}_${dataset_name}"
+config_name: "mri_volume"
 
 logging:
   log_visual_frequency:

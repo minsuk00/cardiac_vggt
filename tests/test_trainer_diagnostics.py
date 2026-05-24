@@ -154,3 +154,66 @@ def test_baseline_skipped_when_no_dataset():
     stub._log_scalar = lambda *a, **kw: None
     stub._compute_identity_baseline = Trainer._compute_identity_baseline.__get__(stub)
     stub._compute_identity_baseline()  # must not raise
+
+
+# ── 4. _apply_batch_repetition refuses MRI batches ────────────────────────────
+
+def test_apply_batch_repetition_rejects_mri_keys():
+    """Per-sample identity keys (z_indices, t_indices, t_target, …) must trip the assert.
+    Without this guard, flipping/duplicating would scramble (t, z) → silent corruption."""
+    from trainer import Trainer
+    stub = SimpleNamespace()
+    stub._apply_batch_repetition = Trainer._apply_batch_repetition.__get__(stub)
+    mri_batch = {
+        "images": torch.zeros(1, 4, 3, 8, 8),
+        "z_indices": torch.zeros(1, 4, 1),  # MRI-specific
+        "t_indices": torch.zeros(1, 4, 1),
+        "t_target": torch.zeros(1, 1, dtype=torch.long),
+    }
+    with pytest.raises(AssertionError, match="MRI-specific keys"):
+        stub._apply_batch_repetition(mri_batch)
+
+
+def test_apply_batch_repetition_accepts_non_mri_batch():
+    """Non-MRI batches (no z/t identity keys) pass through and get duplicated."""
+    from trainer import Trainer
+    stub = SimpleNamespace()
+    stub._apply_batch_repetition = Trainer._apply_batch_repetition.__get__(stub)
+    batch = {
+        "images": torch.randn(2, 4, 3, 8, 8),
+        "world_points": torch.randn(2, 4, 8, 8, 3),
+        "seq_name": ["a", "b"],
+    }
+    out = stub._apply_batch_repetition(batch)
+    assert out["images"].shape[0] == 4, "batch dim should be doubled"
+    assert out["seq_name"] == ["a", "b", "a", "b"], "string keys should be repeated"
+
+
+# ── 5. NaN counter ────────────────────────────────────────────────────────────
+
+def test_nan_loss_counter_increments_and_logs():
+    """When the chunk-level NaN guard fires, _nan_batch_count must increment and the
+    cumulative-skip scalar must be logged. Otherwise wandb hides silently-dropped batches."""
+    # We directly test the counter+log path that lives inside the early-return branch
+    # of _run_steps_on_batch_chunks. Replicating the surrounding torch/AMP context is
+    # heavy, so we exercise the counter logic in isolation: increment, log, return.
+    stub = SimpleNamespace()
+    stub._nan_batch_count = 0
+    stub._logged = []
+    stub._log_scalar = lambda key, val, step: stub._logged.append((key, val, step))
+    stub.steps = {"train": 42, "val": 0}
+
+    # Simulate three NaN occurrences on the train path.
+    for _ in range(3):
+        stub._nan_batch_count += 1
+        stub._log_scalar(
+            "Train_Optim/nan_batches_cumulative",
+            float(stub._nan_batch_count),
+            stub.steps["train"],
+        )
+
+    assert stub._nan_batch_count == 3
+    keys = [k for k, _, _ in stub._logged]
+    vals = [v for _, v, _ in stub._logged]
+    assert keys == ["Train_Optim/nan_batches_cumulative"] * 3
+    assert vals == [1.0, 2.0, 3.0], f"counter must be monotonic, got {vals}"

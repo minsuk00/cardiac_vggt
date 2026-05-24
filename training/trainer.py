@@ -177,7 +177,15 @@ class Trainer:
             self.t_target_fixed = mri_ds.t_target_fixed
         # Accumulator for per-phase val PSNR, cleared at the start of each val epoch.
         self._per_phase_val_psnr = defaultdict(list)
-        # Compute identity-Δ baseline once at startup (logged as constants in wandb).
+        # Identity baseline per phase + aggregate mean, populated by _compute_identity_baseline
+        # and baked into val_psnr metric names so each panel shows n and baseline in its title.
+        self._identity_baseline_per_phase = None
+        self._identity_baseline_mean = None
+        # Cumulative count of training batches skipped due to non-finite loss. Without this,
+        # NaN/Inf chunks get swallowed by the early-return in _run_steps_on_batch_chunks and
+        # loss_meters silently undercount, making the wandb loss curve look healthier than it is.
+        self._nan_batch_count = 0
+        # Compute identity-Δ baseline once at startup.
         if self.mode in ["train", "val"] and self.rank == 0:
             self._compute_identity_baseline()
 
@@ -232,8 +240,9 @@ class Trainer:
         if self.rank == 0:
             logging.info(f"Model state loaded. Missing keys count: {len(missing) if missing else 0}. Unexpected keys count: {len(unexpected) if unexpected else 0}.")
 
-        # Load optimizer state if available and in training mode
-        if "optimizer" in checkpoint:
+        # Load optimizer state if available and in training mode (self.optims is only
+        # constructed when self.mode != "val"; skip otherwise to avoid AttributeError).
+        if "optimizer" in checkpoint and self.mode != "val":
             logging.info(f"Loading optimizer state dict (rank {self.rank})")
             opt_states = checkpoint["optimizer"]
             if not isinstance(opt_states, list):
@@ -280,7 +289,11 @@ class Trainer:
         self.model = instantiate(self.model_conf, _recursive_=False)
         self.loss = instantiate(self.loss_conf, _recursive_=False)
         self.gradient_clipper = instantiate(self.optim_conf.gradient_clip)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.optim_conf.amp.enabled)
+        # GradScaler only helps fp16 (prevents underflow). bf16 has fp32 range, so loss
+        # scaling is dead weight — disable to keep the train loop honest.
+        self.scaler = torch.cuda.amp.GradScaler(
+            enabled=self.optim_conf.amp.enabled and self.optim_conf.amp.amp_dtype == "float16"
+        )
 
         # Freeze specified model parameters if any
         if getattr(self.optim_conf, "frozen_module_names", None):
@@ -468,14 +481,12 @@ class Trainer:
             except Exception as e:
                 logging.warning(f"baseline JSON write failed: {e}")
 
-            # Log to wandb (and TB) as constants at step 0.
-            self._log_scalar("baseline/identity_PSNR_mean", mean_psnr, 0)
-            if self.t_target_fixed is None:
-                for t, m in per_phase_mean.items():
-                    self._log_scalar(f"baseline/identity_PSNR_t{t}", m, 0)
+            # Cache for val-time metric-name embedding (val_psnr/t{k}_n{n}_base{b:.1f}).
+            self._identity_baseline_per_phase = per_phase_mean
+            self._identity_baseline_mean = mean_psnr
             logging.info(
                 f"Identity-Δ baseline: mean PSNR = {mean_psnr:.2f} dB across "
-                f"{len(all_psnrs)} val sample(s). Logged to wandb under 'baseline/'."
+                f"{len(all_psnrs)} val sample(s). Persisted to {out_path}."
             )
         except Exception as e:
             logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
@@ -546,10 +557,11 @@ class Trainer:
         finally:
             mri_ds.t_target_fixed = orig_fixed
 
+        v_vmax = float(max(max(f.max() for f in canon_frames),
+                           max(f.max() for f in gt_frames),
+                           1e-3))
+
         try:
-            v_vmax = float(max(max(f.max() for f in canon_frames),
-                               max(f.max() for f in gt_frames),
-                               1e-3))
             fig = plt.figure(figsize=(1.4 * T_total + 0.5, 3.0), dpi=90)
             gs = _gs.GridSpec(2, T_total + 1, width_ratios=[1.0] * T_total + [0.04], wspace=0.05, hspace=0.18)
             for t in range(T_total):
@@ -571,6 +583,66 @@ class Trainer:
             plt.close(fig)
         except Exception as e:
             logging.warning(f"cardiac filmstrip log failed (ignored): {e}")
+
+        # Animated GIF version: same content as the still strip, but cycled over t so the
+        # heart actually moves. Each frame is V_gt | V_canon side-by-side (horizontal) so the
+        # panel fits in normal aspect — vertical stacking made wandb draw the player too tall.
+        # wandb.Video → moviepy requires 3-channel RGB, so replicate the grayscale across RGB.
+        try:
+            H, W = gt_frames[0].shape
+            T = len(gt_frames)
+            frames = np.zeros((T, 3, H, 2 * W), dtype=np.uint8)
+            for t in range(T):
+                side_by_side = np.concatenate([gt_frames[t], canon_frames[t]], axis=1)
+                gray = np.clip(side_by_side / v_vmax * 255.0, 0, 255).astype(np.uint8)
+                frames[t, 0] = gray
+                frames[t, 1] = gray
+                frames[t, 2] = gray
+            self.wandb_writer.log(
+                "Val_Visuals_cardiac_cycle_gif",
+                wandb.Video(frames, fps=4, format="gif", caption=f"step={log_step} (V_gt left / V_canon right)"),
+                log_step,
+            )
+        except Exception as e:
+            logging.warning(f"cardiac cycle gif log failed (ignored): {e}")
+
+    def _save_val_volumes(self, batch: Mapping, loss_dict: Mapping, data_iter: int) -> None:
+        """Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val step.
+
+        Filenames are overwritten every val epoch so disk usage stays bounded
+        (~30 subjects × 2 files × ~6 MB ≈ 360 MB total). Affine is identity —
+        V_canon lives in the dimensionless canonical [-1, 1] grid, not the source
+        NIfTI's physical frame, so a physical affine would be misleading.
+        """
+        if not getattr(self.logging_conf, "save_val_volumes", False):
+            return
+        if "V_canon" not in loss_dict or "V_gt" not in loss_dict:
+            return
+        try:
+            import nibabel as nib
+            import numpy as np
+
+            out_dir = os.path.join(self.logging_conf.log_dir, "val_volumes")
+            safe_makedirs(out_dir)
+
+            V_canon = loss_dict["V_canon"].detach().float().cpu().numpy()  # (B, D, H, W)
+            V_gt = loss_dict["V_gt"].detach().float().cpu().numpy()
+            t_targets = batch.get("t_target")
+            seq_names = batch.get("seq_name", [])
+            B = V_canon.shape[0]
+            affine = np.eye(4, dtype=np.float32)
+
+            for b in range(B):
+                t_val = int(t_targets[b].flatten()[0].item()) if t_targets is not None else -1
+                raw_seq = seq_names[b] if b < len(seq_names) else f"unknown{b}"
+                # seq_name is "mri_{mri_mode}_{rel_path}"; strip the first two parts to keep filenames short.
+                subject = raw_seq.split("_", 2)[-1] if raw_seq.startswith("mri_") else raw_seq
+                subj_idx = data_iter * B + b
+                stem = f"subj{subj_idx:02d}_t{t_val:02d}_{subject}"
+                nib.save(nib.Nifti1Image(V_canon[b], affine), os.path.join(out_dir, f"{stem}_pred.nii.gz"))
+                nib.save(nib.Nifti1Image(V_gt[b], affine), os.path.join(out_dir, f"{stem}_gt.nii.gz"))
+        except Exception as e:
+            logging.warning(f"val-volume save failed (ignored): {e}")
 
     def _log_volume_and_dvf_to_wandb(self, batch: dict, name: str, step: int, caption: str):
         """Log two figures per visual step (matching tools/test_sequential_sampling.py style):
@@ -645,11 +717,9 @@ class Trainer:
             plt.close(fig)
 
         # ── DVF figure (per-slot Δx/Δy/Δz) ─────────────────────────────────
-        # pred_dvfs comes from the active mri_volume pipeline; fall back to (world_points - scanner_coords).
+        # The model's predicted Δ is recovered as (pred_world_points - scanner_coords).
         pred_dvf = None
-        if "pred_dvfs" in batch:
-            pred_dvf = batch["pred_dvfs"][0].detach().float().cpu().numpy()
-        elif "pred_world_points" in batch and "scanner_coords" in batch:
+        if "pred_world_points" in batch and "scanner_coords" in batch:
             pred_dvf = (batch["pred_world_points"][0] - batch["scanner_coords"][0]).detach().float().cpu().numpy()
         if pred_dvf is not None:
             imgs = batch["images"][0].detach().float().cpu()
@@ -753,6 +823,9 @@ class Trainer:
 
         # Fresh per-phase accumulator for this val epoch (diagnostic only; train unaffected).
         self._per_phase_val_psnr = defaultdict(list)
+        # Per-epoch val iter, read by _log_tb_visuals so subject-specific visuals fire every
+        # epoch (not just the first one — self.steps["val"] is monotonic and resumes carry it).
+        self._val_iter = 0
 
         loss_names = self._get_scalar_log_keys(phase)
         loss_names_prefixed = [f"Loss/{phase}_{name}" for name in loss_names]
@@ -780,6 +853,7 @@ class Trainer:
         for data_iter, batch in enumerate(val_loader):
             if data_iter >= limit_val_batches:
                 break
+            self._val_iter = data_iter
 
             # measure data loading time
             data_time.update(time.time() - end)
@@ -803,6 +877,9 @@ class Trainer:
                     dtype=amp_type,
                 ):
                     val_loss_dict = self._step(batch, self.model, phase, loss_meters)
+
+            if self.rank == 0:
+                self._save_val_volumes(batch, val_loss_dict, data_iter)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -831,21 +908,45 @@ class Trainer:
                 raw_name = name[len(prefix):] if name.startswith(prefix) else name
                 self._log_scalar(f"Val_Loss/{raw_name}", meter.avg, current_train_step)
 
-            # ── Per-phase val PSNR + counts (only when t_target is varying) ──
+            # ── Per-phase val PSNR (only when t_target is varying) ──
+            # Metric name bakes in n and the identity baseline:
+            #   val_psnr/t{k}_n{n}_base{b:.1f}
+            # With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11)
+            # so each phase keeps one stable panel. If val ever loses determinism, n drifts
+            # and new panels appear — that drift is the smoke alarm.
             if self.t_target_fixed is None and len(self._per_phase_val_psnr) > 0:
                 try:
+                    all_psnrs = []
                     for t in sorted(self._per_phase_val_psnr.keys()):
                         psnrs = self._per_phase_val_psnr[t]
-                        self._log_scalar(f"per_phase/PSNR_t{t}", float(sum(psnrs) / len(psnrs)),
-                                         current_train_step)
-                        self._log_scalar(f"per_phase/n_t{t}", float(len(psnrs)),
-                                         current_train_step)
+                        all_psnrs.extend(psnrs)
+                        n = len(psnrs)
+                        baseline = (self._identity_baseline_per_phase or {}).get(t)
+                        base_tag = f"_base{baseline:.1f}" if baseline is not None else ""
+                        self._log_scalar(
+                            f"val_psnr/t{t}_n{n}{base_tag}",
+                            float(sum(psnrs) / n),
+                            current_train_step,
+                        )
+                    # Aggregate mean across all val subjects — sits in the same panel group
+                    # so you can compare model mean vs identity baseline at a glance.
+                    n_total = len(all_psnrs)
+                    base_mean = self._identity_baseline_mean
+                    base_tag = f"_base{base_mean:.1f}" if base_mean is not None else ""
+                    self._log_scalar(
+                        f"val_psnr/mean_n{n_total}{base_tag}",
+                        float(sum(all_psnrs) / n_total),
+                        current_train_step,
+                    )
                 except Exception as e:
                     logging.warning(f"per-phase log failed (ignored): {e}")
 
             # ── Cardiac-cycle filmstrip (every N val epochs) ──
+            # Useful in BOTH modes: in multi-phase it's the qualitative proof of
+            # cross-phase reconstruction; in fixed-ED it shows what the model does at
+            # phases it wasn't trained on (degenerate or not — diagnostic).
             filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
-            if self.t_target_fixed is None and self.epoch % filmstrip_every_n == 0:
+            if self.epoch % filmstrip_every_n == 0:
                 self._log_cardiac_cycle_filmstrip(current_train_step)
 
             logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
@@ -1010,8 +1111,16 @@ class Trainer:
                 batch_size = chunked_batch["images"].shape[0]
 
                 if not math.isfinite(loss.item()):
-                    error_msg = f"Loss is {loss.item()}, attempting to stop training"
-                    logging.error(error_msg)
+                    self._nan_batch_count += 1
+                    logging.error(
+                        f"Loss is {loss.item()} (phase={phase}, step={self.steps[phase]}, "
+                        f"cumulative_nan_batches={self._nan_batch_count}); skipping backward."
+                    )
+                    self._log_scalar(
+                        "Train_Optim/nan_batches_cumulative",
+                        float(self._nan_batch_count),
+                        self.steps[phase],
+                    )
                     return
 
                 loss /= accum_steps
@@ -1023,6 +1132,16 @@ class Trainer:
         Applies a data augmentation by concatenating the original batch with a
         flipped version of itself.
         """
+        # Refuse on MRI batches — keys like z_indices/t_indices/t_target carry per-sample
+        # identity. Flipping or duplicating without also handling them scrambles the (t, z)
+        # mapping and silently corrupts training. If you ever want batch repetition for MRI,
+        # design a method that handles those keys correctly rather than extending the list here.
+        mri_keys = {"z_indices", "t_indices", "t_target", "gt_target_volume", "timesteps", "slice_indices"}
+        present = mri_keys & set(batch.keys())
+        assert not present, (
+            f"_apply_batch_repetition called with MRI-specific keys present ({present}); "
+            "this method would scramble z/t/target identity. Set repeat_batch=False."
+        )
         tensor_keys = [
             "images",
             "depths",
@@ -1173,7 +1292,9 @@ class Trainer:
         if phase == "train":
             should_log = freq > 0 and (step % freq == 0)
         else:
-            should_log = step in VAL_VISUAL_SUBJECT_INDICES
+            # self._val_iter resets each val epoch — using self.steps["val"] (monotonic,
+            # checkpointed) here would skip these visuals after the first epoch / on resume.
+            should_log = self._val_iter in VAL_VISUAL_SUBJECT_INDICES
         if not (self.logging_conf.log_visuals and should_log and (self.logging_conf.visuals_keys_to_log is not None)):
             return
 
@@ -1203,7 +1324,7 @@ class Trainer:
             if phase == "train":
                 name = "Train_Visuals"
             else:
-                name = f"Val_Visuals_subj{step}"
+                name = f"Val_Visuals_subj{self._val_iter}"
 
             # Render both figures and log.
             self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption)
