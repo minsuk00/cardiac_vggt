@@ -58,11 +58,10 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 - `CKPT_ONLY=<ckpt_path>` → load model weights only into a **fresh** exp dir + new wandb run. Bumps `max_epochs=500` and sets `limit_val_batches=30` automatically. Default points at the 4-day baseline ckpt for multi-phase fine-tune.
 
 **Configs** (`training/config/`):
-- `mri_volume.yaml` — **active** unsupervised intensity pipeline. Inherits `mri_finetune.yaml` via `defaults:` and disables the deprecated DVF loss.
-- `mri_finetune.yaml` — base config (shared optimizer / data / freeze pattern); used as parent by `mri_volume.yaml`. The legacy supervised pipeline that ran on this config standalone is **deprecated** — don't run `mri_finetune` directly.
-- `mri_volume_overfit.yaml` — single-subject sanity check.
-- `mri_finetune*.yaml` (other variants) — old supervised DVF experiments (deprecated).
-- `default.yaml` — original Co3D.
+- `mri_volume.yaml` — **active** unsupervised intensity pipeline. Inherits `mri_finetune.yaml` via `defaults:` and disables the deprecated DVF loss. Sets `config_name: "mri_volume"` (used as one of the wandb tags).
+- `mri_finetune.yaml` — base config (shared optimizer / data / freeze pattern); used as parent by `mri_volume.yaml`. Not runnable standalone — the supervised pipeline that did so is fully removed.
+- `default.yaml` / `default_dataset.yaml` — templates inherited via `defaults:`.
+- Legacy variants (`mri_finetune_*`, `mri_p001_overfit`, `mri_volume_overfit`) and their sbatch scripts now live under `_archive/legacy_configs/` and `_archive/legacy_sbatch/`.
 
 **Key knobs:**
 - `max_img_per_gpu: 12` → one slice per slot at S=12. Reduce on OOM.
@@ -125,10 +124,7 @@ Tools:
 
 ## Logging (wandb, project `vggt-mri`)
 
-**At trainer startup (logged once at step 0):**
-- `baseline/identity_PSNR_mean` — splat scanner_coords directly (Δ=0) across the val set; gives a "no motion correction" reference.
-- `baseline/identity_PSNR_t0 .. _t11` — per-phase identity baseline (multi-phase mode only).
-- Persisted to `${log_dir}/baseline_identity.json`.
+**At trainer startup:** identity-Δ baseline (splat `scanner_coords` directly with Δ=0 across the val set) is computed and persisted to `${log_dir}/baseline_identity.json`. The per-phase value is **not** logged as its own wandb scalar — it's baked into the `val_psnr/` metric name (see below).
 
 **Every train visual step (`log_visual_frequency.train = 100`):**
 - `Train_Visuals_Volume` — 4-row × (max S,D)+1 col grid: input slices, V_gt, V_canon, signed diff (per z, ±0.05).
@@ -137,12 +133,19 @@ Tools:
 **Per val epoch:**
 - `Val_Loss/*` — averaged val metrics (loss_volume, psnr_3d, ssim_3d, mae, …).
 - `Val_Visuals_subj{0,7}_Volume` and `_DVF` — two fixed val subjects at diagnostic phases. With stratified val sampling, val_step k → subject k → t_target = k % T_total, so the subject index doubles as the target phase. Subj0 at t=0 = ED. Subj7 at t=7 ≈ ES (empirically measured: ES across the 30 val subjects via LV-cavity bright-pixel count peaks at t=7-8, median=7). Note ES varies per subject — t=7 is the population median, not exact ES for every subject. The cardiac-cycle filmstrip (every N val epochs) shows all 12 phases for subj0, so you can verify the actual ES frame visually. Change `VAL_VISUAL_SUBJECT_INDICES` in `trainer.py` to log different subjects/phases.
-- `per_phase/PSNR_t{0..11}` and `per_phase/n_t{0..11}` — per-phase val PSNR + sample counts (multi-phase mode only). With stratified sampling, n_t = 3 for t=0..5 and 2 for t=6..11.
+- `val_psnr/t{k}_n{n}_base{b:.1f}` — per-phase val PSNR (multi-phase mode only). `n` is the sample count for phase k, `b` is the identity-Δ baseline PSNR for that phase. With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11) and the baseline is computed once at startup, so each phase produces exactly one panel for the lifetime of the run. If val ever loses determinism (e.g. someone re-enables `inside_random` on val), n drifts epoch-to-epoch and new panels appear under different names — that drift is the smoke alarm.
+- `val_psnr/mean_n{n_total}_base{b:.1f}` — aggregate val PSNR across all val subjects (multi-phase mode only). Same panel group as the per-phase ones so you can compare model mean vs identity baseline at a glance. `n_total = 30` for the full val set.
 
 **Every N val epochs** (`logging.filmstrip_every_n_val_epochs`, default 5):
-- `Val_Visuals_cardiac_cycle` — 2×12 grid: V_gt (top) and V_canon (bot) reconstructed at all 12 cardiac phases for val subject 0. The qualitative proof of multi-phase reconstruction.
+- `Val_Visuals_cardiac_cycle` — 2×12 grid: V_gt (top) and V_canon (bot) reconstructed at all 12 cardiac phases for val subject 0, mid-z slice. The qualitative proof of multi-phase reconstruction.
+- `Val_Visuals_cardiac_cycle_gif` — same content as the still strip, but as a 12-frame animated GIF (4 fps) so the heart actually beats. Each frame is V_gt | V_canon side-by-side (horizontal), shared intensity scale. Small (~50–200 KB per gif, ~10 MB total per run).
 
-**Gating.** In `t_target_fixed=K` mode (single-phase), `per_phase/*` and `Val_Visuals_cardiac_cycle` are skipped (meaningless when all samples share one phase); the mean baseline is still logged. All diagnostic logging is wrapped in `try/except` — a failure logs a warning but never raises into training.
+**Every val epoch** (`logging.save_val_volumes`, default `true`):
+- `${log_dir}/val_volumes/subj{idx:02d}_t{t_target:02d}_{subject}_{pred|gt}.nii.gz` — per-subject predicted V_canon + GT V_gt as NIfTI, identity affine in canonical voxel space (12×256×256), overwritten in place every val epoch. ~360 MB constant footprint for 30 val subjects. Single-GPU only — under DDP, only rank 0's subjects are saved. Set `save_val_volumes: false` to disable.
+
+**Wandb tags.** Two tags applied per run via `logging.wandb_writer.tags`: the active config name (`mri_volume`) and the phase mode (`multiphase` when `t_target_fixed` is null, else `t{K}` for fixed phase K). The `phase_mode` resolver is registered in `training/launch.py`.
+
+**Gating.** In `t_target_fixed=K` mode (single-phase), `val_psnr/*` panels are skipped (meaningless when all samples share one phase). The cardiac-cycle filmstrip + GIF run in both modes — in fixed-K mode they show what the model does at phases it wasn't trained on (useful diagnostic). All diagnostic logging is wrapped in `try/except` — a failure logs a warning but never raises into training.
 
 **PSNR caveat.** Pre-loss-switch logs reported anatomy-masked PSNR (over `V_gt > 1e-3`); current `compute_volume_intensity_loss` returns full-volume PSNR. Same model, ~7–9 dB lower number — don't compare across the switchover. Likewise, multi-phase val PSNR averages across all 12 phases and will be ~1–3 dB lower than the old ED-only val PSNR.
 
@@ -155,8 +158,8 @@ Tools:
 
 - Don't pipe `torchrun` through `| tail -N` in background — buffering. Redirect to file: `... > /tmp/run.log 2>&1 &`, then `tail -F /tmp/run.log`.
 - Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
-- Local pilots: `WANDB_MODE=offline`. Cluster scripts in `sbatch/train_mri_volume*.sh` set `WANDB_MODE=online`.
-- Hydra custom resolvers (`rev_ts:`, `basename:`) are registered in `training/launch.py`. For standalone `compose()`: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`.
+- Local pilots: `WANDB_MODE=offline`. The cluster script `sbatch/train_mri_volume.sh` sets `WANDB_MODE=online`.
+- Hydra custom resolvers (`rev_ts:`, `basename:`, `phase_mode:`) are registered in `training/launch.py`. For standalone `compose()`: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`; `OmegaConf.register_new_resolver('basename', lambda p: os.path.basename(p))`; `OmegaConf.register_new_resolver('phase_mode', lambda t: 'multiphase' if t is None else f't{int(t)}')`.
 
 ## Testing
 
@@ -174,3 +177,9 @@ Notes for follow-up work. None of these are in the current pipeline.
 - **Free-breathing extension.** Add a second cyclic Fourier embedder for respiratory phase (analogous to `TIndexEmbedder`). The architecture scales trivially (~14K extra params per added phase). Bigger blockers: (1) need a motion-resolved 5D reference for supervision or move to self-supervised reconstruction loss; (2) need cardiac + respiratory phase tags per slice; (3) domain shift from breath-hold gated cines to real-time acquisitions.
 
 - **Ungated extension.** Phase must be recovered, not measured. Standard solution: k-space center self-gating, image-based PCA, or manifold learning preprocessing producing `(cardiac_phase, respiratory_phase)` per slice. Pipeline downstream is unchanged — phases plug in exactly like gated data. To harden against estimation noise, add `c_norm += noise` augmentation during training. A research-level extension would replace preprocessing with a learned auxiliary phase head.
+
+- **Fully unsupervised — drop `gt_target_volume`.** Current "unsupervised" pipeline still depends on the per-phase NIfTI as `V_gt`, which is itself a derived reconstruction. True self-supervision: sample `V_canon` at the input slices' world coordinates and compare against the **input slice intensities themselves** — input slices become their own supervision. Removes one layer of indirection and aligns with the free-breathing/ungated regime (where no canonical GT exists). Risk: degenerate solutions (`V_canon = 0` everywhere except at sampled pixels) — needs a coverage-based completeness term or a stronger TV/smoothness prior. Loss becomes `|sample(V_canon, input_world_coords) - input_intensities|`.
+
+- **UNet refiner on top of splat.** Add a small 3D UNet after the splat: `V_canon (12×256×256) → UNet → V_canon' (12×256×256)`. Learns to inpaint low-coverage voxels and smooth out splat artifacts (especially the seams between slices at native Z resolution). Drop-in addition — doesn't touch the splat or the point head. Useful as an ablation to quantify how much of the loss is due to splat artifacts vs. genuine motion-prediction error.
+
+- **UNet ablation — replace the splat entirely.** Skip the differentiable splat + coverage division; regress `V_canon` directly from input features with a learned 3D head. Loses the physical interpretability of the splat ("this voxel is the trilinear average of these N pixels") in exchange for more model capacity. Worth running as a head-to-head against the current splat-based pipeline to see whether the inductive bias of explicit splatting is helping or hurting.

@@ -17,6 +17,10 @@ from trainer import Trainer
 REVERSE_TS = str(2000000000 - int(time.time()))
 OmegaConf.register_new_resolver("rev_ts", lambda: REVERSE_TS)
 OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p))
+# Wandb phase-mode tag: "multiphase" when t_target_fixed is null, else "tK".
+OmegaConf.register_new_resolver(
+    "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}"
+)
 
 
 def main():
