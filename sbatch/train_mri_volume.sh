@@ -97,12 +97,13 @@ elif [ ! -z "$CKPT_ONLY" ]; then
         echo "ERROR: CKPT_ONLY is set but $CKPT_ONLY does not exist."
         exit 1
     fi
-    # limit_val_batches=30: with 30 deterministic val subjects (stratified t_target +
-    # diagonal slot sampling), one pass through subjects = 30 batches. Default would
-    # iterate ~200 batches per val epoch, processing each subject ~7× redundantly with
-    # identical inputs — waste of ~3 min per val epoch and inflates per_phase/n_t counts.
-    OVERRIDES="checkpoint.resume_checkpoint_path=${CKPT_ONLY} max_epochs=500 limit_val_batches=30"
-    echo "Loading weights only from: $CKPT_ONLY (fresh exp_name + fresh wandb run, max_epochs=500, limit_val_batches=30)"
+    # Multi-phase fine-tune: keep the config default limit_val_batches=200 so every one
+    # of the 12 target phases gets ~16-17 val samples. The 30 val subjects are revisited
+    # ~7× across the loop, but each revisit is at a DIFFERENT t_target (= seq_index % 12),
+    # so the extra iters are genuine per-phase coverage, not redundancy. (A fixed-phase
+    # run WOULD be redundant past one pass — there val_epoch auto-caps in code.)
+    OVERRIDES="checkpoint.resume_checkpoint_path=${CKPT_ONLY} max_epochs=500"
+    echo "Loading weights only from: $CKPT_ONLY (fresh exp_name + fresh wandb run, max_epochs=500)"
 fi
 
 CMD="PYTHONPATH=training:. torchrun \
