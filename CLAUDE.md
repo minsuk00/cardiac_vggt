@@ -144,7 +144,7 @@ Tools:
 **At trainer startup:** identity-Δ baseline (splat `scanner_coords` directly with Δ=0 across the val set) is computed for BOTH the full-volume and bbox PSNR and persisted to `${log_dir}/baseline_identity.json` (`{full: {...}, bbox: {...}}`). The per-phase values are baked into the `val_psnr_full/` and `val_psnr_bbox/` metric names (see below).
 
 **Every train visual step (`log_visual_frequency.train = 100`):**
-- `Train_Visuals_Volume` — 4-row × (max S,D)+1 col grid: input slices, V_gt, V_canon, signed diff (per z, ±0.05).
+- `Train_Visuals_Volume` — 4-row × (max S,D)+1 col grid: input slices, V_gt, V_canon, signed diff (per z, ±0.1).
 - `Train_Visuals_DVF` — 4-row × S+1 col grid: input intensity + per-slot Δx/Δy/Δz (±0.05).
 
 **Per val epoch:**
