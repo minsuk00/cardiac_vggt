@@ -18,12 +18,18 @@ CONFIG="mri_volume"
 NGPU=1
 MASTER_PORT=29521
 
-# --- Resume settings (leave empty for a fresh run) ---
+# --- Resume settings (set ONE of these or leave both empty for a fresh run) ---
 # RESUME_FROM: path to a previous run's experiment directory.
-#   Example: RESUME_FROM="./scratch/logs/22000xxxxx_mri_volume_dynamic_axial_Cine_combined"
-#   Sets exp_name (so save_dir matches), resume_checkpoint_path (last checkpoint),
-#   and auto-extracts the WandB run id from <RESUME_FROM>/wandb/wandb/run-*/.
+#   Continues SAME exp_name → overwrites that run's checkpoints.
+#   Reuses SAME wandb run id → metrics overlay on the old run's wandb dashboard.
+#   Use this when continuing the same experiment (e.g., a crash recovery).
 RESUME_FROM=""
+
+# CKPT_ONLY: load model weights from this checkpoint but start a FRESH exp dir
+# + FRESH wandb run. Use this when pipeline semantics changed (e.g., multi-phase
+# vs ED-only) and you don't want metrics to overlay onto the old dashboard.
+# Ignored if RESUME_FROM is set.
+CKPT_ONLY="/home/minsukc/vggt/scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
@@ -31,6 +37,8 @@ if [ -z "$SLURM_JOB_ID" ]; then
     JOB_NAME="vggt_${CONFIG}"
     if [ ! -z "$RESUME_FROM" ]; then
         JOB_NAME="${JOB_NAME}_resume"
+    elif [ ! -z "$CKPT_ONLY" ]; then
+        JOB_NAME="${JOB_NAME}_ckptonly"
     fi
 
     mkdir -p /home/minsukc/vggt/slurm_logs/
@@ -57,6 +65,7 @@ export WANDB_MODE=online
 # --- Build Hydra overrides ---
 OVERRIDES=""
 if [ ! -z "$RESUME_FROM" ]; then
+    # Mode 1 — continue same experiment dir + same wandb run.
     EXP_NAME=$(basename "$RESUME_FROM")
     CKPT_PATH="${RESUME_FROM}/ckpts/checkpoint_last.pt"
     if [ ! -f "$CKPT_PATH" ]; then
@@ -64,17 +73,25 @@ if [ ! -z "$RESUME_FROM" ]; then
         exit 1
     fi
     OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH}"
-    echo "Resuming from: $CKPT_PATH"
+    echo "Resuming (same exp + wandb) from: $CKPT_PATH"
 
     # Auto-extract WandB run id from <RESUME_FROM>/wandb/wandb/{run|offline-run}-<ts>-<id>/
     WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
     if [ ! -z "$WANDB_DIR" ]; then
         WANDB_RESUME_ID=$(basename "$WANDB_DIR" | sed -E 's|^(offline-)?run-[0-9_]+-||; s|/$||')
-        OVERRIDES="$OVERRIDES logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
+        OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
         echo "Auto-detected WandB resume_id: $WANDB_RESUME_ID"
     else
         echo "Warning: no WandB run dir found under $RESUME_FROM/wandb/wandb/ — a new WandB run will be created."
     fi
+elif [ ! -z "$CKPT_ONLY" ]; then
+    # Mode 2 — load model weights only; fresh exp dir + fresh wandb run.
+    if [ ! -f "$CKPT_ONLY" ]; then
+        echo "ERROR: CKPT_ONLY is set but $CKPT_ONLY does not exist."
+        exit 1
+    fi
+    OVERRIDES="checkpoint.resume_checkpoint_path=${CKPT_ONLY}"
+    echo "Loading weights only from: $CKPT_ONLY (fresh exp_name + fresh wandb run)"
 fi
 
 CMD="PYTHONPATH=training:. torchrun \
