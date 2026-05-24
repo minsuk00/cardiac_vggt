@@ -12,7 +12,7 @@ VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D 
 
 The "**4-day baseline**" referenced below is the prior production run at `./scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/` (199 epochs over ~4 days, ED-only `t_target=0` always, achieved PSNR 31+ dB at ED). All multi-phase fine-tuning currently warm-starts from its `ckpts/checkpoint_last.pt`.
 
-The old supervised-DVF pipeline (`compute_cine_dvf_elastix.py`, cardiac-mask logic) is **deprecated** — kept for reproducibility, don't extend.
+The old supervised-DVF pipeline is **fully removed** from the live data/loss path: `MRIDataset` no longer reads `dvf_elastix/dvf_frame_*.nii.gz` or `mask_frame_00.nii.gz`, and `gt_dvfs` / `scale_factors` are no longer in the batch. The DVF NIfTIs still sit on disk for reproducibility and `compute_cine_dvf_elastix.py` is kept around to regenerate them, but nothing in training consumes them. Legacy configs/sbatch scripts that used them live under `_archive/`.
 
 - MRI data: `/scratch/data/CMRxRecon2024/` (symlinked, GPFS)
 - Env: `micromamba activate svr`

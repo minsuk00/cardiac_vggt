@@ -14,19 +14,17 @@ from scipy.spatial.transform import Rotation
 
 
 class MRIDataset(BaseDataset):
-    def __init__(self, common_conf, data_root, split="train", split_file=None, mode="static", num_slices=5, target_size=518, mri_mode="axial", dvf_dirname="dvf_elastix", gt_grid_shape=(12, 256, 256), t_target_fixed=None):
+    def __init__(self, common_conf, data_root, split="train", split_file=None, mode="static", num_slices=5, target_size=518, mri_mode="axial", gt_grid_shape=(12, 256, 256), t_target_fixed=None):
         """
         MRI Dataset for VGGT — CMRxRecon2024 Cine_combined format.
 
         Data layout:
             data_root/
               {SubjectName}/sax/3d_recon/sax_frame_{t:02d}.nii.gz   (0-indexed)
-              {SubjectName}/sax/{dvf_dirname}/dvf_frame_{t:02d}.nii.gz (t=1..T-1, mm units, T→0 convention)
 
         split_file: path to a .txt file with [train]/[val]/[test] sections listing subject folder names.
         mode: 'static' (all slots at t_target) or 'dynamic' (slot 0 at t_target + other slots at varying t).
         mri_mode: 'axial' only (coronal/sagittal/oblique not used currently).
-        dvf_dirname: directory name for DVFs (e.g., 'dvf_elastix', 'dvf_carmen').
         t_target_fixed: if None (default), sample t_target uniformly per call (train: random; val: rng-seeded).
                         If int, force t_target to that fixed phase every call — use 0 to reproduce the
                         original ED-only pipeline.
@@ -39,7 +37,6 @@ class MRIDataset(BaseDataset):
         self.num_slices = num_slices
         self.target_size = target_size
         self.mri_mode = mri_mode
-        self.dvf_dirname = dvf_dirname
         self.gt_grid_shape = tuple(gt_grid_shape)  # (D, H, W) canonical-grid shape for GT volume
         self.t_target_fixed = None if t_target_fixed is None else int(t_target_fixed)
 
@@ -86,12 +83,6 @@ class MRIDataset(BaseDataset):
         nii_pattern = os.path.join(sub_dir, "3d_recon", "sax_frame_*.nii.gz")
         nii_files = sorted(glob.glob(nii_pattern))
         T_total = len(nii_files)
-
-        # Load cardiac mask (W, H, Z) once per subject call — used to restrict loss to heart region
-        cardiac_mask_path = os.path.join(sub_dir, self.dvf_dirname, "mask_frame_00.nii.gz")
-        cardiac_mask_vol = None
-        if os.path.exists(cardiac_mask_path):
-            cardiac_mask_vol = nib.load(cardiac_mask_path).get_fdata() > 0.5  # (W, H, Z)
 
         # ── Determine S = min(T_total, Z_total, img_per_seq) ─────────────
         # img_per_seq is set by the dataloader from max_img_per_gpu to prevent OOM.
@@ -150,8 +141,6 @@ class MRIDataset(BaseDataset):
                 "frame_ids",
                 "timesteps",
                 "slice_indices",
-                "gt_dvfs",
-                "scale_factors",
                 "z_indices",
                 "t_indices",
                 "rotations",
@@ -241,27 +230,10 @@ class MRIDataset(BaseDataset):
             # isotropic normalization and consistent DVF units across subjects.
             coords = coords_vox * spacing  # (H, W, 3) in mm
 
-            # scanner_coords = physical position of each pixel in frame_t (before DVF)
+            # scanner_coords = physical position of each pixel in frame_t.
+            # world_points is identical (GT DVF supervision was removed; the model's
+            # predicted Δ is added to scanner_coords inside vggt.py, then splatted).
             sc_wp = coords.copy()
-
-            # ── Load DVF (mm, T→0 convention) ─────────────────────────────
-            gt_dvf = np.zeros_like(coords)
-            if self.mode == "dynamic" and t_idx > 0:
-                dvf_path = os.path.join(sub_dir, self.dvf_dirname, f"dvf_frame_{t_idx:02d}.nii.gz")
-                if os.path.exists(dvf_path):
-                    dvf_obj = nib.load(dvf_path)
-                    dvf_vol = dvf_obj.get_fdata()  # (W, H, Z, 1, 3) or (W, H, Z, 3), in mm
-                    if dvf_vol.ndim == 5:
-                        dvf_vol = dvf_vol[..., 0, :]  # squeeze to (W, H, Z, 3)
-
-                    # map_coordinates needs voxel-index positions for indexing into dvf_vol
-                    vox_pts = coords_vox.reshape(-1, 3).T  # use original voxel coords
-                    dx = map_coordinates(dvf_vol[..., 0], vox_pts, order=1).reshape(raw.shape)
-                    dy = map_coordinates(dvf_vol[..., 1], vox_pts, order=1).reshape(raw.shape)
-                    dz = map_coordinates(dvf_vol[..., 2], vox_pts, order=1).reshape(raw.shape)
-
-                    gt_dvf = np.stack([dx, dy, dz], axis=-1)  # mm displacement (T→0)
-                    coords += gt_dvf  # coords now = world position in frame_0 (mm)
 
             # ── Physical (mm) normalization ────────────────────────────────
             # Use physical extent so all axes are treated consistently regardless
@@ -272,11 +244,6 @@ class MRIDataset(BaseDataset):
                 [W * spacing[0] / 2, H * spacing[1] / 2, Z * spacing[2] / 2],
                 dtype=np.float32,
             )
-            # Backward-compat: scale_factor used by viz / loss for un-normalization (mm-space DVF).
-            # Use mean half-extent as a representative scalar; only matters for DVF visualization
-            # in the legacy supervised path (the unsupervised volume loss does not use it).
-            scale_factor = float(half_extent.mean())
-
             center_mm = np.array(
                 [(W - 1) / 2 * spacing[0], (H - 1) / 2 * spacing[1], (Z - 1) / 2 * spacing[2]],
                 dtype=np.float32,
@@ -288,24 +255,14 @@ class MRIDataset(BaseDataset):
                 p_map[..., 1] = (p_map[..., 1] - center_mm[1]) / half_extent[1]
                 p_map[..., 2] = (p_map[..., 2] - center_mm[2]) / half_extent[2]
 
-            # ── Volume mask (use voxel coords for bounds check) ────────────
-            # coords is in mm; convert back to voxels to check if still inside volume
-            coords_vox_post = coords / spacing
-            geom_mask = (
-                (coords_vox_post[..., 0] >= 0)
-                & (coords_vox_post[..., 0] < W)
-                & (coords_vox_post[..., 1] >= 0)
-                & (coords_vox_post[..., 1] < H)
-                & (coords_vox_post[..., 2] >= 0)
-                & (coords_vox_post[..., 2] < Z)
-            )
-
-            # point_masks = cardiac region only (used for loss/MAE)
-            # geom_masks  = full in-bounds region (used for visualization)
+            # ── Volume mask ────────────────────────────────────────────────
+            # coords_vox is constructed entirely inside the native volume
+            # ([0, W-1] × [0, H-1] × {idx}), so the per-pixel bounds check is
+            # trivially True. point_masks/geom_masks are kept in the batch
+            # because downstream code (compute_point_loss, _apply_batch_repetition,
+            # visualizations) still reads them.
+            geom_mask = np.ones(coords_vox.shape[:-1], dtype=bool)
             vol_mask = geom_mask.copy()
-            if cardiac_mask_vol is not None:
-                cardiac_slice = cardiac_mask_vol[:, :, idx]  # (W, H)
-                vol_mask = vol_mask & cardiac_slice
 
             # ── Resize to target_size ──────────────────────────────────────
             h, w = raw.shape
@@ -321,7 +278,6 @@ class MRIDataset(BaseDataset):
             img_r = cv2.resize(img_norm, (nw, nh), interpolation=cv2.INTER_CUBIC)
             wp_r = cv2.resize(wp, (nw, nh), interpolation=cv2.INTER_LINEAR)
             sc_wp_r = cv2.resize(sc_wp, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            gt_dvf_r = cv2.resize(gt_dvf.astype(np.float32), (nw, nh), interpolation=cv2.INTER_LINEAR)
             vol_mask_r = cv2.resize(vol_mask.astype(np.float32), (nw, nh), interpolation=cv2.INTER_NEAREST) > 0.5
             geom_mask_r = cv2.resize(geom_mask.astype(np.float32), (nw, nh), interpolation=cv2.INTER_NEAREST) > 0.5
 
@@ -334,12 +290,15 @@ class MRIDataset(BaseDataset):
             pt, pb = hp // 2, hp - hp // 2
             pl, pr = wp_p // 2, wp_p - wp_p // 2
 
+            # Pad with 0 (interior point). Padded pixels are dropped by the splat's
+            # intensity gate (Mask B) since image padding is also 0, so the position
+            # value at padded pixels has no effect on V_canon. The earlier -2.0
+            # sentinel was vestige from the supervised point-loss pipeline and only
+            # served to inflate the TV penalty at anatomy/padding boundaries.
             res["images"].append(np.clip(np.pad(img_r, ((pt, pb), (pl, pr), (0, 0))), 0, 255))
-            res["world_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=-2.0))
-            res["cam_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=-2.0))
-            res["scanner_coords"].append(np.pad(sc_wp_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=-2.0))
-            res["gt_dvfs"].append(np.pad(gt_dvf_r, ((pt, pb), (pl, pr), (0, 0)), constant_values=0.0))
-            res["scale_factors"].append(np.array([scale_factor], dtype=np.float32))
+            res["world_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0))))
+            res["cam_points"].append(np.pad(wp_r, ((pt, pb), (pl, pr), (0, 0))))
+            res["scanner_coords"].append(np.pad(sc_wp_r, ((pt, pb), (pl, pr), (0, 0))))
 
             m = np.zeros((self.target_size, self.target_size), bool)
             m[pt : pt + nh, pl : pl + nw] = vol_mask_r

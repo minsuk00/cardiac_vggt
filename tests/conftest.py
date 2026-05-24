@@ -15,7 +15,6 @@ def synthetic_root(tmp_path_factory):
     """
     Creates a minimal Cine_combined-like directory:
       Train_P001/sax/3d_recon/sax_frame_{00,01,02}.nii.gz  — shape (32, 30, 4), spacing (1.344, 1.398, 8.0)
-      Train_P001/sax/dvf_elastix/dvf_frame_{01,02}.nii.gz  — constant DVF [2.0, 1.5, 4.0] mm
       Val_P001/sax/...  — same structure
       splits/default.txt  — Train_P001 in [train], Val_P001 in [val]
       splits/overfit_p001.txt  — Train_P001 in both [train] and [val]
@@ -27,19 +26,12 @@ def synthetic_root(tmp_path_factory):
 
     for subj in ["Train_P001", "Val_P001"]:
         recon = root / subj / "sax" / "3d_recon"
-        dvf_d = root / subj / "sax" / "dvf_elastix"
         recon.mkdir(parents=True)
-        dvf_d.mkdir(parents=True)
 
         rng = np.random.RandomState(42)
         for t in range(T):
             vol = (rng.rand(W, H, Z) * 1000).astype(np.float32)
             nib.save(nib.Nifti1Image(vol, affine), str(recon / f"sax_frame_{t:02d}.nii.gz"))
-
-        # Known constant DVF: [2.0, 1.5, 4.0] mm everywhere
-        dvf = np.full((W, H, Z, 1, 3), [2.0, 1.5, 4.0], dtype=np.float32)
-        for t in range(1, T):
-            nib.save(nib.Nifti1Image(dvf, affine), str(dvf_d / f"dvf_frame_{t:02d}.nii.gz"))
 
     # Split files
     splits_dir = root / "splits"
