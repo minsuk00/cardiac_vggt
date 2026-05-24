@@ -34,6 +34,7 @@ import torchvision
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
 from omegaconf import DictConfig, ListConfig, OmegaConf
+from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from train_utils.checkpoint import DDPCheckpointSaver
 from train_utils.distributed import get_machine_local_and_dist_rank
 from train_utils.freeze import freeze_modules
@@ -176,15 +177,30 @@ class Trainer:
         if mri_ds is not None:
             self.t_target_fixed = mri_ds.t_target_fixed
         # Accumulator for per-phase val PSNR, cleared at the start of each val epoch.
-        self._per_phase_val_psnr = defaultdict(list)
+        # Two parallel namespaces: `_full` (whole canonical cube) and `_bbox` (subject's
+        # geometric native-FOV region only).
+        self._per_phase_val_psnr_full = defaultdict(list)
+        self._per_phase_val_psnr_bbox = defaultdict(list)
         # Identity baseline per phase + aggregate mean, populated by _compute_identity_baseline
         # and baked into val_psnr metric names so each panel shows n and baseline in its title.
-        self._identity_baseline_per_phase = None
-        self._identity_baseline_mean = None
+        self._identity_baseline_full_per_phase = None
+        self._identity_baseline_full_mean = None
+        self._identity_baseline_bbox_per_phase = None
+        self._identity_baseline_bbox_mean = None
         # Cumulative count of training batches skipped due to non-finite loss. Without this,
         # NaN/Inf chunks get swallowed by the early-return in _run_steps_on_batch_chunks and
         # loss_meters silently undercount, making the wandb loss curve look healthier than it is.
         self._nan_batch_count = 0
+        # ── GPU augmentation pipeline (off by default) ─────────────────────
+        # Built from `data.augmentation` (see mri_volume.yaml). `None` → identity
+        # passthrough in the trainer hook. Val ALWAYS uses identity — augmentation
+        # only ever applies to train. NOTE: `logging` is shadowed by the `logging`
+        # kwarg in this __init__ scope, so build_gpu_transforms does its own
+        # (module-scope) logging rather than logging here.
+        aug_cfg = self.data_conf.get("augmentation", None) if self.data_conf is not None else None
+        self.gpu_transforms = build_gpu_transforms(aug_cfg)
+        self.val_gpu_transforms = None  # val never augments
+
         # Compute identity-Δ baseline once at startup.
         if self.mode in ["train", "val"] and self.rank == 0:
             self._compute_identity_baseline()
@@ -432,8 +448,10 @@ class Trainer:
             grid_shape = tuple(mri_ds.gt_grid_shape)
             num_slices = mri_ds.num_slices
 
-            # Bucket PSNR by t_target (when multi-phase) or collect a single list otherwise.
-            per_phase = defaultdict(list)
+            # Bucket PSNR by t_target — TWO parallel namespaces (`_full` over the
+            # whole cube, `_bbox` over the subject's geometric content region).
+            per_phase_full = defaultdict(list)
+            per_phase_bbox = defaultdict(list)
 
             for i in range(len(mri_ds.subjects)):
                 data = mri_ds.get_data(seq_index=i, img_per_seq=num_slices)
@@ -450,43 +468,51 @@ class Trainer:
                         data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
                 else:
                     continue  # no GT to compare against; skip
+                if "anatomy_bbox" in data:
+                    batch["anatomy_bbox"] = torch.from_numpy(
+                        np.asarray(data["anatomy_bbox"]).astype(np.int64)).unsqueeze(0).to(self.device)
                 # Identity world_points = scanner_coords (Δ = 0).
                 preds = {"world_points": batch["scanner_coords"]}
                 out = compute_volume_intensity_loss(preds, batch, grid_shape=grid_shape, tv_weight=0.0)
-                V_canon = out["V_canon"][0]
-                V_gt = out["V_gt"][0]
-                mse = (V_canon - V_gt).pow(2).mean().clamp(min=1e-10)
-                psnr = (10.0 * torch.log10(1.0 / mse)).item()
                 t = int(data["t_target"].item() if data["t_target"].ndim == 0 else data["t_target"].flatten()[0].item())
-                per_phase[t].append(psnr)
+                if "metric_psnr_3d_full" in out:
+                    per_phase_full[t].append(out["metric_psnr_3d_full"].item())
+                if "metric_psnr_3d_bbox" in out:
+                    per_phase_bbox[t].append(out["metric_psnr_3d_bbox"].item())
 
             # Aggregate.
-            all_psnrs = [p for ps in per_phase.values() for p in ps]
-            if not all_psnrs:
+            all_full = [p for ps in per_phase_full.values() for p in ps]
+            all_bbox = [p for ps in per_phase_bbox.values() for p in ps]
+            if not all_full:
                 logging.warning("Identity baseline: no subjects yielded a PSNR; skipping.")
                 return
-            mean_psnr = float(sum(all_psnrs) / len(all_psnrs))
-            per_phase_mean = {t: float(sum(ps) / len(ps)) for t, ps in per_phase.items()}
+            mean_full = float(sum(all_full) / len(all_full))
+            mean_bbox = float(sum(all_bbox) / len(all_bbox)) if all_bbox else None
+            per_phase_mean_full = {t: float(sum(ps) / len(ps)) for t, ps in per_phase_full.items()}
+            per_phase_mean_bbox = {t: float(sum(ps) / len(ps)) for t, ps in per_phase_bbox.items()}
 
             # Persist to JSON for offline inspection.
             out_path = os.path.join(self.logging_conf.log_dir, "baseline_identity.json")
             try:
                 with open(out_path, "w") as f:
                     json.dump({
-                        "mean_psnr": mean_psnr,
-                        "per_phase_mean": per_phase_mean,
-                        "per_phase_counts": {t: len(ps) for t, ps in per_phase.items()},
+                        "full": {"mean_psnr": mean_full, "per_phase_mean": per_phase_mean_full},
+                        "bbox": {"mean_psnr": mean_bbox, "per_phase_mean": per_phase_mean_bbox},
+                        "per_phase_counts": {t: len(ps) for t, ps in per_phase_full.items()},
                         "t_target_fixed": self.t_target_fixed,
                     }, f, indent=2)
             except Exception as e:
                 logging.warning(f"baseline JSON write failed: {e}")
 
-            # Cache for val-time metric-name embedding (val_psnr/t{k}_n{n}_base{b:.1f}).
-            self._identity_baseline_per_phase = per_phase_mean
-            self._identity_baseline_mean = mean_psnr
+            # Cache for val-time metric-name embedding.
+            self._identity_baseline_full_per_phase = per_phase_mean_full
+            self._identity_baseline_full_mean = mean_full
+            self._identity_baseline_bbox_per_phase = per_phase_mean_bbox
+            self._identity_baseline_bbox_mean = mean_bbox
+            bbox_str = f"{mean_bbox:.2f}" if mean_bbox is not None else "n/a"
             logging.info(
-                f"Identity-Δ baseline: mean PSNR = {mean_psnr:.2f} dB across "
-                f"{len(all_psnrs)} val sample(s). Persisted to {out_path}."
+                f"Identity-Δ baseline: full PSNR = {mean_full:.2f} dB / bbox PSNR = {bbox_str} dB "
+                f"across {len(all_full)} val sample(s). Persisted to {out_path}."
             )
         except Exception as e:
             logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
@@ -606,13 +632,19 @@ class Trainer:
         except Exception as e:
             logging.warning(f"cardiac cycle gif log failed (ignored): {e}")
 
-    def _save_val_volumes(self, batch: Mapping, loss_dict: Mapping, data_iter: int) -> None:
-        """Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val step.
+    def _save_val_volumes(self, batch: Mapping, loss_dict: Mapping) -> None:
+        """Dump predicted + GT volumes to ${log_dir}/val_volumes/, one pair per val subject.
 
-        Filenames are overwritten every val epoch so disk usage stays bounded
-        (~30 subjects × 2 files × ~6 MB ≈ 360 MB total). Affine is identity —
-        V_canon lives in the dimensionless canonical [-1, 1] grid, not the source
-        NIfTI's physical frame, so a physical affine would be misleading.
+        The val loop revisits each of the N val subjects multiple times (at
+        different t_target phases) over limit_val_batches iterations, so we
+        de-dup by subject and save each one only the FIRST time it is seen this
+        epoch. Because val is deterministic (shuffle=False, t_target = seq_index
+        % T), the first-seen order and phase are identical every epoch, so the
+        same filenames are overwritten in place: exactly N subjects × 2 files
+        (~len(val subjects) × 2 ≈ a couple hundred MB), NOT limit_val_batches × 2.
+        Affine is identity — V_canon lives in the dimensionless canonical [-1, 1]
+        grid, not the source NIfTI's physical frame, so a physical affine would
+        be misleading.
         """
         if not getattr(self.logging_conf, "save_val_volumes", False):
             return
@@ -631,13 +663,17 @@ class Trainer:
             seq_names = batch.get("seq_name", [])
             B = V_canon.shape[0]
             affine = np.eye(4, dtype=np.float32)
+            saved = self._val_volumes_saved  # per-epoch set of subjects already dumped
 
             for b in range(B):
-                t_val = int(t_targets[b].flatten()[0].item()) if t_targets is not None else -1
                 raw_seq = seq_names[b] if b < len(seq_names) else f"unknown{b}"
                 # seq_name is "mri_{mri_mode}_{rel_path}"; strip the first two parts to keep filenames short.
                 subject = raw_seq.split("_", 2)[-1] if raw_seq.startswith("mri_") else raw_seq
-                subj_idx = data_iter * B + b
+                if subject in saved:
+                    continue  # already dumped this subject this epoch
+                t_val = int(t_targets[b].flatten()[0].item()) if t_targets is not None else -1
+                subj_idx = len(saved)  # 0..N-1 in deterministic first-seen order
+                saved.add(subject)
                 stem = f"subj{subj_idx:02d}_t{t_val:02d}_{subject}"
                 nib.save(nib.Nifti1Image(V_canon[b], affine), os.path.join(out_dir, f"{stem}_pred.nii.gz"))
                 nib.save(nib.Nifti1Image(V_gt[b], affine), os.path.join(out_dir, f"{stem}_gt.nii.gz"))
@@ -821,11 +857,15 @@ class Trainer:
         data_times = []
         phase = "val"
 
-        # Fresh per-phase accumulator for this val epoch (diagnostic only; train unaffected).
-        self._per_phase_val_psnr = defaultdict(list)
+        # Fresh per-phase accumulators for this val epoch (diagnostic only; train unaffected).
+        self._per_phase_val_psnr_full = defaultdict(list)
+        self._per_phase_val_psnr_bbox = defaultdict(list)
         # Per-epoch val iter, read by _log_tb_visuals so subject-specific visuals fire every
         # epoch (not just the first one — self.steps["val"] is monotonic and resumes carry it).
         self._val_iter = 0
+        # Per-epoch dedup set so _save_val_volumes writes one pred+gt pair per subject
+        # (not one per val iteration), overwritten in place each epoch.
+        self._val_volumes_saved = set()
 
         loss_names = self._get_scalar_log_keys(phase)
         loss_names_prefixed = [f"Loss/{phase}_{name}" for name in loss_names]
@@ -850,6 +890,22 @@ class Trainer:
         iters_per_epoch = len(val_loader)
         limit_val_batches = iters_per_epoch if self.limit_val_batches is None else self.limit_val_batches
 
+        # Fixed-phase mode: t_target is constant, so the val loop's only source of
+        # variety (cycling t_target = seq_index % T) collapses — iterating past one
+        # pass over the val subjects just re-evaluates byte-identical (subject, phase)
+        # samples (val is deterministic). Cap to one pass = len(val subjects) so we
+        # don't waste ~limit_val_batches/N_subj× redundant compute (e.g. 200→30).
+        if self.t_target_fixed is not None:
+            mri_ds = self._get_mri_dataset()
+            n_val_subj = len(mri_ds.subjects) if mri_ds is not None else 0
+            if 0 < n_val_subj < limit_val_batches:
+                logging.info(
+                    f"Fixed-phase val (t_target_fixed={self.t_target_fixed}): capping "
+                    f"limit_val_batches {limit_val_batches}→{n_val_subj} (one deterministic "
+                    f"pass over val subjects; more is redundant)."
+                )
+                limit_val_batches = n_val_subj
+
         for data_iter, batch in enumerate(val_loader):
             if data_iter >= limit_val_batches:
                 break
@@ -862,6 +918,8 @@ class Trainer:
             with torch.cuda.amp.autocast(enabled=False):
                 batch = self._process_batch(batch)
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
+            # Val never augments (identity passthrough). Kept symmetric with train for clarity.
+            batch = gpu_augment_batch(batch, self.val_gpu_transforms, self.device)
 
             amp_type = self.optim_conf.amp.amp_dtype
             assert amp_type in ["bfloat16", "float16"], f"Invalid Amp type: {amp_type}"
@@ -879,7 +937,7 @@ class Trainer:
                     val_loss_dict = self._step(batch, self.model, phase, loss_meters)
 
             if self.rank == 0:
-                self._save_val_volumes(batch, val_loss_dict, data_iter)
+                self._save_val_volumes(batch, val_loss_dict)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -914,32 +972,41 @@ class Trainer:
             # With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11)
             # so each phase keeps one stable panel. If val ever loses determinism, n drifts
             # and new panels appear — that drift is the smoke alarm.
-            if self.t_target_fixed is None and len(self._per_phase_val_psnr) > 0:
+            # Multi-phase mode logs TWO parallel namespaces:
+            #   val_psnr_full/t{k}_n{n}_base{b:.1f}   averages over the whole cube
+            #   val_psnr_bbox/t{k}_n{n}_base{b:.1f}   averages over the subject's geometric content region only
+            # Both go to wandb so you can sanity-check that they track each other; large divergence
+            # means something's off (e.g., model hallucinating outside the FOV).
+            for namespace, accum, baseline_per_phase, baseline_mean in [
+                ("val_psnr_full", self._per_phase_val_psnr_full,
+                 self._identity_baseline_full_per_phase, self._identity_baseline_full_mean),
+                ("val_psnr_bbox", self._per_phase_val_psnr_bbox,
+                 self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
+            ]:
+                if self.t_target_fixed is not None or len(accum) == 0:
+                    continue
                 try:
                     all_psnrs = []
-                    for t in sorted(self._per_phase_val_psnr.keys()):
-                        psnrs = self._per_phase_val_psnr[t]
+                    for t in sorted(accum.keys()):
+                        psnrs = accum[t]
                         all_psnrs.extend(psnrs)
                         n = len(psnrs)
-                        baseline = (self._identity_baseline_per_phase or {}).get(t)
+                        baseline = (baseline_per_phase or {}).get(t)
                         base_tag = f"_base{baseline:.1f}" if baseline is not None else ""
                         self._log_scalar(
-                            f"val_psnr/t{t}_n{n}{base_tag}",
+                            f"{namespace}/t{t}_n{n}{base_tag}",
                             float(sum(psnrs) / n),
                             current_train_step,
                         )
-                    # Aggregate mean across all val subjects — sits in the same panel group
-                    # so you can compare model mean vs identity baseline at a glance.
                     n_total = len(all_psnrs)
-                    base_mean = self._identity_baseline_mean
-                    base_tag = f"_base{base_mean:.1f}" if base_mean is not None else ""
+                    base_tag = f"_base{baseline_mean:.1f}" if baseline_mean is not None else ""
                     self._log_scalar(
-                        f"val_psnr/mean_n{n_total}{base_tag}",
+                        f"{namespace}/mean_n{n_total}{base_tag}",
                         float(sum(all_psnrs) / n_total),
                         current_train_step,
                     )
                 except Exception as e:
-                    logging.warning(f"per-phase log failed (ignored): {e}")
+                    logging.warning(f"per-phase {namespace} log failed (ignored): {e}")
 
             # ── Cardiac-cycle filmstrip (every N val epochs) ──
             # Useful in BOTH modes: in multi-phase it's the qualitative proof of
@@ -1003,6 +1070,8 @@ class Trainer:
                 batch = self._process_batch(batch)
 
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
+            # GPU augmentation (train only; identity passthrough when self.gpu_transforms is None).
+            batch = gpu_augment_batch(batch, self.gpu_transforms, self.device)
 
             accum_steps = self.accum_steps
 
@@ -1238,13 +1307,26 @@ class Trainer:
                 V_canon = data["V_canon"]
                 V_gt = data["V_gt"]
                 t_targets = data["t_target"]
+                bboxes = data.get("anatomy_bbox", None)   # (B, 6) int64 or None
                 B = V_canon.shape[0]
                 for b in range(B):
-                    mse_b = (V_canon[b].float() - V_gt[b].float()).pow(2).mean()
-                    psnr_b = 10.0 * torch.log10(1.0 / mse_b.clamp(min=1e-10)).item()
+                    Vc = V_canon[b].float()
+                    Vg = V_gt[b].float()
+                    mse_full = (Vc - Vg).pow(2).mean()
+                    psnr_full = 10.0 * torch.log10(1.0 / mse_full.clamp(min=1e-10)).item()
                     tt = t_targets[b]
                     t = int(tt.item() if tt.ndim == 0 else tt.flatten()[0].item())
-                    self._per_phase_val_psnr[t].append(psnr_b)
+                    self._per_phase_val_psnr_full[t].append(psnr_full)
+                    if bboxes is not None:
+                        z0, z1, y0, y1, x0, x1 = [int(v) for v in bboxes[b].tolist()]
+                        if (z1 > z0) and (y1 > y0) and (x1 > x0):
+                            Vc_bb = Vc[z0:z1, y0:y1, x0:x1]
+                            Vg_bb = Vg[z0:z1, y0:y1, x0:x1]
+                        else:
+                            Vc_bb, Vg_bb = Vc, Vg
+                        mse_bbox = (Vc_bb - Vg_bb).pow(2).mean().clamp(min=1e-10)
+                        psnr_bbox = (10.0 * torch.log10(1.0 / mse_bbox)).item()
+                        self._per_phase_val_psnr_bbox[t].append(psnr_bbox)
             except Exception as e:
                 logging.warning(f"per-phase PSNR accumulation failed (ignored): {e}")
 

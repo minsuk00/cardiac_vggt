@@ -1,0 +1,9 @@
+# Single-subject overfit split for sanity checking
+[train]
+Train_P001
+
+[val]
+Train_P001
+
+[test]
+Train_P001

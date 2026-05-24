@@ -161,6 +161,15 @@ class ComposedDataset(Dataset, ABC):
             sample["gt_target_volume"] = torch.from_numpy(batch["gt_target_volume"].astype(np.float32))
         if "t_target" in batch:
             sample["t_target"] = torch.from_numpy(batch["t_target"].astype(np.int64))
+        if "anatomy_bbox" in batch:
+            sample["anatomy_bbox"] = torch.from_numpy(batch["anatomy_bbox"].astype(np.int64))
+        if "content_mask" in batch:
+            sample["content_mask"] = torch.from_numpy(batch["content_mask"].astype(np.uint8))
+        if "phases" in batch:
+            # Full (T, D, H, W) canonical bundle in float16. Used by GPU aug
+            # (Phase 4); inert under aug-off. Kept as float16 to keep batch
+            # transfer cheap (~18 MB per sample at T=12, D=12, H=W=256).
+            sample["phases"] = torch.from_numpy(np.asarray(batch["phases"]))
         # --- Track Processing (if enabled) ---
         if self.load_track:
             if batch["tracks"] is not None:
