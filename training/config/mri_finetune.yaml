@@ -219,21 +219,27 @@ loss:
     tv_weight: 0.1
     train_on_residual_dvf: ${model.train_on_residual_dvf}
 
-# Configure Optim — heavy aggregator blocks frozen; point_head + small (z, t) embedders train.
-# IMPORTANT: aggregator.z_embedder and aggregator.t_embedder MUST NOT be in this list.
-#   They are tiny Linear(13, 1024) projections (~14K params each) that need to LEARN to
-#   encode the per-slot (z, t) into a 1024-d code the aggregator's attention can route.
-#   The previous wildcard `*aggregator*` accidentally swept them up, leaving them at
-#   random init for the entire 4-day training — the point_head then had to memorize
-#   meaningless random codes. Listing aggregator's subparts explicitly fixes this.
+# Configure Optim — entire aggregator frozen (incl. z/t Fourier embedders); only point_head trains.
+#
+# Why z_embedder + t_embedder are ALSO frozen (despite living "in" the aggregator):
+#   In an earlier iteration we enumerated the heavy aggregator subparts so the embedders
+#   stayed trainable. A controlled A/B (see /tmp/ab_single.py history) measured the cost:
+#     OLD wildcard `*aggregator*` (embedders frozen):     1.32 sec/step
+#     NEW enumerated (embedders trainable):               3.25 sec/step  → 2.5× slower
+#   The 28K-param embedders are tiny but trainable, which forces backward to traverse
+#   ALL 48 frozen attention blocks via gradient checkpointing recomputation to reach
+#   them. The compute cost is in the autograd graph traversal, not the params themselves.
+#
+# Since the 4-day baseline (which had embedders frozen at random init by accident) reached
+# 31+ dB PSNR on ED-only, the trainable embedders aren't proven to help quality — but they
+# would halve our usable epochs per 48h SLURM slot. Frozen wins on practical throughput.
+#
+# When to revisit: if you unfreeze the aggregator's attention blocks (e.g., for a
+# fundamental retraining on free-breathing data or Option B continuous-phase support),
+# the backward already traverses those blocks, so making embedders trainable becomes
+# free. In that scenario, enumerate the subparts explicitly and let z/t embedders learn.
 optim:
-  frozen_module_names:
-    - "aggregator.patch_embed*"      # DINOv2 patch embed (~300M, pretrained)
-    - "aggregator.frame_blocks*"     # 24 frame-attention blocks
-    - "aggregator.global_blocks*"    # 24 global-attention blocks
-    - "aggregator.rope*"             # rotary position embedding
-    - "aggregator.camera_token"      # legacy VGGT camera token (unused; we replace it with z+t embeddings)
-    - "aggregator.register_token"    # learned register tokens (slot-0 vs rest)
+  frozen_module_names: ["*patch_embed*", "*camera_token*", "*aggregator*"]
   amp:
     enabled: true
     amp_dtype: bfloat16
