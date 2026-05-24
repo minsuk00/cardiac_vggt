@@ -47,7 +47,10 @@ def _make_stub_trainer(t_target_fixed=None, rank=0):
     from trainer import Trainer
     stub = SimpleNamespace()
     stub.t_target_fixed = t_target_fixed
-    stub._per_phase_val_psnr = defaultdict(list)
+    # Two parallel accumulators after the canonical-grid refactor: `_full` over
+    # the whole cube; `_bbox` over the subject's geometric content region.
+    stub._per_phase_val_psnr_full = defaultdict(list)
+    stub._per_phase_val_psnr_bbox = defaultdict(list)
     stub.rank = rank
     stub.logging_conf = SimpleNamespace(log_freq=1)
     # Mock scalar log to a list we can assert against.
@@ -69,7 +72,7 @@ def test_per_phase_accumulator_buckets_correctly():
         data = _make_data(t_targets)
         stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
     # Expected: bucket 0 has 2 entries; bucket 1 has 1; bucket 3 has 1; bucket 5 has 1; bucket 11 has 1.
-    counts = {t: len(v) for t, v in stub._per_phase_val_psnr.items()}
+    counts = {t: len(v) for t, v in stub._per_phase_val_psnr_full.items()}
     assert counts == {0: 2, 1: 1, 5: 1, 3: 1, 11: 1}, f"unexpected per-phase counts: {counts}"
 
 
@@ -78,8 +81,8 @@ def test_per_phase_accumulator_skipped_for_train_phase():
     stub = _make_stub_trainer(t_target_fixed=None)
     data = _make_data([3, 5])
     stub._update_and_log_scalars(data, phase="train", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr) == 0, \
-        f"train phase incorrectly populated val accumulator: {dict(stub._per_phase_val_psnr)}"
+    assert len(stub._per_phase_val_psnr_full) == 0, \
+        f"train phase incorrectly populated val accumulator: {dict(stub._per_phase_val_psnr_full)}"
 
 
 def test_per_phase_accumulator_skipped_when_t_target_fixed():
@@ -87,8 +90,8 @@ def test_per_phase_accumulator_skipped_when_t_target_fixed():
     stub = _make_stub_trainer(t_target_fixed=0)
     data = _make_data([0, 0, 0])
     stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr) == 0, \
-        f"fixed-target mode populated accumulator: {dict(stub._per_phase_val_psnr)}"
+    assert len(stub._per_phase_val_psnr_full) == 0, \
+        f"fixed-target mode populated accumulator: {dict(stub._per_phase_val_psnr_full)}"
 
 
 def test_per_phase_accumulator_handles_missing_keys():
@@ -97,7 +100,7 @@ def test_per_phase_accumulator_handles_missing_keys():
     stub = _make_stub_trainer(t_target_fixed=None)
     data = {"extrinsics": torch.eye(3, 4).unsqueeze(0)}  # nothing else
     stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr) == 0
+    assert len(stub._per_phase_val_psnr_full) == 0
 
 
 # ── 2. Filmstrip state restoration ────────────────────────────────────────────
