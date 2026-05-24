@@ -1162,10 +1162,14 @@ class Trainer:
         # Visual logging policy:
         #   train: log every `log_visual_frequency.train` steps, one random subject (whatever
         #          the shuffled dataloader pulled — diagnostic sampling).
-        #   val:   log only val_steps 0, 1, 2 → val subjects 0, 1, 2 with distinct wandb keys.
-        #          (Previous behavior logged ~25× per val epoch but all at the same wandb
-        #          step → 24 figures overwritten; we waste no compute now.)
-        VAL_VISUAL_SUBJECT_INDICES = (0, 1, 2)
+        #   val:   log only at the val_steps listed below. With stratified val sampling
+        #          (t_target = seq_index % T_total), val_step k → subject k → t_target = k % T.
+        #          (0, 7) targets ED (t=0) + ES (t=7, empirically measured ES median across
+        #          val subjects via LV-cavity bright-pixel count; histogram of ES across 30
+        #          val subjects peaks at t=7-8). Adjust if the dataset's phase binning
+        #          convention shifts. Filmstrip (every N val epochs) covers the full cycle
+        #          for subject 0 so this snapshot choice isn't load-bearing.
+        VAL_VISUAL_SUBJECT_INDICES = (0, 7)
         if phase == "train":
             should_log = freq > 0 and (step % freq == 0)
         else:

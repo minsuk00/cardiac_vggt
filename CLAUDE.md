@@ -136,7 +136,7 @@ Tools:
 
 **Per val epoch:**
 - `Val_Loss/*` — averaged val metrics (loss_volume, psnr_3d, ssim_3d, mae, …).
-- `Val_Visuals_subj{0,1,2}_Volume` and `_DVF` — three fixed val subjects (subjects 0, 1, 2 deterministically). Distinct wandb keys so they don't overwrite.
+- `Val_Visuals_subj{0,7}_Volume` and `_DVF` — two fixed val subjects at diagnostic phases. With stratified val sampling, val_step k → subject k → t_target = k % T_total, so the subject index doubles as the target phase. Subj0 at t=0 = ED. Subj7 at t=7 ≈ ES (empirically measured: ES across the 30 val subjects via LV-cavity bright-pixel count peaks at t=7-8, median=7). Note ES varies per subject — t=7 is the population median, not exact ES for every subject. The cardiac-cycle filmstrip (every N val epochs) shows all 12 phases for subj0, so you can verify the actual ES frame visually. Change `VAL_VISUAL_SUBJECT_INDICES` in `trainer.py` to log different subjects/phases.
 - `per_phase/PSNR_t{0..11}` and `per_phase/n_t{0..11}` — per-phase val PSNR + sample counts (multi-phase mode only). With stratified sampling, n_t = 3 for t=0..5 and 2 for t=6..11.
 
 **Every N val epochs** (`logging.filmstrip_every_n_val_epochs`, default 5):
