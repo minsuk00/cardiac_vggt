@@ -10,7 +10,9 @@ VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D 
 
 **Active pipeline: unsupervised intensity-based, multi-phase** (`mri_volume*` configs). No GT DVF. Each sample picks a target cardiac phase `t_target ∈ {0..T-1}`; loss compares splatted predicted volume `V_canon` against the on-disk NIfTI at that target phase (`V_gt`). The model can query any of the 12 discrete training phases — discrete-only; continuous-phase query (Option B) is not implemented (see Future enhancements).
 
-The "**4-day baseline**" referenced below is the prior production run at `./scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/` (199 epochs over ~4 days, ED-only `t_target=0` always, achieved PSNR 31+ dB at ED). All multi-phase fine-tuning currently warm-starts from its `ckpts/checkpoint_last.pt`.
+The "**4-day baseline**" referenced below is the prior production run at `./scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/` (199 epochs over ~4 days, ED-only `t_target=0` always, achieved PSNR 31+ dB at ED). **Archive-only after the canonical-grid refactor** — it can't be resumed from because the input normalization (scanner_coords scale) and V_gt frame changed; the point head's memorized codes don't transfer. Treat the canonical-grid pipeline as a fresh-retrain series.
+
+**Canonical-grid refactor (2026-05-24).** Every subject is now resampled to a fixed `(1.4, 1.4, 8.0)` mm spacing and cropped/zero-padded to `(256, 256, 12)` voxels (geometric-center aligned), so the canonical `[-1,+1]³` cube means the *same physical thing* for every subject (358.4 × 358.4 × 96 mm). Preprocessing runs once per subject via a monai `PersistentDataset` cached on `/tmp`; input slices and V_gt both live in this canonical frame. This replaced the old per-subject per-axis normalization (where canonical voxels had different physical sizes per subject). See "CMR data notes".
 
 The old supervised-DVF pipeline is **fully removed** from the live data/loss path: `MRIDataset` no longer reads `dvf_elastix/dvf_frame_*.nii.gz` or `mask_frame_00.nii.gz`, and `gt_dvfs` / `scale_factors` are no longer in the batch. The DVF NIfTIs still sit on disk for reproducibility and `compute_cine_dvf_elastix.py` is kept around to regenerate them, but nothing in training consumes them. Legacy configs/sbatch scripts that used them live under `_archive/`.
 
@@ -23,9 +25,12 @@ The old supervised-DVF pipeline is **fully removed** from the live data/loss pat
 ```bash
 micromamba activate svr
 pip install -e .
-pip install -r requirements.txt
-pip install -r requirements_demo.txt  # demos only
+pip install -r requirements.txt           # includes monai>=1.4,<1.5
+pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/  # GPU aug — see note below
+pip install -r requirements_demo.txt       # demos only
 ```
+
+**monai** is pinned `>=1.4,<1.5` — monai 1.5+ requires torch≥2.4 which would force-upgrade away from torch 2.3.1 (VGGT's frozen build). **batchaug** is not on PyPI; install editable from the MRI2CT clone with `--no-deps` to skip its `triton>=3.0` requirement (our env has triton 2.3.1 bundled with torch 2.3.1; triton 3.x risks breaking torch.compile/inductor paths). At runtime `gpu_aug.py` forces `batchaug.set_backend("pytorch")` so triton is never used. Full rationale is in the comment block at the bottom of `requirements.txt`.
 
 ## Training
 
@@ -66,30 +71,40 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 **Key knobs:**
 - `max_img_per_gpu: 12` → one slice per slot at S=12. Reduce on OOM.
 - `t_target_fixed: null` (default → multi-phase, uniform per train call) | `0` (reproduces ED-only behavior) | any int K (force `t_target=K`).
-- `optim.frozen_module_names: ["*patch_embed*", "*camera_token*", "*aggregator*"]` — wildcard freezes the **entire** aggregator subtree, **including `z_embedder` and `t_embedder`**. Only `point_head` trains (~32.65M / 941M params). The z/t Fourier projections stay at their (random-init or resumed) values; point_head memorizes the codes. **This is intentional** — making the embedders trainable while keeping the rest of the aggregator frozen makes backward 2.5× slower (gradient must traverse all 48 frozen attention blocks via gradient checkpointing recomputation to reach the embedders; A/B-measured 1.32 → 3.25 sec/step). The 4-day baseline ran with frozen-random embedders and reached 31+ dB PSNR — trainable embedders aren't proven to help quality. If you ever unfreeze the aggregator's attention blocks (Option B, free-breathing, etc.), the backward already traverses them, so the embedders become free to unfreeze too — at that point, enumerate the subparts explicitly and let them learn. `tests/test_freeze_pattern.py` guards the current contract.
+- `optim.frozen_module_names: ["*patch_embed*", "*camera_token*", "*aggregator*"]` — wildcard freezes the **entire** aggregator subtree, **including `z_embedder` and `t_embedder`**. Only `point_head` trains (~32.65M / 941M params). The z/t Fourier projections stay at their (random-init or resumed) values; point_head memorizes the codes. **This is intentional** — making the embedders trainable while keeping the rest of the aggregator frozen makes backward 2.5× slower (gradient must traverse all 48 frozen attention blocks via gradient checkpointing recomputation to reach the embedders; A/B-measured 1.32 → 3.25 sec/step). The 4-day baseline ran with frozen-random embedders and reached 31+ dB PSNR — trainable embedders aren't proven to help quality. If you ever unfreeze the aggregator's attention blocks (Option B, free-breathing, etc.), the backward already traverses them, so the embedders become free to unfreeze too — at that point, enumerate the subparts explicitly and let them learn. `tests/test_freeze_pattern.py` guards the current contract. **Gotcha if you unfreeze:** an aggregator-finetune (e.g. `optim.frozen_module_names='[*patch_embed*]'`) **crashes under DDP** with `Expected to have finished reduction in the prior iteration…` because unfreezing exposes params that get no gradient in the point-only forward (camera_token, register_token, disabled depth/track heads). Set **`distributed.find_unused_parameters=true`** to fix it. This is required even on a **single GPU** — the trainer always wraps the model in DDP, so the unused-param check fires regardless of world size. Verified: with the flag, 637.4M params train (Grad/aggregator nonzero), ~27 GB on an A40, ~2.8× slower than head-only (~4.4 vs ~1.6 sec/step).
 - `model.train_on_residual_dvf: true` → point head outputs Δ; `world_points = scanner_coords + Δ`.
 - `logging.filmstrip_every_n_val_epochs: 5` → cadence for the multi-phase cardiac-cycle visualization.
+- `data.augmentation.enable: false` (default) | `true` → opt into GPU augmentation. `data.augmentation.tier: "conservative"` (only tier implemented). See "Augmentation" below.
 
 ## Volume pipeline (one forward pass)
 
-1. **Sample.** S ≤ 12 slices.
-   - **Train:** slot 0 = `(t_target, random z)` where `t_target = random.randrange(T)`; slots 1..S-1 = `(random t ≠ t_target, distinct random z)`.
-   - **Val:** `t_target = seq_index % T_total` (stratified — ~2–3 val subjects per phase across 30 subjects). Slots use **diagonal** acquisition: slot i = `((t_target + i) mod T, z=i)` — mimics real-life sequential slice acquisition. Deterministic across runs (crc32-seeded; no `PYTHONHASHSEED` dependency).
-   - **Fixed-phase fallback:** `t_target_fixed=K` overrides both → every sample at phase K.
-2. **Aggregator (frozen).** DINOv2 patch_embed + 24× alternating frame/global attention. Replaces the camera token with `z_embedder(z_norm) + t_embedder(t_norm)` — sinusoidal Fourier on per-axis normalized indices. `t_embedder` is **cyclic** (`t_norm = t/T * 2 - 1` — divides by T, not T-1, so wrap point sits at +1 outside the data); `z_embedder` is linear. **Everything in the aggregator (incl. z/t Fourier projections) is frozen** — see freeze-pattern note in Key knobs for why.
+0. **Preprocess (cached, one-time per subject).** monai `PersistentDataset` resamples all 12 phase NIfTIs to `(1.4, 1.4, 8.0)` mm, crop/zero-pads to `(256, 256, 12)` (geometric center), normalizes intensity against phase_00's 1/99.5 percentiles, and stacks into one `(T=12, 256, 256, 12)` float16 tensor + a `(256,256,12)` content mask (1=native FOV, 0=zero-pad). Cached on `/tmp/vggt-mri_${USER}_monai_cache/`. Pipeline + custom transforms live in `training/data/preprocess.py`.
+1. **Sample.** S ≤ 12 slices. **z is sampled only from within the geometric anatomy bbox** (in-FOV canonical planes) so small-Z subjects don't waste slots on zero-padded planes.
+   - **Train:** slot 0 = `(t_target, random in-bbox z)` where `t_target = random.randrange(T)`; slots 1..S-1 = `(random t ≠ t_target, random in-bbox z)`. If `bbox_z_size < S`, z is sampled with replacement.
+   - **Val:** `t_target = seq_index % T_total` (stratified). Slots use cyclic-within-bbox diagonal: slot i = `((t_target + i) mod T, bbox_z0 + (i mod bbox_z_size))`. Deterministic across runs (crc32-seeded).
+   - **Fixed-phase fallback:** `t_target_fixed=K` overrides → every sample at phase K.
+2. **Aggregator (frozen).** DINOv2 patch_embed + 24× alternating frame/global attention. Replaces the camera token with `z_embedder(z_norm) + t_embedder(t_norm)` — sinusoidal Fourier. `t_embedder` is **cyclic** (`t_norm = t/T * 2 - 1`); `z_embedder` is linear (`z_norm = z/(D-1) * 2 - 1`, D=12 canonical). **Everything in the aggregator is frozen** — see freeze-pattern note in Key knobs.
 3. **Point head (trainable, DPT).** Outputs per-pixel residual Δ (3 channels) + confidence (1, unused). `world_points = scanner_coords + Δ`, all in normalized [-1, 1].
-4. **Splat.** `splat_to_volume(world_points, intensity, (12,256,256))` → `V_canon`. Differentiable trilinear scatter; divides by accumulated coverage (`vggt/utils/splat.py`). Mask B: zero-intensity (padding) pixels get `splat_weight=0` so they don't dilute V_canon.
-5. **Loss.** `loss_volume = (V_canon - V_gt).abs().mean()` + `0.1 * TV(pos_pred)` — **full-volume L1**, no anatomy mask. Anatomy-masked variant is commented in `loss.py` (kept giving free-pass over-prediction outside the heart; switched on user request).
+4. **Splat.** `splat_to_volume(world_points, intensity, (12,256,256))` → `V_canon`. Differentiable trilinear scatter; divides by accumulated coverage (`vggt/utils/splat.py`). **`splat_weight = intensity > 1e-3` is kept** — padded-Z slots are all-zero, and the gate prevents their zero-intensity pixels from diluting V_canon if the model's Δ ever moves them into content planes.
+5. **Loss.** `loss_volume = (V_canon - V_gt).abs().mean()` + `0.1 * TV(pos_pred)` — **full-volume L1**, no anatomy mask.
 
-`V_gt` is the on-disk NIfTI at `t_target` resampled to (12, 256, 256) once per sample via `scipy.ndimage.map_coordinates(order=1, mode="nearest")` in the same per-axis normalized frame as `V_canon`. Batch key: `gt_target_volume` (was `gt_phase0_volume` in the ED-only pipeline; renamed).
+**Input slices:** each canonical `(256, 256)` slice is bilinear-resized to `518×518` for DINOv2 — **no letterbox, no padding** (the canonical slice is already square). `scanner_coords[py, px] = (px/517·2−1, py/517·2−1, z_i/11·2−1)` — a pure geometric mapping, identical for every subject. There is no `-2.0` invalid sentinel anymore; every pixel has a valid canonical coord.
+
+**`V_gt`** = `phases[t_target]` from the cache (canonical frame, batch key `gt_target_volume`). **`anatomy_bbox`** = `(z0,z1,y0,y1,x0,x1)` geometric bbox of the content mask (used to restrict z sampling AND for the bbox metric). Both produced by `MRIDataset.get_data`.
 
 ## CMR data notes
 
-Native cine shapes vary: W=256 fixed, H∈{162,204,246}, Z∈{8..12}, T=12, spacing ≈ (1.34, 1.34, 8.0) mm.
+Native cine shapes vary: W=256 fixed, H∈{162,204,246}, Z∈{6..14}, T=12. Spacing is **not** uniform: X median 1.3438 (range 1.3438–1.5781), Y median 1.3984 (range 1.3174–1.6423), Z always 8.0 (28 unique spacing tuples across 301 subjects). Native FOV spans X 344–404, Y 215–404, Z 48–112 mm.
 
-`MRIDataset.get_data` (in `training/data/datasets/mri_dataset.py`) does **per-axis normalization** — each subject's physical FOV maps independently onto its own `[-1,1]³` cube. The canonical 12×256×256 grid has the same shape for every subject but different physical voxel sizes. The model only ever sees normalized coordinates.
+`MRIDataset` (`training/data/datasets/mri_dataset.py`) maps every subject onto **one fixed canonical cube**: `(1.4, 1.4, 8.0)` mm spacing, `(256, 256, 12)` voxels, 358.4 × 358.4 × 96 mm extent, `half_extent = (179.2, 179.2, 48.0)` mm. So canonical voxels have the **same physical size for every subject** (was per-subject before the refactor). Subjects with FOV < cube get zero-padded; subjects with FOV > cube get center-cropped (the heart is always near the acquisition center, so cropping loses only periphery). The model only ever sees normalized `[-1,+1]` coordinates.
 
-`mri_mode: "axial"` means **native SAX z-slicing** (`vol[:, :, idx]`) — not anatomical axial. The slices are short-axis views.
+**Axis-order gotcha:** monai/nibabel store volumes `(X, Y, Z)`; the splat consumes `(D, H, W) = (Z, Y, X)`. The single conversion site is the `permute(0, 3, 2, 1)` in `MRIDataset.get_data` right after the cache lookup — everything downstream is splat-order. Easy to break silently; tests in `test_canonical_invariants.py` guard it.
+
+`mri_mode: "axial"` means **native SAX z-slicing** — not anatomical axial. The slices are short-axis views.
+
+## Augmentation
+
+GPU augmentation via `batchaug` (`training/data/gpu_aug.py`), **off by default** (`data.augmentation.enable: false`). When enabled, applied in the trainer between `copy_data_to_device` and the model forward, train-only (val never augments). One affine is sampled per subject and applied across all 12 T-phases (T as channel) AND the content mask, so cardiac motion stays consistent across phases. After aug the trainer re-derives `gt_target_volume = phases_aug[t_target]`, re-extracts input slices at the original (t,z) pairs, and recomputes `anatomy_bbox` from the augmented mask. `scanner_coords` need no update (pure geometry). Conservative tier: in-plane H-flip, ±5° in-plane rotate, small translate/scale, gaussian noise, gamma, mild bias field — no through-plane rotation, no elastic. Visual proof: `tools/render_augmentation_examples.py` → `result/augmentation_examples/` (per-op PNGs + a cardiac-cycle GIF confirming cross-phase consistency).
 
 ## Architecture
 
@@ -118,23 +133,26 @@ preds = model(images, batch=batch)  # batch needs: z_indices, t_indices, scanner
 ```
 
 Tools:
+- `tools/preview_canonical_preprocess.py` — sanity-check the canonical resample on shape-extreme subjects (min/max Z, min/max H, typical); native vs canonical mid-z slice + content-mask + bbox overlay → `result/canonical_preview/`.
+- `tools/render_augmentation_examples.py` — per-op + combined aug variant PNGs and a cardiac-cycle GIF → `result/augmentation_examples/`.
 - `tools/render_volume_example.py` — random val sample, per-z V_gt/V_canon/diff panel.
 - `tools/test_sequential_sampling.py` — diagonal `(t=k+offset, z=k)` for one subject; PNGs to `result/`.
 - `baselines/eval_*.py` — identity-Δ / elastix-Δ / carmen-Δ PSNR sweeps over the val set.
 
 ## Logging (wandb, project `vggt-mri`)
 
-**At trainer startup:** identity-Δ baseline (splat `scanner_coords` directly with Δ=0 across the val set) is computed and persisted to `${log_dir}/baseline_identity.json`. The per-phase value is **not** logged as its own wandb scalar — it's baked into the `val_psnr/` metric name (see below).
+**At trainer startup:** identity-Δ baseline (splat `scanner_coords` directly with Δ=0 across the val set) is computed for BOTH the full-volume and bbox PSNR and persisted to `${log_dir}/baseline_identity.json` (`{full: {...}, bbox: {...}}`). The per-phase values are baked into the `val_psnr_full/` and `val_psnr_bbox/` metric names (see below).
 
 **Every train visual step (`log_visual_frequency.train = 100`):**
 - `Train_Visuals_Volume` — 4-row × (max S,D)+1 col grid: input slices, V_gt, V_canon, signed diff (per z, ±0.05).
 - `Train_Visuals_DVF` — 4-row × S+1 col grid: input intensity + per-slot Δx/Δy/Δz (±0.05).
 
 **Per val epoch:**
-- `Val_Loss/*` — averaged val metrics (loss_volume, psnr_3d, ssim_3d, mae, …).
-- `Val_Visuals_subj{0,7}_Volume` and `_DVF` — two fixed val subjects at diagnostic phases. With stratified val sampling, val_step k → subject k → t_target = k % T_total, so the subject index doubles as the target phase. Subj0 at t=0 = ED. Subj7 at t=7 ≈ ES (empirically measured: ES across the 30 val subjects via LV-cavity bright-pixel count peaks at t=7-8, median=7). Note ES varies per subject — t=7 is the population median, not exact ES for every subject. The cardiac-cycle filmstrip (every N val epochs) shows all 12 phases for subj0, so you can verify the actual ES frame visually. Change `VAL_VISUAL_SUBJECT_INDICES` in `trainer.py` to log different subjects/phases.
-- `val_psnr/t{k}_n{n}_base{b:.1f}` — per-phase val PSNR (multi-phase mode only). `n` is the sample count for phase k, `b` is the identity-Δ baseline PSNR for that phase. With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11) and the baseline is computed once at startup, so each phase produces exactly one panel for the lifetime of the run. If val ever loses determinism (e.g. someone re-enables `inside_random` on val), n drifts epoch-to-epoch and new panels appear under different names — that drift is the smoke alarm.
-- `val_psnr/mean_n{n_total}_base{b:.1f}` — aggregate val PSNR across all val subjects (multi-phase mode only). Same panel group as the per-phase ones so you can compare model mean vs identity baseline at a glance. `n_total = 30` for the full val set.
+- `Val_Loss/*` — averaged val metrics. Metric names are now `_full` / `_bbox` suffixed: `metric_psnr_3d_full` (whole cube), `metric_psnr_3d_bbox` (subject's geometric content region only), likewise `mae`/`mse`. `metric_ssim_3d_full` only (bbox SSIM deferred — variable per-sample shape). The full and bbox metrics are **equal for full-FOV subjects** (bbox = cube) and **diverge for small-FOV subjects** (bbox excludes the padded zeros that inflate full PSNR). Both logged so they cross-check.
+- `Val_Visuals_subj{0,7}_Volume` and `_DVF` — two fixed val subjects at diagnostic phases (subj0 t=0 = ED, subj7 t=7 ≈ ES population median). The cardiac-cycle filmstrip shows all 12 phases for subj0.
+- `val_psnr_full/t{k}_n{n}_base{b:.1f}` and `val_psnr_bbox/t{k}_n{n}_base{b:.1f}` — **two parallel namespaces**, per-phase val PSNR (multi-phase mode only). `n` = sample count for phase k, `b` = identity-Δ baseline for that phase/metric. Deterministic stratified val → n constant per phase across runs.
+- `val_psnr_full/mean_n{n_total}_base{b:.1f}` and `val_psnr_bbox/mean_n{n_total}_base{b:.1f}` — aggregate across the val loop. **`n_total = limit_val_batches`** (200 by default), NOT 30: `MRIDataset.__len__` returns 1000 for val too, so the loop runs `limit_val_batches` iterations with `subj_idx = seq_index % 30` and `t_target = seq_index % 12` — each of the 30 subjects is revisited ~6–7× but at *different* target phases each time (lcm(12,30)=60 period). So per-phase `n ≈ limit_val_batches/12 ≈ 16–17`. The identity baseline, by contrast, iterates each subject once (`len(subjects)=30`).
+- **Migration note:** the old un-suffixed `val_psnr/*` and `metric_psnr_3d` keyspaces are gone — wandb dashboards built on them break across the canonical-grid refactor.
 
 **Every N val epochs** (`logging.filmstrip_every_n_val_epochs`, default 5):
 - `Val_Visuals_cardiac_cycle` — 2×12 grid: V_gt (top) and V_canon (bot) reconstructed at all 12 cardiac phases for val subject 0, mid-z slice. The qualitative proof of multi-phase reconstruction.
@@ -145,14 +163,17 @@ Tools:
 
 **Wandb tags.** Two tags applied per run via `logging.wandb_writer.tags`: the active config name (`mri_volume`) and the phase mode (`multiphase` when `t_target_fixed` is null, else `t{K}` for fixed phase K). The `phase_mode` resolver is registered in `training/launch.py`.
 
-**Gating.** In `t_target_fixed=K` mode (single-phase), `val_psnr/*` panels are skipped (meaningless when all samples share one phase). The cardiac-cycle filmstrip + GIF run in both modes — in fixed-K mode they show what the model does at phases it wasn't trained on (useful diagnostic). All diagnostic logging is wrapped in `try/except` — a failure logs a warning but never raises into training.
+**Gating.** In `t_target_fixed=K` mode (single-phase), `val_psnr_full/*` and `val_psnr_bbox/*` panels are skipped (meaningless when all samples share one phase). The cardiac-cycle filmstrip + GIF run in both modes. All diagnostic logging is wrapped in `try/except` — a failure logs a warning but never raises into training.
 
-**PSNR caveat.** Pre-loss-switch logs reported anatomy-masked PSNR (over `V_gt > 1e-3`); current `compute_volume_intensity_loss` returns full-volume PSNR. Same model, ~7–9 dB lower number — don't compare across the switchover. Likewise, multi-phase val PSNR averages across all 12 phases and will be ~1–3 dB lower than the old ED-only val PSNR.
+**Fixed-phase val auto-caps `limit_val_batches`.** In `t_target_fixed=K` mode, `val_epoch` caps `limit_val_batches` to the number of val subjects (one deterministic pass over the set). Beyond one pass the val loop only re-evaluates byte-identical `(subject, phase)` samples (val is deterministic), so iterating to the default 200 would be pure redundant compute. No need to pass `limit_val_batches` for fixed-phase runs — it self-sizes. **Multi-phase runs are unaffected** (there, each iter hits a different target phase, so more iters = genuine per-phase coverage, not redundancy — CKPT_ONLY in `sbatch/train_mri_volume.sh` uses the config default `limit_val_batches=200` → ~16-17 val samples per phase). Val sampling (subject, `t_target=seq%T`, z/t slot diagonals) is deterministic across epochs **and** runs (`shuffle=False` + zero random calls in the val path); empirically verified identical across separate processes.
+
+**PSNR caveat.** Don't compare across the canonical-grid refactor: the V_gt frame, normalization, and metric definitions all changed. Treat it as a fresh series. Within the new series, prefer `metric_psnr_3d_bbox` as the honest number (full-volume PSNR is inflated by padded zeros for small-FOV subjects).
 
 ## SLURM
 
 - Stagger mamba activations in array jobs: `sleep $((SLURM_ARRAY_TASK_ID * 15))`.
 - Logs: `/home/minsukc/vggt/slurm_logs/`.
+- **Monai cache is node-local `/tmp` and rebuilt per job.** The canonical preprocessing cache (step 0; ~55 MB/subject) lives on `/tmp/vggt-mri_${USER}_monai_cache/`, which is wiped per node. The dataloader rebuilds it lazily on the first epoch — a one-time cost of ~3–10 min for the run's ~270 subjects (4 workers; longer under GPFS contention), which overlaps GPU compute. This is intentionally not persisted to GPFS: cached reads off GPFS are ~18–20× slower than /tmp, so a persistent cache would slow every epoch to save a one-time few-minute rebuild — not worth it.
 
 ## Local gotchas
 
@@ -166,7 +187,7 @@ Tools:
 ```bash
 micromamba run -n svr python -m pytest tests/
 ```
-Synthetic in-memory CMR dataset (`tests/conftest.py`, W=32, H=30, Z=4) — no real data needed.
+Synthetic in-memory CMR dataset (`tests/conftest.py`, native W=64, H=60, Z=8, **T=12**) — no real data needed. T=12 matches the canonical pipeline's phase count; each test session gets an isolated monai cache dir (`monai_cache_dir` fixture) so the shared `/tmp` cache isn't polluted. Test files: `test_mri_dataset.py` (dataset contract), `test_preprocess.py` (canonical transforms + geometric bbox), `test_canonical_invariants.py` (cross-subject coord consistency, V_gt zero outside bbox, axis-order), `test_gpu_aug.py` (aug identity passthrough + shape preservation), `test_loss_bbox.py` (bbox vs full metrics), `test_splat.py`, `test_freeze_pattern.py`, `test_trainer_diagnostics.py`.
 
 ## Future enhancements (not implemented)
 
