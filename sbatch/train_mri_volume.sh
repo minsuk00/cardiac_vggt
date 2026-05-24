@@ -85,13 +85,24 @@ if [ ! -z "$RESUME_FROM" ]; then
         echo "Warning: no WandB run dir found under $RESUME_FROM/wandb/wandb/ — a new WandB run will be created."
     fi
 elif [ ! -z "$CKPT_ONLY" ]; then
-    # Mode 2 — load model weights only; fresh exp dir + fresh wandb run.
+    # Mode 2 — load model weights from ckpt; fresh exp dir + fresh wandb run.
+    # The checkpoint's epoch + step counters ARE inherited (so wandb x-axis starts at
+    # the resumed step, e.g. 200K — makes it visible that the model came from a ckpt
+    # and isn't from-scratch). The fresh exp_name + wandb run_id provide separation
+    # from the source experiment's dashboard.
+    # Bump max_epochs so the inherited epoch counter (e.g. 200 from the 4-day ckpt)
+    # leaves headroom for further training — otherwise `while epoch < max_epochs`
+    # exits immediately and the job does zero train steps.
     if [ ! -f "$CKPT_ONLY" ]; then
         echo "ERROR: CKPT_ONLY is set but $CKPT_ONLY does not exist."
         exit 1
     fi
-    OVERRIDES="checkpoint.resume_checkpoint_path=${CKPT_ONLY}"
-    echo "Loading weights only from: $CKPT_ONLY (fresh exp_name + fresh wandb run)"
+    # limit_val_batches=30: with 30 deterministic val subjects (stratified t_target +
+    # diagonal slot sampling), one pass through subjects = 30 batches. Default would
+    # iterate ~200 batches per val epoch, processing each subject ~7× redundantly with
+    # identical inputs — waste of ~3 min per val epoch and inflates per_phase/n_t counts.
+    OVERRIDES="checkpoint.resume_checkpoint_path=${CKPT_ONLY} max_epochs=500 limit_val_batches=30"
+    echo "Loading weights only from: $CKPT_ONLY (fresh exp_name + fresh wandb run, max_epochs=500, limit_val_batches=30)"
 fi
 
 CMD="PYTHONPATH=training:. torchrun \
