@@ -18,6 +18,13 @@ def splat_to_volume(pos, intensity, grid_shape, weight=None):
         volume: (B, D, H, W) accumulated intensity divided by accumulated weight.
         coverage: (B, D, H, W) accumulated trilinear weight per voxel.
     """
+    # Force fp32 regardless of outer autocast — bf16 (7-bit mantissa) loses precision
+    # after thousands of scatter_add contributions per voxel, capping achievable PSNR.
+    pos = pos.float()
+    intensity = intensity.float()
+    if weight is not None:
+        weight = weight.float()
+
     B, N, _ = pos.shape
     D, H, W = grid_shape
     device = pos.device

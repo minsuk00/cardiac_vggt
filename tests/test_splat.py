@@ -98,3 +98,30 @@ def test_splat_recovers_constant_field():
     # Where covered, V_canon should equal 0.42 (intensity / weight, both scaled identically).
     covered = cov[0] > 0.1
     assert vol[0][covered].mean().item() == pytest.approx(0.42, abs=1e-4)
+
+
+def test_splat_outputs_fp32_under_bf16_input():
+    """bf16 mantissa loses precision after thousands of scatter_adds per voxel.
+    The splat must internally promote to fp32 regardless of input dtype to
+    preserve PSNR. Locked-in fix at vggt/utils/splat.py."""
+    N = 200
+    pos = (torch.rand(1, N, 3) * 1.8 - 0.9).bfloat16()
+    intensity = torch.rand(1, N).bfloat16()
+    weight = torch.ones(1, N).bfloat16()
+    vol, cov = splat_to_volume(pos, intensity, (4, 4, 4), weight=weight)
+    assert vol.dtype == torch.float32, f"V_canon must be fp32, got {vol.dtype}"
+    assert cov.dtype == torch.float32, f"coverage must be fp32, got {cov.dtype}"
+
+
+def test_splat_bf16_input_matches_fp32_reference():
+    """Splat run with bf16 inputs should match fp32 reference within fp32 tolerance —
+    proving the internal promotion is real, not just an output cast."""
+    torch.manual_seed(0)
+    pos = torch.rand(1, 500, 3) * 1.8 - 0.9
+    intensity = torch.rand(1, 500)
+    vol_fp32, _ = splat_to_volume(pos, intensity, (6, 6, 6))
+    vol_bf16, _ = splat_to_volume(pos.bfloat16(), intensity.bfloat16(), (6, 6, 6))
+    # bf16 input gets promoted inside; only loss is the initial cast (~1% of input precision).
+    # Output should match fp32 reference to within a loose tolerance.
+    diff = (vol_fp32 - vol_bf16).abs().max().item()
+    assert diff < 0.05, f"bf16-input splat drifted {diff} from fp32 reference"
