@@ -23,6 +23,7 @@ import json
 import logging
 import math
 import time
+from collections import defaultdict
 from datetime import timedelta
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -165,6 +166,33 @@ class Trainer:
 
         # Barrier to ensure all processes are synchronized before starting
         dist.barrier()
+
+        # ── Diagnostics state (val-only; never touches training) ──────────
+        # Cache the dataset's `t_target_fixed` setting so val-only diagnostics can gate on it.
+        # When None → multi-phase val sampling: log per-phase PSNR + cardiac-cycle filmstrip.
+        # When int → single-phase mode: those diagnostics are skipped (meaningless).
+        self.t_target_fixed = None
+        mri_ds = self._get_mri_dataset()
+        if mri_ds is not None:
+            self.t_target_fixed = mri_ds.t_target_fixed
+        # Accumulator for per-phase val PSNR, cleared at the start of each val epoch.
+        self._per_phase_val_psnr = defaultdict(list)
+        # Compute identity-Δ baseline once at startup (logged as constants in wandb).
+        if self.mode in ["train", "val"] and self.rank == 0:
+            self._compute_identity_baseline()
+
+    def _get_mri_dataset(self):
+        """Walk the wrapper chain (DynamicTorchDataset → ComposedDataset → TupleConcatDataset)
+        to retrieve the underlying MRIDataset instance. Returns None if val_dataset is unset
+        or the chain doesn't match (e.g., non-MRI datasets)."""
+        try:
+            ds = self.val_dataset
+            if ds is None:
+                return None
+            inner = ds.dataset.base_dataset.datasets[0]
+            return inner
+        except (AttributeError, IndexError, TypeError):
+            return None
 
     def _setup_timers(self):
         """Initializes timers for tracking total elapsed time."""
@@ -368,6 +396,301 @@ class Trainer:
         if self.wandb_writer:
             self.wandb_writer.log_visuals(name, data, step, fps, caption=caption)
 
+    def _compute_identity_baseline(self):
+        """Run identity-Δ (no motion correction) on the val set and log PSNR as constants.
+        Called ONCE at trainer setup. Read-only over the val dataset; never touches the
+        training path. Failures are caught and logged — training proceeds either way.
+        """
+        try:
+            from loss import compute_volume_intensity_loss
+            from data.composed_dataset import _data_to_batch_tensors as _maybe_to_batch  # type: ignore
+        except Exception:
+            _maybe_to_batch = None  # we'll do the conversion inline
+
+        mri_ds = self._get_mri_dataset()
+        if mri_ds is None:
+            logging.warning("Identity baseline: no MRIDataset found, skipping.")
+            return
+
+        try:
+            import numpy as np
+            from loss import compute_volume_intensity_loss
+
+            grid_shape = tuple(mri_ds.gt_grid_shape)
+            num_slices = mri_ds.num_slices
+
+            # Bucket PSNR by t_target (when multi-phase) or collect a single list otherwise.
+            per_phase = defaultdict(list)
+
+            for i in range(len(mri_ds.subjects)):
+                data = mri_ds.get_data(seq_index=i, img_per_seq=num_slices)
+                # Build a minimal batch dict on device (no model forward; identity Δ).
+                def st(k, dt=np.float32):
+                    return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
+                imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
+                batch = {
+                    "images": imgs,
+                    "scanner_coords": st("scanner_coords"),
+                }
+                if "gt_target_volume" in data:
+                    batch["gt_target_volume"] = torch.from_numpy(
+                        data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
+                else:
+                    continue  # no GT to compare against; skip
+                # Identity world_points = scanner_coords (Δ = 0).
+                preds = {"world_points": batch["scanner_coords"]}
+                out = compute_volume_intensity_loss(preds, batch, grid_shape=grid_shape, tv_weight=0.0)
+                V_canon = out["V_canon"][0]
+                V_gt = out["V_gt"][0]
+                mse = (V_canon - V_gt).pow(2).mean().clamp(min=1e-10)
+                psnr = (10.0 * torch.log10(1.0 / mse)).item()
+                t = int(data["t_target"].item() if data["t_target"].ndim == 0 else data["t_target"].flatten()[0].item())
+                per_phase[t].append(psnr)
+
+            # Aggregate.
+            all_psnrs = [p for ps in per_phase.values() for p in ps]
+            if not all_psnrs:
+                logging.warning("Identity baseline: no subjects yielded a PSNR; skipping.")
+                return
+            mean_psnr = float(sum(all_psnrs) / len(all_psnrs))
+            per_phase_mean = {t: float(sum(ps) / len(ps)) for t, ps in per_phase.items()}
+
+            # Persist to JSON for offline inspection.
+            out_path = os.path.join(self.logging_conf.log_dir, "baseline_identity.json")
+            try:
+                with open(out_path, "w") as f:
+                    json.dump({
+                        "mean_psnr": mean_psnr,
+                        "per_phase_mean": per_phase_mean,
+                        "per_phase_counts": {t: len(ps) for t, ps in per_phase.items()},
+                        "t_target_fixed": self.t_target_fixed,
+                    }, f, indent=2)
+            except Exception as e:
+                logging.warning(f"baseline JSON write failed: {e}")
+
+            # Log to wandb (and TB) as constants at step 0.
+            self._log_scalar("baseline/identity_PSNR_mean", mean_psnr, 0)
+            if self.t_target_fixed is None:
+                for t, m in per_phase_mean.items():
+                    self._log_scalar(f"baseline/identity_PSNR_t{t}", m, 0)
+            logging.info(
+                f"Identity-Δ baseline: mean PSNR = {mean_psnr:.2f} dB across "
+                f"{len(all_psnrs)} val sample(s). Logged to wandb under 'baseline/'."
+            )
+        except Exception as e:
+            logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
+
+    def _log_cardiac_cycle_filmstrip(self, log_step: int):
+        """Reconstruct one fixed val subject (idx 0) at all 12 phases and log a 2×12 strip
+        (V_gt top / V_canon bot, mid-z slice). Read-only over model + dataset state. Wrapped
+        in try/finally so the dataset's `t_target_fixed` is always restored.
+        """
+        if not self.wandb_writer:
+            return
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+            from matplotlib import gridspec as _gs
+            import numpy as np
+            from loss import compute_volume_intensity_loss
+        except ImportError:
+            return
+
+        mri_ds = self._get_mri_dataset()
+        if mri_ds is None:
+            return
+
+        T_total = mri_ds.gt_grid_shape[0]
+        subj_idx = 0
+        grid_shape = tuple(mri_ds.gt_grid_shape)
+        num_slices = mri_ds.num_slices
+
+        orig_fixed = mri_ds.t_target_fixed
+        canon_frames = []
+        gt_frames = []
+        try:
+            self.model.eval()
+            amp_dtype = torch.bfloat16
+            for t in range(T_total):
+                mri_ds.t_target_fixed = t
+                data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=num_slices)
+                def st(k, dt=np.float32):
+                    return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
+                imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
+                batch = {
+                    "images": imgs,
+                    "scanner_coords": st("scanner_coords"),
+                    "z_indices": st("z_indices"),
+                    "t_indices": st("t_indices"),
+                }
+                if "gt_target_volume" in data:
+                    batch["gt_target_volume"] = torch.from_numpy(
+                        data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
+                with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
+                    # Underlying VGGT (unwrap DDP if needed).
+                    model = self.model.module if hasattr(self.model, "module") else self.model
+                    preds = model(batch["images"], batch=batch)
+                    out = compute_volume_intensity_loss(
+                        {"world_points": preds["world_points"].float()},
+                        batch, grid_shape=grid_shape, tv_weight=0.0,
+                    )
+                V_canon = out["V_canon"][0].float().cpu().numpy()
+                V_gt = out["V_gt"][0].float().cpu().numpy()
+                mid_d = V_canon.shape[0] // 2
+                canon_frames.append(V_canon[mid_d])
+                gt_frames.append(V_gt[mid_d])
+        except Exception as e:
+            logging.warning(f"cardiac filmstrip render failed (ignored): {e}")
+            mri_ds.t_target_fixed = orig_fixed
+            return
+        finally:
+            mri_ds.t_target_fixed = orig_fixed
+
+        try:
+            v_vmax = float(max(max(f.max() for f in canon_frames),
+                               max(f.max() for f in gt_frames),
+                               1e-3))
+            fig = plt.figure(figsize=(1.4 * T_total + 0.5, 3.0), dpi=90)
+            gs = _gs.GridSpec(2, T_total + 1, width_ratios=[1.0] * T_total + [0.04], wspace=0.05, hspace=0.18)
+            for t in range(T_total):
+                ax = fig.add_subplot(gs[0, t])
+                ax.imshow(gt_frames[t], cmap="gray", vmin=0, vmax=v_vmax)
+                ax.set_xticks([]); ax.set_yticks([])
+                ax.set_title(f"t={t}", fontsize=8)
+                if t == 0:
+                    ax.set_ylabel("V_gt", fontsize=9)
+                ax2 = fig.add_subplot(gs[1, t])
+                im = ax2.imshow(canon_frames[t], cmap="gray", vmin=0, vmax=v_vmax)
+                ax2.set_xticks([]); ax2.set_yticks([])
+                if t == 0:
+                    ax2.set_ylabel("V_canon", fontsize=9)
+            cax = fig.add_subplot(gs[:, T_total]); plt.colorbar(im, cax=cax)
+            fig.suptitle(f"Cardiac cycle (val subj 0, mid-z) — step={log_step}", fontsize=9)
+            self.wandb_writer.log("Val_Visuals_cardiac_cycle",
+                                  wandb.Image(fig, caption=f"step={log_step}"), log_step)
+            plt.close(fig)
+        except Exception as e:
+            logging.warning(f"cardiac filmstrip log failed (ignored): {e}")
+
+    def _log_volume_and_dvf_to_wandb(self, batch: dict, name: str, step: int, caption: str):
+        """Log two figures per visual step (matching tools/test_sequential_sampling.py style):
+          {name}_Volume : 4 rows × max(S,D) cols — input slices, V_gt, V_canon, signed diff (per z).
+          {name}_DVF    : 4 rows × S cols       — input intensity + Δx/Δy/Δz per slot.
+        Both use dpi=90 (≈0.6 MB each PNG).
+        """
+        if not self.wandb_writer:
+            return
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+            from matplotlib import gridspec as _gs
+            import numpy as np
+        except ImportError:
+            return
+
+        # ── Volume figure (per-z grid) ─────────────────────────────────────
+        if "V_canon" in batch and "V_gt" in batch:
+            V_canon = batch["V_canon"][0].detach().float().cpu().numpy()   # (D, H, W)
+            V_gt = batch["V_gt"][0].detach().float().cpu().numpy()
+            D, _, _ = V_canon.shape
+            # Input row from batch images (518² padded, OK as diagnostic).
+            imgs = batch["images"][0].detach().float().cpu()                # (S, 3, H, W)
+            if imgs.min() < 0:
+                imgs = (imgs + 1.0) / 2.0
+            imgs = imgs.clamp(0, 1).mean(dim=1).numpy()                     # (S, H, W) gray
+            S = imgs.shape[0]
+            diff = V_canon - V_gt
+            v_vmax = float(max(V_canon.max(), V_gt.max(), 1e-3))
+            ERR = 0.05
+            n_cols = max(S, D)
+            t_picks = batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None
+            z_picks = batch["slice_indices"][0].cpu().numpy() if "slice_indices" in batch else None
+
+            fig = plt.figure(figsize=(1.6 * n_cols + 1.6, 7.5), dpi=90)
+            gs = _gs.GridSpec(4, n_cols + 1, width_ratios=[1.0] * n_cols + [0.05], wspace=0.04, hspace=0.18)
+            fig.suptitle(f"Volumes — {caption}", fontsize=8)
+
+            # Row 0: input slices
+            for s in range(S):
+                ax = fig.add_subplot(gs[0, s])
+                ax.imshow(imgs[s], cmap="gray", vmin=0, vmax=1)
+                ax.set_xticks([]); ax.set_yticks([])
+                if t_picks is not None and z_picks is not None:
+                    ax.set_title(f"t={int(t_picks[s])}, z={int(z_picks[s])}", fontsize=7)
+                if s == 0:
+                    ax.set_ylabel("input slice", fontsize=8)
+            for s in range(S, n_cols):
+                fig.add_subplot(gs[0, s]).axis("off")
+            fig.add_subplot(gs[0, n_cols]).axis("off")
+
+            def _vol_row(r, vol, cmap, vmin, vmax, ylabel, show_titles=False):
+                last_im = None
+                for d in range(D):
+                    ax = fig.add_subplot(gs[r, d])
+                    last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
+                    ax.set_xticks([]); ax.set_yticks([])
+                    if show_titles:
+                        ax.set_title(f"z={d}", fontsize=7)
+                    if d == 0:
+                        ax.set_ylabel(ylabel, fontsize=8)
+                for d in range(D, n_cols):
+                    fig.add_subplot(gs[r, d]).axis("off")
+                plt.colorbar(last_im, cax=fig.add_subplot(gs[r, n_cols]))
+
+            _vol_row(1, V_gt,    "gray",   0,     v_vmax, "V_gt", show_titles=True)
+            _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon")
+            _vol_row(3, diff,    "RdBu_r", -ERR,  ERR,    f"V_canon-V_gt\n(±{ERR})")
+
+            self.wandb_writer.log(f"{name}_Volume", wandb.Image(fig, caption=caption), step)
+            plt.close(fig)
+
+        # ── DVF figure (per-slot Δx/Δy/Δz) ─────────────────────────────────
+        # pred_dvfs comes from the active mri_volume pipeline; fall back to (world_points - scanner_coords).
+        pred_dvf = None
+        if "pred_dvfs" in batch:
+            pred_dvf = batch["pred_dvfs"][0].detach().float().cpu().numpy()
+        elif "pred_world_points" in batch and "scanner_coords" in batch:
+            pred_dvf = (batch["pred_world_points"][0] - batch["scanner_coords"][0]).detach().float().cpu().numpy()
+        if pred_dvf is not None:
+            imgs = batch["images"][0].detach().float().cpu()
+            if imgs.min() < 0:
+                imgs = (imgs + 1.0) / 2.0
+            imgs = imgs.clamp(0, 1).mean(dim=1).numpy()
+            S = imgs.shape[0]
+            t_picks = batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None
+            z_picks = batch["slice_indices"][0].cpu().numpy() if "slice_indices" in batch else None
+            p50 = float(np.percentile(np.abs(pred_dvf), 50))
+            p95 = float(np.percentile(np.abs(pred_dvf), 95))
+            p99 = float(np.percentile(np.abs(pred_dvf), 99))
+            DVF_R = 0.05
+
+            fig = plt.figure(figsize=(1.6 * S + 1.6, 7.5), dpi=90)
+            gs = _gs.GridSpec(4, S + 1, width_ratios=[1.0] * S + [0.05], wspace=0.04, hspace=0.18)
+            fig.suptitle(
+                f"DVF — {caption}    |Δ| p50={p50:.3f} p95={p95:.3f} p99={p99:.3f}",
+                fontsize=8,
+            )
+            rows = [
+                ("input intensity", imgs,            "gray",   0,      1.0,    True),
+                ("Δx (norm)",       pred_dvf[..., 0], "RdBu_r", -DVF_R, DVF_R, False),
+                ("Δy (norm)",       pred_dvf[..., 1], "RdBu_r", -DVF_R, DVF_R, False),
+                ("Δz (norm)",       pred_dvf[..., 2], "RdBu_r", -DVF_R, DVF_R, False),
+            ]
+            for r, (lbl, data, cmap, vmin, vmax, is_top) in enumerate(rows):
+                last_im = None
+                for s in range(S):
+                    ax = fig.add_subplot(gs[r, s])
+                    last_im = ax.imshow(data[s], cmap=cmap, vmin=vmin, vmax=vmax)
+                    ax.set_xticks([]); ax.set_yticks([])
+                    if is_top and t_picks is not None and z_picks is not None:
+                        ax.set_title(f"t={int(t_picks[s])}, z={int(z_picks[s])}", fontsize=7)
+                    if s == 0:
+                        ax.set_ylabel(lbl, fontsize=8)
+                plt.colorbar(last_im, cax=fig.add_subplot(gs[r, S]))
+
+            self.wandb_writer.log(f"{name}_DVF", wandb.Image(fig, caption=caption), step)
+            plt.close(fig)
+
     def run(self):
         """Main entry point to start the training or validation process."""
         assert self.mode in ["train", "val"], f"Invalid mode: {self.mode}"
@@ -427,6 +750,9 @@ class Trainer:
         mem = AverageMeter("Mem (GB)", self.device, ":.4f")
         data_times = []
         phase = "val"
+
+        # Fresh per-phase accumulator for this val epoch (diagnostic only; train unaffected).
+        self._per_phase_val_psnr = defaultdict(list)
 
         loss_names = self._get_scalar_log_keys(phase)
         loss_names_prefixed = [f"Loss/{phase}_{name}" for name in loss_names]
@@ -504,6 +830,24 @@ class Trainer:
             for name, meter in loss_meters.items():
                 raw_name = name[len(prefix):] if name.startswith(prefix) else name
                 self._log_scalar(f"Val_Loss/{raw_name}", meter.avg, current_train_step)
+
+            # ── Per-phase val PSNR + counts (only when t_target is varying) ──
+            if self.t_target_fixed is None and len(self._per_phase_val_psnr) > 0:
+                try:
+                    for t in sorted(self._per_phase_val_psnr.keys()):
+                        psnrs = self._per_phase_val_psnr[t]
+                        self._log_scalar(f"per_phase/PSNR_t{t}", float(sum(psnrs) / len(psnrs)),
+                                         current_train_step)
+                        self._log_scalar(f"per_phase/n_t{t}", float(len(psnrs)),
+                                         current_train_step)
+                except Exception as e:
+                    logging.warning(f"per-phase log failed (ignored): {e}")
+
+            # ── Cardiac-cycle filmstrip (every N val epochs) ──
+            filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
+            if self.t_target_fixed is None and self.epoch % filmstrip_every_n == 0:
+                self._log_cardiac_cycle_filmstrip(current_train_step)
+
             logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
 
         return True
@@ -609,7 +953,8 @@ class Trainer:
                     if meter_key in loss_meters:
                         loss_meters[meter_key].update(grad_norm)
                     if self.steps[phase] % self.logging_conf.log_freq == 0:
-                        self._log_scalar(f"Train_Grad/{key}", grad_norm, self.steps[phase])
+                        # Logged under Train_Optim/ alongside lr + where (gradient norms are optimizer diagnostics).
+                        self._log_scalar(f"Train_Optim/grad_{key}", grad_norm, self.steps[phase])
 
             # Optimizer step
             for optim in self.optims:
@@ -764,6 +1109,26 @@ class Trainer:
                 if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
                     self._log_scalar(f"Train_Loss/{key}", value, step)
 
+        # ── Val-only diagnostic: per-phase PSNR accumulation (gated, never touches train) ──
+        # Compute per-sample PSNR from V_canon/V_gt and bucket by the batch's t_target.
+        # All conditions must hold; if anything raises, we log a warning and continue —
+        # diagnostics must NEVER crash training.
+        if (phase == "val" and self.t_target_fixed is None
+                and "V_canon" in data and "V_gt" in data and "t_target" in data):
+            try:
+                V_canon = data["V_canon"]
+                V_gt = data["V_gt"]
+                t_targets = data["t_target"]
+                B = V_canon.shape[0]
+                for b in range(B):
+                    mse_b = (V_canon[b].float() - V_gt[b].float()).pow(2).mean()
+                    psnr_b = 10.0 * torch.log10(1.0 / mse_b.clamp(min=1e-10)).item()
+                    tt = t_targets[b]
+                    t = int(tt.item() if tt.ndim == 0 else tt.flatten()[0].item())
+                    self._per_phase_val_psnr[t].append(psnr_b)
+            except Exception as e:
+                logging.warning(f"per-phase PSNR accumulation failed (ignored): {e}")
+
         # Log Frame and Slice selection for Slot 2 and Slot 3 (if available)
         if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
             # data["timesteps"] and data["slice_indices"] are [B, S]
@@ -794,178 +1159,50 @@ class Trainer:
         # For validation, we use the training step to keep WandB monotonic
         log_step = step if phase == "train" else self.steps["train"]
 
-        if not (self.logging_conf.log_visuals and freq > 0 and (step % freq == 0) and (self.logging_conf.visuals_keys_to_log is not None)):
+        # Visual logging policy:
+        #   train: log every `log_visual_frequency.train` steps, one random subject (whatever
+        #          the shuffled dataloader pulled — diagnostic sampling).
+        #   val:   log only val_steps 0, 1, 2 → val subjects 0, 1, 2 with distinct wandb keys.
+        #          (Previous behavior logged ~25× per val epoch but all at the same wandb
+        #          step → 24 figures overwritten; we waste no compute now.)
+        VAL_VISUAL_SUBJECT_INDICES = (0, 1, 2)
+        if phase == "train":
+            should_log = freq > 0 and (step % freq == 0)
+        else:
+            should_log = step in VAL_VISUAL_SUBJECT_INDICES
+        if not (self.logging_conf.log_visuals and should_log and (self.logging_conf.visuals_keys_to_log is not None)):
             return
 
         if phase in self.logging_conf.visuals_keys_to_log:
-            keys_to_log = self.logging_conf.visuals_keys_to_log[phase]["keys_to_log"]
-            assert len(keys_to_log) > 0, "Need to include some visual keys to log"
-            modality = self.logging_conf.visuals_keys_to_log[phase]["modality"]
-            assert modality in [
-                "image",
-                "video",
-            ], "Currently only support video or image logging"
-
-            prefix = "Train" if phase == "train" else "Val"
-            name = f"{prefix}_Visuals"
-
-            # Prepare MRI metadata for caption — show all frames' slice and timestep
-            caption = None
+            # Build caption (per-slot z/t info + t_target).
+            caption_parts = []
+            t_target_val = None
+            if "t_target" in batch:
+                try:
+                    t_target_val = int(batch["t_target"][0].item() if hasattr(batch["t_target"][0], "item") else batch["t_target"][0])
+                    caption_parts.append(f"t_target={t_target_val}")
+                except Exception:
+                    pass
             if "slice_indices" in batch and "timesteps" in batch:
                 try:
-                    seq_name = batch["seq_name"][0] if "seq_name" in batch else ""
-                    label = "z" if "mri_axial" in seq_name else "s"
-                    slices = batch["slice_indices"][0]   # (S,)
-                    timesteps = batch["timesteps"][0]    # (S,)
+                    slices = batch["slice_indices"][0]
+                    timesteps = batch["timesteps"][0]
                     S = slices.shape[0]
-                    parts = [f"f{i}: {label}={slices[i].item()}, t={timesteps[i].item()}" for i in range(S)]
-                    caption = " | ".join(parts)
-                except:
+                    per_slot = " | ".join([f"f{i}: z={slices[i].item()}, t={timesteps[i].item()}" for i in range(S)])
+                    caption_parts.append(per_slot)
+                except Exception:
                     pass
+            caption_parts.append(f"step={log_step}")
+            caption = "  ".join(caption_parts)
 
-            def prepare_visual(key, v):
-                # If it's world points (S, H, W, 3), permute to (S, 3, H, W)
-                if v.dim() == 4 and v.shape[-1] == 3:
-                    v = v.permute(0, 3, 1, 2)
+            # Wandb key prefix. Val gets a per-subject suffix so the 3 subjects don't collide.
+            if phase == "train":
+                name = "Train_Visuals"
+            else:
+                name = f"Val_Visuals_subj{step}"
 
-                if "world_points" in key:
-                    # Rescale coordinates [-1, 1] to [0, 1]
-                    v = (v + 1.0) / 2.0
-                elif key == "images":
-                    # Images are [0, 1]. If they were normalized to [-1, 1], shift to [0, 1]
-                    if v.min() < 0:
-                        v = (v + 1.0) / 2.0
-                return v.clamp(0, 1)
-
-            # Log input images separately
-            if "images" in batch and batch["images"][0].dim() >= 3:
-                img_grid = torchvision.utils.make_grid(prepare_visual("images", batch["images"][0]), nrow=self.logging_conf.visuals_per_batch_to_log)
-                img_grid = img_grid.cpu()
-                if img_grid.dtype == torch.bfloat16:
-                    img_grid = img_grid.to(torch.float16)
-                self._log_visuals(f"{name}_images", img_grid.numpy(), log_step, self.logging_conf.video_logging_fps, caption=caption)
-
-            # Assemble gradient grids (GT and Pred) together
-            grad_grids = []
-            for key in ["world_points", "pred_world_points"]:
-                if key in keys_to_log and key in batch and batch[key][0].dim() >= 3:
-                    v = batch[key][0]
-                    if key == "pred_world_points":
-                        # Mask out padded regions in the prediction to match GT
-                        mask = batch["point_masks"][0].unsqueeze(-1)
-                        v = v * mask
-                    grad_grids.append(torchvision.utils.make_grid(prepare_visual(key, v), nrow=self.logging_conf.visuals_per_batch_to_log))
-
-            if grad_grids:
-                grad_visuals = torch.cat(grad_grids, dim=1)  # Stack vertically: Top=GT, Bot=Pred
-                grad_visuals = grad_visuals.cpu()
-                if grad_visuals.dtype == torch.bfloat16:
-                    grad_visuals = grad_visuals.to(torch.float16)
-                self._log_visuals(f"{name}_gradients_GT_Top_Pred_Bot", grad_visuals.numpy(), log_step, self.logging_conf.video_logging_fps, caption=caption)
-
-            # --- 3D point cloud logging removed (too heavy for WandB storage) ---
-
-            # --- Added DVF Visualization ---
-            if self.wandb_writer and "pred_dvfs" in batch and "gt_dvfs_unnorm" in batch:
-                try:
-                    import wandb
-
-                    from visual_util import plot_dvf_grid
-                except ImportError:
-                    wandb = None
-
-                if wandb is not None:
-                    # Get the first sequence in the batch
-                    pred_dvf = batch["pred_dvfs"][0].detach().cpu().numpy()  # (S, H, W, 3)
-                    gt_dvf = batch["gt_dvfs_unnorm"][0].detach().cpu().numpy()  # (S, H, W, 3)
-                    img_tx = batch["images"][0].detach().cpu().numpy()  # (S, 3, H, W)
-
-                    # Visualize the first dynamic frame (index 1 if S > 1, else 0)
-                    s_idx = min(1, pred_dvf.shape[0] - 1)
-
-                    # Create a descriptive caption
-                    caption = f"Phase: {phase}, Step: {log_step}"
-                    if "timesteps" in batch:
-                        t_idx = batch["timesteps"][0][s_idx].item()
-                        caption += f", Frame (t): {t_idx + 1}"
-                    if "slice_indices" in batch:
-                        s_val = batch["slice_indices"][0][s_idx].item()
-                        caption += f", Slice: {s_val}"
-                    if "rotations" in batch:
-                        rot = batch["rotations"][0][s_idx]
-                        caption += f", Rot: [{rot[0]:.0f},{rot[1]:.0f},{rot[2]:.0f}]"
-
-                    fig = plot_dvf_grid(img_tx, gt_dvf, pred_dvf, seq_idx=s_idx, v_min=-5.0, v_max=5.0, ref_image=img_tx[0])
-                    self.wandb_writer.log(f"{name}_DVF", wandb.Image(fig, caption=caption), log_step)
-
-                    import matplotlib.pyplot as plt
-
-                    plt.close(fig)
-            # ------------------------------------
-
-            # --- Volume reconstruction visualization (direct V_canon vs V_gt loss) ---
-            if self.wandb_writer and "V_canon" in batch:
-                try:
-                    import wandb
-                    import matplotlib.pyplot as plt
-                except ImportError:
-                    wandb = None
-
-                if wandb is not None:
-                    import numpy as np
-                    V = batch["V_canon"][0].detach().float().cpu().numpy()        # (D, H, W)
-                    cov = batch["coverage"][0].detach().float().cpu().numpy()     # (D, H, W)
-                    has_gt = "V_gt" in batch
-                    V_gt_np = batch["V_gt"][0].detach().float().cpu().numpy() if has_gt else None
-                    D, Hv, Wv = V.shape
-
-                    # ── Panel A: MIPs (V_canon, V_gt, error, coverage) ──────────────
-                    n_rows = 4 if has_gt else 2
-                    fig, axes = plt.subplots(n_rows, 3, figsize=(12, 4 * n_rows), dpi=72)
-                    fig.suptitle(f"Volumes — {caption or ''}")
-                    v_vmax = float(max(V.max(), V_gt_np.max() if has_gt else 0.0, 1e-3))
-                    for col, (lbl, mip) in enumerate([
-                        ("axial", V.max(0)), ("coronal", V.max(1)), ("sagittal", V.max(2)),
-                    ]):
-                        axes[0, col].imshow(mip, cmap="gray", vmin=0, vmax=v_vmax)
-                        axes[0, col].set_title(f"V_canon (pred) {lbl}"); axes[0, col].axis("off")
-                    if has_gt:
-                        for col, mip in enumerate([V_gt_np.max(0), V_gt_np.max(1), V_gt_np.max(2)]):
-                            axes[1, col].imshow(mip, cmap="gray", vmin=0, vmax=v_vmax)
-                            axes[1, col].set_title("V_gt (phase-0 splat)"); axes[1, col].axis("off")
-                        diff_vol = V - V_gt_np  # signed error volume
-                        err_max = max(float(np.abs(diff_vol).max()), 1e-3)
-                        for col, mip in enumerate([diff_vol.mean(0), diff_vol.mean(1), diff_vol.mean(2)]):
-                            axes[2, col].imshow(mip, cmap="RdBu", vmin=-err_max, vmax=err_max)
-                            axes[2, col].set_title("V_canon - V_gt (mean)"); axes[2, col].axis("off")
-                    c_row = 3 if has_gt else 1
-                    c_vmax = float(max(cov.max(), 1e-3))
-                    for col, mip in enumerate([cov.max(0), cov.max(1), cov.max(2)]):
-                        axes[c_row, col].imshow(mip, cmap="viridis", vmin=0, vmax=c_vmax)
-                        axes[c_row, col].set_title("coverage"); axes[c_row, col].axis("off")
-                    plt.tight_layout()
-                    self.wandb_writer.log(f"{name}_Volume", wandb.Image(fig, caption=caption), log_step)
-                    plt.close(fig)
-
-                    # ── Per-z slice strip removed (too heavy: 3×12 = 36 thumbnails) ──
-
-                    # ── Panel C: input slices grid (just show what the model received) ──
-                    images_b = batch["images"][0].detach().float().cpu()  # (S, 3, H, W)
-                    S_in = images_b.shape[0]
-                    I_in_all = images_b.mean(dim=1).numpy()                # (S, H, W)
-                    if I_in_all.max() > 2.0:
-                        I_in_all = I_in_all / 255.0
-                    fig3, ax3 = plt.subplots(1, S_in, figsize=(2.0 * S_in, 2.0), dpi=72)
-                    fig3.suptitle(f"Input slices — {caption or ''}")
-                    if S_in == 1:
-                        ax3 = [ax3]
-                    for s in range(S_in):
-                        ax3[s].imshow(I_in_all[s], cmap="gray", vmin=0, vmax=1)
-                        ax3[s].set_title(f"s={s}", fontsize=7); ax3[s].axis("off")
-                    plt.tight_layout()
-                    self.wandb_writer.log(f"{name}_InputSlices", wandb.Image(fig3, caption=caption), log_step)
-                    plt.close(fig3)
-            # ------------------------------------
+            # Render both figures and log.
+            self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption)
 
 
 def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mapping]:
