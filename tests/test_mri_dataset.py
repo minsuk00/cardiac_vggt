@@ -118,17 +118,17 @@ def test_images_in_valid_range(train_ds):
 
 # ── 4. DVF values (mm units) ──────────────────────────────────────────────────
 
-def test_reference_frame_zero_dvf(train_ds):
-    """i=0 is always the reference (t=0); DVF must be zero everywhere."""
-    s = train_ds.get_data(0, img_per_seq=3)
-    assert np.abs(s["gt_dvfs"][0]).max() == 0.0, \
-        "Reference frame should have zero DVF"
-
-def test_dynamic_frame_nonzero_dvf(train_ds):
-    """i=1 is always a dynamic frame; DVF must be nonzero."""
-    s = train_ds.get_data(0, img_per_seq=3)
-    assert np.abs(s["gt_dvfs"][1]).max() > 0.0, \
-        "Dynamic frame should have nonzero DVF"
+def test_dvf_matches_slot_timestep(train_ds):
+    """DVF for any slot is zero iff its t_idx == 0 (DVF files only exist for t > 0).
+    With t_target sampling, slot 0 may be at any t; the invariant is per-slot, not per-slot-index.
+    """
+    for _ in range(5):
+        s = train_ds.get_data(0, img_per_seq=3)
+        for i, (t_idx, dvf) in enumerate(zip(s["timesteps"], s["gt_dvfs"])):
+            if t_idx == 0:
+                assert np.abs(dvf).max() == 0.0, f"slot {i} t={t_idx}: expected zero DVF"
+            else:
+                assert np.abs(dvf).max() > 0.0, f"slot {i} t={t_idx}: expected nonzero DVF"
 
 def test_dvf_values_match_known_mm(train_ds):
     """
@@ -136,9 +136,13 @@ def test_dvf_values_match_known_mm(train_ds):
     In voxels this would be [2.0/1.344, 1.5/1.398, 4.0/8.0] = [1.49, 1.07, 0.5].
     We check the stored mm values match, distinguishing mm from voxel representation.
     """
+    # Find a slot with t > 0 (DVF file exists). With t_target sampling, slot 0 may be t=0 or not.
     s = train_ds.get_data(0, img_per_seq=3)
-    dvf = s["gt_dvfs"][1]   # dynamic frame, shape (518, 518, 3)
-    mask = s["point_masks"][1]
+    nonzero_slots = [i for i, t in enumerate(s["timesteps"]) if t > 0]
+    assert nonzero_slots, "Need at least one slot with t>0 to check DVF values"
+    i = nonzero_slots[0]
+    dvf = s["gt_dvfs"][i]   # dynamic frame, shape (518, 518, 3)
+    mask = s["point_masks"][i]
     assert mask.sum() > 0, "No valid pixels in mask"
 
     np.testing.assert_allclose(dvf[mask, 0].mean(), KNOWN_DVF_MM[0], atol=0.3,
@@ -151,8 +155,11 @@ def test_dvf_values_match_known_mm(train_ds):
 def test_dvf_not_divided_by_spacing(train_ds):
     """If DVF were wrongly converted to voxels, z-component would be 4.0/8.0=0.5, not ~4.0."""
     s = train_ds.get_data(0, img_per_seq=3)
-    dvf = s["gt_dvfs"][1]
-    mask = s["point_masks"][1]
+    nonzero_slots = [i for i, t in enumerate(s["timesteps"]) if t > 0]
+    assert nonzero_slots, "Need at least one slot with t>0 to check DVF mm scale"
+    i = nonzero_slots[0]
+    dvf = s["gt_dvfs"][i]
+    mask = s["point_masks"][i]
     z_mean = dvf[mask, 2].mean()
     assert z_mean > 1.0, \
         f"DVF z should be in mm (~4.0), got {z_mean:.3f} — looks like it was divided by spacing"
@@ -232,16 +239,41 @@ def test_vol_mask_invalid_pixels_have_sentinel(train_ds):
 
 # ── 7. Timesteps and frame indexing ──────────────────────────────────────────
 
-def test_first_frame_is_always_reference(train_ds):
+def test_slot0_anchored_to_t_target(train_ds):
+    """Slot 0 is anchored to the per-call t_target (was always t=0 in the old pipeline)."""
     for _ in range(5):
         s = train_ds.get_data(0, img_per_seq=4)
-        assert s["timesteps"][0] == 0, "First frame must always be reference (t=0)"
+        t_target = int(np.asarray(s["t_target"]).item())
+        assert 0 <= t_target < T, f"t_target {t_target} out of [0, {T})"
+        assert s["timesteps"][0] == t_target, \
+            f"Slot 0 must equal t_target ({t_target}), got {s['timesteps'][0]}"
 
 def test_dynamic_timesteps_in_valid_range(train_ds):
     for _ in range(5):
         s = train_ds.get_data(0, img_per_seq=4)
+        t_target = int(np.asarray(s["t_target"]).item())
         for t in s["timesteps"][1:]:
-            assert 1 <= t <= T - 1, f"Dynamic timestep {t} out of range [1, {T-1}]"
+            assert 0 <= t <= T - 1, f"Dynamic timestep {t} out of range [0, {T-1}]"
+            assert t != t_target, \
+                f"Dynamic slot has t={t}, equal to t_target={t_target} (should differ)"
+
+
+def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf):
+    """Val sampling: t_target = seq_index % T_total. Deterministic + balanced across phases.
+    Ensures per-phase val metrics get reproducible sample counts.
+    """
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=4)
+    # Across multiple seq_index values, t_target must equal seq_index % T_total exactly.
+    for seq_index in range(15):
+        s = ds.get_data(seq_index, img_per_seq=4)
+        t_target = int(np.asarray(s["t_target"]).item())
+        assert t_target == seq_index % T, \
+            f"Val seq_index={seq_index} expected t_target={seq_index % T}, got {t_target}"
+        # And slot 0 must follow this assignment.
+        assert s["timesteps"][0] == t_target, \
+            f"Val slot 0 (={s['timesteps'][0]}) should equal t_target={t_target}"
 
 def test_z_indices_in_range(train_ds):
     s = train_ds.get_data(0, img_per_seq=4)
@@ -251,13 +283,16 @@ def test_z_indices_in_range(train_ds):
 
 # ── 8. Static mode ────────────────────────────────────────────────────────────
 
-def test_static_mode_all_reference_frames(synthetic_root, split_file, common_conf):
-    """In static mode every frame uses t=0 → all DVFs should be zero."""
+def test_static_mode_all_same_timestep(synthetic_root, split_file, common_conf):
+    """In static mode every slot uses t=t_target → all timesteps identical.
+    Static mode never loads DVFs (legacy behavior), so gt_dvfs is always zero.
+    """
     from data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
                     mode="static", mri_mode="axial", num_slices=4)
     s = ds.get_data(0, img_per_seq=4)
-    for dvf in s["gt_dvfs"]:
-        assert np.abs(dvf).max() == 0.0, "Static mode should have zero DVF for all frames"
+    t_target = int(np.asarray(s["t_target"]).item())
     for t in s["timesteps"]:
-        assert t == 0, "Static mode should always use t=0"
+        assert t == t_target, f"Static mode: slot t={t} != t_target={t_target}"
+    for dvf in s["gt_dvfs"]:
+        assert np.abs(dvf).max() == 0.0, "Static mode should always have zero DVF regardless of t_target"

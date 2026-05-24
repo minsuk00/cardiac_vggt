@@ -77,7 +77,10 @@ def splat_to_volume(pos, intensity, grid_shape, weight=None):
         vol_flat.scatter_add_(0, flat_idx.reshape(-1), (w * intensity).reshape(-1))
         cov_flat.scatter_add_(0, flat_idx.reshape(-1), w.reshape(-1))
 
-    volume = volume / coverage.clamp(min=1e-6)
+    # Use additive epsilon (not clamp) so the gradient w.r.t. coverage stays smooth
+    # at very low-coverage voxels; clamp would zero the gradient and produce a
+    # discontinuous loss landscape at the coverage threshold.
+    volume = volume / (coverage + 1e-6)
     return volume, coverage
 
 

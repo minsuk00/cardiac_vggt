@@ -43,7 +43,19 @@ class ZIndexEmbedder(nn.Module):
 
 
 class TIndexEmbedder(nn.Module):
-    """Sinusoidal embedding for normalized cardiac phase index t ∈ [-1, 1]."""
+    """Sinusoidal embedding for normalized cardiac phase index t ∈ [-1, 1].
+
+    Cyclic encoding: the dataset normalizes t_idx via `(t_idx / T_total) * 2 - 1`
+    (note: T_total, NOT T_total - 1), so the wrap point lands at +1 — outside
+    the data range. With sin/cos(2^i · π · t_norm), t=0 and t=T-1 become
+    close-but-distinct in feature space (anatomical neighbors on the cardiac
+    cycle, not collapsed to the same point as they would be with the /(T-1)
+    normalization). The raw t_norm scalar is kept in the feature list; it
+    breaks pure cyclicity but provides a useful monotonic ordering for the
+    discrete training case (Option A). For continuous-phase queries (Option B,
+    not implemented), drop the raw term and lower num_freqs to ~3 to avoid
+    aliasing above Nyquist.
+    """
     def __init__(self, embed_dim=1024, num_freqs=6):
         super().__init__()
         self.num_freqs = num_freqs
