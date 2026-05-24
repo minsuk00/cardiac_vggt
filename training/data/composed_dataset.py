@@ -145,10 +145,6 @@ class ComposedDataset(Dataset, ABC):
         if scanner_coords is not None:
             sample["scanner_coords"] = scanner_coords
 
-        if "gt_dvfs" in batch:
-            sample["gt_dvfs"] = torch.from_numpy(np.stack(batch["gt_dvfs"]).astype(np.float32))
-        if "scale_factors" in batch:
-            sample["scale_factors"] = torch.from_numpy(np.stack(batch["scale_factors"]).astype(np.float32))
         if "z_indices" in batch:
             sample["z_indices"] = torch.from_numpy(np.stack(batch["z_indices"]).astype(np.float32))
         if "t_indices" in batch:
