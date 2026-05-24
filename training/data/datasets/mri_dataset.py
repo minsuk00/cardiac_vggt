@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import random
+import zlib
 
 import cv2
 import nibabel as nib
@@ -13,19 +14,22 @@ from scipy.spatial.transform import Rotation
 
 
 class MRIDataset(BaseDataset):
-    def __init__(self, common_conf, data_root, split="train", split_file=None, mode="static", num_slices=5, target_size=518, mri_mode="axial", dvf_dirname="dvf_elastix", gt_grid_shape=(12, 256, 256)):
+    def __init__(self, common_conf, data_root, split="train", split_file=None, mode="static", num_slices=5, target_size=518, mri_mode="axial", dvf_dirname="dvf_elastix", gt_grid_shape=(12, 256, 256), t_target_fixed=None):
         """
         MRI Dataset for VGGT — CMRxRecon2024 Cine_combined format.
 
         Data layout:
             data_root/
-              {SubjectName}/sax/3d_recon/sax_frame_{t:02d}.nii.gz   (0-indexed, t=0 is reference)
+              {SubjectName}/sax/3d_recon/sax_frame_{t:02d}.nii.gz   (0-indexed)
               {SubjectName}/sax/{dvf_dirname}/dvf_frame_{t:02d}.nii.gz (t=1..T-1, mm units, T→0 convention)
 
         split_file: path to a .txt file with [train]/[val]/[test] sections listing subject folder names.
-        mode: 'static' (always t=0) or 'dynamic' (reference t=0 + random dynamic frames)
-        mri_mode: 'axial' only (coronal/sagittal/oblique not used currently)
-        dvf_dirname: directory name for DVFs (e.g., 'dvf_elastix', 'dvf_carmen')
+        mode: 'static' (all slots at t_target) or 'dynamic' (slot 0 at t_target + other slots at varying t).
+        mri_mode: 'axial' only (coronal/sagittal/oblique not used currently).
+        dvf_dirname: directory name for DVFs (e.g., 'dvf_elastix', 'dvf_carmen').
+        t_target_fixed: if None (default), sample t_target uniformly per call (train: random; val: rng-seeded).
+                        If int, force t_target to that fixed phase every call — use 0 to reproduce the
+                        original ED-only pipeline.
         """
         super().__init__(common_conf=common_conf)
         self.data_root = os.path.abspath(data_root)
@@ -36,7 +40,8 @@ class MRIDataset(BaseDataset):
         self.target_size = target_size
         self.mri_mode = mri_mode
         self.dvf_dirname = dvf_dirname
-        self.gt_grid_shape = tuple(gt_grid_shape)  # (D, H, W) canonical-grid shape for GT phase-0 volume
+        self.gt_grid_shape = tuple(gt_grid_shape)  # (D, H, W) canonical-grid shape for GT volume
+        self.t_target_fixed = None if t_target_fixed is None else int(t_target_fixed)
 
         self.subjects = self._find_subjects()
         logging.info(f"MRIDataset [{split}]: {len(self.subjects)} subjects from {self.split_file}")
@@ -72,7 +77,8 @@ class MRIDataset(BaseDataset):
 
         # For val/test, fix randomness per (subject, seq_index) so metrics are reproducible
         if self.split != "train":
-            rng = random.Random(seq_index * 1000 + hash(sub_dir) % 100000)
+            # zlib.crc32 (not Python's hash()) so the seed is deterministic across processes.
+            rng = random.Random(seq_index * 1000 + zlib.crc32(sub_dir.encode()) % 100000)
         else:
             rng = None  # use global random for train
 
@@ -94,25 +100,40 @@ class MRIDataset(BaseDataset):
         Z_total = int(_hdr.get_data_shape()[2])
         S = min(T_total, Z_total, img_per_seq or self.num_slices)
 
-        # ── Pre-sample t and z without replacement ────────────────────────
-        # Slot 0: t=0 (ED reference, required for GT volume loading).
-        # Slots 1..S-1: random non-zero t, random z. All distinct within batch.
-        if self.mode == "static":
-            t_sequence = [0] * S
+        # ── Sample target phase ───────────────────────────────────────────
+        # Slot 0 is anchored to t_target; V_gt is loaded from the t_target NIfTI.
+        # If t_target_fixed is set, use it (e.g., 0 reproduces the original ED-only pipeline).
+        # Otherwise — train: uniform random; val/test: STRATIFIED via seq_index % T_total
+        #   so per-phase val metrics get balanced sample counts (e.g., 30 val subjects ÷ 12
+        #   phases ≈ 3 subjects/phase for t=0..5, 2 subjects/phase for t=6..11). Deterministic.
+        if self.t_target_fixed is not None:
+            t_target = self.t_target_fixed % max(1, T_total)
+        elif self.split != "train":
+            t_target = seq_index % T_total
         else:
-            dynamic_ts = list(range(1, T_total))
-            if self.split != "train":
-                rng.shuffle(dynamic_ts)
-            else:
-                random.shuffle(dynamic_ts)
-            t_sequence = [0] + dynamic_ts[: S - 1]
+            t_target = random.randrange(T_total)
 
-        all_z = list(range(Z_total))
+        # ── Pre-sample t and z without replacement ────────────────────────
+        # Train: random t/z per slot (subject to slot 0 = t_target).
+        # Val/test: diagonal acquisition pattern — slot i = ((t_target + i) mod T, z=i).
+        #   This matches real-life sequential slice acquisition (one slice per heartbeat,
+        #   scanner walks through z while cardiac phase advances). Deterministic given t_target.
         if self.split != "train":
-            rng.shuffle(all_z)
+            if self.mode == "static":
+                t_sequence = [t_target] * S
+            else:
+                t_sequence = [(t_target + i) % T_total for i in range(S)]
+            z_sequence = list(range(S))
         else:
+            if self.mode == "static":
+                t_sequence = [t_target] * S
+            else:
+                dynamic_ts = [t for t in range(T_total) if t != t_target]
+                random.shuffle(dynamic_ts)
+                t_sequence = [t_target] + dynamic_ts[: S - 1]
+            all_z = list(range(Z_total))
             random.shuffle(all_z)
-        z_sequence = all_z[:S]
+            z_sequence = all_z[:S]
 
         res = {
             k: []
@@ -138,7 +159,8 @@ class MRIDataset(BaseDataset):
             ]
         }
 
-        gt_phase0_volume = None  # built once per sample when slot 0 (t=0) is processed
+        gt_target_volume = None  # built once per sample when slot 0 (t=t_target) is processed
+        ref_v_min = ref_v_max = None  # cached t_target percentiles, reused for every slot
         for i in range(S):
             t_idx = t_sequence[i]
             idx = z_sequence[i]
@@ -147,15 +169,22 @@ class MRIDataset(BaseDataset):
             img_obj = nib.load(img_path)
             vol = img_obj.get_fdata()
             spacing = np.array(img_obj.header.get_zooms()[:3], dtype=np.float32)  # (sx, sy, sz) mm/voxel
-            v_min = np.percentile(vol, 1)
-            v_max = np.percentile(vol, 99.5)
+            # Use t_target percentiles for V_gt AND every input slot so the unsupervised
+            # |V_canon - V_gt| loss isn't biased by per-phase intensity drift.
+            # Slot 0 is always t=t_target (see t_sequence construction above), so the cache
+            # is populated before any other slot needs it.
+            if ref_v_min is None:
+                assert t_idx == t_target, "slot 0 must be t=t_target so reference percentiles come from the GT frame"
+                ref_v_min = np.percentile(vol, 1)
+                ref_v_max = np.percentile(vol, 99.5)
+            v_min, v_max = ref_v_min, ref_v_max
             W, H, Z = vol.shape
 
-            # ── GT canonical volume (phase 0 only): load full vol, resample once to gt_grid_shape ──
+            # ── GT canonical volume (t_target only): load full vol, resample once to gt_grid_shape ──
             # Same per-axis normalized [-1, 1] frame as scanner_coords so V_canon and V_gt are voxel-aligned.
             # Each canonical axis's [-1, 1] spans exactly that axis's native physical extent →
             # the canonical grid voxel sizes match native acquisition (~8mm Z, ~1.34mm X/Y).
-            if t_idx == 0 and gt_phase0_volume is None:
+            if t_idx == t_target and gt_target_volume is None:
                 D_t, H_t, W_t = self.gt_grid_shape
                 half_t = np.array(
                     [W * spacing[0] / 2, H * spacing[1] / 2, Z * spacing[2] / 2],
@@ -172,10 +201,26 @@ class MRIDataset(BaseDataset):
                 x_vox = (center_t[0] + half_t[0] * ww) / spacing[0]
                 y_vox = (center_t[1] + half_t[1] * hh) / spacing[1]
                 z_vox = (center_t[2] + half_t[2] * dd) / spacing[2]
-                # vol is (W, H, Z); map_coordinates needs coords in (W, H, Z) order
+                # vol is (W, H, Z); map_coordinates needs coords in (W, H, Z) order.
+                # Option A (current): mode='nearest' for boundary canonical voxels.
+                #   half_extent uses N·spacing/2 (full physical FOV), so canonical
+                #   d=0 and d=D-1 query z_vox = -0.5 and Z-0.5 — half a voxel past
+                #   the native data on each side. With the previous cval=0 fill,
+                #   scipy returned literal 0 (no partial interpolation), creating
+                #   phantom V_gt=0 boundary voxels that the splat (working off
+                #   scanner_coords with the SAME half_extent) does write into.
+                #   'nearest' replicates the edge native voxel instead, so V_gt
+                #   has real anatomy at the boundaries — consistent with what the
+                #   splat puts there.
+                # TODO Option B (cleaner, next retrain): shrink half_extent to
+                #   (N-1)/2·spacing for ALL three axes here AND in the scanner_coords
+                #   normalization at the bottom of get_data. Canonical [-1,+1] then
+                #   spans native voxel centers exactly; no phantom region; input z=0
+                #   maps exactly to canonical d=0. Invalidates current checkpoints
+                #   because it changes the scanner_coords scale the model trained on.
                 vox_coords = np.stack([x_vox.ravel(), y_vox.ravel(), z_vox.ravel()])
-                gt_phase0_volume = map_coordinates(vol, vox_coords, order=1, cval=0.0).reshape(D_t, H_t, W_t)
-                gt_phase0_volume = np.clip((gt_phase0_volume - v_min) / (v_max - v_min + 1e-8), 0, 1).astype(np.float32)
+                gt_target_volume = map_coordinates(vol, vox_coords, order=1, mode="nearest").reshape(D_t, H_t, W_t)
+                gt_target_volume = np.clip((gt_target_volume - v_min) / (v_max - v_min + 1e-8), 0, 1).astype(np.float32)
 
             # ── Axial slicing only ──────────────────────────────────────────
             raw = vol[:, :, idx]
@@ -184,7 +229,11 @@ class MRIDataset(BaseDataset):
             res["rotations"].append(np.zeros(3, dtype=np.float32))
             z_idx_norm = (idx / max(1, Z - 1)) * 2.0 - 1.0
             res["z_indices"].append(np.array([z_idx_norm], dtype=np.float32))
-            t_idx_norm = (t_idx / max(1, T_total - 1)) * 2.0 - 1.0
+            # Cyclic encoding: divide by T_total (not T_total-1) so the wrap point
+            # lands at +1 (outside the data range). With sin/cos(2^i · π · t_norm),
+            # t=0 and t=T-1 are now close-but-distinct rather than collapsed to the
+            # same feature point. See TIndexEmbedder in vggt/models/aggregator.py.
+            t_idx_norm = (t_idx / max(1, T_total)) * 2.0 - 1.0
             res["t_indices"].append(np.array([t_idx_norm], dtype=np.float32))
 
             # ── Convert voxel coords → physical mm ────────────────────────
@@ -322,6 +371,7 @@ class MRIDataset(BaseDataset):
             "frame_num": S,
             "tracks": np.zeros((1, 1, 2), np.float32),
         }
-        if gt_phase0_volume is not None:
-            out["gt_phase0_volume"] = gt_phase0_volume  # (D, H, W) float32 in [0, 1]
+        if gt_target_volume is not None:
+            out["gt_target_volume"] = gt_target_volume  # (D, H, W) float32 in [0, 1]
+        out["t_target"] = np.array([t_target], dtype=np.int64)
         return out

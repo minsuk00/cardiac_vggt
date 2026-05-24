@@ -161,8 +161,10 @@ class ComposedDataset(Dataset, ABC):
             sample["geom_masks"] = torch.from_numpy(np.stack(batch["geom_masks"]))
         if "rotations" in batch:
             sample["rotations"] = torch.from_numpy(np.stack(batch["rotations"]).astype(np.float32))
-        if "gt_phase0_volume" in batch:
-            sample["gt_phase0_volume"] = torch.from_numpy(batch["gt_phase0_volume"].astype(np.float32))
+        if "gt_target_volume" in batch:
+            sample["gt_target_volume"] = torch.from_numpy(batch["gt_target_volume"].astype(np.float32))
+        if "t_target" in batch:
+            sample["t_target"] = torch.from_numpy(batch["t_target"].astype(np.int64))
         # --- Track Processing (if enabled) ---
         if self.load_track:
             if batch["tracks"] is not None:

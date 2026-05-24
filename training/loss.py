@@ -297,21 +297,22 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
         input slices → per-pixel predicted positions → splat into V_canon (B, D, H, W)
         loss = |V_canon - V_gt|  averaged over voxels with GT anatomy.
 
-    V_gt is the phase-0 NIfTI loaded from disk by the dataset (`batch["gt_phase0_volume"]`),
+    V_gt is the target-phase NIfTI loaded from disk by the dataset (`batch["gt_target_volume"]`),
     resampled to the canonical grid in the same per-axis normalized [-1, 1] frame as scanner_coords.
+    The target phase (slot 0's t_idx) is sampled per call by the dataset.
 
     Args:
         predictions: dict with "world_points" (B, S, H, W, 3) — per-pixel canonical position in [-1, 1].
-        batch: dict with "images" (B, S, 3, H, W), "gt_phase0_volume" (B, D, H, W).
-        grid_shape: (D, H_v, W_v) canonical volume resolution; must match gt_phase0_volume.
+        batch: dict with "images" (B, S, 3, H, W), "gt_target_volume" (B, D, H, W).
+        grid_shape: (D, H_v, W_v) canonical volume resolution; must match gt_target_volume.
         tv_weight: weight for the spatial smoothness regularizer on pos_pred.
     """
-    if "gt_phase0_volume" not in batch:
-        raise RuntimeError("compute_volume_intensity_loss requires batch['gt_phase0_volume'].")
+    if "gt_target_volume" not in batch:
+        raise RuntimeError("compute_volume_intensity_loss requires batch['gt_target_volume'].")
 
     pos_pred = predictions["world_points"]
     images = batch["images"]
-    V_gt = batch["gt_phase0_volume"]
+    V_gt = batch["gt_target_volume"]
 
     B, S, H, W, _ = pos_pred.shape
     intensity = images.float().mean(dim=2)
@@ -321,16 +322,31 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     pos_flat = pos_pred.reshape(B, S * H * W, 3)
     int_flat = intensity.reshape(B, S * H * W)
 
+    # Mask B (intensity gate): exclude zero-intensity input pixels (padding around
+    # the native FOV) from BOTH the numerator and the coverage denominator of
+    # splat_to_volume. Without this, padding pixels carry intensity=0 but still
+    # contribute weight, diluting V_canon wherever they co-splat with anatomy.
+    # Loss is still evaluated over the full canonical volume — this only changes
+    # how V_canon is constructed.
+    splat_weight = (int_flat > 1e-3).to(int_flat.dtype)
+
     grid_shape = tuple(grid_shape)
-    V_canon, coverage = splat_to_volume(pos_flat, int_flat, grid_shape)
+    V_canon, coverage = splat_to_volume(pos_flat, int_flat, grid_shape, weight=splat_weight)
 
     if V_gt.shape != V_canon.shape:
-        raise RuntimeError(f"gt_phase0_volume {tuple(V_gt.shape)} must match V_canon {tuple(V_canon.shape)}")
+        raise RuntimeError(f"gt_target_volume {tuple(V_gt.shape)} must match V_canon {tuple(V_canon.shape)}")
 
-    # Main loss: V_canon vs V_gt, restricted to where GT has anatomy.
-    valid = (V_gt > 1e-3).float()
-    denom = valid.sum().clamp(min=1.0)
-    loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
+    # Main loss: naive L1 over the full canonical volume.
+    # Previously we masked by (V_gt > 1e-3) — i.e. only voxels where the GT
+    # phase-0 NIfTI had anatomy contributed. That kept the average focused on
+    # tissue voxels but also gave the model a "free pass" to over-predict
+    # intensity anywhere V_gt was zero (lungs, background outside the body),
+    # which showed up as ghost blobs in the V_canon - V_gt panel.
+    # Naive L1 over every voxel penalizes those over-predictions symmetrically.
+    # valid = (V_gt > 1e-3).float()
+    # denom = valid.sum().clamp(min=1.0)
+    # loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
+    loss_volume = (V_canon - V_gt).abs().mean()
 
     # Spatial smoothness on pos_pred (keep motion fields locally coherent).
     pos_dh = (pos_pred[:, :, 1:, :, :] - pos_pred[:, :, :-1, :, :]).abs().sum(-1)
@@ -345,13 +361,13 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
         "coverage": coverage,
     }
     with torch.no_grad():
-        sq3d = ((V_canon - V_gt) ** 2) * valid
-        mse3d = sq3d.sum() / denom
+        # Metrics are computed over the full volume to match the unmasked loss.
+        mse3d = ((V_canon - V_gt) ** 2).mean()
         psnr3d = 10.0 * torch.log10(torch.tensor(1.0, device=mse3d.device) / mse3d.clamp(min=1e-10))
         out["metric_mae_3d"] = loss_volume.detach()
         out["metric_mse_3d"] = mse3d
         out["metric_psnr_3d"] = psnr3d
-        out["metric_gt_coverage_frac"] = valid.mean()
+        out["metric_gt_coverage_frac"] = (V_gt > 1e-3).float().mean()  # data property, kept for visibility
         out["metric_coverage_frac"] = (coverage > 1e-3).float().mean()
         out["metric_coverage_mean"] = coverage.mean()
         if "scanner_coords" in batch:
@@ -359,8 +375,8 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
         if V_canon.is_cuda:
             try:
                 from fused_ssim import fused_ssim3d
-                pred_m = (V_canon * valid).unsqueeze(1).float().contiguous()
-                targ_m = (V_gt * valid).unsqueeze(1).float().contiguous()
+                pred_m = V_canon.unsqueeze(1).float().contiguous()
+                targ_m = V_gt.unsqueeze(1).float().contiguous()
                 out["metric_ssim_3d"] = fused_ssim3d(pred_m, targ_m, train=False)
             except Exception:
                 pass

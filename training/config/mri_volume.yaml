@@ -52,5 +52,5 @@ loss:
     weight: 0.0  # disable supervised DVF loss
   volume:
     weight: 1.0
-    grid_shape: [12, 256, 256]  # (D, H, W) — D matches CMR z-resolution
+    grid_shape: ${gt_grid_shape}  # (D, H, W); shared with MRIDataset.gt_grid_shape
     tv_weight: 0.1
