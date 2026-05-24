@@ -759,7 +759,7 @@ class Trainer:
             S = imgs.shape[0]
             diff = V_canon - V_gt
             v_vmax = float(max(V_canon.max(), V_gt.max(), 1e-3))
-            ERR = 0.05
+            ERR = 0.1  # signed-diff color range ±ERR for the V_canon-V_gt row
             n_cols = max(S, D)
             t_picks = batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None
             z_picks = batch["slice_indices"][0].cpu().numpy() if "slice_indices" in batch else None
