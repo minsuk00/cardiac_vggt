@@ -5,3 +5,25 @@ Pillow
 huggingface_hub
 einops
 safetensors
+
+# ── MRI / data preprocessing & augmentation (added 2026-05-24) ─────────────
+# monai pinned to 1.4.x because monai>=1.5 requires torch>=2.4.1, which would
+# force a torch upgrade away from 2.3.1 (VGGT's frozen build target).
+monai>=1.4,<1.5
+
+# batchaug is NOT on PyPI — install from the MRI2CT clone:
+#   pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/
+#
+# Use --no-deps to bypass batchaug's `triton>=3.0` requirement. Our env has
+# triton 2.3.1 (bundled with torch 2.3.1); triton 3.x has API breakage that
+# can disrupt torch.compile / inductor paths under torch 2.3. To stay safe
+# we force batchaug onto its PyTorch backend at runtime:
+#
+#     import batchaug as B
+#     B.set_backend("pytorch")   # NOT "triton" or "auto"
+#
+# The PyTorch backend works on any torch>=2.0, no triton dependency. It is
+# slower than the triton backend on spatial ops, but augmentation runtime
+# is dominated by model forward/backward anyway, so the slowdown is noise.
+# Revisit triton-3 upgrade only if augmentation becomes a real bottleneck
+# AND a clean way to coexist with torch 2.3 is verified.
