@@ -680,6 +680,56 @@ class Trainer:
         except Exception as e:
             logging.warning(f"val-volume save failed (ignored): {e}")
 
+    def _log_augmentation_to_wandb(self, orig_images, aug_images, step: int) -> None:
+        """Log a before/after panel of GPU augmentation for one training subject.
+
+        Top row = original input slices, bottom row = the augmented slices the model
+        actually trains on, so it's visible which augmentations are active and how
+        strong they are (the caption lists the tier's ops + per-op probabilities).
+        Diagnostic only: gated on aug enabled + rank 0 + the epoch cadence at the call
+        site, and wrapped in try/except so it can never perturb training.
+        """
+        if not self.wandb_writer or orig_images is None or aug_images is None:
+            return
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+            from matplotlib import gridspec as _gs
+
+            def _gray(t):  # (B,S,3,H,W) or (S,3,H,W) -> (S,H,W) in [0,1]
+                t = t[0] if t.dim() == 5 else t
+                t = t.detach().float().cpu()
+                if t.min() < 0:                       # [-1,1] -> [0,1] if needed
+                    t = (t + 1.0) / 2.0
+                return t.clamp(0, 1).mean(dim=1).numpy()
+
+            orig, aug = _gray(orig_images), _gray(aug_images)
+            S = min(orig.shape[0], aug.shape[0], 6)   # a few slots is enough
+            caption = (
+                "GPU aug (conservative): H-flip p0.5 | in-plane rotate +/-5deg + "
+                "translate <=4px + scale <=5% p0.5 | gaussian-noise p0.3 | gamma "
+                "0.8-1.25 p0.3 | bias-field p0.3 -- one affine/subject across all 12 "
+                f"phases; step={step}"
+            )
+            fig = plt.figure(figsize=(1.6 * S + 0.4, 3.6), dpi=90)
+            gs = _gs.GridSpec(2, S, wspace=0.04, hspace=0.12)
+            fig.suptitle("Data augmentation -- original (top) vs augmented (bottom)", fontsize=8)
+            for s in range(S):
+                ax0 = fig.add_subplot(gs[0, s])
+                ax0.imshow(orig[s], cmap="gray", vmin=0, vmax=1)
+                ax0.set_xticks([]); ax0.set_yticks([])
+                if s == 0:
+                    ax0.set_ylabel("original", fontsize=8)
+                ax1 = fig.add_subplot(gs[1, s])
+                ax1.imshow(aug[s], cmap="gray", vmin=0, vmax=1)
+                ax1.set_xticks([]); ax1.set_yticks([])
+                if s == 0:
+                    ax1.set_ylabel("augmented", fontsize=8)
+            self.wandb_writer.log("Train_Visuals_Augmentation", wandb.Image(fig, caption=caption), step)
+            plt.close(fig)
+        except Exception as e:
+            logging.warning(f"augmentation visual log failed (ignored): {e}")
+
     def _log_volume_and_dvf_to_wandb(self, batch: dict, name: str, step: int, caption: str):
         """Log two figures per visual step (matching tools/test_sequential_sampling.py style):
           {name}_Volume : 4 rows × max(S,D) cols — input slices, V_gt, V_canon, signed diff (per z).
@@ -1071,7 +1121,18 @@ class Trainer:
 
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
             # GPU augmentation (train only; identity passthrough when self.gpu_transforms is None).
+            # On the log cadence, snapshot the pre-aug input slices (read-only clone) so we
+            # can log a before/after augmentation example. This never alters the batch the
+            # model trains on — gpu_augment_batch runs identically either way.
+            _aug_log = (
+                self.gpu_transforms is not None and self.rank == 0
+                and self.logging_conf.log_visuals and data_iter == 0
+                and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
+            )
+            _orig_images = batch["images"].detach().clone() if (_aug_log and "images" in batch) else None
             batch = gpu_augment_batch(batch, self.gpu_transforms, self.device)
+            if _aug_log:
+                self._log_augmentation_to_wandb(_orig_images, batch.get("images"), self.steps["train"])
 
             accum_steps = self.accum_steps
 
