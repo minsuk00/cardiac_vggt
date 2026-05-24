@@ -273,19 +273,18 @@ class Aggregator(nn.Module):
 
         _, P, C = patch_tokens.shape
 
-        if getattr(self, "use_z_pose_embedding", False):
-            if z_indices is None:
-                raise ValueError("use_z_pose_embedding is True but z_indices not provided in batch.")
-
-            # Warn if non-axial mode is being used (indicated by all zeros in z_indices)
-            if (z_indices == 0.0).all():
-                logger.warning("z_indices are all 0.0! Sinusoidal embedding is only meaningful for 'axial' MRI mode.")
-
-            # z_indices shape: [B, S, 1] -> [B*S, 1]
-            z_indices_flat = z_indices.view(B * S, 1).to(images.device)
-            camera_token = self.z_embedder(z_indices_flat)  # shape [B*S, 1, C]
-
-            if getattr(self, "use_t_pose_embedding", False):
+        use_z = getattr(self, "use_z_pose_embedding", False)
+        use_t = getattr(self, "use_t_pose_embedding", False)
+        if use_z or use_t:
+            camera_token = 0
+            if use_z:
+                if z_indices is None:
+                    raise ValueError("use_z_pose_embedding is True but z_indices not provided in batch.")
+                if (z_indices == 0.0).all():
+                    logger.warning("z_indices are all 0.0! Sinusoidal embedding is only meaningful for 'axial' MRI mode.")
+                z_indices_flat = z_indices.view(B * S, 1).to(images.device)
+                camera_token = camera_token + self.z_embedder(z_indices_flat)  # [B*S, 1, C]
+            if use_t:
                 if t_indices is None:
                     raise ValueError("use_t_pose_embedding is True but t_indices not provided in batch.")
                 t_indices_flat = t_indices.view(B * S, 1).to(images.device)
