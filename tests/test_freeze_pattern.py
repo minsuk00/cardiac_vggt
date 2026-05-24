@@ -1,10 +1,22 @@
 """Guard the freeze pattern in mri_finetune.yaml / mri_volume.yaml.
 
-The 4-day baseline pipeline accidentally swept up `z_embedder` and `t_embedder` via
-the `*aggregator*` wildcard, leaving them at random init for the whole training. The
-point_head then had to memorize meaningless random codes. The fix is to enumerate
-the heavy aggregator subparts explicitly so the small (z, t) Fourier-projection
-embedders stay trainable. This test ensures we don't regress on that.
+Current contract: the entire aggregator subtree is frozen (incl. z_embedder + t_embedder).
+Only `point_head` is trainable (~32.65M params).
+
+Why z/t embedders are also frozen, despite being only 28K params:
+  We A/B-measured the cost of making them trainable while keeping the rest of the
+  aggregator frozen. Step time jumps from ~1.32 sec to ~3.25 sec (2.5× slower)
+  because backward must traverse all 48 frozen attention blocks via gradient
+  checkpointing recomputation to reach the upstream embedders. The 4-day baseline
+  ran with embedders frozen at random init and still reached 31+ dB PSNR — the
+  point_head memorizes the (random but consistent) codes. Frozen wins on throughput
+  with no proven quality cost in our discrete multi-phase setup.
+
+When this contract should change: if you ever unfreeze the aggregator's attention
+blocks (e.g., for fundamental retraining on free-breathing data or Option B
+continuous-phase queries), backward already traverses them all, so trainable
+embedders become free. In that case, enumerate the aggregator subparts and let
+z/t embedders learn. Until then, the wildcard freeze stays.
 """
 import sys
 import os
@@ -51,20 +63,21 @@ def _counts(model, prefix):
     return nt, nf
 
 
-def test_t_embedder_is_trainable(model_with_freeze):
-    """The cyclic Fourier projection for cardiac phase MUST learn — it was accidentally
-    frozen via `*aggregator*` in the original 4-day pipeline; don't let that recur.
+def test_t_embedder_is_frozen(model_with_freeze):
+    """t_embedder is currently frozen (with the rest of the aggregator) for 2.5× faster
+    training. See module docstring for the rationale. Flip this assertion if you
+    enumerate the freeze subparts (e.g., when unfreezing the aggregator too).
     """
     nt, nf = _counts(model_with_freeze, "aggregator.t_embedder")
-    assert nt > 0, "t_embedder must have trainable params"
-    assert nf == 0, f"t_embedder has frozen params: {nf}"
+    assert nt == 0, f"t_embedder should be frozen for throughput; got {nt} trainable params"
+    assert nf > 0, "t_embedder has no params at all — wrong module path?"
 
 
-def test_z_embedder_is_trainable(model_with_freeze):
-    """Same for the z Fourier projection."""
+def test_z_embedder_is_frozen(model_with_freeze):
+    """Same — z_embedder frozen alongside t_embedder. See module docstring."""
     nt, nf = _counts(model_with_freeze, "aggregator.z_embedder")
-    assert nt > 0, "z_embedder must have trainable params"
-    assert nf == 0, f"z_embedder has frozen params: {nf}"
+    assert nt == 0, f"z_embedder should be frozen for throughput; got {nt} trainable params"
+    assert nf > 0, "z_embedder has no params at all"
 
 
 def test_heavy_aggregator_blocks_are_frozen(model_with_freeze):
