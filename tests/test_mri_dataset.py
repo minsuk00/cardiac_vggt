@@ -161,6 +161,38 @@ def test_z_sampled_within_bbox(train_ds):
             assert z0 <= z < z1, f"slot z={z} outside bbox z[{z0}:{z1}]"
 
 
+# ── 6b. S capped to in-bbox z extent — no z wrap / no duplicate z ──────────────
+
+def test_S_capped_to_bbox_no_wrap_val(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Requesting MORE slices than the subject's in-FOV z extent must shrink S to
+    bbox_z_size (fewer than 12 input slices) instead of wrapping z back to bbox_z0.
+    Regression for the canonical-padding bug: S was pinned to the padded D=12, so the
+    val diagonal wrapped — e.g. slot (t=10,z=10) → (t=11,z=0) — re-sampling z planes."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=12, cache_dir=monai_cache_dir)
+    s = ds.get_data(0, img_per_seq=12)  # ask for 12 — more than the synthetic's z extent
+    z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
+    bbox_z_size = z1 - z0
+    zs = [int(z) for z in s["slice_indices"]]
+    assert bbox_z_size < 12, "fixture should have a sub-12 z extent to exercise the cap"
+    assert len(zs) == bbox_z_size, f"S must cap to bbox_z_size={bbox_z_size}, got {len(zs)} slices"
+    assert len(set(zs)) == len(zs), f"val z must not repeat (no wrap), got {zs}"
+    assert zs == list(range(z0, z0 + len(zs))), f"val z must be the monotonic in-bbox diagonal, got {zs}"
+
+
+def test_S_capped_to_bbox_no_dup_train(train_ds):
+    """Train: asking for more slices than bbox_z_size shrinks S and samples z WITHOUT
+    replacement — no duplicate z planes."""
+    for _ in range(5):
+        s = train_ds.get_data(0, img_per_seq=12)
+        z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
+        bbox_z_size = z1 - z0
+        zs = [int(z) for z in s["slice_indices"]]
+        assert len(zs) == bbox_z_size, f"S must cap to bbox_z_size={bbox_z_size}, got {len(zs)}"
+        assert len(set(zs)) == len(zs), f"train z must be distinct (no replacement), got {zs}"
+
+
 # ── 7. Timesteps and frame indexing ──────────────────────────────────────────
 
 def test_slot0_anchored_to_t_target(train_ds):
