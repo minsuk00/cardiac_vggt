@@ -225,8 +225,15 @@ class MRIDataset(BaseDataset):
         else:
             t_target = random.randrange(T_total)
 
-        # ── S = min(T, D, requested) ──────────────────────────────────────
-        S = min(T_total, D, img_per_seq or self.num_slices)
+        # ── S = min(T, in-bbox z count, requested) ────────────────────────
+        # Cap by the subject's in-FOV z extent (bbox_z_size), NOT the padded
+        # canonical D=12. A small-FOV subject thus gets FEWER than 12 input
+        # slices rather than wrapping z back over already-sampled planes
+        # (e.g. slot (t=10,z=10) → (t=11,z=0)). t still cycles mod T (phases are
+        # cyclic, so distinct phases), but z never repeats within a sample.
+        # Before the canonical-grid refactor `D` was the subject's native Z, so
+        # this min naturally shrank S; padding Z to 12 silently pinned S=12.
+        S = min(T_total, bbox_z_size, img_per_seq or self.num_slices)
 
         # ── Build (t, z) slot sequences ───────────────────────────────────
         # IMPORTANT: z is sampled from WITHIN the anatomy bbox (in-FOV z planes
@@ -236,11 +243,12 @@ class MRIDataset(BaseDataset):
         # but useless compute, and uneven data efficiency across subjects).
         #
         # Train: slot 0 = (t_target, random in-bbox z); slots 1..S-1 = distinct
-        #   non-target t with random in-bbox z (independent of t). If bbox_z_size
-        #   < S, z is sampled with replacement (different t per duplicate z, so
-        #   the model still sees diverse (t, z) pairs).
-        # Val/test: cyclic-within-bbox diagonal — slot i = ((t_target+i)%T,
-        #   bbox_z0 + (i mod bbox_z_size)). Deterministic per (subject, t_target)
+        #   non-target t with distinct random in-bbox z. Since S ≤ bbox_z_size
+        #   (capped above), the no-replacement branch always wins → no duplicate z.
+        # Val/test: in-bbox diagonal — slot i = ((t_target+i)%T, bbox_z0 + i).
+        #   z increases monotonically inside the bbox (the `% bbox_z_size` is a
+        #   no-op now that S ≤ bbox_z_size — kept as a defensive guard); t cycles
+        #   mod T through S distinct phases. Deterministic per (subject, t_target)
         #   so per-phase val metrics remain stable across runs.
         if self.split != "train":
             if self.mode == "static":
