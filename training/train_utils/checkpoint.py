@@ -73,18 +73,15 @@ def robust_torch_save(checkpoint: Dict[str, Any], checkpoint_path: str) -> None:
     """
     A more robust version of torch.save that works better with preemptions
     and corruptions if a job is preempted during save.
+
+    Writes to a temp file then atomically renames it into place (os.replace is
+    atomic on POSIX, including a same-directory rename on GPFS). So an interrupted
+    save — e.g. a SLURM auto-requeue exiting mid-write — leaves the previous
+    checkpoint fully intact rather than a truncated, unloadable file. The atomic
+    rename supersedes the older move-to-.bak scheme (which left a window where the
+    live file was absent or partial).
     """
-    # Move the existing checkpoint to a backup location
-    backup_checkpoint_path = checkpoint_path + ".bak"
-    backup_checkpoint_path_saved = False
-    if g_pathmgr.exists(checkpoint_path):
-        if g_pathmgr.exists(backup_checkpoint_path):
-            g_pathmgr.rm(backup_checkpoint_path)
-        g_pathmgr.mv(checkpoint_path, backup_checkpoint_path)
-        backup_checkpoint_path_saved = True
-    # Save the checkpoint
-    with g_pathmgr.open(checkpoint_path, "wb") as f:
+    tmp_checkpoint_path = checkpoint_path + ".tmp"
+    with g_pathmgr.open(tmp_checkpoint_path, "wb") as f:
         torch.save(checkpoint, f)
-    # Remove the backup checkpoint
-    if backup_checkpoint_path_saved:
-        g_pathmgr.rm(backup_checkpoint_path)
+    os.replace(tmp_checkpoint_path, checkpoint_path)

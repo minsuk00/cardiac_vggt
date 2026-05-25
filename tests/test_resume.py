@@ -214,6 +214,49 @@ class TestCheckpointResume(unittest.TestCase):
             print("  [PASS] optimizer_state_restored")
 
 
+class TestResumePriority(unittest.TestCase):
+    """Regression for the requeue bug: a run's own checkpoint_last.pt in save_dir MUST
+    take precedence over the configured seed/base checkpoint (resume_checkpoint_path).
+
+    Before the fix, resume_checkpoint_path (config default = base VGGT model.pt, which has
+    no prev_epoch/steps/optimizer) unconditionally won, so every SLURM requeue silently
+    reloaded base weights at epoch 0 and discarded all training progress.
+    """
+
+    def _resolve(self, save_dir, seed):
+        from train_utils.general import resolve_resume_checkpoint
+        return resolve_resume_checkpoint(save_dir, seed)
+
+    def test_cold_start_uses_seed(self):
+        """Empty/nonexistent save_dir → fall back to the seed/base checkpoint."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            empty = os.path.join(d, "ckpts")  # does not exist yet
+            assert self._resolve(empty, "/base/model.pt") == "/base/model.pt"
+            os.makedirs(empty)  # exists but no checkpoint_last.pt
+            assert self._resolve(empty, "/base/model.pt") == "/base/model.pt"
+            print("  [PASS] cold_start_uses_seed")
+
+    def test_local_checkpoint_wins_over_seed(self):
+        """checkpoint_last.pt present → it wins, NOT the base seed. (The requeue fix.)"""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_dir = os.path.join(d, "ckpts")
+            os.makedirs(ckpt_dir)
+            local = os.path.join(ckpt_dir, "checkpoint_last.pt")
+            open(local, "wb").close()
+            resolved = self._resolve(ckpt_dir, "/base/model.pt")
+            assert resolved == local, f"expected local ckpt to win, got {resolved}"
+            print("  [PASS] local_checkpoint_wins_over_seed")
+
+    def test_no_local_no_seed_returns_none(self):
+        """No local checkpoint and no seed path → None (nothing to load)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            assert self._resolve(os.path.join(d, "ckpts"), None) is None
+            print("  [PASS] no_local_no_seed_returns_none")
+
+
 class TestWandbResume(unittest.TestCase):
 
     def test_wandb_init_called_with_resume_id(self):
