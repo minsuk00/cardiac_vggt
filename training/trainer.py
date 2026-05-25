@@ -154,13 +154,15 @@ class Trainer:
         if self.mode != "val":
             self.optims = construct_optimizers(self.model, self.optim_conf)
 
-        # Load checkpoint if available or specified
-        if self.checkpoint_conf.resume_checkpoint_path is not None:
-            self._load_resuming_checkpoint(self.checkpoint_conf.resume_checkpoint_path)
-        else:
-            ckpt_path = get_resume_checkpoint(self.checkpoint_conf.save_dir)
-            if ckpt_path is not None:
-                self._load_resuming_checkpoint(ckpt_path)
+        # Load checkpoint: a run's own latest checkpoint in save_dir wins (SLURM auto-requeue
+        # / crash resume — epoch+steps+optimizer+scaler intact); the configured seed/base
+        # checkpoint (resume_checkpoint_path) is only the cold-start fallback. See
+        # resolve_resume_checkpoint for why the priority must be this way round.
+        ckpt_to_load = resolve_resume_checkpoint(
+            self.checkpoint_conf.save_dir, self.checkpoint_conf.resume_checkpoint_path
+        )
+        if ckpt_to_load is not None:
+            self._load_resuming_checkpoint(ckpt_to_load)
 
         # Wrap the model with DDP
         self._setup_ddp_distributed_training(distributed, device)
@@ -587,6 +589,14 @@ class Trainer:
                            max(f.max() for f in gt_frames),
                            1e-3))
 
+        # In fixed-phase mode the model only ever trained at t_target_fixed, so V_canon at
+        # every other phase is out-of-distribution (V_gt still beats — it's real data).
+        # Note this in the caption so the strip/gif isn't misread as a failed reconstruction.
+        if self.t_target_fixed is not None:
+            mode_note = f" | fixed-t={self.t_target_fixed}: V_canon at t≠{self.t_target_fixed} is out-of-distribution"
+        else:
+            mode_note = ""
+
         try:
             fig = plt.figure(figsize=(1.4 * T_total + 0.5, 3.0), dpi=90)
             gs = _gs.GridSpec(2, T_total + 1, width_ratios=[1.0] * T_total + [0.04], wspace=0.05, hspace=0.18)
@@ -605,7 +615,7 @@ class Trainer:
             cax = fig.add_subplot(gs[:, T_total]); plt.colorbar(im, cax=cax)
             fig.suptitle(f"Cardiac cycle (val subj 0, mid-z) — step={log_step}", fontsize=9)
             self.wandb_writer.log("Val_Visuals_cardiac_cycle",
-                                  wandb.Image(fig, caption=f"step={log_step}"), log_step)
+                                  wandb.Image(fig, caption=f"step={log_step}{mode_note}"), log_step)
             plt.close(fig)
         except Exception as e:
             logging.warning(f"cardiac filmstrip log failed (ignored): {e}")
@@ -626,7 +636,7 @@ class Trainer:
                 frames[t, 2] = gray
             self.wandb_writer.log(
                 "Val_Visuals_cardiac_cycle_gif",
-                wandb.Video(frames, fps=4, format="gif", caption=f"step={log_step} (V_gt left / V_canon right)"),
+                wandb.Video(frames, fps=4, format="gif", caption=f"step={log_step} (V_gt left / V_canon right){mode_note}"),
                 log_step,
             )
         except Exception as e:
@@ -1399,7 +1409,11 @@ class Trainer:
                 sls = data["slice_indices"]
                 # S is the number of slots in the sequence
                 S = ts.shape[1] if hasattr(ts, "shape") else len(ts[0])
-                
+
+                # Slot 1 (index 0) = the t_target slice — the most important slot.
+                self._log_scalar("train_slice_selection/slot1_frame", ts[0, 0].item(), step)
+                self._log_scalar("train_slice_selection/slot1_slice", sls[0, 0].item(), step)
+
                 # Slot 2 (index 1)
                 if S > 1:
                     self._log_scalar("train_slice_selection/slot2_frame", ts[0, 1].item(), step)
@@ -1442,8 +1456,16 @@ class Trainer:
             return
 
         if phase in self.logging_conf.visuals_keys_to_log:
-            # Build caption (per-slot z/t info + t_target).
+            # Build caption (subject + per-slot z/t info + t_target).
             caption_parts = []
+            if "seq_name" in batch:
+                try:
+                    raw_seq = batch["seq_name"][0]
+                    # seq_name is "mri_{mri_mode}_{rel_path}"; strip to the bare subject id.
+                    subject = raw_seq.split("_", 2)[-1] if raw_seq.startswith("mri_") else raw_seq
+                    caption_parts.append(f"subj={subject}")
+                except Exception:
+                    pass
             t_target_val = None
             if "t_target" in batch:
                 try:

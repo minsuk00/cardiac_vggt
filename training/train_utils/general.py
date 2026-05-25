@@ -66,6 +66,25 @@ def get_resume_checkpoint(checkpoint_save_dir):
 
     return ckpt_file
 
+
+def resolve_resume_checkpoint(checkpoint_save_dir, seed_checkpoint_path):
+    """Decide which checkpoint to load at trainer startup.
+
+    A run's OWN latest checkpoint in `checkpoint_save_dir` (checkpoint_last.pt) always
+    wins, so a SLURM auto-requeue or crash-restart resumes mid-run with epoch / steps /
+    optimizer / scaler state intact. `seed_checkpoint_path` (the configured
+    `resume_checkpoint_path` — e.g. the VGGT-1B base or a CKPT_ONLY seed) is used only on a
+    COLD start, when save_dir has no checkpoint yet. Returns the path to load, or None.
+
+    Before this, `resume_checkpoint_path` unconditionally won, so a requeue reloaded the
+    base state_dict (which carries no prev_epoch/steps/optimizer keys) and silently
+    restarted at epoch 0, discarding all training progress.
+    """
+    local_ckpt = get_resume_checkpoint(checkpoint_save_dir)
+    if local_ckpt is not None:
+        return local_ckpt
+    return seed_checkpoint_path
+
 class DurationMeter:
     def __init__(self, name, device, fmt=":f"):
         self.name = name
