@@ -45,9 +45,15 @@ def test_build_returns_compose_when_enabled():
     t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
     assert t is not None
 
-def test_build_moderate_tier_not_implemented():
-    with pytest.raises(NotImplementedError):
-        build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "moderate"}))
+def test_build_moderate_tier_builds():
+    """Moderate tier is now implemented (in-plane only, stronger ranges/probs)."""
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "moderate"}))
+    assert t is not None
+    assert len(t.transforms) == 5
+
+def test_build_unknown_tier_raises():
+    with pytest.raises(ValueError):
+        build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "bogus"}))
 
 
 # ── gpu_augment_batch identity passthrough ────────────────────────────────────
