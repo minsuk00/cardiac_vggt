@@ -108,7 +108,53 @@ def build_gpu_transforms(aug_cfg=None):
         return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
 
     if tier == "moderate":
-        raise NotImplementedError("'moderate' tier deferred — start with 'conservative'.")
+        # Moderate tier: same IN-PLANE-ONLY discipline as conservative (NO
+        # through-plane rotation, NO elastic — Z is 8 mm anisotropic), but with
+        # stronger ranges and higher fire-probabilities so the effect is clearly
+        # visible and provides real regularization rather than near-identity draws.
+        # Same positional/plane semantics as the conservative block above:
+        #   rotate_range slot 0 = in-plane (H-W); translate/scale slots are (D,H,W)
+        #   with D frozen; RandFlipd spatial_axis=[2] = in-plane left-right (W).
+        transforms = [
+            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            _B.RandAffined(
+                keys=keys,
+                prob=0.9,
+                rotate_range=(float(np.deg2rad(12)), 0.0, 0.0),  # in-plane (H-W) only
+                translate_range=(0.0, 8.0, 8.0),                 # H, W only (D frozen)
+                scale_range=(0.0, 0.10, 0.10),                   # H, W only (D frozen)
+                padding_mode="zeros",
+            ),
+            # Photometric — apply ONLY to `phases`, not the mask.
+            _B.RandGaussianNoised(keys=["phases"], prob=0.5, std=(0.0, 0.03)),
+            _B.RandAdjustContrastd(keys=["phases"], prob=0.5, gamma=(0.7, 1.4)),
+            _B.RandBiasFieldd(keys=["phases"], prob=0.5, degree=3, coeff_range=(-0.3, 0.3)),
+        ]
+        return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
+
+    if tier == "aggressive":
+        # Aggressive tier: still IN-PLANE ONLY (no through-plane rotation, no
+        # elastic — Z is 8 mm anisotropic), but large, clearly-visible ranges and
+        # high fire-probabilities for strong regularization. Same plane/axis
+        # semantics as the blocks above (rotate slot 0 = in-plane H-W;
+        # translate/scale slots = (D,H,W) with D frozen; flip W = in-plane L-R).
+        transforms = [
+            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            _B.RandAffined(
+                keys=keys,
+                prob=0.95,
+                rotate_range=(float(np.deg2rad(25)), 0.0, 0.0),  # in-plane (H-W) only
+                translate_range=(0.0, 16.0, 16.0),               # H, W only (D frozen)
+                scale_range=(0.0, 0.20, 0.20),                   # H, W only (D frozen)
+                padding_mode="zeros",
+            ),
+            # Photometric — apply ONLY to `phases`, not the mask.
+            _B.RandGaussianNoised(keys=["phases"], prob=0.6, std=(0.0, 0.05)),
+            _B.RandAdjustContrastd(keys=["phases"], prob=0.6, gamma=(0.6, 1.7)),
+            _B.RandBiasFieldd(keys=["phases"], prob=0.6, degree=3, coeff_range=(-0.5, 0.5)),
+        ]
+        return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
+
     raise ValueError(f"unknown aug tier: {tier!r}")
 
 
