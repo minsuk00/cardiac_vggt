@@ -95,6 +95,7 @@ class MRIDataset(BaseDataset):
         dvf_dirname="dvf_elastix",     # legacy — accepted but unused
         gt_grid_shape=GRID_SHAPE_SPLAT,  # legacy override; must match preprocess.py
         t_target_fixed=None,
+        t_target_phases=None,
         cache_dir=None,
     ):
         """
@@ -115,6 +116,9 @@ class MRIDataset(BaseDataset):
         self.target_size = target_size
         self.mri_mode = mri_mode
         self.t_target_fixed = t_target_fixed
+        self.t_target_phases = list(t_target_phases) if t_target_phases is not None else None
+        if self.t_target_phases is not None and len(self.t_target_phases) == 0:
+            raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
 
         if tuple(gt_grid_shape) != GRID_SHAPE_SPLAT:
             raise ValueError(
@@ -222,8 +226,15 @@ class MRIDataset(BaseDataset):
         bbox_z_size = max(1, bbox_z1 - bbox_z0)  # at least 1 for fallback
 
         # ── Pick t_target ─────────────────────────────────────────────────
+        # Priority: single fixed phase > restricted phase pool > all T phases.
         if self.t_target_fixed is not None:
             t_target = int(self.t_target_fixed) % T_total
+        elif self.t_target_phases is not None:
+            pool = [int(t) % T_total for t in self.t_target_phases]
+            if self.split != "train":
+                t_target = pool[seq_index % len(pool)]   # deterministic cycle for stable val
+            else:
+                t_target = random.choice(pool)
         elif self.split != "train":
             t_target = seq_index % T_total
         else:

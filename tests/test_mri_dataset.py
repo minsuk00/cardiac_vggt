@@ -222,6 +222,127 @@ def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, mon
             f"Val seq_index={seq_index} expected t_target={seq_index % SYN_T}, got {t_target}"
         assert s["timesteps"][0] == t_target
 
+def test_t_target_phases_val_cycles_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
+    from data.datasets.mri_dataset import MRIDataset
+    pool = [0, 7]
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8,
+                    t_target_phases=pool, cache_dir=monai_cache_dir)
+    for seq_index in range(12):
+        s = ds.get_data(seq_index, img_per_seq=8)
+        t_target = int(np.asarray(s["t_target"]).item())
+        assert t_target == pool[seq_index % len(pool)], \
+            f"Val seq_index={seq_index} expected t_target={pool[seq_index % len(pool)]}, got {t_target}"
+        assert s["timesteps"][0] == t_target
+
+def test_t_target_phases_train_only_from_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
+    from data.datasets.mri_dataset import MRIDataset
+    pool = [0, 7]
+    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8,
+                    t_target_phases=pool, cache_dir=monai_cache_dir)
+    seen = set()
+    for seq_index in range(40):
+        s = ds.get_data(seq_index, img_per_seq=8)
+        t_target = int(np.asarray(s["t_target"]).item())
+        assert t_target in pool, f"Train t_target={t_target} not in pool {pool}"
+        assert s["timesteps"][0] == t_target
+        seen.add(t_target)
+    assert seen == set(pool), f"Train never sampled the full pool {pool}; saw {seen}"
+
+def test_t_target_phases_inputs_span_beyond_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """TARGET-ONLY guarantee: restricting the pool restricts only t_target (slot 0);
+    the other input slots must still draw from ALL phases, including ones outside the pool."""
+    from data.datasets.mri_dataset import MRIDataset
+    pool = [0, 7]
+    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=12,
+                    t_target_phases=pool, cache_dir=monai_cache_dir)
+    input_phases = set()
+    for seq_index in range(30):
+        s = ds.get_data(seq_index, img_per_seq=8)
+        input_phases.update(int(t) for t in s["timesteps"])
+    outside = input_phases - set(pool)
+    assert len(outside) >= 3, \
+        f"Inputs should span phases beyond the target pool {pool}; only saw {sorted(input_phases)}"
+
+def test_t_target_phases_val_deterministic_across_instances(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Val phase selection must be identical across two independent dataset objects
+    (the basis for stable per-phase val metrics across runs)."""
+    from data.datasets.mri_dataset import MRIDataset
+    pool = [0, 7]
+    def seq(ds):
+        return [int(np.asarray(ds.get_data(i, img_per_seq=8)["t_target"]).item()) for i in range(10)]
+    ds_a = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                      mode="dynamic", mri_mode="axial", num_slices=8,
+                      t_target_phases=pool, cache_dir=monai_cache_dir)
+    ds_b = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                      mode="dynamic", mri_mode="axial", num_slices=8,
+                      t_target_phases=pool, cache_dir=monai_cache_dir)
+    assert seq(ds_a) == seq(ds_b) == [pool[i % 2] for i in range(10)]
+
+def test_t_target_phases_single_element(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """A 1-element pool pins every sample to that phase, in both splits."""
+    from data.datasets.mri_dataset import MRIDataset
+    for split in ("train", "val"):
+        ds = MRIDataset(common_conf, synthetic_root, split=split, split_file=split_file,
+                        mode="dynamic", mri_mode="axial", num_slices=8,
+                        t_target_phases=[5], cache_dir=monai_cache_dir)
+        for seq_index in range(6):
+            t = int(np.asarray(ds.get_data(seq_index, img_per_seq=8)["t_target"]).item())
+            assert t == 5, f"{split}: 1-element pool should pin t_target=5, got {t}"
+
+def test_t_target_phases_out_of_range_wraps(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Pool entries are taken mod T (defensive), so [12, 19] behaves like [0, 7] for T=12."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8,
+                    t_target_phases=[12, 19], cache_dir=monai_cache_dir)  # 12%12=0, 19%12=7
+    ts = [int(np.asarray(ds.get_data(i, img_per_seq=8)["t_target"]).item()) for i in range(6)]
+    assert ts == [0, 7, 0, 7, 0, 7], f"out-of-range pool should wrap mod {SYN_T}; got {ts}"
+
+def test_t_target_phases_empty_raises(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """An empty pool is a misconfig and must fail loudly at construction, not mid-training."""
+    from data.datasets.mri_dataset import MRIDataset
+    with pytest.raises(ValueError, match="non-empty"):
+        MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
+                   mode="dynamic", mri_mode="axial", num_slices=8,
+                   t_target_phases=[], cache_dir=monai_cache_dir)
+
+# ── 7b. Original t_target behavior must be preserved (regression) ──────────────
+
+def test_t_target_fixed_forces_phase(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """REGRESSION: t_target_fixed=K forces every sample (train AND val) to phase K."""
+    from data.datasets.mri_dataset import MRIDataset
+    for split in ("train", "val"):
+        ds = MRIDataset(common_conf, synthetic_root, split=split, split_file=split_file,
+                        mode="dynamic", mri_mode="axial", num_slices=8,
+                        t_target_fixed=3, cache_dir=monai_cache_dir)
+        for seq_index in range(8):
+            s = ds.get_data(seq_index, img_per_seq=8)
+            t = int(np.asarray(s["t_target"]).item())
+            assert t == 3, f"{split}: t_target_fixed=3 expected 3, got {t}"
+            assert s["timesteps"][0] == 3
+
+def test_t_target_fixed_overrides_phases(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """PRIORITY: if both t_target_fixed and t_target_phases are set, fixed wins."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8,
+                    t_target_fixed=3, t_target_phases=[0, 7], cache_dir=monai_cache_dir)
+    for seq_index in range(12):
+        t = int(np.asarray(ds.get_data(seq_index, img_per_seq=8)["t_target"]).item())
+        assert t == 3, f"t_target_fixed must override t_target_phases; got {t}"
+
+def test_all_phases_train_spans_many(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """REGRESSION: with neither knob set, train samples t_target uniformly over all T phases."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
+    seen = {int(np.asarray(ds.get_data(i, img_per_seq=8)["t_target"]).item()) for i in range(60)}
+    assert seen <= set(range(SYN_T))
+    assert len(seen) >= 6, f"all-phases train should spread across phases; saw only {sorted(seen)}"
+
 def test_z_indices_in_range(train_ds):
     s = train_ds.get_data(0, img_per_seq=8)
     for z_idx in s["z_indices"]:

@@ -28,6 +28,10 @@ gt_grid_shape: [12, 256, 256]
 # Set to an int (e.g., 0) to force every sample to use that phase as the target —
 # 0 reproduces the original ED-only pipeline.
 t_target_fixed: null
+# Restrict the multi-phase target pool to a subset of phases (e.g. [0, 7]) instead
+# of all T. null → all phases. Train picks uniformly from the list; val cycles it
+# deterministically. Mutually exclusive with t_target_fixed (single-phase wins).
+t_target_phases: null
 # ---------------------
 
 dataset_name: "${basename:${data_root}}"
@@ -145,6 +149,7 @@ data:
           target_size: ${img_size}
           gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
+          t_target_phases: ${t_target_phases}
   val:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
@@ -193,6 +198,7 @@ data:
           target_size: ${img_size}
           gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
+          t_target_phases: ${t_target_phases}
 
 # Enable Point Head, disable others
 model:
