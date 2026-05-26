@@ -78,7 +78,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 
 ## Volume pipeline (one forward pass)
 
-0. **Preprocess (cached, one-time per subject).** monai `PersistentDataset` resamples all 12 phase NIfTIs to `(1.4, 1.4, 8.0)` mm, crop/zero-pads to `(256, 256, 12)` (geometric center), normalizes intensity against phase_00's 1/99.5 percentiles, and stacks into one `(T=12, 256, 256, 12)` float16 tensor + a `(256,256,12)` content mask (1=native FOV, 0=zero-pad). Cached on `/tmp/vggt-mri_${USER}_monai_cache/`. Pipeline + custom transforms live in `training/data/preprocess.py`.
+0. **Preprocess (cached, one-time per subject).** monai `PersistentDataset` resamples all 12 phase NIfTIs to `(1.4, 1.4, 8.0)` mm, crop/zero-pads to `(256, 256, 12)` (geometric center), normalizes intensity against phase_00's 0.5/99.9 percentiles (computed over non-zero FOV voxels, excluding zero-padding), and stacks into one `(T=12, 256, 256, 12)` float16 tensor + a `(256,256,12)` content mask (1=native FOV, 0=zero-pad). Cached on `/tmp/vggt-mri_${USER}_monai_cache/`. Pipeline + custom transforms live in `training/data/preprocess.py`.
 1. **Sample.** S ≤ 12 slices. **z is sampled only from within the geometric anatomy bbox** (in-FOV canonical planes) so small-Z subjects don't waste slots on zero-padded planes.
    - **Train:** slot 0 = `(t_target, random in-bbox z)` where `t_target = random.randrange(T)`; slots 1..S-1 = `(random t ≠ t_target, random in-bbox z)`. If `bbox_z_size < S`, z is sampled with replacement.
    - **Val:** `t_target = seq_index % T_total` (stratified). Slots use cyclic-within-bbox diagonal: slot i = `((t_target + i) mod T, bbox_z0 + (i mod bbox_z_size))`. Deterministic across runs (crc32-seeded).

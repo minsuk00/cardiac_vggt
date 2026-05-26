@@ -60,6 +60,7 @@ from data.preprocess import (
     TARGET_SHAPE,
     TARGET_SPACING,
     build_data_dicts,
+    cache_signature,
     compute_geometric_bbox,
     default_cache_dir,
     get_canonical_transforms,
@@ -141,7 +142,10 @@ class MRIDataset(BaseDataset):
             raise RuntimeError(
                 "monai is required for canonical-grid MRIDataset — pip install monai>=1.4,<1.5"
             )
-        cache_dir = cache_dir or default_cache_dir()
+        # Subdir keyed by content-defining params (spacing/shape/normalization) so a
+        # normalization change routes to a fresh cache instead of silently reusing a
+        # stale one (PersistentDataset hashes only the input dict, not the transform).
+        cache_dir = os.path.join(cache_dir or default_cache_dir(), cache_signature())
         os.makedirs(cache_dir, exist_ok=True)
         data_dicts = build_data_dicts(self.subjects, num_phases=NUM_PHASES)
         self.cache = PersistentDataset(

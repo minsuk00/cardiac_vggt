@@ -49,7 +49,16 @@ class ScaleIntensityByT0PercentilesD(MapTransform):
     loss isn't biased by per-phase intensity drift. Output is float in [0, 1].
     """
 
-    def __init__(self, keys, ref_key, lower: float = 1.0, upper: float = 99.5, eps: float = 1e-8):
+    # Percentiles are computed over NON-ZERO ref voxels only (the FOV): the canonical
+    # cube zero-pads small subjects, and exact-zero padding would otherwise skew the
+    # stat (e.g. pin the low percentile to 0). FOV air is positive (Rician noise), so
+    # only the zero-padding is dropped. NOTE on (lower, upper): 0.5/99.9 = robust clip
+    # of the dark floor + bright outlier tail (flow/blood-pool spikes). Do NOT retune
+    # these to chase PSNR — normalization rescales both recon and GT, so PSNR ∝
+    # 20·log10(range) shifts cosmetically WITHOUT changing reconstruction. Changing the
+    # region or percentiles invalidates checkpoints; the monai cache auto-rebuilds via
+    # cache_signature() (PersistentDataset keys on file paths, not the transform).
+    def __init__(self, keys, ref_key, lower: float = 0.5, upper: float = 99.9, eps: float = 1e-8):
         super().__init__(keys, allow_missing_keys=False)
         self.ref_key = ref_key
         self.lower = lower
@@ -61,6 +70,11 @@ class ScaleIntensityByT0PercentilesD(MapTransform):
         ref = d[self.ref_key]
         ref_t = ref.as_tensor() if hasattr(ref, "as_tensor") else ref
         ref_f = ref_t.reshape(-1).float()
+        # Drop exact-zero padding so it can't skew the percentiles; keep FOV voxels
+        # (air is positive). Fall back to all voxels if the ref is all-zero (degenerate).
+        nz = ref_f[ref_f != 0]
+        if nz.numel() > 0:
+            ref_f = nz
         # torch.quantile is exact but slow on big tensors; use it because the volumes
         # are small (256·256·12 ≈ 786k voxels), well under the kernel-launch cost.
         vmin = torch.quantile(ref_f, self.lower / 100.0).item()
@@ -184,8 +198,8 @@ def get_canonical_transforms(
     target_spacing=TARGET_SPACING,
     target_shape=TARGET_SHAPE,
     num_phases: int = NUM_PHASES,
-    lower: float = 1.0,
-    upper: float = 99.5,
+    lower: float = 0.5,
+    upper: float = 99.9,
     storage_dtype=torch.float16,
 ):
     """Build the deterministic monai pipeline for `PersistentDataset`.
@@ -248,6 +262,21 @@ def build_data_dicts(subject_sax_dirs, num_phases: int = NUM_PHASES):
         d["sax_dir"] = sax_dir
         items.append(d)
     return items
+
+
+def cache_signature() -> str:
+    """Short hash of the params that determine cached tensor *content*.
+
+    monai `PersistentDataset` keys its cache on the input data dict (file paths),
+    NOT on the transform — so changing spacing / shape / normalization would silently
+    reuse a stale cache. Append this to the cache dir so any such change auto-routes
+    to a fresh subdir (old cache is harmlessly orphaned on /tmp). NORM_REGION/percentiles
+    are folded in so the non-zero 0.5/99.9 change can't no-op on a warm node.
+    """
+    import hashlib
+
+    sig = repr((TARGET_SPACING, TARGET_SHAPE, NUM_PHASES, "nonzero", 0.5, 99.9))
+    return hashlib.md5(sig.encode()).hexdigest()[:10]
 
 
 def default_cache_dir() -> str:
