@@ -25,9 +25,9 @@
 # ---- PER-RUN CONFIG (the only block that differs across the 4 run scripts) ----
 CONFIG="mri_volume"
 NGPU=1
-EXP_TAG="mri_volume_fixedED"                 # → exp_name = <rev_ts>_${EXP_TAG}
-RUN_OVERRIDES="max_epochs=200 t_target_fixed=0 logging.wandb_writer.tags=[mri_volume,t0,headonly]"   # fixed ED (t=0) target phase, head-only
-MASTER_PORT=29531
+EXP_TAG="mri_volume_t0t7"                 # → exp_name = <rev_ts>_${EXP_TAG}
+RUN_OVERRIDES="max_epochs=200 t_target_phases=[0,7] logging.wandb_writer.tags=[mri_volume,t0t7,multiphase,headonly]"   # multiphase restricted to target phases {0,7}, head-only
+MASTER_PORT=29536
 # -------------------------------------------------------------------------------
 
 # Fresh-run series: do NOT seed from the (non-transferable) 4-day baseline.
