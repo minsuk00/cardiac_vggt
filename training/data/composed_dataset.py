@@ -149,6 +149,8 @@ class ComposedDataset(Dataset, ABC):
             sample["z_indices"] = torch.from_numpy(np.stack(batch["z_indices"]).astype(np.float32))
         if "t_indices" in batch:
             sample["t_indices"] = torch.from_numpy(np.stack(batch["t_indices"]).astype(np.float32))
+        if "target_t_indices" in batch:
+            sample["target_t_indices"] = torch.from_numpy(np.stack(batch["target_t_indices"]).astype(np.float32))
         if "timesteps" in batch:
             sample["timesteps"] = torch.from_numpy(np.stack(batch["timesteps"]).astype(np.int64))
         if "slice_indices" in batch:

@@ -51,6 +51,8 @@ def _make_stub_trainer(t_target_fixed=None, rank=0):
     # the whole cube; `_bbox` over the subject's geometric content region.
     stub._per_phase_val_psnr_full = defaultdict(list)
     stub._per_phase_val_psnr_bbox = defaultdict(list)
+    # `_motion` = voxels that move across the cardiac cycle (the val_motion panel).
+    stub._per_phase_val_psnr_motion = defaultdict(list)
     stub.rank = rank
     stub.logging_conf = SimpleNamespace(log_freq=1)
     # Mock scalar log to a list we can assert against.
@@ -74,6 +76,38 @@ def test_per_phase_accumulator_buckets_correctly():
     # Expected: bucket 0 has 2 entries; bucket 1 has 1; bucket 3 has 1; bucket 5 has 1; bucket 11 has 1.
     counts = {t: len(v) for t, v in stub._per_phase_val_psnr_full.items()}
     assert counts == {0: 2, 1: 1, 5: 1, 3: 1, 11: 1}, f"unexpected per-phase counts: {counts}"
+
+
+def _make_data_with_phases(t_targets, V_shape=(2, 4, 4), T=4):
+    """`_make_data` plus a `phases` (B, T, D, H, W) bundle with a deterministic
+    moving 2×2 sub-region in z-plane 0 (swing 0.9 > tau), the rest static."""
+    data = _make_data(t_targets, V_shape=V_shape)
+    B = data["V_canon"].shape[0]
+    D, H, W = V_shape
+    phases = torch.full((B, T, D, H, W), 0.2)
+    ramp = torch.linspace(0.0, 0.9, T).view(1, T, 1, 1)  # swing 0.9 across phases
+    phases[:, :, 0, 0:2, 0:2] = ramp                     # 4 moving voxels in plane 0
+    data["phases"] = phases
+    return data
+
+
+def test_per_phase_motion_accumulator_buckets_correctly():
+    """When `phases` is present, motion PSNR buckets by t_target like full/bbox."""
+    stub = _make_stub_trainer(t_target_fixed=None)
+    for t_targets in [[0, 1], [0, 5]]:
+        stub._update_and_log_scalars(_make_data_with_phases(t_targets), phase="val", step=0, loss_meters={})
+    counts = {t: len(v) for t, v in stub._per_phase_val_psnr_motion.items()}
+    assert counts == {0: 2, 1: 1, 5: 1}, f"unexpected motion counts: {counts}"
+    # Every accumulated value is a finite PSNR.
+    assert all(torch.isfinite(torch.tensor(v)).all() for v in stub._per_phase_val_psnr_motion.values())
+
+
+def test_motion_accumulator_empty_without_phases():
+    """No `phases` in the batch → motion accumulator stays empty, full still fills."""
+    stub = _make_stub_trainer(t_target_fixed=None)
+    stub._update_and_log_scalars(_make_data([0, 1]), phase="val", step=0, loss_meters={})
+    assert len(stub._per_phase_val_psnr_motion) == 0
+    assert sum(len(v) for v in stub._per_phase_val_psnr_full.values()) == 2  # full path unaffected
 
 
 def test_per_phase_accumulator_skipped_for_train_phase():
@@ -131,6 +165,39 @@ def test_filmstrip_restores_dataset_state():
     stub._log_cardiac_cycle_filmstrip(log_step=42)  # should error internally and recover
     assert mock_ds.t_target_fixed == orig, \
         f"t_target_fixed not restored: was {orig}, now {mock_ds.t_target_fixed}"
+
+
+def test_motion_mask_example_logs_under_val_motion():
+    """`_log_motion_mask_example` renders an image and logs it under `val_motion/mask_example`;
+    and returns silently when there's no wandb writer."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import numpy as np
+    from trainer import Trainer
+
+    # No wandb → silent no-op.
+    stub = SimpleNamespace(wandb_writer=None)
+    stub._get_mri_dataset = lambda: None
+    stub._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub)
+    stub._log_motion_mask_example(0)  # must not raise
+
+    # With wandb + a mock dataset → logs exactly the val_motion/mask_example key.
+    class MockDS:
+        num_slices = 12
+
+        def get_data(self, seq_index, img_per_seq):
+            T, D, H, W = 4, 3, 16, 16
+            phases = np.full((T, D, H, W), 0.2, dtype=np.float32)
+            phases[:, 1, 4:8, 4:8] = np.linspace(0.0, 0.9, T)[:, None, None]  # moving region
+            return {"phases": phases, "anatomy_bbox": np.array([0, D, 0, H, 0, W])}
+
+    logged = []
+    stub2 = SimpleNamespace()
+    stub2.wandb_writer = SimpleNamespace(log=lambda key, val, step: logged.append((key, step)))
+    stub2._get_mri_dataset = lambda: MockDS()
+    stub2._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub2)
+    stub2._log_motion_mask_example(99)
+    assert ("val_motion/mask_example", 99) in logged, f"image not logged: {logged}"
 
 
 def test_filmstrip_skipped_without_wandb():

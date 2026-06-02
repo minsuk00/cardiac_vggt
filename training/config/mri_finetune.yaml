@@ -17,6 +17,7 @@ mri_data_mode: "dynamic" # "static" or "dynamic"
 train_on_residual_dvf: true
 use_z_pose_embedding: true
 use_t_pose_embedding: true
+use_target_t_pose_embedding: true
 limit_train_batches: 1000
 limit_val_batches: 200
 max_epochs: 200
@@ -51,8 +52,9 @@ logging:
   visuals_per_batch_to_log: 4
   video_logging_fps: 4
   # Multi-phase cardiac-cycle filmstrip (val-only, gated on t_target_fixed is None).
-  # Logged every N val epochs to amortize the ~72s cost (12 model forwards on A40).
-  filmstrip_every_n_val_epochs: 5
+  # Logged every N val epochs (~72s: 12 model forwards on A40). Set to 1 to watch the
+  # full-cycle V_gt vs V_canon reconstruction every epoch.
+  filmstrip_every_n_val_epochs: 1
   # Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val epoch.
   # Overwrites in place (constant ~360 MB disk). Identity affine (canonical voxel space).
   save_val_volumes: true
@@ -96,7 +98,7 @@ logging:
 checkpoint:
   save_dir: "${logging.log_dir}/ckpts"
   save_freq: 200
-  resume_checkpoint_path: "./scratch/torch_cache/model.pt"
+  resume_checkpoint_path: "./scratch/base_weights/vggt1b_base.pt"
   strict: false
 
 # Override data to use ONLY MRIDataset via ComposedDataset
@@ -208,6 +210,7 @@ model:
   enable_track: false
   use_z_pose_embedding: ${use_z_pose_embedding}
   use_t_pose_embedding: ${use_t_pose_embedding}
+  use_target_t_pose_embedding: ${use_target_t_pose_embedding}
   train_on_residual_dvf: ${train_on_residual_dvf}
 
 # Configure Loss

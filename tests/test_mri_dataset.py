@@ -178,7 +178,9 @@ def test_S_capped_to_bbox_no_wrap_val(synthetic_root, split_file, common_conf, m
     assert bbox_z_size < 12, "fixture should have a sub-12 z extent to exercise the cap"
     assert len(zs) == bbox_z_size, f"S must cap to bbox_z_size={bbox_z_size}, got {len(zs)} slices"
     assert len(set(zs)) == len(zs), f"val z must not repeat (no wrap), got {zs}"
-    assert zs == list(range(z0, z0 + len(zs))), f"val z must be the monotonic in-bbox diagonal, got {zs}"
+    # z is now seeded-random WITHOUT replacement (no longer the monotonic diagonal), so it
+    # must COVER every in-bbox plane exactly once — check as a set, not in order.
+    assert set(zs) == set(range(z0, z0 + len(zs))), f"val z must cover the in-bbox planes, got {zs}"
 
 
 def test_S_capped_to_bbox_no_dup_train(train_ds):
@@ -195,21 +197,45 @@ def test_S_capped_to_bbox_no_dup_train(train_ds):
 
 # ── 7. Timesteps and frame indexing ──────────────────────────────────────────
 
-def test_slot0_anchored_to_t_target(train_ds):
-    for _ in range(5):
-        s = train_ds.get_data(0, img_per_seq=8)
+def test_train_slot0_decoupled_from_t_target(train_ds):
+    """DECOUPLED-TARGET design: train input phases are sampled independently of t_target,
+    so slot 0 is NO LONGER pinned to t_target. Over many draws slot-0's phase must NOT
+    always equal t_target (the old anchored behavior)."""
+    slot0_equals_target = 0
+    n = 40
+    for i in range(n):
+        s = train_ds.get_data(i, img_per_seq=8)
         t_target = int(np.asarray(s["t_target"]).item())
         assert 0 <= t_target < SYN_T
-        assert s["timesteps"][0] == t_target, \
-            f"Slot 0 must equal t_target ({t_target}), got {s['timesteps'][0]}"
+        if int(s["timesteps"][0]) == t_target:
+            slot0_equals_target += 1
+    # With random-with-replacement sampling, P(slot0==target) ≈ 1/T per draw.
+    assert slot0_equals_target < n, \
+        f"slot 0 is still always == t_target ({slot0_equals_target}/{n}) — decoupling failed"
 
-def test_dynamic_timesteps_distinct_from_target(train_ds):
-    for _ in range(5):
-        s = train_ds.get_data(0, img_per_seq=8)
+def test_train_timesteps_in_range_and_may_equal_target(train_ds):
+    """Train input phases are valid [0,T) and (unlike the old scheme) MAY equal t_target —
+    a slice that lands on t_target is a natural anchor, no longer forbidden."""
+    all_phases = set()
+    for i in range(40):
+        s = train_ds.get_data(i, img_per_seq=8)
+        for t in s["timesteps"]:
+            assert 0 <= int(t) < SYN_T
+            all_phases.add(int(t))
+    assert len(all_phases) >= 6, f"train input phases should spread widely; saw {sorted(all_phases)}"
+
+def test_target_t_indices_present_and_broadcast(train_ds):
+    """target_t_indices: one per slot, ALL equal, and == (t_target/T)*2-1 (matches the
+    t_indices normalization). This is the global target-phase query broadcast to every slot."""
+    for i in range(8):
+        s = train_ds.get_data(i, img_per_seq=8)
         t_target = int(np.asarray(s["t_target"]).item())
-        for t in s["timesteps"][1:]:
-            assert 0 <= t < SYN_T
-            assert t != t_target, f"Dynamic slot t={t} equals t_target={t_target}"
+        tti = s["target_t_indices"]
+        assert len(tti) == len(s["timesteps"]), "one target_t_index per slot"
+        expected = (t_target / SYN_T) * 2.0 - 1.0
+        vals = [float(np.asarray(v).reshape(-1)[0]) for v in tti]
+        assert all(abs(v - expected) < 1e-6 for v in vals), \
+            f"target_t_indices must all == {expected} (t_target={t_target}); got {vals}"
 
 def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, monai_cache_dir):
     from data.datasets.mri_dataset import MRIDataset
@@ -220,7 +246,6 @@ def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, mon
         t_target = int(np.asarray(s["t_target"]).item())
         assert t_target == seq_index % SYN_T, \
             f"Val seq_index={seq_index} expected t_target={seq_index % SYN_T}, got {t_target}"
-        assert s["timesteps"][0] == t_target
 
 def test_t_target_phases_val_cycles_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
     from data.datasets.mri_dataset import MRIDataset
@@ -233,7 +258,6 @@ def test_t_target_phases_val_cycles_pool(synthetic_root, split_file, common_conf
         t_target = int(np.asarray(s["t_target"]).item())
         assert t_target == pool[seq_index % len(pool)], \
             f"Val seq_index={seq_index} expected t_target={pool[seq_index % len(pool)]}, got {t_target}"
-        assert s["timesteps"][0] == t_target
 
 def test_t_target_phases_train_only_from_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
     from data.datasets.mri_dataset import MRIDataset
@@ -246,13 +270,12 @@ def test_t_target_phases_train_only_from_pool(synthetic_root, split_file, common
         s = ds.get_data(seq_index, img_per_seq=8)
         t_target = int(np.asarray(s["t_target"]).item())
         assert t_target in pool, f"Train t_target={t_target} not in pool {pool}"
-        assert s["timesteps"][0] == t_target
         seen.add(t_target)
     assert seen == set(pool), f"Train never sampled the full pool {pool}; saw {seen}"
 
 def test_t_target_phases_inputs_span_beyond_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """TARGET-ONLY guarantee: restricting the pool restricts only t_target (slot 0);
-    the other input slots must still draw from ALL phases, including ones outside the pool."""
+    """Restricting the pool restricts only the t_target QUERY; input slots (now ALL of them,
+    since slot 0 is decoupled) still draw from ALL phases, including ones outside the pool."""
     from data.datasets.mri_dataset import MRIDataset
     pool = [0, 7]
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
@@ -322,7 +345,8 @@ def test_t_target_fixed_forces_phase(synthetic_root, split_file, common_conf, mo
             s = ds.get_data(seq_index, img_per_seq=8)
             t = int(np.asarray(s["t_target"]).item())
             assert t == 3, f"{split}: t_target_fixed=3 expected 3, got {t}"
-            assert s["timesteps"][0] == 3
+            # NOTE: t_target_fixed fixes the QUERY phase only; input slots stay decoupled,
+            # so slot 0 is NOT pinned to 3 anymore (that's the decoupled-target design).
 
 def test_t_target_fixed_overrides_phases(synthetic_root, split_file, common_conf, monai_cache_dir):
     """PRIORITY: if both t_target_fixed and t_target_phases are set, fixed wins."""
@@ -352,6 +376,8 @@ def test_z_indices_in_range(train_ds):
 # ── 8. Static mode ────────────────────────────────────────────────────────────
 
 def test_static_mode_all_same_timestep(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Static mode is PRESERVED by the decoupling change: every slot == t_target, and
+    target_t_indices still equals norm(t_target)."""
     from data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
                     mode="static", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
@@ -359,3 +385,112 @@ def test_static_mode_all_same_timestep(synthetic_root, split_file, common_conf, 
     t_target = int(np.asarray(s["t_target"]).item())
     for t in s["timesteps"]:
         assert t == t_target, f"Static mode: slot t={t} != t_target={t_target}"
+    expected = (t_target / SYN_T) * 2.0 - 1.0
+    for v in s["target_t_indices"]:
+        assert abs(float(np.asarray(v).reshape(-1)[0]) - expected) < 1e-6
+
+
+# ── 9. Decoupled-target val sampling (deterministic, decoupled from t_target) ──
+
+def test_val_sampling_makes_no_global_rng_calls(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """STRONG no-leak guard: a val get_data call must leave the GLOBAL `random` state
+    byte-identical. Val uses a LOCAL `random.Random(seq_index)` (a private generator), so
+    it must NEVER perturb the global RNG the train split draws from. This catches a
+    `random.seed(...)` / module-level `random.*` creeping into the val branch (which a
+    cross-instance equality check would MISS, since reseeding is reproducible)."""
+    import random
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
+    random.seed(12345)
+    for seq_index in range(8):
+        state_before = random.getstate()
+        ds.get_data(seq_index, img_per_seq=8)
+        assert random.getstate() == state_before, \
+            f"val get_data perturbed the global RNG at seq_index={seq_index} — it made a random.* call"
+
+
+def test_val_sampling_deterministic_across_instances(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Val get_data must be fully reproducible across two independent dataset objects for
+    the SAME seq_index — the seeded local RNG (random.Random(seq_index)) makes the
+    random-looking draw identical across runs (stable per-phase metrics)."""
+    from data.datasets.mri_dataset import MRIDataset
+    def make():
+        return MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                          mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
+    ds_a, ds_b = make(), make()
+    for seq_index in range(12):
+        sa = ds_a.get_data(seq_index, img_per_seq=8)
+        sb = ds_b.get_data(seq_index, img_per_seq=8)
+        assert [int(t) for t in sa["timesteps"]] == [int(t) for t in sb["timesteps"]], \
+            f"val timesteps not reproducible at seq_index={seq_index}"
+        assert [int(z) for z in sa["slice_indices"]] == [int(z) for z in sb["slice_indices"]], \
+            f"val z not reproducible at seq_index={seq_index}"
+        va = [float(np.asarray(v).reshape(-1)[0]) for v in sa["target_t_indices"]]
+        vb = [float(np.asarray(v).reshape(-1)[0]) for v in sb["target_t_indices"]]
+        assert va == vb, f"val target_t_indices not reproducible at seq_index={seq_index}"
+        # z must still be distinct planes (sampled WITHOUT replacement within the bbox).
+        zs = [int(z) for z in sa["slice_indices"]]
+        assert len(set(zs)) == len(zs), f"val z must be distinct (no replacement); got {zs}"
+
+def test_val_consistent_across_simulated_epochs(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Val must return the IDENTICAL sample for a given seq_index on EVERY epoch. Between
+    epochs the training loop churns the global RNG (augmentation draws, sampler set_epoch
+    reseed); this simulates that and asserts the val draw is unaffected — because val uses a
+    LOCAL random.Random(seq_index) and the val loader is shuffle=False (stable seq_index
+    order). This is the 'consistent across runs AND epochs' guarantee."""
+    import random
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
+    seq = 5
+    s1 = ds.get_data(seq, img_per_seq=8)
+    # Simulate an intervening training epoch + set_epoch: reseed and churn the GLOBAL RNG.
+    random.seed(99999)
+    for _ in range(1000):
+        random.random()
+    s2 = ds.get_data(seq, img_per_seq=8)
+    assert [int(t) for t in s1["timesteps"]] == [int(t) for t in s2["timesteps"]], \
+        "val input phases changed after global-RNG churn — not epoch-stable"
+    assert [int(z) for z in s1["slice_indices"]] == [int(z) for z in s2["slice_indices"]], \
+        "val z changed after global-RNG churn — not epoch-stable"
+    assert int(np.asarray(s1["t_target"]).item()) == int(np.asarray(s2["t_target"]).item())
+
+
+def test_val_inputs_vary_per_seq_index_no_duplicates(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Seeding on seq_index (not subj_idx) means two val iterations that land on the SAME
+    (subject, t_target) — i.e. seq and seq+lcm(n_subj, T) — get DIFFERENT scattered inputs,
+    not bit-identical duplicates. This is the whole point of seeding per seq_index."""
+    import math
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
+    n_subj = len(ds.subjects)
+    step = n_subj * SYN_T // math.gcd(n_subj, SYN_T)   # lcm → same (subj_idx, t_target)
+    s0 = ds.get_data(0, img_per_seq=8)
+    s1 = ds.get_data(step, img_per_seq=8)
+    # Same subject and same target phase...
+    assert int(np.asarray(s0["t_target"]).item()) == int(np.asarray(s1["t_target"]).item())
+    # ...but the scattered input must differ (seeded on seq_index, not subj).
+    t0 = [int(t) for t in s0["timesteps"]]
+    t1 = [int(t) for t in s1["timesteps"]]
+    z0 = [int(z) for z in s0["slice_indices"]]
+    z1 = [int(z) for z in s1["slice_indices"]]
+    assert (t0, z0) != (t1, z1), \
+        f"val inputs are bit-identical duplicates across seq {0} and {step} — seeding not per-seq_index"
+
+def test_val_inputs_decoupled_from_t_target(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Val input phases are random (seeded) and decoupled from t_target — slot 0 is NOT pinned
+    to t_target across the val sweep (the honest unobserved-phase regime)."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
+    slot0_equals_target = 0
+    n = SYN_T  # one full t_target cycle
+    for seq_index in range(n):
+        s = ds.get_data(seq_index, img_per_seq=8)
+        t_target = int(np.asarray(s["t_target"]).item())
+        if int(s["timesteps"][0]) == t_target:
+            slot0_equals_target += 1
+    assert slot0_equals_target < n, \
+        f"val slot 0 still always == t_target ({slot0_equals_target}/{n}) — val not decoupled"

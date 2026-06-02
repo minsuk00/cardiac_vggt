@@ -183,12 +183,19 @@ class Trainer:
         # geometric native-FOV region only).
         self._per_phase_val_psnr_full = defaultdict(list)
         self._per_phase_val_psnr_bbox = defaultdict(list)
+        # `_motion` = only the voxels that move across the cardiac cycle (the dynamic
+        # heart, ~3-5% of the cube). The honest signal: static tissue is excluded, so
+        # this PSNR vs its identity baseline tells you whether the model actually
+        # corrects motion where it matters. Logged under the `val_motion/` panel.
+        self._per_phase_val_psnr_motion = defaultdict(list)
         # Identity baseline per phase + aggregate mean, populated by _compute_identity_baseline
         # and baked into val_psnr metric names so each panel shows n and baseline in its title.
         self._identity_baseline_full_per_phase = None
         self._identity_baseline_full_mean = None
         self._identity_baseline_bbox_per_phase = None
         self._identity_baseline_bbox_mean = None
+        self._identity_baseline_motion_per_phase = None
+        self._identity_baseline_motion_mean = None
         # Cumulative count of training batches skipped due to non-finite loss. Without this,
         # NaN/Inf chunks get swallowed by the early-return in _run_steps_on_batch_chunks and
         # loss_meters silently undercount, making the wandb loss curve look healthier than it is.
@@ -454,8 +461,20 @@ class Trainer:
             # whole cube, `_bbox` over the subject's geometric content region).
             per_phase_full = defaultdict(list)
             per_phase_bbox = defaultdict(list)
+            per_phase_motion = defaultdict(list)
 
-            for i in range(len(mri_ds.subjects)):
+            # Iterate the SAME seq_index range the val loop uses. Val calls
+            # get_data(seq_index = 0..N-1) with N = effective limit_val_batches, and val
+            # inputs are now seeded per seq_index (random.Random(seq_index)), so mirroring
+            # the range here makes the identity reference cover the EXACT (subject,
+            # t_target, seeded-input) samples val scores. Falls back to one pass over
+            # subjects when limit_val_batches is unset.
+            n_subj = len(mri_ds.subjects)
+            N = self.limit_val_batches if self.limit_val_batches is not None else n_subj
+            if self.t_target_fixed is not None and 0 < n_subj < N:
+                N = n_subj   # mirror val's fixed-phase auto-cap (one deterministic pass)
+            N = max(int(N), 1)
+            for i in range(N):
                 data = mri_ds.get_data(seq_index=i, img_per_seq=num_slices)
                 # Build a minimal batch dict on device (no model forward; identity Δ).
                 def st(k, dt=np.float32):
@@ -473,6 +492,9 @@ class Trainer:
                 if "anatomy_bbox" in data:
                     batch["anatomy_bbox"] = torch.from_numpy(
                         np.asarray(data["anatomy_bbox"]).astype(np.int64)).unsqueeze(0).to(self.device)
+                if "phases" in data:
+                    batch["phases"] = torch.from_numpy(
+                        np.asarray(data["phases"]).astype(np.float32)).unsqueeze(0).to(self.device)
                 # Identity world_points = scanner_coords (Δ = 0).
                 preds = {"world_points": batch["scanner_coords"]}
                 out = compute_volume_intensity_loss(preds, batch, grid_shape=grid_shape, tv_weight=0.0)
@@ -481,17 +503,22 @@ class Trainer:
                     per_phase_full[t].append(out["metric_psnr_3d_full"].item())
                 if "metric_psnr_3d_bbox" in out:
                     per_phase_bbox[t].append(out["metric_psnr_3d_bbox"].item())
+                if "metric_psnr_3d_motion" in out:
+                    per_phase_motion[t].append(out["metric_psnr_3d_motion"].item())
 
             # Aggregate.
             all_full = [p for ps in per_phase_full.values() for p in ps]
             all_bbox = [p for ps in per_phase_bbox.values() for p in ps]
+            all_motion = [p for ps in per_phase_motion.values() for p in ps]
             if not all_full:
                 logging.warning("Identity baseline: no subjects yielded a PSNR; skipping.")
                 return
             mean_full = float(sum(all_full) / len(all_full))
             mean_bbox = float(sum(all_bbox) / len(all_bbox)) if all_bbox else None
+            mean_motion = float(sum(all_motion) / len(all_motion)) if all_motion else None
             per_phase_mean_full = {t: float(sum(ps) / len(ps)) for t, ps in per_phase_full.items()}
             per_phase_mean_bbox = {t: float(sum(ps) / len(ps)) for t, ps in per_phase_bbox.items()}
+            per_phase_mean_motion = {t: float(sum(ps) / len(ps)) for t, ps in per_phase_motion.items()}
 
             # Persist to JSON for offline inspection.
             out_path = os.path.join(self.logging_conf.log_dir, "baseline_identity.json")
@@ -500,6 +527,7 @@ class Trainer:
                     json.dump({
                         "full": {"mean_psnr": mean_full, "per_phase_mean": per_phase_mean_full},
                         "bbox": {"mean_psnr": mean_bbox, "per_phase_mean": per_phase_mean_bbox},
+                        "motion": {"mean_psnr": mean_motion, "per_phase_mean": per_phase_mean_motion},
                         "per_phase_counts": {t: len(ps) for t, ps in per_phase_full.items()},
                         "t_target_fixed": self.t_target_fixed,
                     }, f, indent=2)
@@ -511,18 +539,77 @@ class Trainer:
             self._identity_baseline_full_mean = mean_full
             self._identity_baseline_bbox_per_phase = per_phase_mean_bbox
             self._identity_baseline_bbox_mean = mean_bbox
+            self._identity_baseline_motion_per_phase = per_phase_mean_motion
+            self._identity_baseline_motion_mean = mean_motion
             bbox_str = f"{mean_bbox:.2f}" if mean_bbox is not None else "n/a"
+            motion_str = f"{mean_motion:.2f}" if mean_motion is not None else "n/a"
             logging.info(
                 f"Identity-Δ baseline: full PSNR = {mean_full:.2f} dB / bbox PSNR = {bbox_str} dB "
-                f"across {len(all_full)} val sample(s). Persisted to {out_path}."
+                f"/ motion PSNR = {motion_str} dB across {len(all_full)} val sample(s). "
+                f"Persisted to {out_path}."
             )
         except Exception as e:
             logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
 
+    def _log_motion_mask_example(self, log_step: int):
+        """Render the motion mask for val subj 0 and log it under the `val_motion/` panel.
+
+        Shows, at a mid-bbox z-plane: V_gt(ED) | motion magnitude (max-min over phases) |
+        mask overlay on V_gt. Data-derived only (no model forward), so it documents exactly
+        which voxels the `val_motion` PSNR is computed over. Wrapped so it never raises.
+        """
+        if not self.wandb_writer:
+            return
+        try:
+            import wandb
+            import numpy as np
+            import matplotlib.pyplot as plt
+            from loss import compute_motion_mask, MOTION_MASK_TAU
+        except ImportError:
+            return
+
+        mri_ds = self._get_mri_dataset()
+        if mri_ds is None:
+            return
+        try:
+            data = mri_ds.get_data(seq_index=0, img_per_seq=mri_ds.num_slices)
+            phases = np.asarray(data["phases"]).astype(np.float32)   # (T, D, H, W)
+            ed = phases[0]                                            # (D, H, W)
+            motion_mag = phases.max(0) - phases.min(0)               # (D, H, W)
+            mask = compute_motion_mask(
+                torch.from_numpy(phases).unsqueeze(0)
+            )[0].cpu().numpy()                                       # (D, H, W) bool
+            bbox = np.asarray(data["anatomy_bbox"]).astype(int)
+            z0, z1 = int(bbox[0]), int(bbox[1])
+            z = (z0 + z1) // 2
+            frac = float(mask[z0:z1].mean())
+            vmax = max(float(ed.max()), 1e-3)
+            mmax = max(float(motion_mag.max()), 1e-3)
+
+            fig, ax = plt.subplots(1, 3, figsize=(9.0, 3.2), dpi=90)
+            ax[0].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
+            ax[0].set_title(f"V_gt ED (z={z})", fontsize=9)
+            ax[1].imshow(motion_mag[z], cmap="magma", vmin=0, vmax=mmax)
+            ax[1].set_title("motion = max-min", fontsize=9)
+            ax[2].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
+            overlay = np.zeros((*mask[z].shape, 4))
+            overlay[mask[z]] = [1, 0, 0, 0.45]
+            ax[2].imshow(overlay)
+            ax[2].set_title(f"mask tau={MOTION_MASK_TAU} ({frac*100:.1f}% of bbox)", fontsize=9)
+            for a in ax:
+                a.set_xticks([]); a.set_yticks([])
+            fig.suptitle(f"Motion mask (val subj 0, mid-bbox z) — step={log_step}", fontsize=10)
+            fig.tight_layout(rect=[0, 0, 1, 0.95])
+            self.wandb_writer.log("val_motion/mask_example", wandb.Image(fig), log_step)
+            plt.close(fig)
+        except Exception as e:
+            logging.warning(f"motion mask example log failed (ignored): {e}")
+
     def _log_cardiac_cycle_filmstrip(self, log_step: int):
         """Reconstruct one fixed val subject (idx 0) at all 12 phases and log a 2×12 strip
-        (V_gt top / V_canon bot, mid-z slice). Read-only over model + dataset state. Wrapped
-        in try/finally so the dataset's `t_target_fixed` is always restored.
+        (V_gt top / V_canon bot, mid-z slice). Builds ONE input batch and sweeps the global
+        target_t query over all phases (decoupled-target design) — faithful 4D cine from a
+        single acquisition. Read-only over model + dataset state (no t_target_fixed mutation).
         """
         if not self.wandb_writer:
             return
@@ -544,30 +631,36 @@ class Trainer:
         grid_shape = tuple(mri_ds.gt_grid_shape)
         num_slices = mri_ds.num_slices
 
-        orig_fixed = mri_ds.t_target_fixed
         canon_frames = []
         gt_frames = []
         try:
             self.model.eval()
             amp_dtype = torch.bfloat16
+            # Build the input batch ONCE (decoupled-target design): the SAME scattered
+            # input slices are reused for every target phase — only the global target_t
+            # query (and the V_gt we compare against) varies. This is the faithful
+            # "one acquisition → beating heart" 4D cine, not a different input per phase.
+            data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=num_slices)
+            def st(k, dt=np.float32):
+                return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
+            imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
+            S = imgs.shape[1]
+            batch = {
+                "images": imgs,
+                "scanner_coords": st("scanner_coords"),
+                "z_indices": st("z_indices"),
+                "t_indices": st("t_indices"),
+            }
+            # Full canonical phase bundle → per-phase V_gt without re-sampling inputs.
+            phases_bundle = torch.from_numpy(
+                np.asarray(data["phases"]).astype(np.float32)).to(self.device)  # (T, D, H, W)
+            model = self.model.module if hasattr(self.model, "module") else self.model
             for t in range(T_total):
-                mri_ds.t_target_fixed = t
-                data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=num_slices)
-                def st(k, dt=np.float32):
-                    return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
-                imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
-                batch = {
-                    "images": imgs,
-                    "scanner_coords": st("scanner_coords"),
-                    "z_indices": st("z_indices"),
-                    "t_indices": st("t_indices"),
-                }
-                if "gt_target_volume" in data:
-                    batch["gt_target_volume"] = torch.from_numpy(
-                        data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
+                t_norm = (t / max(1, T_total)) * 2.0 - 1.0  # match dataset normalization
+                batch["target_t_indices"] = torch.full(
+                    (1, S, 1), t_norm, dtype=torch.float32, device=self.device)
+                batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)  # (1, D, H, W)
                 with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
-                    # Underlying VGGT (unwrap DDP if needed).
-                    model = self.model.module if hasattr(self.model, "module") else self.model
                     preds = model(batch["images"], batch=batch)
                     out = compute_volume_intensity_loss(
                         {"world_points": preds["world_points"].float()},
@@ -580,10 +673,7 @@ class Trainer:
                 gt_frames.append(V_gt[mid_d])
         except Exception as e:
             logging.warning(f"cardiac filmstrip render failed (ignored): {e}")
-            mri_ds.t_target_fixed = orig_fixed
             return
-        finally:
-            mri_ds.t_target_fixed = orig_fixed
 
         v_vmax = float(max(max(f.max() for f in canon_frames),
                            max(f.max() for f in gt_frames),
@@ -920,6 +1010,7 @@ class Trainer:
         # Fresh per-phase accumulators for this val epoch (diagnostic only; train unaffected).
         self._per_phase_val_psnr_full = defaultdict(list)
         self._per_phase_val_psnr_bbox = defaultdict(list)
+        self._per_phase_val_psnr_motion = defaultdict(list)
         # Per-epoch val iter, read by _log_tb_visuals so subject-specific visuals fire every
         # epoch (not just the first one — self.steps["val"] is monotonic and resumes carry it).
         self._val_iter = 0
@@ -1042,6 +1133,8 @@ class Trainer:
                  self._identity_baseline_full_per_phase, self._identity_baseline_full_mean),
                 ("val_psnr_bbox", self._per_phase_val_psnr_bbox,
                  self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
+                ("val_motion", self._per_phase_val_psnr_motion,
+                 self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
             ]:
                 if self.t_target_fixed is not None or len(accum) == 0:
                     continue
@@ -1075,6 +1168,11 @@ class Trainer:
             filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
             if self.epoch % filmstrip_every_n == 0:
                 self._log_cardiac_cycle_filmstrip(current_train_step)
+
+            # Motion-mask example (val subj 0) → val_motion panel. Data-derived, no
+            # model forward, so it can't fail from model state. Multi-phase only.
+            if self.t_target_fixed is None:
+                self._log_motion_mask_example(current_train_step)
 
             logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
 
@@ -1276,7 +1374,7 @@ class Trainer:
         # identity. Flipping or duplicating without also handling them scrambles the (t, z)
         # mapping and silently corrupts training. If you ever want batch repetition for MRI,
         # design a method that handles those keys correctly rather than extending the list here.
-        mri_keys = {"z_indices", "t_indices", "t_target", "gt_target_volume", "timesteps", "slice_indices"}
+        mri_keys = {"z_indices", "t_indices", "target_t_indices", "t_target", "gt_target_volume", "timesteps", "slice_indices"}
         present = mri_keys & set(batch.keys())
         assert not present, (
             f"_apply_batch_repetition called with MRI-specific keys present ({present}); "
@@ -1375,10 +1473,13 @@ class Trainer:
         if (phase == "val" and self.t_target_fixed is None
                 and "V_canon" in data and "V_gt" in data and "t_target" in data):
             try:
+                from loss import compute_motion_mask
                 V_canon = data["V_canon"]
                 V_gt = data["V_gt"]
                 t_targets = data["t_target"]
                 bboxes = data.get("anatomy_bbox", None)   # (B, 6) int64 or None
+                # Motion mask from the full phase bundle (post-aug; val never augments).
+                motion_masks = compute_motion_mask(data["phases"]) if "phases" in data else None
                 B = V_canon.shape[0]
                 for b in range(B):
                     Vc = V_canon[b].float()
@@ -1398,10 +1499,21 @@ class Trainer:
                         mse_bbox = (Vc_bb - Vg_bb).pow(2).mean().clamp(min=1e-10)
                         psnr_bbox = (10.0 * torch.log10(1.0 / mse_bbox)).item()
                         self._per_phase_val_psnr_bbox[t].append(psnr_bbox)
+                    if motion_masks is not None:
+                        m = motion_masks[b]
+                        if bool(m.any()):
+                            Vc_m = Vc[m]
+                            Vg_m = Vg[m]
+                            mse_motion = (Vc_m - Vg_m).pow(2).mean().clamp(min=1e-10)
+                            psnr_motion = (10.0 * torch.log10(1.0 / mse_motion)).item()
+                            self._per_phase_val_psnr_motion[t].append(psnr_motion)
             except Exception as e:
                 logging.warning(f"per-phase PSNR accumulation failed (ignored): {e}")
 
-        # Log Frame and Slice selection for Slot 2 and Slot 3 (if available)
+        # Log Frame and Slice selection for the first few slots (if available).
+        # NOTE: with the decoupled-target design, slot 0 is NO LONGER the t_target slice —
+        # input phases are sampled independently of t_target. These are just the raw (t, z)
+        # picks for the first slots, for sanity-checking the sampler.
         if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
             # data["timesteps"] and data["slice_indices"] are [B, S]
             if "timesteps" in data and "slice_indices" in data:
@@ -1410,19 +1522,31 @@ class Trainer:
                 # S is the number of slots in the sequence
                 S = ts.shape[1] if hasattr(ts, "shape") else len(ts[0])
 
-                # Slot 1 (index 0) = the t_target slice — the most important slot.
+                # Slot 0
                 self._log_scalar("train_slice_selection/slot1_frame", ts[0, 0].item(), step)
                 self._log_scalar("train_slice_selection/slot1_slice", sls[0, 0].item(), step)
 
-                # Slot 2 (index 1)
+                # Slot 1
                 if S > 1:
                     self._log_scalar("train_slice_selection/slot2_frame", ts[0, 1].item(), step)
                     self._log_scalar("train_slice_selection/slot2_slice", sls[0, 1].item(), step)
-                
-                # Slot 3 (index 2)
+
+                # Slot 2
                 if S > 2:
                     self._log_scalar("train_slice_selection/slot3_frame", ts[0, 2].item(), step)
                     self._log_scalar("train_slice_selection/slot3_slice", sls[0, 2].item(), step)
+
+                # Natural-anchor rate: mean number of input slots whose phase == t_target.
+                # With decoupled sampling this is no longer guaranteed ≥1 — tracking it
+                # surfaces how often the model gets a free zero-motion anchor (training
+                # dynamics signal; ~65% have ≥1 at S=12, T=12).
+                if "t_target" in data:
+                    try:
+                        tt = data["t_target"]  # (B, 1)
+                        n_anchor = (ts == tt).float().sum(dim=1).mean().item()
+                        self._log_scalar("train/n_slots_at_target", n_anchor, step)
+                    except Exception as e:
+                        logging.warning(f"n_slots_at_target log failed (ignored): {e}")
 
     def _log_tb_visuals(self, batch: Mapping, phase: str, step: int) -> None:
         """Logs image or video visualizations to TensorBoard."""

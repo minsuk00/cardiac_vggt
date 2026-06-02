@@ -257,43 +257,48 @@ class MRIDataset(BaseDataset):
         # intensity = 0 → splat writes 0 → matches V_gt = 0 → loss = 0 (harmless
         # but useless compute, and uneven data efficiency across subjects).
         #
-        # Train: slot 0 = (t_target, random in-bbox z); slots 1..S-1 = distinct
-        #   non-target t with distinct random in-bbox z. Since S ≤ bbox_z_size
-        #   (capped above), the no-replacement branch always wins → no duplicate z.
-        # Val/test: in-bbox diagonal — slot i = ((t_target+i)%T, bbox_z0 + i).
-        #   z increases monotonically inside the bbox (the `% bbox_z_size` is a
-        #   no-op now that S ≤ bbox_z_size — kept as a defensive guard); t cycles
-        #   mod T through S distinct phases. Deterministic per (subject, t_target)
-        #   so per-phase val metrics remain stable across runs.
-        if self.split != "train":
-            if self.mode == "static":
-                t_sequence = [t_target] * S
-            else:
-                t_sequence = [(t_target + i) % T_total for i in range(S)]
-            z_sequence = [bbox_z0 + (i % bbox_z_size) for i in range(S)]
+        # DECOUPLED TARGET PHASE: the reconstruction target phase t_target is
+        # injected globally via `target_t_indices` (broadcast to every slot, built
+        # below) — NOT by forcing slot 0 to be a slice at t_target. So input-slice
+        # phases are sampled INDEPENDENTLY of t_target; slot 0 is no longer special.
+        # A slice that happens to land on t_target still acts as a free anchor, but
+        # it's no longer guaranteed (the honest sparse/unobserved-phase regime).
+        #
+        # Train AND val draw from the SAME distribution: each slot t = random phase
+        # WITH replacement (independent of t_target); z = random WITHOUT replacement
+        # within the bbox (distinct planes). They differ ONLY in the RNG source:
+        #   Train → the global `random` module: varies every epoch (the model should
+        #           see fresh scattered acquisitions, like augmentation).
+        #   Val   → a LOCAL `random.Random(seq_index)`: random-LOOKING but fully
+        #           reproducible across runs AND epochs (same seq_index → same draw),
+        #           and a PRIVATE generator that NEVER perturbs the global RNG stream
+        #           the train split draws from. Each val seq_index is therefore a
+        #           distinct, reproducible scattered acquisition — no rigid pattern and
+        #           no bit-identical duplicates when (subject, t_target) recur.
+        # t_target itself is chosen above (a deterministic cycle in val) for balanced
+        # per-phase coverage; only the INPUT (t, z) is randomized here.
+        # Static mode: all slots == t_target (z still drawn as below).
+        rng = random if self.split == "train" else random.Random(seq_index)
+        if self.mode == "static":
+            t_sequence = [t_target] * S
         else:
-            if self.mode == "static":
-                t_sequence = [t_target] * S
-            else:
-                dynamic_ts = [t for t in range(T_total) if t != t_target]
-                random.shuffle(dynamic_ts)
-                t_sequence = [t_target] + dynamic_ts[: S - 1]
-            in_bbox_z = list(range(bbox_z0, bbox_z1))
-            if len(in_bbox_z) >= S:
-                random.shuffle(in_bbox_z)
-                z_sequence = in_bbox_z[:S]
-            else:
-                # Fewer in-bbox z planes than requested slots → sample with
-                # replacement. Different t per duplicate z (t_sequence is
-                # already distinct), so the model still gets diverse (t, z)
-                # coverage at each content plane.
-                z_sequence = random.choices(in_bbox_z, k=S)
+            t_sequence = [rng.randrange(T_total) for _ in range(S)]
+        in_bbox_z = list(range(bbox_z0, bbox_z1))
+        if len(in_bbox_z) >= S:
+            rng.shuffle(in_bbox_z)
+            z_sequence = in_bbox_z[:S]
+        else:
+            # Fewer in-bbox z planes than requested slots → sample z with replacement.
+            # (Unreachable under the S = min(..., bbox_z_size, ...) cap above; kept as a
+            # defensive guard.) t is independent per slot, so coverage stays diverse.
+            z_sequence = rng.choices(in_bbox_z, k=S)
 
         # ── Build per-slot tensors ────────────────────────────────────────
         images_list = []
         scanner_coords_list = []
         z_indices_list = []
         t_indices_list = []
+        target_t_indices_list = []
         rotations_list = []
         frame_ids_list = []
         timesteps_list = []
@@ -342,6 +347,11 @@ class MRIDataset(BaseDataset):
             z_indices_list.append(np.array([z_val], dtype=np.float32))
             t_val = (t_idx / max(1, T_total)) * 2.0 - 1.0  # cyclic, wrap at +1
             t_indices_list.append(np.array([t_val], dtype=np.float32))
+            # target_t index: the GLOBAL reconstruction target phase, same value for
+            # every slot (broadcast query). Normalized identically to t_indices so the
+            # separate target_t_embedder sees the same cyclic domain.
+            target_t_val = (t_target / max(1, T_total)) * 2.0 - 1.0
+            target_t_indices_list.append(np.array([target_t_val], dtype=np.float32))
 
             rotations_list.append(np.zeros(3, dtype=np.float32))
             frame_ids_list.append(i)
@@ -398,6 +408,7 @@ class MRIDataset(BaseDataset):
             "slice_indices": slice_indices_list,
             "z_indices": z_indices_list,
             "t_indices": t_indices_list,
+            "target_t_indices": target_t_indices_list,
             "rotations": rotations_list,
             "seq_name": seq_name,
             "ids": np.array(frame_ids_list, np.int64),

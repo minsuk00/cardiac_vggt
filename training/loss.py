@@ -15,6 +15,35 @@ from vggt.utils.pose_enc import extri_intri_to_pose_encoding
 from vggt.utils.splat import sample_volume, splat_to_volume
 
 
+# Threshold for the cardiac-motion mask (see compute_motion_mask). A canonical
+# voxel counts as "moving" if its intensity swings by more than this across the
+# 12 cardiac phases. 0.05 (on the [0, 1] normalized scale) isolates the LV/RV
+# blood pool + myocardium (~3-5% of in-bbox voxels) — see tools/preview_motion_mask.py.
+MOTION_MASK_TAU = 0.05
+
+
+def compute_motion_mask(phases, tau=MOTION_MASK_TAU):
+    """Per-voxel cardiac-motion mask from the full canonical phase bundle.
+
+    motion[z,y,x] = max_t phases[t,z,y,x] - min_t phases[t,z,y,x]; mask = motion > tau.
+    Static tissue (chest wall, liver, fat) barely changes across the cycle → False;
+    the dynamic heart → True. No segmentation needed.
+
+    Args:
+        phases: (B, T, D, H, W) phase bundle (the batch["phases"] field; post-aug
+                if augmentation ran, since the trainer overwrites it in place).
+        tau: intensity-swing threshold on the normalized [0, 1] scale.
+
+    Returns:
+        (B, D, H, W) bool mask on the same device as `phases`.
+    """
+    # Reduce over T FIRST (in the input dtype) so we never materialize a float32
+    # copy of the full (B, T, D, H, W) bundle — amax/amin are exact selections, so
+    # fp16 input loses nothing here; only the small (B, D, H, W) swing is upcast.
+    swing = phases.amax(dim=1) - phases.amin(dim=1)   # (B, D, H, W)
+    return swing.float() > tau
+
+
 @dataclass(eq=False)
 class MultitaskLoss(torch.nn.Module):
     """
@@ -398,6 +427,28 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
             out["metric_mae_3d_bbox"] = torch.stack(mae_bbox_list).mean()
             out["metric_mse_3d_bbox"] = torch.stack(mse_bbox_list).mean()
             out["metric_psnr_3d_bbox"] = torch.stack(psnr_bbox_list).mean()
+
+        # ── Motion-masked metrics (only voxels that move across the cardiac cycle) ──
+        # The dynamic heart is ~3-5% of the cube; full/bbox PSNR is dominated by
+        # static tissue and barely moves between a good and a bad model. Restricting
+        # to (max_t - min_t > tau) isolates the region the model must actually get
+        # right. Mask is derived from the full phase bundle batch["phases"].
+        if "phases" in batch:
+            motion_mask = compute_motion_mask(batch["phases"])  # (B, D, H, W) bool
+            psnr_motion_list, mae_motion_list = [], []
+            for b in range(B):
+                m = motion_mask[b]
+                if not bool(m.any()):
+                    continue  # no moving voxels (shouldn't happen for real cardiac data)
+                Vc = V_canon[b][m]
+                Vg = V_gt[b][m]
+                mse_m = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
+                psnr_motion_list.append(10.0 * torch.log10(1.0 / mse_m))
+                mae_motion_list.append((Vc - Vg).abs().mean())
+            if psnr_motion_list:
+                out["metric_psnr_3d_motion"] = torch.stack(psnr_motion_list).mean()
+                out["metric_mae_3d_motion"] = torch.stack(mae_motion_list).mean()
+                out["metric_motion_frac"] = motion_mask.float().mean()
 
     return out
 

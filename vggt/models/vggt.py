@@ -16,12 +16,12 @@ from vggt.models.aggregator import Aggregator
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, train_on_residual_dvf=False
+        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, use_target_t_pose_embedding=False, train_on_residual_dvf=False
     ):
         super().__init__()
         self.train_on_residual_dvf = train_on_residual_dvf
 
-        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_t_pose_embedding=use_t_pose_embedding)
+        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_t_pose_embedding=use_t_pose_embedding, use_target_t_pose_embedding=use_target_t_pose_embedding)
 
         self.camera_head = CameraHead(dim_in=2 * embed_dim) if enable_camera else None
 
@@ -65,7 +65,8 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
         z_indices = batch.get("z_indices") if batch is not None else None
         t_indices = batch.get("t_indices") if batch is not None else None
-        aggregated_tokens_list, patch_start_idx = self.aggregator(images, z_indices=z_indices, t_indices=t_indices)
+        target_t_indices = batch.get("target_t_indices") if batch is not None else None
+        aggregated_tokens_list, patch_start_idx = self.aggregator(images, z_indices=z_indices, t_indices=t_indices, target_t_indices=target_t_indices)
 
         predictions = {}
 
