@@ -166,5 +166,9 @@ logs/
 /elastix_grid_search
 /lixuan_simulation
 
+# Local-only: Claude Code harness state + untracked future-work sim
+.claude/
+SPINER/
+
 
 
