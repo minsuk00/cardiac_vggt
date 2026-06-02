@@ -15,29 +15,34 @@
 #SBATCH --open-mode=append
 
 # =============================================================================
-# 200k-step head-only training run (loads VGGT-1B base on cold start, then trains
-# only point_head — aggregator + patch_embed stay frozen) with SLURM auto-requeue
-# across the walltime cap, resuming from its own ckpts/checkpoint_last.pt.
+# 200k-step head + aggregator finetune run, ALL cardiac phases. Fresh run (loads
+# VGGT-1B base on cold start). Trains point_head AND the full aggregator subtree;
+# only the DINOv2 patch_embed stays frozen. SLURM auto-requeue across the walltime
+# cap, resuming from its own ckpts/checkpoint_last.pt.
+#
+# This is run7 (head+aggregator finetune) but WITHOUT the t_target_phases={0,7}
+# restriction → multiphase over all T=12 target phases (config default). The only
+# difference from run7 is dropping t_target_phases.
+#
+# Unfreezing the aggregator exposes params that get no gradient in the point-only
+# forward (camera/register tokens, disabled depth/track heads) → DDP needs
+# find_unused_parameters=true even on 1 GPU. ~637M trainable, ~27GB on the A40,
+# ~2.8x slower than head-only (~4.4 vs ~1.6 sec/step). No augmentation.
 #
 # 200k optimizer steps = 200 epochs  (limit_train_batches=1000, accum_steps=1, 1 GPU).
-#
-# RESUME NOTE: the first run (exp 220162807_mri_volume_t0t7) was SIGTERM-cancelled
-# at epoch ~53 without a clean walltime requeue, so it did not self-resubmit.
-# RESUME_FROM below points at that exp dir → continues the SAME exp_name + SAME wandb
-# run (resume_id auto-detected) and loads ckpts/checkpoint_last.pt (epoch ~50).
+# At ~4.4 sec/step that is ~245 GPU-h → expect ~3 walltime requeues to finish 200 ep.
 # =============================================================================
 
-# ---- PER-RUN CONFIG (the only block that differs across the 4 run scripts) ----
+# ---- PER-RUN CONFIG (the only block that differs across the run scripts) ----
 CONFIG="mri_volume"
 NGPU=1
-EXP_TAG="mri_volume_t0t7"                 # → exp_name = <rev_ts>_${EXP_TAG} (fresh only; ignored when RESUME_FROM set)
-RUN_OVERRIDES="max_epochs=200 t_target_phases=[0,7] logging.wandb_writer.tags=[mri_volume,t0t7,multiphase,headonly]"   # multiphase restricted to target phases {0,7}, head-only
-MASTER_PORT=29536
+EXP_TAG="mri_volume_allphases_headonly"   # → exp_name = <rev_ts>_${EXP_TAG}
+RUN_OVERRIDES="max_epochs=200 logging.wandb_writer.tags=[mri_volume,allphases,multiphase,headonly]"   # multiphase all T phases, HEAD-ONLY (config default *aggregator* freeze; only point_head trains)
+MASTER_PORT=29540
 # -------------------------------------------------------------------------------
 
-# RESUME_FROM: continue an existing exp dir → SAME exp_name, SAME wandb run,
-#   loads <dir>/ckpts/checkpoint_last.pt. Set to resume the SIGTERM-killed first run.
-RESUME_FROM="/home/minsukc/vggt/scratch/logs/220162807_mri_volume_t0t7"
+# Fresh-run series: do NOT seed from the (non-transferable) 4-day baseline.
+RESUME_FROM=""
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
@@ -85,30 +90,6 @@ if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
         OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
     fi
     echo "Requeue restart #${SLURM_RESTART_COUNT}: exp_name=${EXP_NAME}, resume_id=${WANDB_RESUME_ID:-<new>}, extra='${EXTRA_OVERRIDES}'"
-elif [ ! -z "$RESUME_FROM" ]; then
-    # --- First launch, RESUME mode: continue the existing exp dir + same wandb run.
-    #     The trainer auto-detects ckpts/checkpoint_last.pt from save_dir, but we also
-    #     pass resume_checkpoint_path explicitly for clarity. EXTRA_OVERRIDES still
-    #     carries RUN_OVERRIDES (max_epochs etc.) across requeue restarts. ---
-    EXP_NAME=$(basename "$RESUME_FROM")
-    CKPT_PATH="${RESUME_FROM}/ckpts/checkpoint_last.pt"
-    if [ ! -f "$CKPT_PATH" ]; then
-        echo "ERROR: RESUME_FROM is set but $CKPT_PATH does not exist."
-        exit 1
-    fi
-    EXTRA_OVERRIDES="${RUN_OVERRIDES}"
-    OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH} ${EXTRA_OVERRIDES}"
-    echo "Resuming (same exp + wandb) from: $CKPT_PATH"
-    # Re-attach the same wandb run so resumed segments overlay on one dashboard.
-    WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
-    if [ ! -z "$WANDB_DIR" ]; then
-        WANDB_RESUME_ID=$(basename "$WANDB_DIR" | sed -E 's|^(offline-)?run-[0-9_]+-||; s|/$||')
-        OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
-        echo "Auto-detected WandB resume_id: $WANDB_RESUME_ID"
-    else
-        echo "Warning: no WandB run dir found under $RESUME_FROM/wandb/wandb/ — a new WandB run will be created."
-    fi
-    { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 else
     # --- First launch: fresh run. Pin exp_name + EXTRA_OVERRIDES for requeue restarts. ---
     REV_TS=$((2000000000 - $(date +%s)))
