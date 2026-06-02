@@ -58,6 +58,7 @@ def build_batch():
         "point_masks": torch.from_numpy(np.stack(data["point_masks"])).unsqueeze(0),
         "z_indices": stack("z_indices"),
         "t_indices": stack("t_indices"),
+        "target_t_indices": stack("target_t_indices"),
         "timesteps": torch.from_numpy(np.stack(data["timesteps"]).astype(np.int64)).unsqueeze(0),
         "slice_indices": torch.from_numpy(np.stack(data["slice_indices"]).astype(np.int64)).unsqueeze(0),
     }
@@ -84,7 +85,7 @@ def main():
     model = VGGT(
         img_size=518, patch_size=14, embed_dim=1024,
         enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
-        use_z_pose_embedding=True, use_t_pose_embedding=True,
+        use_z_pose_embedding=True, use_t_pose_embedding=True, use_target_t_pose_embedding=True,
         train_on_residual_dvf=True,
     ).to(device)
 

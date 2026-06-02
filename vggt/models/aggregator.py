@@ -121,9 +121,10 @@ class Aggregator(nn.Module):
         init_values=0.01,
         use_z_pose_embedding=False,
         use_t_pose_embedding=False,
+        use_target_t_pose_embedding=False,
     ):
         super().__init__()
-        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}, use_t_pose_embedding={use_t_pose_embedding}")
+        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}, use_t_pose_embedding={use_t_pose_embedding}, use_target_t_pose_embedding={use_target_t_pose_embedding}")
 
         self.use_z_pose_embedding = use_z_pose_embedding
         if self.use_z_pose_embedding:
@@ -132,6 +133,16 @@ class Aggregator(nn.Module):
         self.use_t_pose_embedding = use_t_pose_embedding
         if self.use_t_pose_embedding:
             self.t_embedder = TIndexEmbedder(embed_dim=embed_dim)
+
+        # Target cardiac phase embedding: a SEPARATE TIndexEmbedder instance (not reused
+        # from t_embedder) so the input-slice phase t_self and the query target phase
+        # t_target map to independent feature directions. Summing two outputs of the SAME
+        # embedder would be symmetric in (t_self, t_target) and destroy motion direction.
+        # Broadcast to every slice (same t_target value per slot) → decouples the target
+        # phase query from input slot 0. See TIndexEmbedder docstring for the cyclic encoding.
+        self.use_target_t_pose_embedding = use_target_t_pose_embedding
+        if self.use_target_t_pose_embedding:
+            self.target_t_embedder = TIndexEmbedder(embed_dim=embed_dim)
 
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
@@ -243,7 +254,7 @@ class Aggregator(nn.Module):
             if hasattr(self.patch_embed, "mask_token"):
                 self.patch_embed.mask_token.requires_grad_(False)
 
-    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None, t_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
+    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None, t_indices: Optional[torch.Tensor] = None, target_t_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
@@ -275,7 +286,8 @@ class Aggregator(nn.Module):
 
         use_z = getattr(self, "use_z_pose_embedding", False)
         use_t = getattr(self, "use_t_pose_embedding", False)
-        if use_z or use_t:
+        use_target_t = getattr(self, "use_target_t_pose_embedding", False)
+        if use_z or use_t or use_target_t:
             camera_token = 0
             if use_z:
                 if z_indices is None:
@@ -289,6 +301,12 @@ class Aggregator(nn.Module):
                     raise ValueError("use_t_pose_embedding is True but t_indices not provided in batch.")
                 t_indices_flat = t_indices.view(B * S, 1).to(images.device)
                 camera_token = camera_token + self.t_embedder(t_indices_flat)  # [B*S, 1, C]
+            if use_target_t:
+                if target_t_indices is None:
+                    raise ValueError("use_target_t_pose_embedding is True but target_t_indices not provided in batch.")
+                # No (== 0.0).all() guard: t_target = T/2 legitimately normalizes to 0.0.
+                target_t_indices_flat = target_t_indices.view(B * S, 1).to(images.device)
+                camera_token = camera_token + self.target_t_embedder(target_t_indices_flat)  # [B*S, 1, C]
         else:
             # Expand camera and register tokens to match batch size and sequence length
             camera_token = slice_expand_and_flatten(self.camera_token, B, S)

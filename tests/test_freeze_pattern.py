@@ -46,6 +46,7 @@ def model_with_freeze():
         img_size=518, patch_size=14, embed_dim=1024,
         enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
         use_z_pose_embedding=True, use_t_pose_embedding=True,
+        use_target_t_pose_embedding=True,
         train_on_residual_dvf=True,
     )
     freeze_modules(model, patterns=list(cfg.optim.frozen_module_names), recursive=True)
@@ -78,6 +79,14 @@ def test_z_embedder_is_frozen(model_with_freeze):
     nt, nf = _counts(model_with_freeze, "aggregator.z_embedder")
     assert nt == 0, f"z_embedder should be frozen for throughput; got {nt} trainable params"
     assert nf > 0, "z_embedder has no params at all"
+
+
+def test_target_t_embedder_is_frozen(model_with_freeze):
+    """target_t_embedder frozen alongside z/t embedders under the `*aggregator*` wildcard
+    (head-only freeze). In aggft runs (`*patch_embed*` only) it trains — same as z/t."""
+    nt, nf = _counts(model_with_freeze, "aggregator.target_t_embedder")
+    assert nt == 0, f"target_t_embedder should be frozen for throughput; got {nt} trainable params"
+    assert nf > 0, "target_t_embedder has no params at all — wrong module path?"
 
 
 def test_heavy_aggregator_blocks_are_frozen(model_with_freeze):
