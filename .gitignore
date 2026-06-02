@@ -157,5 +157,14 @@ skyseg.onnx
 .pixi
 *.egg-info
 
+# Runtime output dirs (local only)
+slurm_logs/
+wandb/
+logs/
+# GPFS symlinks (resolve per-machine)
+/result
+/elastix_grid_search
+/lixuan_simulation
+
 
 
