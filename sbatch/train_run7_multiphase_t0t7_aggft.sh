@@ -15,29 +15,33 @@
 #SBATCH --open-mode=append
 
 # =============================================================================
-# 200k-step head-only training run (loads VGGT-1B base on cold start, then trains
-# only point_head — aggregator + patch_embed stay frozen) with SLURM auto-requeue
-# across the walltime cap, resuming from its own ckpts/checkpoint_last.pt.
+# 200k-step head + aggregator finetune run. Fresh run (loads VGGT-1B base on cold
+# start). Trains point_head AND the full aggregator subtree; only the DINOv2
+# patch_embed stays frozen. SLURM auto-requeue across the walltime cap, resuming
+# from its own ckpts/checkpoint_last.pt.
+#
+# This is the head+aggregator counterpart to run6 (head-only t0t7). Same multiphase
+# {0,7} target setup; the only difference is the freeze pattern.
+#
+# Unfreezing the aggregator exposes params that get no gradient in the point-only
+# forward (camera/register tokens, disabled depth/track heads) → DDP needs
+# find_unused_parameters=true even on 1 GPU. ~637M trainable, ~27GB on the A40,
+# ~2.8x slower than head-only (~4.4 vs ~1.6 sec/step). No augmentation.
 #
 # 200k optimizer steps = 200 epochs  (limit_train_batches=1000, accum_steps=1, 1 GPU).
-#
-# RESUME NOTE: the first run (exp 220162807_mri_volume_t0t7) was SIGTERM-cancelled
-# at epoch ~53 without a clean walltime requeue, so it did not self-resubmit.
-# RESUME_FROM below points at that exp dir → continues the SAME exp_name + SAME wandb
-# run (resume_id auto-detected) and loads ckpts/checkpoint_last.pt (epoch ~50).
+# At ~4.4 sec/step that is ~245 GPU-h → expect ~3 walltime requeues to finish 200 ep.
 # =============================================================================
 
-# ---- PER-RUN CONFIG (the only block that differs across the 4 run scripts) ----
+# ---- PER-RUN CONFIG (the only block that differs across the run scripts) ----
 CONFIG="mri_volume"
 NGPU=1
-EXP_TAG="mri_volume_t0t7"                 # → exp_name = <rev_ts>_${EXP_TAG} (fresh only; ignored when RESUME_FROM set)
-RUN_OVERRIDES="max_epochs=200 t_target_phases=[0,7] logging.wandb_writer.tags=[mri_volume,t0t7,multiphase,headonly]"   # multiphase restricted to target phases {0,7}, head-only
-MASTER_PORT=29536
+EXP_TAG="mri_volume_t0t7_aggft"           # → exp_name = <rev_ts>_${EXP_TAG} (fresh only; ignored when RESUME_FROM set)
+RUN_OVERRIDES="max_epochs=200 t_target_phases=[0,7] optim.frozen_module_names=[*patch_embed*] distributed.find_unused_parameters=true logging.wandb_writer.tags=[mri_volume,t0t7,multiphase,aggft]"   # multiphase {0,7} target, head + aggregator (DINO patch_embed frozen)
+MASTER_PORT=29537
 # -------------------------------------------------------------------------------
 
-# RESUME_FROM: continue an existing exp dir → SAME exp_name, SAME wandb run,
-#   loads <dir>/ckpts/checkpoint_last.pt. Set to resume the SIGTERM-killed first run.
-RESUME_FROM="/home/minsukc/vggt/scratch/logs/220162807_mri_volume_t0t7"
+# Fresh run from VGGT-1B base: do NOT seed from any prior checkpoint.
+RESUME_FROM=""
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
