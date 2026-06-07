@@ -168,11 +168,31 @@ micromamba run -n svr python -m pytest tests/
 ```
 Synthetic in-memory CMR dataset (`tests/conftest.py`, native W=64, H=60, Z=8, **T=12**) — no real data needed. T=12 matches the canonical pipeline's phase count; each test session gets an isolated monai cache dir (`monai_cache_dir` fixture) so the shared `/tmp` cache isn't polluted. Test files: `test_mri_dataset.py` (dataset contract), `test_preprocess.py` (canonical transforms + geometric bbox), `test_canonical_invariants.py` (cross-subject coord consistency, V_gt zero outside bbox, axis-order), `test_gpu_aug.py` (aug identity passthrough + shape preservation), `test_loss_bbox.py` (bbox vs full metrics), `test_splat.py`, `test_freeze_pattern.py`, `test_trainer_diagnostics.py`, `test_loss.py`, `test_resume.py` (requeue/resume).
 
+## Docs
+
+Research findings, design decisions, and experiment write-ups live in **`docs/`** (numbered,
+e.g. `docs/01_respiratory_motion_simulation.md`) — separate from per-version implementation logs
+in `version_history/`. **When you make a non-trivial design choice, run a research/literature
+sweep, or design/run an experiment, record the choice AND the reasoning (why, sources, rejected
+alternatives) as a numbered `docs/NN_*.md`** so future agents can understand *why*, not just
+*what*. Keep CLAUDE.md pointers short and link out to the doc for detail.
+
+**Every `docs/NN_*.md` MUST open with a `> **TL;DR & takeaway**` blockquote** before any other
+content — a plain-language summary of the conclusion, key decision, and status. This top block is
+**human-facing** (the reader skims it and stops); everything below it is the **agent-facing**
+detailed record (process, numbers, sources, open questions). Write the TL;DR for someone who will
+read *only* it.
+
+**The doc index lives in `docs/README.md`** (one line per doc). Read it to see which doc to open;
+add a pointer there when you create a new `docs/NN_*.md`. Don't list individual docs here.
+
 ## Future enhancements (not implemented)
 
 Notes for follow-up work. None of these are in the current pipeline.
 
 - **Realistic real-time acquisition simulation (headline direction).** Current "simulation" = scattered single-frame sampling + in-plane aug on clean gated cine. Real transfer needs the physics real-time acquisition imposes: bSSFP transient/contrast, single-shot undersampling artifacts, respiratory + through-plane motion. `SPINER/` + `lixuan_simulation/` (untracked) are starting points.
+
+  - **Respiratory motion simulation** — research + design scoped in `docs/01_respiratory_motion_simulation.md` (literature-validated; not implemented). Gist: per-slice respiratory phase sampled independently of cardiac phase (XCAT two-clocks); rigid SI translation ~10–15 mm along canonical Z + deform-then-reslice the cached `phases` bundle. See the doc for numbers, sources, the correct-vs-condition fork, and reference code (NeSVoR/SVRTK, MRXCAT).
 
 - **Option B — continuous-phase query.** Add a `target_t_embedder` alongside `TIndexEmbedder` so the model decodes any `t_target ∈ [0,1)`, not just the 12 discrete phases (new embedder + `target_t` batch field + light `point_head`/`register_token` fine-tune).
 
