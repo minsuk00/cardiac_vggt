@@ -17,6 +17,22 @@
 > **Open decision before coding:** should the model *correct* breathing back to a fixed reference,
 > or be *told* the breathing phase? **Reference code worth reusing:** NeSVoR/SVRTK (slice-to-volume
 > reconstruction), MRXCAT / LGE_CMRI_Simulation (cardiac motion phantoms).
+>
+> **Update (2026-06-07):** MRXCAT is now symlinked into the repo at `./MRXCAT`, with a
+> pre-generated **free-breathing** XCAT cine example. Inspecting its config (§6) **independently
+> confirms our exact model**: decoupled cardiac/respiratory clocks + rigid heart translation
+> (SI ≈ 20 mm, AP ≈ 5–12 mm, no LR/rotation). It gives us a ground-truth-motion benchmark
+> (build option B) but doesn't replace augmenting real cine (option A).
+>
+> **Update 2 (2026-06-07):** We checked whether XCAT's motion-simulation *logic* can be obtained
+> to run on our own data — **it can't, and we don't need it** (§6). MRXCAT only renders MR physics;
+> the motion engine is XCAT's, which is a closed binary, and **XCAT 3.0's public release is static
+> phantoms + a segmentation model, not the motion engine.** Even the algorithm (Segars 2010) is a
+> NURBS-surface + motion-vector-field system built to construct a *synthetic* phantom — not
+> portable to a real patient volume. **But the part we need is trivial:** XCAT's respiratory heart
+> motion is just a diaphragm-scaled **rigid 6-DOF transform** (translate + rotate), which we
+> reimplement directly on our cine voxels. **Conclusion: path A (reimplement the simple documented
+> model on our data) is the only path that runs on our data; XCAT/MRXCAT is validation-only.**
 
 **Date:** 2026-06-07
 **Status:** Research + design scoping. **Not implemented.** No code written yet.
@@ -42,7 +58,7 @@ cycle, so the heart sits at a different position. The proposal under evaluation:
 > **Is this valid?**
 
 **Short answer from this research: yes, it is a literature-standard approach**, with two
-design constraints that must be respected (see §6).
+design constraints that must be respected (see §7).
 
 ---
 
@@ -61,7 +77,7 @@ Two parallel investigations on 2026-06-07:
    confirmed, 0 refuted.** Angles: (a) parametric heart respiratory-motion models & numbers,
    (b) respiratory waveform models, (c) digital cardiac-respiratory phantoms, (d) simulating
    free-breathing slices for DL super-resolution / slice-to-volume reconstruction (SVR),
-   (e) open-source code. Findings in §4–5. Full source list in §8.
+   (e) open-source code. Findings in §4–5. Full source list in §9.
 
 **Confidence note:** the numbers below are verified against primary sources, but a few carry
 caveats — the 0.6 tracking factor is a *population mean* (subject range 0.31–1.2); the `cos^{2n}`
@@ -197,7 +213,7 @@ architectural analogs to our pipeline — added below. Treat this list as a good
 
 | Repo / link | What it provides | Lang / license | Relevance |
 |---|---|---|---|
-| **MRXCAT** — `biomed.ee.ethz.ch/mrxcat.html` | XCAT→MR cine/perfusion phantom w/ cardiac+resp motion. **NOT a public download** — email subject "MRXCAT Download Link" to the authors. | MATLAB, non-commercial | Phantom w/ GT motion |
+| **MRXCAT** — `biomed.ee.ethz.ch/mrxcat.html` — **now local at `./MRXCAT` (§6)** | XCAT→MR cine/perfusion phantom w/ cardiac+resp motion. **NOT a public download** — email subject "MRXCAT Download Link" to the authors (we already have a copy). | MATLAB, non-commercial | Phantom w/ GT motion |
 | **sinaamirrajab/LGE_CMRI_Simulation** | **MRXCAT extension simulating cardiac LGE with slice-misalignment (respiratory) artifacts** — directly our problem domain. | MATLAB (2018b), CC-BY-NC-ND | **High** — cardiac slice misalignment |
 | **daviddmc/NeSVoR** | GPU slice-to-volume reconstruction (rigid + **deformable**) via implicit neural rep + **SVoRT** registration transformers. Fetal brain, but the DL SVR machinery is our analog. | Python/CUDA, **MIT** | **High** — DL SVR architecture |
 | **SVRTK/SVRTK** (KCL) | Classical SVR + super-resolution incl. **4D whole-fetal-heart** reconstruction from motion-corrupted stacks. | C++ (MIRTK), Apache-2 | **High** — cardiac SVR reference |
@@ -207,7 +223,106 @@ architectural analogs to our pipeline — added below. Treat this list as a good
 
 ---
 
-## 6. Design implications for our pipeline
+## 6. Local MRXCAT install — codebase analysis (symlinked 2026-06-07)
+
+MRXCAT v1.4 is now symlinked into the repo at `./MRXCAT` (→ GPFS; gitignored). Contents:
+`MRXCAT-v1-4/` (the ETH MATLAB framework + local glue scripts), `xcat-cine/` (two pre-generated
+XCAT cine datasets — `cine_breathhold/` and `cine_freebreathing/`, 360 frames each, ~2.9 GB),
+and `perf/` (a perfusion example).
+
+### Key realization: motion is XCAT's job; MRXCAT only renders MR
+XCAT (run separately, configured by a `.par` file) precomputes the *moving anatomy* → one
+`*_act_{n}.bin` activity volume per time frame. MRXCAT then maps tissue → (ρ, T1, T2), applies a
+**bSSFP signal model** (default TR 3 / TE 1.5 ms / FA 60°), coil sensitivities (Biot-Savart, 4
+coils), Gaussian noise (default SNR 20), and k-space sampling (Cartesian / radial / golden-angle),
+emitting complex `.cpx` / `.msk` / `.sen` / `.noi` + a `_par.mat`. **MRXCAT never moves anatomy** —
+motion is baked into the `.bin` frames. So the respiratory *model* lives entirely in the XCAT
+`.par`, not in MRXCAT.
+
+### The respiratory motion model actually used (from the freebreathing `.par` + `cine_log`)
+| XCAT param | breathhold | freebreathing | meaning |
+|---|---|---|---|
+| `motion_option` | 0 | **2** | 0 = cardiac only, 2 = cardiac + respiratory |
+| `hrt_period` | 0.952 s | 0.952 s | heartbeat (63 bpm) |
+| `resp_period` | — | **5.0 s** | breathing cycle |
+| `resp_start_ph_index` | — | 0.4 | 0 = full exhale, 0.4 = full inhale |
+| `max_diaphragm_motion` | — | **7.0 cm** | (normal tidal = 2 cm; here a deep breath) |
+| `max_AP_exp` | — | 2.0 cm | chest AP expansion (normal 1.2) |
+| `hrt_motion_z` (SI) | — | **2.0 cm** | heart up/down with breathing (XCAT default 2.0) |
+| `hrt_motion_y` (AP) | — | 0.5 cm | heart AP (XCAT default 1.2) |
+| `hrt_motion_x` (LR) | — | 0.0 cm | heart lateral (XCAT default 0.0) |
+| `hrt_motion_rot_*` | — | 0.0° | heart rotation (all three off) |
+| `out_frames` | 360 | 360 | 14.3 s ≈ 15 beats × ~2.9 breaths |
+
+**This independently confirms the model §4 (literature) and §7 (design) arrive at.** XCAT's heart
+respiratory model = two decoupled clocks (cardiac 0.95 s ⊥ respiratory 5 s) + heart bulk motion as
+**SI-dominant rigid translation (z = 20 mm) + smaller AP (5–12 mm) + ~zero LR + optional
+rotation**, diaphragm-driven (curve files `diaphragm_curve.dat`, `ap_curve.dat`). XCAT's own
+defaults (SI 20 / AP 12 mm → AP/SI = 0.6) bracket our literature numbers; this fb config dials AP
+to 0.25×SI. *XCAT is effectively the ground-truth implementation of the parametric model we
+proposed.*
+
+### Two ways to consume it (both present here)
+1. **`.bin → 4D NIfTI directly** (`xcat_to_nifti.py`, `xcat_to_nifti_4d.py`) — bypasses MR
+   rendering; reads each float32 `.bin` (Fortran order `(X,Y,Z)`), stacks to `(X,Y,Z,T)`, voxel
+   size from the log (`pixel/slice width × 10` mm), diagonal affine. Output = **the moving anatomy
+   itself** (activity labels/intensities, no MR contrast/noise) → the **ground-truth-motion** path,
+   most useful for us as a controllable validation set or GT DVF source.
+2. **`.bin → MRXCAT → realistic MR cine** (MATLAB `MRXCAT_CMR_CINE` → `mrxcat_to_nifti.m`;
+   `run_all_patients.m` batches over `train/val/patient_*`). Output = bSSFP cine with
+   contrast/coils/noise/(optional undersampling) — closer to real CMRxRecon appearance.
+
+### Caveats for reuse
+- The example `xcat-cine` was generated at **1024², 1 mm iso, single-slice** (a 2D real-time-style
+  cine over 360 frames) — *not* matched to our canonical cube `(256,256,12)` @ `(1.4,1.4,8.0)` mm.
+  Producing CMRxRecon-like volumes means re-running XCAT with matched matrix/slice-count/FOV/spacing.
+- MRXCAT default contrast (bSSFP TR 3 / TE 1.5 / FA 60°, SNR 20) isn't tuned to CMRxRecon's
+  protocol (TR 47.9 / TE 1.5 / FA 44°).
+- Generating *new* motion needs the **XCAT binary** (separate license); only re-rendering MR from
+  existing `.bin` needs just MATLAB. Non-commercial license; cite Wissmann 2014.
+
+### Can we obtain XCAT's motion-simulation *logic* to run on our own data? (checked 2026-06-07)
+**Short answer: no reusable engine exists to lift — and we don't need one.** We need to simulate
+on *our* real CMRxRecon cine without the XCAT program, so we asked whether the motion logic is
+obtainable. Three findings:
+
+1. **XCAT 3.0 public release (`xcat-3.github.io`) does NOT contain the motion engine.** What's
+   public is **2,500+ *static* anatomical phantoms** (voxel + mesh) and the **DukeSeg** CT-
+   segmentation models (`gitlab.oit.duke.edu/cvit-public/dukeseg_public`). There's a
+   "Respiratory Motion Explorer" *demo*, but the 4D cardiac/respiratory **deformation source is
+   not released**. So XCAT 3.0 ≈ a static-phantom + segmentation library, not a motion simulator.
+2. **The original XCAT motion engine is a closed binary** (Duke research license), and even its
+   *algorithm* (Segars 2010, `PMC2941518`) is **not portable to our voxel data**: all organs are
+   **NURBS surfaces** (10–200 control points each); motion is applied by moving control points and
+   regenerating surfaces, with a voxelized **Motion Vector Field** filled by smoothing + **Bezier-
+   clipping collision detection** so organs don't interpenetrate. That machinery exists to build a
+   *whole synthetic phantom from scratch* — it presumes the NURBS anatomy model. It cannot be run
+   on a real patient volume we already have.
+3. **But the part we care about is simple and fully documented.** In XCAT, **respiratory heart
+   motion** = the heart (and liver/spleen/kidneys) **rigidly translated + rotated by a *scaled-
+   down* version of the diaphragm motion**, driven by two user curves (diaphragm SI + chest AP),
+   default cycle **5 s (2 s in / 3 s out)**, **end-expiration = rest**, no hysteresis modeled. The
+   per-organ controls are literally a **6-DOF rigid transform** (`x,y,z` translation cm + `x,y,z`
+   rotation deg) — exactly the `hrt_motion_*` numbers in our `.par` (§6 table). The NURBS/MVF/
+   collision apparatus is *only* needed to keep a from-scratch phantom self-consistent; it is
+   irrelevant when the heart is already imaged.
+
+**Takeaway:** there is nothing to port. The reusable artifact is the *model spec*, not code — and
+that spec reduces, for our purposes, to a diaphragm-waveform-driven **rigid 6-DOF heart transform**
+that we reimplement directly on our cine voxels (path A). XCAT's value to us stays exactly: a
+ground-truth-motion **benchmark** (option B), runnable only if the group already has the binary.
+
+### What this changes for our plan
+We have **build option (B) as a benchmark** (a free-breathing XCAT/MRXCAT example +
+`.bin → NIfTI`), giving (a) a **ground-truth respiratory motion field** to validate that our
+augment-real-cine path (A) injects physically sensible motion, and (b) a parameter reference (the
+`.par` numbers above) to set our own `d(r)` amplitudes. But the **headline conclusion is that (A)
+is the only path that runs on our data** — no XCAT motion code is obtainable/portable, so we
+**reimplement the (simple, documented) rigid 6-DOF diaphragm-driven model ourselves** and deform-
+then-reslice our real cine. XCAT anatomy ≠ real CMRxRecon anatomy/contrast, so (B) is validation
+only.
+
+## 7. Design implications for our pipeline
 
 The literature **validates the core idea** and pins down the design:
 
@@ -233,14 +348,15 @@ The literature **validates the core idea** and pins down the design:
   Cheap, keeps real anatomy/contrast. *= the user's original idea, now literature-backed.*
 - **(B) MRXCAT phantom** for ground-truth motion + a fully controllable validation set. More
   work (MATLAB), but gives exact motion GT to *validate* (A) — i.e. confirm the model actually
-  corrects a *known* motion field.
+  corrects a *known* motion field. **Now materially in hand** — symlinked at `./MRXCAT` with a
+  free-breathing example and direct `.bin → NIfTI` conversion (see §6).
 
 Suggested plan: implement **(A)** as the training augmentation; optionally use **(B)/MRXCAT** as
 a controlled benchmark.
 
 ---
 
-## 7. Open design questions (decide before coding)
+## 8. Open design questions (decide before coding)
 
 1. **Correction vs. conditioning.** Should the model **correct** breathing back to the
    end-expiration reference (blind to `r`, robustness target) — or be **conditioned** on `r` (a
@@ -254,7 +370,7 @@ a controlled benchmark.
 
 ---
 
-## 8. Sources
+## 9. Sources
 
 Primary sources fetched and (where claims were drawn) 3-vote verified:
 
@@ -271,7 +387,8 @@ Primary sources fetched and (where claims were drawn) 3-vote verified:
 - `pmc.ncbi.nlm.nih.gov/articles/PMC11014047/`
 
 **Phantoms**
-- Segars 2010 (4D-XCAT) — `pmc.ncbi.nlm.nih.gov/articles/PMC2941518/`
+- Segars 2010 (4D-XCAT, the motion mechanism — NURBS + MVF + diaphragm/AP curves) — `pmc.ncbi.nlm.nih.gov/articles/PMC2941518/`
+- XCAT 3.0 (2025; **static phantoms + DukeSeg segmentation only — no public motion engine**) — `xcat-3.github.io` ; code `gitlab.oit.duke.edu/cvit-public/dukeseg_public`
 - Wissmann 2014 (MRXCAT) — `pmc.ncbi.nlm.nih.gov/articles/PMC4422262/` ; code `biomed.ee.ethz.ch/mrxcat.html`
 - `sciencedirect.com/science/article/abs/pii/S112017971730635X`
 - `iopscience.iop.org/article/10.1088/1361-6560/ab8533`
