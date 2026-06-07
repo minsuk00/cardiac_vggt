@@ -165,6 +165,7 @@ logs/
 /result
 /elastix_grid_search
 /lixuan_simulation
+/MRXCAT
 
 # Local-only: Claude Code harness state + untracked future-work sim
 .claude/
