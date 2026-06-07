@@ -1140,24 +1140,37 @@ class Trainer:
                     continue
                 try:
                     all_psnrs = []
+                    per_phase_means = []
                     for t in sorted(accum.keys()):
                         psnrs = accum[t]
                         all_psnrs.extend(psnrs)
                         n = len(psnrs)
+                        phase_mean = float(sum(psnrs) / n)
+                        per_phase_means.append((t, phase_mean))
                         baseline = (baseline_per_phase or {}).get(t)
                         base_tag = f"_base{baseline:.1f}" if baseline is not None else ""
                         self._log_scalar(
                             f"{namespace}/t{t}_n{n}{base_tag}",
-                            float(sum(psnrs) / n),
+                            phase_mean,
                             current_train_step,
                         )
                     n_total = len(all_psnrs)
+                    overall_mean = float(sum(all_psnrs) / n_total)
                     base_tag = f"_base{baseline_mean:.1f}" if baseline_mean is not None else ""
                     self._log_scalar(
                         f"{namespace}/mean_n{n_total}{base_tag}",
-                        float(sum(all_psnrs) / n_total),
+                        overall_mean,
                         current_train_step,
                     )
+                    # Also emit to the TEXT log (slurm log), not just wandb, so per-phase
+                    # progress and the identity-baseline delta are readable straight from the
+                    # log file. Δ>0 means the model beats the no-motion-correction baseline.
+                    per_phase_str = " ".join(f"t{t}={m:.2f}" for t, m in per_phase_means)
+                    if baseline_mean is not None:
+                        head = f"mean={overall_mean:.2f} (Δ={overall_mean - baseline_mean:+.2f} vs identity {baseline_mean:.2f})"
+                    else:
+                        head = f"mean={overall_mean:.2f}"
+                    logging.info(f"[val per-phase @ step {current_train_step}] {namespace}: {head} | {per_phase_str}")
                 except Exception as e:
                     logging.warning(f"per-phase {namespace} log failed (ignored): {e}")
 
