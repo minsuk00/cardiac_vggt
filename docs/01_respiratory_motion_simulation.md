@@ -13,10 +13,13 @@
 > **Model:** rigid superior-inferior translation **~10–15 mm** (heart tracks the diaphragm at
 > ~0.6×), smaller front-back component, end-of-exhale as the rest position. That's 1–2.5× our
 > 8 mm slice spacing — i.e. breathing is a real *multi-slice* shift, not a tiny nudge.
-> **Status: not implemented** — this is the research + design that justifies building it.
-> **Open decision before coding:** should the model *correct* breathing back to a fixed reference,
-> or be *told* the breathing phase? **Reference code worth reusing:** NeSVoR/SVRTK (slice-to-volume
-> reconstruction), MRXCAT / LGE_CMRI_Simulation (cardiac motion phantoms).
+> **Status: simulation core implemented** (2026-06-11) — the motion model + unit tests + an example
+> report are built (`training/data/respiratory.py`, `tests/test_respiratory.py`,
+> `tools/render_respiratory_examples.py` → `_html/06_respiratory_motion_simulation_examples.html`).
+> Wiring into the GPU aug pipeline / config / trainer is **deferred** (design in §5). Decided the
+> *correct* framing (model blind to `r`; target stays at reference — no embedder yet).
+> **Reference code worth reusing:** NeSVoR/SVRTK (slice-to-volume reconstruction),
+> MRXCAT / LGE_CMRI_Simulation (cardiac motion phantoms).
 >
 > **Update (2026-06-07): evaluated MRXCAT/XCAT, dropped it.** We obtained MRXCAT (XCAT→MR cardiac
 > phantom) + its free-breathing example, inspected the code/config, and **concluded it isn't useful
@@ -29,8 +32,9 @@
 > **rigid 6-DOF transform** we reimplement on our own cine voxels. **Conclusion: path A (reimplement
 > on our data) is the only viable path; XCAT/MRXCAT is not used.** Detail in §6.
 
-**Date:** 2026-06-07
-**Status:** Research + design scoping. **Not implemented.** No code written yet.
+**Date:** 2026-06-07 (sim core implemented 2026-06-11)
+**Status:** Design + **simulation core implemented** (`training/data/respiratory.py` + tests +
+example report); GPU-aug/config/trainer wiring deferred (§5).
 **Goal:** decide whether (and how) to simulate breathing motion on top of our breath-hold
 gated cine, to push the scattered-slice reconstruction pipeline toward real-time
 free-breathing transfer (the headline direction in `CLAUDE.md → Future enhancements`).
