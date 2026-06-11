@@ -184,6 +184,7 @@ def test_motion_mask_example_logs_under_val_motion():
     # With wandb + a mock dataset → logs exactly the val_motion/mask_example key.
     class MockDS:
         num_slices = 12
+        subjects = list(range(16))  # ≥16 so subj indices 0/7/15 all render
 
         def get_data(self, seq_index, img_per_seq):
             T, D, H, W = 4, 3, 16, 16
