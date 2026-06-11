@@ -213,6 +213,9 @@ class Trainer:
         # Compute identity-Δ baseline once at startup.
         if self.mode in ["train", "val"] and self.rank == 0:
             self._compute_identity_baseline()
+            # Motion-mask reference panel (3 val subjects). Data-derived + static across
+            # training, so logged once here rather than every val epoch.
+            self._log_motion_mask_example(self.steps.get("train", 0))
 
     def _get_mri_dataset(self):
         """Walk the wrapper chain (DynamicTorchDataset → ComposedDataset → TupleConcatDataset)
@@ -552,11 +555,13 @@ class Trainer:
             logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
 
     def _log_motion_mask_example(self, log_step: int):
-        """Render the motion mask for val subj 0 and log it under the `val_motion/` panel.
+        """Render the motion mask for 3 val subjects in one panel under `val_motion/`.
 
-        Shows, at a mid-bbox z-plane: V_gt(ED) | motion magnitude (max-min over phases) |
-        mask overlay on V_gt. Data-derived only (no model forward), so it documents exactly
-        which voxels the `val_motion` PSNR is computed over. Wrapped so it never raises.
+        Each row is one subject (val indices 0, 7, 15); columns show, at a mid-bbox
+        z-plane: V_gt(ED) | motion magnitude (max-min over phases) | mask overlay on V_gt.
+        Data-derived only (no model forward) and static across training, so this is logged
+        ONCE at startup to document which voxels the `val_motion` PSNR is computed over.
+        vmin/vmax are per-subject so small-FOV rows aren't washed out. Wrapped, never raises.
         """
         if not self.wandb_writer:
             return
@@ -572,34 +577,45 @@ class Trainer:
         if mri_ds is None:
             return
         try:
-            data = mri_ds.get_data(seq_index=0, img_per_seq=mri_ds.num_slices)
-            phases = np.asarray(data["phases"]).astype(np.float32)   # (T, D, H, W)
-            ed = phases[0]                                            # (D, H, W)
-            motion_mag = phases.max(0) - phases.min(0)               # (D, H, W)
-            mask = compute_motion_mask(
-                torch.from_numpy(phases).unsqueeze(0)
-            )[0].cpu().numpy()                                       # (D, H, W) bool
-            bbox = np.asarray(data["anatomy_bbox"]).astype(int)
-            z0, z1 = int(bbox[0]), int(bbox[1])
-            z = (z0 + z1) // 2
-            frac = float(mask[z0:z1].mean())
-            vmax = max(float(ed.max()), 1e-3)
-            mmax = max(float(motion_mag.max()), 1e-3)
+            # Distinct val subjects; drop any out-of-range / duplicate after wraparound
+            # so tiny val sets (e.g. synthetic test data) don't render the same subject twice.
+            n_subj = len(mri_ds.subjects)
+            subj_indices = [i for i in (0, 7, 15) if i < n_subj]
+            if not subj_indices:
+                return
+            n_rows = len(subj_indices)
 
-            fig, ax = plt.subplots(1, 3, figsize=(9.0, 3.2), dpi=90)
-            ax[0].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
-            ax[0].set_title(f"V_gt ED (z={z})", fontsize=9)
-            ax[1].imshow(motion_mag[z], cmap="magma", vmin=0, vmax=mmax)
-            ax[1].set_title("motion = max-min", fontsize=9)
-            ax[2].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
-            overlay = np.zeros((*mask[z].shape, 4))
-            overlay[mask[z]] = [1, 0, 0, 0.45]
-            ax[2].imshow(overlay)
-            ax[2].set_title(f"mask tau={MOTION_MASK_TAU} ({frac*100:.1f}% of bbox)", fontsize=9)
-            for a in ax:
-                a.set_xticks([]); a.set_yticks([])
-            fig.suptitle(f"Motion mask (val subj 0, mid-bbox z) — step={log_step}", fontsize=10)
-            fig.tight_layout(rect=[0, 0, 1, 0.95])
+            fig, axes = plt.subplots(n_rows, 3, figsize=(9.0, 3.2 * n_rows), dpi=90)
+            axes = np.atleast_2d(axes)  # (n_rows, 3) even when n_rows == 1
+            for row, subj_idx in enumerate(subj_indices):
+                data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=mri_ds.num_slices)
+                phases = np.asarray(data["phases"]).astype(np.float32)   # (T, D, H, W)
+                ed = phases[0]                                           # (D, H, W)
+                motion_mag = phases.max(0) - phases.min(0)              # (D, H, W)
+                mask = compute_motion_mask(
+                    torch.from_numpy(phases).unsqueeze(0)
+                )[0].cpu().numpy()                                      # (D, H, W) bool
+                bbox = np.asarray(data["anatomy_bbox"]).astype(int)
+                z0, z1 = int(bbox[0]), int(bbox[1])
+                z = (z0 + z1) // 2
+                frac = float(mask[z0:z1].mean())
+                vmax = max(float(ed.max()), 1e-3)
+                mmax = max(float(motion_mag.max()), 1e-3)
+
+                ax = axes[row]
+                ax[0].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
+                ax[0].set_title(f"subj {subj_idx}: V_gt ED (z={z})", fontsize=9)
+                ax[1].imshow(motion_mag[z], cmap="magma", vmin=0, vmax=mmax)
+                ax[1].set_title("motion = max-min", fontsize=9)
+                ax[2].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
+                overlay = np.zeros((*mask[z].shape, 4))
+                overlay[mask[z]] = [1, 0, 0, 0.45]
+                ax[2].imshow(overlay)
+                ax[2].set_title(f"mask tau={MOTION_MASK_TAU} ({frac*100:.1f}% of bbox)", fontsize=9)
+                for a in ax:
+                    a.set_xticks([]); a.set_yticks([])
+            fig.suptitle("Motion mask (val subjects, mid-bbox z)", fontsize=10)
+            fig.tight_layout(rect=[0, 0, 1, 0.97])
             self.wandb_writer.log("val_motion/mask_example", wandb.Image(fig), log_step)
             plt.close(fig)
         except Exception as e:
@@ -1181,11 +1197,6 @@ class Trainer:
             filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
             if self.epoch % filmstrip_every_n == 0:
                 self._log_cardiac_cycle_filmstrip(current_train_step)
-
-            # Motion-mask example (val subj 0) → val_motion panel. Data-derived, no
-            # model forward, so it can't fail from model state. Multi-phase only.
-            if self.t_target_fixed is None:
-                self._log_motion_mask_example(current_train_step)
 
             logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
 
