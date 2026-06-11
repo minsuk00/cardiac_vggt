@@ -17,7 +17,8 @@ def b64(name):
         return base64.b64encode(f.read()).decode()
 
 
-imgs = {k: b64(f"{k}.png") for k in ["lujan_curve", "reslice_sweep", "axial_sweep", "combined"]}
+imgs = {k: b64(f"{k}.png") for k in
+        ["lujan_curve", "reslice_sweep", "axial_sweep", "zmontage", "input_view", "combined"]}
 
 html = f"""<!doctype html><html><head><meta charset="utf-8">
 <title>VGGT-MRI: respiratory-motion simulation — examples</title>
@@ -54,26 +55,44 @@ unshifted end-expiration reference — the model learns to <b>correct</b> breath
 <span class="mono">r</span>; no embedder this round). Each input slice draws an <i>independent</i>
 respiratory phase (decoupled from the cardiac phase — the scattered-acquisition regime).</div>
 
-<h2>1. Respiratory waveform</h2>
+<h2>1. Respiratory waveform — and n=2 vs n=3</h2>
 <img src="data:image/png;base64,{imgs['lujan_curve']}">
-<p class="note">SI displacement vs respiratory phase. The <span class="mono">sin²ⁿ</span> form dwells at
-end-expiration (flat near r=0/1) and peaks at inspiration (r=0.5) — more time near the rest position,
-as in real breathing. Dots mark the displacement sweep used below; the dashed line is the AP component.</p>
+<p class="note">Left: SI displacement vs respiratory phase for n=1/2/3. The <span class="mono">sin²ⁿ</span>
+form dwells at end-expiration (flat near r=0/1) and peaks at inspiration (r=0.5); dots mark the sweep
+used below. Right: the same over 3 breaths (5 s period) — <b>higher n sits at exhale longer</b>.</p>
+<div class="callout"><b>n=2 vs n=3?</b> n is the exhale-dwell knob: n=3 spends visibly more time near
+rest (more realistic for shallow free-breathing), n=1 is a plain sinusoid (symmetric). <b>Default
+n=2</b> (standard, moderate). It's a config knob (<span class="mono">cos2n</span>); for augmentation
+we can also sample n∈{2,3} per breath for diversity. The exact n matters less than the amplitude
+distribution.</div>
 
-<h2>2. Coronal &amp; sagittal sweep (single cardiac phase)</h2>
+<h2>2. Coronal &amp; sagittal sweep, with difference vs rest</h2>
 <img src="data:image/png;base64,{imgs['reslice_sweep']}">
-<p class="note">One fixed cardiac phase, so the motion shown is purely respiratory. The depth axis D is
-vertical; as the displacement grows the heart slides along D (note the anatomy translating up the
-frame). Anisotropic views (D=12 × 256), stretched for visibility.</p>
+<p class="note">One fixed cardiac phase (motion shown is purely respiratory). Depth axis D is vertical;
+the heart slides along D as the displacement grows. The Δ rows (shifted − rest) make the growing motion
+obvious — the d=0 column is blank by construction.
+<b>On the coarseness:</b> these views are inherently blocky because D is only <b>12 planes at 8 mm</b>
+(through-plane), shown here with nearest-neighbour display (no smoothing) so the real sampling is
+honest, not faked. In-plane (1.4 mm) is sharp; depth is the resolution we have.</p>
 
 <h2>3. Same scanner plane, different anatomy (the point)</h2>
 <img src="data:image/png;base64,{imgs['axial_sweep']}">
-<p class="note">A single fixed plane <span class="mono">z</span> across the sweep. Because the heart moves
-through-plane, the <i>same</i> scanner plane images a <i>different</i> cross-section at each
-displacement — exactly what deform-then-reslice produces (and what a fixed-slice free-breathing
-acquisition sees). This is the effect the model must learn to undo.</p>
+<p class="note">A single fixed plane <span class="mono">z</span> across the sweep, with a Δ-vs-rest row.
+Because the heart moves through-plane, the <i>same</i> scanner plane images a <i>different</i>
+cross-section at each displacement — exactly what deform-then-reslice produces (and what a fixed-slice
+free-breathing acquisition sees). This is the effect the model must learn to undo.</p>
 
-<h2>4. Combined: beating + breathing</h2>
+<h2>4. Through-plane montage</h2>
+<img src="data:image/png;base64,{imgs['zmontage']}">
+<p class="note">Depth planes (columns) × displacement (rows). Reading down a column: as the heart
+shifts, a fixed plane index reveals deeper anatomy — the cross-sections "scroll" through the stack.</p>
+
+<h2>5. What the model actually sees</h2>
+<img src="data:image/png;base64,{imgs['input_view']}">
+<p class="note">The upsampled <b>518² input slice</b> for one slot (fixed t, z) across the sweep — exactly
+what gets fed to the network — with a Δ-vs-rest row. Same geometric plane, shifted anatomy.</p>
+
+<h2>6. Combined: beating + breathing</h2>
 <img src="data:image/png;base64,{imgs['combined']}">
 <p class="note">Secondary view — cardiac phase (rows) × respiratory displacement (columns) at a fixed
 plane. Cardiac contraction and respiratory translation are independent (two clocks); in training they
