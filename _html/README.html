@@ -10,7 +10,11 @@
       span.smallcaps{font-variant: small-caps;}
       span.underline{text-decoration: underline;}
       div.column{display: inline-block; vertical-align: top; width: 50%;}
-  </style>  <style>
+  </style>
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+  <style>
   :root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -59,15 +63,14 @@
 <header>
 <h1 class="title">docs/ index</h1>
 </header>
-<nav id="TOC">
-<ul>
-<li><a href="#docs-index">docs/ index</a></li>
-</ul>
-</nav>
 <h1 id="docs-index">docs/ index</h1>
 <p>Research findings, design decisions, and experiment write-ups for the VGGT-MRI project. Numbered <code>NN_*.md</code>, each opening with a <code>&gt; **TL;DR &amp; takeaway**</code> blockquote (see <code>CLAUDE.md → Docs</code> for the convention). Separate from per-version implementation logs in <code>version_history/</code>.</p>
 <p><strong>This index is the entry point</strong> — skim it to find the right doc, then open only that one. Add a one-line pointer here whenever you create a new <code>docs/NN_*.md</code>.</p>
 <table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
 <thead>
 <tr class="header">
 <th>Doc</th>
@@ -77,7 +80,7 @@
 <tbody>
 <tr class="odd">
 <td><a href="01_respiratory_motion_simulation.md"><code>01_respiratory_motion_simulation.md</code></a></td>
-<td>Respiratory motion simulation: literature survey (motion models, magnitudes, phantoms, SVR code), current-data format recap, and design plan. <strong>Not implemented</strong> — research + design scoping.</td>
+<td>Respiratory motion simulation: literature survey (motion models, magnitudes, phantoms, SVR code), current-data format recap, and design plan. <strong>Simulation core implemented</strong> (2026-06-11): <code>training/data/respiratory.py</code> + <code>tests/test_respiratory.py</code> + example report <code>_html/06_respiratory_motion_simulation_examples.html</code>; GPU-aug/config/trainer wiring deferred.</td>
 </tr>
 <tr class="even">
 <td><a href="02_related_work_literature_review.md"><code>02_related_work_literature_review.md</code></a></td>
