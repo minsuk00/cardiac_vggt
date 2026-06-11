@@ -174,7 +174,7 @@ nudge. Rigid SI(+AP) translation is a defensible first model; affine is the docu
   design is exactly the cardiac ⊥ respiratory decoupling we need.*
 - **MRXCAT** (Wissmann 2014, *JCMR*) — wraps XCAT into **MR cine + perfusion** numerical
   phantoms with cardiac + respiratory motion and realistic MR contrast/coils. Code is **email-
-  gated** (request a download link from the authors at `biomed.ee.ethz.ch/mrxcat.html`, MATLAB,
+  gated** (request a download link from the authors at [`biomed.ee.ethz.ch/mrxcat.html`](https://biomed.ee.ethz.ch/mrxcat.html), MATLAB,
   non-commercial). Closest thing to "synthetic CMRxRecon with breathing." The
   `sinaamirrajab/LGE_CMRI_Simulation` repo (§5) is a public MRXCAT *extension* that already
   simulates cardiac slice-misalignment artifacts.
@@ -208,7 +208,7 @@ architectural analogs to our pipeline — added below. Treat this list as a good
 
 | Repo / link | What it provides | Lang / license | Relevance |
 |---|---|---|---|
-| **MRXCAT** — `biomed.ee.ethz.ch/mrxcat.html` — **evaluated & dropped (§6)** | XCAT→MR cine/perfusion phantom w/ cardiac+resp motion. Inspected then discarded: only renders MR physics (motion is XCAT's, not obtainable). **NOT a public download** — email the authors. | MATLAB, non-commercial | **Not used** (only confirmed our model) |
+| **MRXCAT** — [`biomed.ee.ethz.ch/mrxcat.html`](https://biomed.ee.ethz.ch/mrxcat.html) — **evaluated & dropped (§6)** | XCAT→MR cine/perfusion phantom w/ cardiac+resp motion. Inspected then discarded: only renders MR physics (motion is XCAT's, not obtainable). **NOT a public download** — email the authors. | MATLAB, non-commercial | **Not used** (only confirmed our model) |
 | **sinaamirrajab/LGE_CMRI_Simulation** | **MRXCAT extension simulating cardiac LGE with slice-misalignment (respiratory) artifacts** — directly our problem domain. | MATLAB (2018b), CC-BY-NC-ND | **High** — cardiac slice misalignment |
 | **daviddmc/NeSVoR** | GPU slice-to-volume reconstruction (rigid + **deformable**) via implicit neural rep + **SVoRT** registration transformers. Fetal brain, but the DL SVR machinery is our analog. | Python/CUDA, **MIT** | **High** — DL SVR architecture |
 | **SVRTK/SVRTK** (KCL) | Classical SVR + super-resolution incl. **4D whole-fetal-heart** reconstruction from motion-corrupted stacks. | C++ (MIRTK), Apache-2 | **High** — cardiac SVR reference |
@@ -282,13 +282,13 @@ proposed.*
 on *our* real CMRxRecon cine without the XCAT program, so we asked whether the motion logic is
 obtainable. Three findings:
 
-1. **XCAT 3.0 public release (`xcat-3.github.io`) does NOT contain the motion engine.** What's
+1. **XCAT 3.0 public release ([`xcat-3.github.io`](https://xcat-3.github.io)) does NOT contain the motion engine.** What's
    public is **2,500+ *static* anatomical phantoms** (voxel + mesh) and the **DukeSeg** CT-
-   segmentation models (`gitlab.oit.duke.edu/cvit-public/dukeseg_public`). There's a
+   segmentation models ([`gitlab.oit.duke.edu/cvit-public/dukeseg_public`](https://gitlab.oit.duke.edu/cvit-public/dukeseg_public)). There's a
    "Respiratory Motion Explorer" *demo*, but the 4D cardiac/respiratory **deformation source is
    not released**. So XCAT 3.0 ≈ a static-phantom + segmentation library, not a motion simulator.
 2. **The original XCAT motion engine is a closed binary** (Duke research license), and even its
-   *algorithm* (Segars 2010, `PMC2941518`) is **not portable to our voxel data**: all organs are
+   *algorithm* (Segars 2010, [`PMC2941518`](https://pmc.ncbi.nlm.nih.gov/articles/PMC2941518/)) is **not portable to our voxel data**: all organs are
    **NURBS surfaces** (10–200 control points each); motion is applied by moving control points and
    regenerating surfaces, with a voxelized **Motion Vector Field** filled by smoothing + **Bezier-
    clipping collision detection** so organs don't interpenetrate. That machinery exists to build a
@@ -367,42 +367,42 @@ it only validates on synthetic anatomy and needs the closed XCAT binary to gener
 Primary sources fetched and (where claims were drawn) 3-vote verified:
 
 **Parametric models & numbers**
-- Faranesh et al. 2013 — `pmc.ncbi.nlm.nih.gov/articles/PMC3579864/`
-- Shechter et al. 2004 — `onlinelibrary.wiley.com/doi/10.1002/mrm.24502`
-- `onlinelibrary.wiley.com/doi/10.1002/mrm.27681`
-- `pmc.ncbi.nlm.nih.gov/articles/PMC9139421/`
+- Faranesh et al. 2013 — [`pmc.ncbi.nlm.nih.gov/articles/PMC3579864/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC3579864/)
+- Shechter et al. 2004 — [`onlinelibrary.wiley.com/doi/10.1002/mrm.24502`](https://onlinelibrary.wiley.com/doi/10.1002/mrm.24502)
+- [`onlinelibrary.wiley.com/doi/10.1002/mrm.27681`](https://onlinelibrary.wiley.com/doi/10.1002/mrm.27681)
+- [`pmc.ncbi.nlm.nih.gov/articles/PMC9139421/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC9139421/)
 
 **Waveform / hysteresis models**
-- Lujan-type `cos^{2n}` — `sciencedirect.com/science/article/abs/pii/S036030160500711X`
-- Burger & Meintjes 2013 (*MRM*) — `ncbi.nlm.nih.gov/pmc/articles/PMC4218740/`
-- PROCO 2019 — `pmc.ncbi.nlm.nih.gov/articles/PMC11643223/`
-- `pmc.ncbi.nlm.nih.gov/articles/PMC11014047/`
+- Lujan-type `cos^{2n}` — [`sciencedirect.com/science/article/abs/pii/S036030160500711X`](https://sciencedirect.com/science/article/abs/pii/S036030160500711X)
+- Burger & Meintjes 2013 (*MRM*) — [`ncbi.nlm.nih.gov/pmc/articles/PMC4218740/`](https://ncbi.nlm.nih.gov/pmc/articles/PMC4218740/)
+- PROCO 2019 — [`pmc.ncbi.nlm.nih.gov/articles/PMC11643223/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC11643223/)
+- [`pmc.ncbi.nlm.nih.gov/articles/PMC11014047/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC11014047/)
 
 **Phantoms**
-- Segars 2010 (4D-XCAT, the motion mechanism — NURBS + MVF + diaphragm/AP curves) — `pmc.ncbi.nlm.nih.gov/articles/PMC2941518/`
-- XCAT 3.0 (2025; **static phantoms + DukeSeg segmentation only — no public motion engine**) — `xcat-3.github.io` ; code `gitlab.oit.duke.edu/cvit-public/dukeseg_public`
-- Wissmann 2014 (MRXCAT) — `pmc.ncbi.nlm.nih.gov/articles/PMC4422262/` ; code `biomed.ee.ethz.ch/mrxcat.html`
-- `sciencedirect.com/science/article/abs/pii/S112017971730635X`
-- `iopscience.iop.org/article/10.1088/1361-6560/ab8533`
-- STINR-MR — `arxiv.org/pdf/2308.09771`
+- Segars 2010 (4D-XCAT, the motion mechanism — NURBS + MVF + diaphragm/AP curves) — [`pmc.ncbi.nlm.nih.gov/articles/PMC2941518/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC2941518/)
+- XCAT 3.0 (2025; **static phantoms + DukeSeg segmentation only — no public motion engine**) — [`xcat-3.github.io`](https://xcat-3.github.io) ; code [`gitlab.oit.duke.edu/cvit-public/dukeseg_public`](https://gitlab.oit.duke.edu/cvit-public/dukeseg_public)
+- Wissmann 2014 (MRXCAT) — [`pmc.ncbi.nlm.nih.gov/articles/PMC4422262/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC4422262/) ; code [`biomed.ee.ethz.ch/mrxcat.html`](https://biomed.ee.ethz.ch/mrxcat.html)
+- [`sciencedirect.com/science/article/abs/pii/S112017971730635X`](https://sciencedirect.com/science/article/abs/pii/S112017971730635X)
+- [`iopscience.iop.org/article/10.1088/1361-6560/ab8533`](https://iopscience.iop.org/article/10.1088/1361-6560/ab8533)
+- STINR-MR — [`arxiv.org/pdf/2308.09771`](https://arxiv.org/pdf/2308.09771)
 
 **SVR / DL free-breathing-slice simulation**
-- Lowther 2018 (PMID 29472089) — `pmc.ncbi.nlm.nih.gov/articles/PMC10193526/`
-- `pmc.ncbi.nlm.nih.gov/articles/PMC6370029/`
+- Lowther 2018 (PMID 29472089) — [`pmc.ncbi.nlm.nih.gov/articles/PMC10193526/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC10193526/)
+- [`pmc.ncbi.nlm.nih.gov/articles/PMC6370029/`](https://pmc.ncbi.nlm.nih.gov/articles/PMC6370029/)
 
 **Code** (all individually fetched & confirmed to exist, 2026-06-07)
-- `github.com/daviddmc/NeSVoR` (NeSVoR + SVoRT, MIT)
-- `github.com/SVRTK/SVRTK` (SVR toolkit incl. 4D fetal heart, Apache-2)
-- `github.com/sinaamirrajab/LGE_CMRI_Simulation` (cardiac LGE slice-misalignment sim)
-- `github.com/nadeemlab/SeqX2Y` (RMSim, lung/CT)
-- `github.com/UCL/SuPReMo` (surrogate respiratory motion modelling)
-- MRXCAT — `biomed.ee.ethz.ch/mrxcat.html` (email-gated download)
+- [`github.com/daviddmc/NeSVoR`](https://github.com/daviddmc/NeSVoR) (NeSVoR + SVoRT, MIT)
+- [`github.com/SVRTK/SVRTK`](https://github.com/SVRTK/SVRTK) (SVR toolkit incl. 4D fetal heart, Apache-2)
+- [`github.com/sinaamirrajab/LGE_CMRI_Simulation`](https://github.com/sinaamirrajab/LGE_CMRI_Simulation) (cardiac LGE slice-misalignment sim)
+- [`github.com/nadeemlab/SeqX2Y`](https://github.com/nadeemlab/SeqX2Y) (RMSim, lung/CT)
+- [`github.com/UCL/SuPReMo`](https://github.com/UCL/SuPReMo) (surrogate respiratory motion modelling)
+- MRXCAT — [`biomed.ee.ethz.ch/mrxcat.html`](https://biomed.ee.ethz.ch/mrxcat.html) (email-gated download)
 
 **Follow-up search** (cardiac slice-misalignment + SVR toolkits, 2026-06-07): found the UK
 Biobank inter-slice misalignment distribution (mean 2.3 / std 0.87 mm) and the NeSVoR/SVRTK
 toolkits the original sweep missed.
-- `ncbi.nlm.nih.gov/pmc/articles/PMC2292180/` (slice-to-volume registration for misaligned CMR)
-- `sciencedirect.com/science/article/abs/pii/S0895611124000661` (end-to-end DL motion-correction + super-resolution, multi-slice CMR)
+- [`ncbi.nlm.nih.gov/pmc/articles/PMC2292180/`](https://ncbi.nlm.nih.gov/pmc/articles/PMC2292180/) (slice-to-volume registration for misaligned CMR)
+- [`sciencedirect.com/science/article/abs/pii/S0895611124000661`](https://sciencedirect.com/science/article/abs/pii/S0895611124000661) (end-to-end DL motion-correction + super-resolution, multi-slice CMR)
 
 > Provenance: deep-research workflow run `wf_d9a713b5-f5d` (2026-06-07), 102 agents,
 > 88 claims extracted → 25 verified (25 confirmed / 0 refuted). Caveats in §2. Open-source code
