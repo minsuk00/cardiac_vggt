@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xcaseg — repo evaluation for VGGT-MRI</title>
+<style>
+:root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; --warn:#e0a800; --bad:#b00020; }
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+     max-width:880px;margin:0 auto;padding:40px 28px 120px;color:var(--fg);line-height:1.62;font-size:16px}
+h1{font-size:28px;line-height:1.25;margin:0 0 6px;padding-bottom:10px;border-bottom:3px solid var(--accent)}
+h2{font-size:21px;margin:42px 0 10px;padding-bottom:6px;border-bottom:2px solid #eee}
+h3{font-size:17px;margin:26px 0 8px;color:#333}
+p{margin:10px 0}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+     background:#f4f5f7;padding:2px 5px;border-radius:4px;color:#b5295a;white-space:pre-wrap}
+pre{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+pre code{background:none;padding:0;color:#1a1a1a;font-size:13px;white-space:pre}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:16px 0}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:#f6f7f9;font-weight:600}
+tr:nth-child(even) td{background:#fafbfc}
+ul,ol{margin:8px 0;padding-left:26px} li{margin:5px 0}
+strong{color:#111}
+.sub{color:var(--muted);margin-top:0;font-size:14.5px}
+.callout{border-left:4px solid var(--accent);background:#f0f6ff;padding:14px 18px;margin:18px 0;border-radius:0 8px 8px 0}
+.callout.verdict{border-color:var(--bad);background:#fdeef0}
+.callout.key{border-color:var(--accent2);background:#eafaf0}
+.callout.warn{border-color:var(--warn);background:#fff7e6}
+.callout b:first-child{color:inherit}
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;vertical-align:middle;margin-left:6px}
+.tag.no{background:#fdeaea;color:var(--bad)} .tag.maybe{background:#fff3cd;color:#856404} .tag.yes{background:#d4edda;color:#155724}
+.verdict-grid{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:14.5px;margin:10px 0}
+.verdict-grid div:nth-child(odd){color:var(--muted);font-weight:600}
+.num{text-align:center;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#555}
+.rel-no{color:var(--bad);font-weight:600} .rel-low{color:var(--warn);font-weight:600} .rel-yes{color:var(--accent2);font-weight:600}
+</style>
+</head>
+<body>
+
+<h1>xcaseg — code analysis &amp; reuse assessment for VGGT-MRI</h1>
+<p class="sub">Repo: <a href="https://github.com/liamjwang/xcaseg">github.com/liamjwang/xcaseg</a> ·
+single snapshot commit <span class="mono">151e951</span> (2025-05-01) · no top-level license ·
+Evaluated 2026-06-10 against the respiratory-motion-simulation direction in <code>docs/01</code>.</p>
+
+<div class="callout verdict">
+<b>Verdict: not usable for your project. <span class="tag no">DON'T ADOPT</span></b><br>
+<code>xcaseg</code> is a <strong>synthetic X-ray coronary-angiography</strong> data generator (a UMich EECS&nbsp;545
+course project), not a cardiac-MRI or motion-simulation tool. Its single motion component — a
+<code>CardiacWarpTransform</code> — simulates <em>cardiac</em> contraction (which your real CMRxRecon cine
+already contains, for free, as 12 measured phases), <strong>not the respiratory motion you actually need to
+simulate</strong>. The warp is also an <strong>uncalibrated, artistic Perlin-noise deformation</strong> (no mm,
+no strain, no literature grounding), and it is welded to a <strong>NeRF ray-marching pipeline</strong>
+(nerfstudio) that operates on continuous query positions rather than your discrete monai voxel grid. There is
+nothing here to drop in. The only takeaway is a <em>design-pattern confirmation</em> you already arrived at
+independently in <code>docs/01</code>: compose a motion warp <em>before</em> sampling ("deform-then-reslice").
+</div>
+
+<h2>1. What the repo actually is</h2>
+<p>Despite the suggestive name, <strong>"xcaseg" = X-ray Coronary Angiography <u>seg</u>mentation</strong>, not
+XCAT. (The internal dataset codename is <code>synthca</code> = <em>synthetic coronary angiography</em>.) It is a
+heavyweight research/course monorepo that vendors a dozen unrelated packages (<code>nerfstudio</code>,
+<code>dust3r</code>, <code>mvdust3r</code>, <code>Video-Swin-Transformer</code>, <code>apex</code>, a CroCo
+fork, …) under <code>pkgs/</code>. The original work — and the only part that matters here — lives in
+<code>pkgs/xcaseg/xcaseg/datagens/</code>.</p>
+
+<p>Its goal: <strong>generate synthetic coronary-angiogram videos with ground-truth vessel masks</strong>, to
+train a 2D vessel-segmentation network without real labeled angiograms. Maturity signals: a single squashed
+commit, <strong>no license file</strong>, leftover scratch files (<code>asdfsadf.py</code>,
+<code>dataset_synthca copy.py</code>), and <code>TODO: disable cardiac warp</code> comments in the hot path. It
+is a student deliverable, not a maintained library.</p>
+
+<h2>2. The generation pipeline (synthca_v3)</h2>
+<p>One synthetic example is built entirely from a generic CT plus procedural geometry — there is no real
+angiogram anywhere in the loop:</p>
+<ol>
+<li><strong>Load a CT</strong> (<code>TotalSegmentatorCTs</code> → <code>volume_from_nifti</code>) as a static
+density volume — the soft-tissue background.</li>
+<li><strong>Grow a synthetic vessel tree</strong> (<code>treegen.generate_tree</code> →
+<code>volume_from_tree</code>): a procedural branching coronary tree voxelized into its own density volume.</li>
+<li><strong>Apply a time-dependent cardiac warp</strong> (<code>CardiacWarpTransform</code>) to <em>both</em>
+volumes, composed with a random rigid placement matrix via a <code>SequentialSampleTransform</code> chain.</li>
+<li><strong>Differentiable X-ray rendering</strong> (<code>voxel_warp_field.py</code>, a
+<code>nerfstudio</code> <code>Field</code>/<code>Model</code>): march C-arm camera rays
+(<code>ClinicalCArmView</code>, LAO/RAO + CRA/CAU angles) through the warped volumes, accumulate density, and
+apply Beer–Lambert transmission <code>exp(−∑density)</code> to get a 2D projection.</li>
+<li><strong>Write outputs</strong>: per-frame X-ray PNG/npz (combined + tissue-only + tree-only), depth maps,
+and camera poses — a short <em>beating-heart angiogram clip</em> per object, with the tree channel doubling as
+the segmentation label.</li>
+</ol>
+<p>Everything below the warp — vessel trees, mass attenuation, spectral/material coefficients, C-arm geometry,
+NeRF renderer — is <strong>X-ray-specific and irrelevant to MRI volume reconstruction</strong>.</p>
+
+<h2>3. The one relevant component: <code>CardiacWarpTransform</code></h2>
+<p><span class="mono">datagens/components/cardiac_warp.py</span> — a <code>torch.nn.Module</code> that maps
+<code>(positions, t) → (warped_positions, t)</code>. This is the <em>only</em> motion model in the repo. What it
+does, mechanically:</p>
+<ul>
+<li><strong>Periodic time drive.</strong> <code>t ∈ [0,1)</code> feeds harmonic signals
+(<code>sin(2πt)+0.4·sin(4πt)</code> for a global rotation angle; a 3-harmonic
+<code>sin(2πt)+0.3·sin(4πt+1.5)+0.1·sin(8πt−4.2)</code> for the contraction phase) so the motion loops over a
+cardiac cycle.</li>
+<li><strong>Radial contraction.</strong> The core displacement is <code>vec_to_center · sq</code> — points move
+toward/away from the volume center, i.e. a crude myocardial squeeze.</li>
+<li><strong>Perlin-noise spatial modulation.</strong> A fixed random 3-channel 3D fractal-noise field
+(sampled at each position) multiplies the displacement, so the contraction is spatially non-uniform and
+randomized per instance.</li>
+<li><strong>Plus a small global rigid rotation</strong> (random axis, <code>angle ≈ 0.05&nbsp;rad</code>) and a
+small <strong>translation</strong> (<code>≈ 0.1</code> in normalized units) along a random direction.</li>
+</ul>
+<div class="callout warn">
+<b>It is artistic, not anatomical.</b> Magnitudes (<code>0.05&nbsp;rad</code>, <code>0.1</code>,
+<code>contraction_coeff</code>, the <code>·0.2</code>/<code>·0.6</code> fudge factors) are hand-tuned to look
+plausible in a 2D projection. There is <strong>no millimeter calibration, no strain model, no literature
+reference, and no spacing awareness</strong> — confirmed by grep: zero occurrences of mm / strain / spacing /
+diaphragm anywhere. It is randomized <em>domain-randomization</em> motion (maximize variety so a segmenter
+generalizes), the opposite of the <em>calibrated, reproducible</em> motion your <code>docs/01</code> requires.</li>
+</div>
+<p>And critically: <strong>there is no respiratory motion anywhere in the repo</strong> (grep for
+<code>respir|breath|diaphragm</code> → nothing). Respiratory simulation — the actual gap in your pipeline,
+since your breath-hold cine lacks it — is simply not addressed here.</p>
+
+<h2>4. Why it doesn't fit VGGT-MRI</h2>
+<table>
+<tr><th>Dimension</th><th>What xcaseg provides</th><th>What your pipeline needs</th><th>Fit</th></tr>
+<tr><td><strong>Imaging domain</strong></td><td>2D X-ray angiography projections (Beer–Lambert, C-arm)</td><td>3D cine-MRI magnitude volumes</td><td class="num rel-no">✗</td></tr>
+<tr><td><strong>Motion type</strong></td><td>Cardiac contraction (synthetic)</td><td>You already <em>have</em> real cardiac motion (12 measured phases); you need <strong>respiratory</strong></td><td class="num rel-no">✗</td></tr>
+<tr><td><strong>Respiratory model</strong></td><td>None</td><td>Rigid SI translation ~10–15&nbsp;mm, decoupled clock (docs/01)</td><td class="num rel-no">✗</td></tr>
+<tr><td><strong>Calibration</strong></td><td>Uncalibrated Perlin/artistic</td><td>Literature-validated, mm-calibrated, reproducible</td><td class="num rel-no">✗</td></tr>
+<tr><td><strong>Data structure</strong></td><td>Continuous query positions in a NeRF <code>Field</code></td><td>Discrete canonical voxel grid (monai <code>(256,256,12)</code>)</td><td class="num rel-low">~</td></tr>
+<tr><td><strong>Deform-then-sample pattern</strong></td><td><code>SampleTransform</code> chain warps positions before sampling</td><td>Exactly your "deform-then-reslice" (docs/01 §7)</td><td class="num rel-yes">✓ idea only</td></tr>
+<tr><td><strong>Engineering cost</strong></td><td>Drags in nerfstudio + a huge pixi env; no license</td><td>A ~50-line rigid-translate-then-reslice on cached <code>phases</code></td><td class="num rel-no">✗</td></tr>
+</table>
+
+<p>The deepest mismatch is conceptual: xcaseg <em>invents</em> cardiac motion because its synthetic angiograms
+have none. <strong>Your data already contains real, measured cardiac motion</strong> — the 12 on-disk phase
+NIfTIs are your supervision target. Injecting xcaseg's random, uncalibrated cardiac warp would actively
+<em>fight</em> your supervised intensity loss against the real <code>V_gt</code>. And the motion you do need to
+fabricate — respiratory — isn't in this repo at all.</p>
+
+<h2>5. The only thing worth taking (and you already have it)</h2>
+<p>The reusable insight is a <strong>pattern, not code</strong>: compose motion as a transform applied to
+sampling coordinates <em>before</em> they hit the volume, and chain multiple transforms
+(<code>warp ∘ placement</code>) with a clean <code>SequentialSampleTransform</code> abstraction. That is the
+same "deform-then-reslice" mechanism you specified in <code>docs/01 §7</code> (point 4) and that your existing
+GPU-aug path already implements (re-derive <code>gt_target_volume</code> + re-extract slices after an affine).
+xcaseg confirms the approach is sound but adds nothing beyond it.</p>
+
+<div class="callout key">
+<b>Recommendation.</b> Skip <code>xcaseg</code> entirely. Proceed with <strong>path A from
+<code>docs/01</code></strong>: implement a small, literature-calibrated rigid respiratory transform
+(SI translation along canonical Z, decoupled per-slice respiratory phase) directly on your cached
+<code>phases</code> bundle. If you ever want a <em>differentiable, continuous</em> 3D motion field later (e.g.
+for an Option-B continuous-phase query), the better references are the SVR toolkits already cited in
+<code>docs/01 §5</code> — <strong>NeSVoR / SVRTK</strong> — not this course project.
+</div>
+
+<h2>6. Practical risks if you tried anyway</h2>
+<ul>
+<li><strong>No license</strong> → no legal right to reuse the code. Disqualifying on its own for anything beyond
+reading.</li>
+<li><strong>nerfstudio coupling</strong> → the warp is invoked inside a nerfstudio <code>Field</code>; lifting
+just <code>CardiacWarpTransform</code> is possible (its <code>forward</code> only needs a Perlin generator +
+<code>from_axis_angle</code>), but you'd inherit its normalized-coordinate conventions and have to rewrite the
+sampling for a discrete grid.</li>
+<li><strong>Course-grade maturity</strong> → one squashed commit, scratch files, <code>TODO</code>s in the hot
+loop, no tests for the warp, no docs. Nothing is guaranteed correct or maintained.</li>
+<li><strong>Wrong calibration philosophy</strong> → it maximizes random variety; you need controlled,
+physically-meaningful amplitudes. Adapting it would mean replacing its entire motion core anyway.</li>
+</ul>
+
+<hr>
+<p class="sub">Files read: <code>README.md</code>, <code>pixi.toml</code>,
+<code>datagens/synthca_v3.py</code>, <code>datagens/components/cardiac_warp.py</code>,
+<code>datagens/components/voxel_warp_field.py</code>, the synthca configs, plus a structural pass over the
+package tree. Cardiac-warp claims verified by direct read; "no respiratory / no calibration / no license"
+verified by grep + directory listing.</p>
+
+</body>
+</html>

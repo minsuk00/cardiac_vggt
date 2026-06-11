@@ -1,0 +1,44 @@
+<style>
+:root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; }
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+     max-width:860px;margin:0 auto;padding:40px 28px 120px;color:var(--fg);line-height:1.62;font-size:16px}
+h1{font-size:28px;line-height:1.25;margin:0 0 6px;padding-bottom:10px;border-bottom:3px solid var(--accent)}
+h2{font-size:21px;margin:42px 0 10px;padding-bottom:6px;border-bottom:2px solid #eee}
+h3{font-size:17px;margin:26px 0 8px;color:#333}
+p{margin:10px 0}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+/* TL;DR / callout blockquotes */
+blockquote{background:#f0f6ff;border-left:4px solid var(--accent);margin:18px 0;
+     padding:14px 20px;border-radius:0 8px 8px 0}
+blockquote p{margin:8px 0}
+blockquote strong:first-child{color:var(--accent)}
+/* code */
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+     background:#f4f5f7;padding:2px 5px;border-radius:4px;color:#b5295a;white-space:pre-wrap}
+pre{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+pre code{background:none;padding:0;color:#1a1a1a;font-size:13px;white-space:pre}
+/* tables */
+table{border-collapse:collapse;width:100%;font-size:14px;margin:16px 0;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:#f6f7f9;font-weight:600}
+tr:nth-child(even) td{background:#fafbfc}
+/* lists */
+ul,ol{margin:8px 0;padding-left:26px}
+li{margin:5px 0}
+/* table of contents */
+nav#TOC{background:#fafbfc;border:1px solid var(--line);border-radius:8px;
+     padding:14px 20px 14px 16px;margin:22px 0 30px;font-size:14.5px}
+nav#TOC::before{content:"Contents";display:block;font-weight:700;font-size:13px;
+     text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px 6px}
+nav#TOC ul{list-style:none;margin:0;padding-left:14px}
+nav#TOC>ul{padding-left:0}
+nav#TOC li{margin:3px 0}
+nav#TOC a{color:#333}
+header{display:none}
+strong{color:#111}
+em{color:#333}
+</style>

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>03 — Classical &amp; DL cardiac SVR literature: focused sweep</title>
+  <style type="text/css">
+      code{white-space: pre-wrap;}
+      span.smallcaps{font-variant: small-caps;}
+      span.underline{text-decoration: underline;}
+      div.column{display: inline-block; vertical-align: top; width: 50%;}
+  </style>  <style>
+  :root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       max-width:860px;margin:0 auto;padding:40px 28px 120px;color:var(--fg);line-height:1.62;font-size:16px}
+  h1{font-size:28px;line-height:1.25;margin:0 0 6px;padding-bottom:10px;border-bottom:3px solid var(--accent)}
+  h2{font-size:21px;margin:42px 0 10px;padding-bottom:6px;border-bottom:2px solid #eee}
+  h3{font-size:17px;margin:26px 0 8px;color:#333}
+  p{margin:10px 0}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+  /* TL;DR / callout blockquotes */
+  blockquote{background:#f0f6ff;border-left:4px solid var(--accent);margin:18px 0;
+       padding:14px 20px;border-radius:0 8px 8px 0}
+  blockquote p{margin:8px 0}
+  blockquote strong:first-child{color:var(--accent)}
+  /* code */
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+       background:#f4f5f7;padding:2px 5px;border-radius:4px;color:#b5295a;white-space:pre-wrap}
+  pre{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+  pre code{background:none;padding:0;color:#1a1a1a;font-size:13px;white-space:pre}
+  /* tables */
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:16px 0;display:block;overflow-x:auto}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f6f7f9;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  /* lists */
+  ul,ol{margin:8px 0;padding-left:26px}
+  li{margin:5px 0}
+  /* table of contents */
+  nav#TOC{background:#fafbfc;border:1px solid var(--line);border-radius:8px;
+       padding:14px 20px 14px 16px;margin:22px 0 30px;font-size:14.5px}
+  nav#TOC::before{content:"Contents";display:block;font-weight:700;font-size:13px;
+       text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px 6px}
+  nav#TOC ul{list-style:none;margin:0;padding-left:14px}
+  nav#TOC>ul{padding-left:0}
+  nav#TOC li{margin:3px 0}
+  nav#TOC a{color:#333}
+  header{display:none}
+  strong{color:#111}
+  em{color:#333}
+  </style>
+</head>
+<body>
+<header>
+<h1 class="title">03 — Classical &amp; DL cardiac SVR literature: focused sweep</h1>
+</header>
+<nav id="TOC">
+<ul>
+<li><a href="#03--classical--dl-cardiac-svr-literature-focused-sweep">03 — Classical &amp; DL cardiac SVR literature: focused sweep</a><ul>
+<li><a href="#the-ranked-list">The ranked list</a></li>
+<li><a href="#synthesis-what-this-sweep-adds-to-docs02">Synthesis: what this sweep adds to docs/02</a></li>
+<li><a href="#the-confirmed-open-gap-from-both-sweeps-combined">The confirmed open gap (from both sweeps combined)</a></li>
+<li><a href="#caveats">Caveats</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="03--classical--dl-cardiac-svr-literature-focused-sweep">03 — Classical &amp; DL cardiac SVR literature: focused sweep</h1>
+<blockquote>
+<p><strong>TL;DR &amp; takeaway</strong> <em>(human-facing; the rest of this doc is the detailed record for agents)</em></p>
+<p><strong>The true intersection is essentially empty</strong> — no published method, classical or DL, reconstructs a 3D cardiac volume at a chosen target phase from genuinely scattered single-frame-per-slice <code>(t,z)</code> 2D acquisitions. This is a confirmed open gap, not a search failure.</p>
+<p>The closest non-DL predecessor is <strong>Jantsch et al. (IEEE ISBI 2013)</strong>: assembles free-breathing 2D real-time SAX cine stacks across z-depths into a coherent 3D+t volume via iterative respiratory motion correction. It hits all four criteria except it needs <em>many</em> frames per slice (not one) and has no target-phase query. That's the classical baseline to cite and beat.</p>
+<p>The closest DL analog is <strong>Chen et al. (CMIG 2024)</strong>: end-to-end motion-correction + through-plane super-resolution → 3D cardiac volume from SAX stacks. Same gaps: full per-slice cine required, no target-phase query, no free-breathing across z.</p>
+<p><strong>Confirmed out-of-scope</strong> (commonly cited but not SVR): XD-GRASP = per-slice 2D reconstruction (no cross-z assembly); TetHeart = mesh output (no intensity volume). <strong>DMCVR</strong> (from <code>docs/02</code> first sweep) also <strong>did not survive</strong> this sweep's adversarial verification (1-2 twice) — treat with caution.</p>
+<p>The problem statement = inter-slice respiratory misalignment (<strong>Chandler JCMR'08</strong>, <strong>Tarroni '18</strong>, <strong>Dangi MICCAI'18</strong>) + single-frame scarcity + phase conditioning. Nobody has done all three together.</p>
+</blockquote>
+<p><strong>Date:</strong> 2026-06-07 <strong>Status:</strong> Literature sweep (deep-research harness: 5 search angles, 23 sources fetched, 98 claims extracted, 25 verified, <strong>12 confirmed / 13 killed</strong> — 52% kill rate, more rigorous than <code>docs/02</code> sweep). No design decision attached. <strong>Goal:</strong> Fill in the classical/MR-physics cardiac SVR literature that the first sweep (<code>docs/02</code>) missed due to a DL/INR skew. This sweep explicitly targeted the narrow intersection of {real-time OR free-breathing} × {cardiac} × {slice-to-volume reconstruction}.</p>
+<hr />
+<h2 id="the-ranked-list">The ranked list</h2>
+<h3 id="tier-1--true-cardiac-slice-to-volume-reconstruction-the-rarest-class">Tier 1 — True cardiac slice-to-volume reconstruction (the rarest class)</h3>
+<p><strong>These actually assemble 2D slices at different z-depths into a 3D cardiac volume.</strong></p>
+<h4 id="1-jantsch-et-al--free-breathing-multi-stack-2d-cine-to-3dt-via-iterative-motion-correction">1. Jantsch et al. — Free-breathing multi-stack 2D cine to 3D+t via iterative motion correction</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Jantsch, Rueckert, Price, Hajnal — <em>IEEE ISBI</em> 2013. (<a href="https://ieeexplore.ieee.org/document/6556599/">IEEE</a>)</li>
+<li><strong>Focus:</strong> <code>MR/Classical</code> — iterative non-rigid registration, no deep learning.</li>
+<li><strong>Criteria hit:</strong> cardiac ✅, free-breathing ✅, 2D slices → 3D volume ✅, real-time cine ✅</li>
+<li><strong>Criteria missed:</strong> needs many frames per slice (not one); no target-phase query.</li>
+<li><strong>Summary:</strong> Takes multiple stacks of 2D real-time SAX images acquired during normal free-breathing, estimates respiratory deformations iteratively from the data, and registers them into a coherent spatiotemporal 3D+t volume — entirely classical (2013, pre-DL registration).</li>
+<li><strong>Why it matters:</strong> This is the <strong>only peer-reviewed confirmed paper</strong> in either sweep that achieves slice-to-volume assembly across z-depths under free-breathing for cardiac cine. It is the <strong>classical baseline to cite and aim to surpass</strong> with our learning-based approach.</li>
+<li><strong>Key gap:</strong> &quot;Many frames per slice&quot; requirement — needs a full cine video per z-position to estimate respiratory motion; does not address the single-frame-per-slice regime.</li>
+</ul>
+<h4 id="2-chen-et-al--end-to-end-dl-motion-correction--through-plane-sr--3d-cardiac-volume">2. Chen et al. — End-to-end DL motion correction + through-plane SR → 3D cardiac volume</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Chen et al., <em>Computerized Medical Imaging and Graphics (CMIG)</em>, April 2024. (<a href="https://www.sciencedirect.com/science/article/abs/pii/S0895611124000661">ScienceDirect</a>, GitHub: CMR_MC_SR_End2End)</li>
+<li><strong>Focus:</strong> <code>DL</code> — CNN motion correction + through-plane super-resolution, end-to-end.</li>
+<li><strong>Criteria hit:</strong> cardiac ✅, 2D slices → 3D volume ✅</li>
+<li><strong>Criteria missed:</strong> breath-hold stacks (not real-time/free-breathing); full per-slice cine required (not single-frame); same-phase inputs only (no scattered-phase inputs, no target-phase query — see note).</li>
+<li><strong>Summary:</strong> Takes multi-slice SAX cine stacks, corrects inter-slice motion (reduces misalignment from 3.33±0.74 mm to 1.36±0.63 mm), applies through-plane super-resolution, and outputs a high-resolution 3D cardiac volume. Peer-reviewed, public code. <em>Confidence: medium (quantitative figures behind paywall, verified plausible).</em></li>
+<li><strong>Why it matters:</strong> The <strong>strongest DL slice-to-3D cardiac volume baseline</strong> in either sweep. The two-stage design (motion correction → super-resolution → volume) is a good ablation foil for our end-to-end learned approach.</li>
+<li><strong>Key gap (important):</strong> Like all classical cardiac SVR, this method operates in the <em>same-phase</em> regime — input slices are ECG-gated frames pre-selected to the same cardiac phase before reconstruction. The &quot;phase query&quot; is trivial (just pick the right frame from each cine). Our problem is strictly harder: inputs are at <em>scattered, arbitrary</em> cardiac phases and the model must infer how to reconstruct at any queried target phase. This is the core novelty gap.</li>
+</ul>
+<hr />
+<h3 id="tier-2--problem-definition-inter-slice-misalignment-the-core-challenge-svr-solves">Tier 2 — Problem definition: inter-slice misalignment (the core challenge SVR solves)</h3>
+<p><strong>These confirm and quantify the problem that motivates all cardiac SVR work.</strong></p>
+<h4 id="3-chandler-et-al--quantifying-inter-slice-misalignment-in-breath-hold-cmr">3. Chandler et al. — Quantifying inter-slice misalignment in breath-hold CMR</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Chandler et al., <em>JCMR</em> 2008. (<a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2292180/">PMC2292180</a>)</li>
+<li><strong>Focus:</strong> <code>MR/Classical</code>.</li>
+<li><strong>Summary:</strong> Foundational paper quantifying breath-hold inconsistency as the primary source of inter-slice misalignment; reports LV volume errors of 5.8±4.1 ml from misaligned stacks. <em>Note: the specific NMI registration numbers (7.01→1.56 mm) were refuted by adversarial verification — do not cite those figures.</em></li>
+<li><strong>Why it matters:</strong> The problem-definition reference. Our simulation using gated breath-hold data sidesteps this problem, but it's exactly what our model must handle in true real-time free-breathing cine (the target domain).</li>
+</ul>
+<h4 id="4-tarroni-et-al-rueckert-group--classical-psm-based-slice-alignment">4. Tarroni et al. (Rueckert group) — Classical PSM-based slice alignment</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Tarroni et al., 2018. (<a href="https://arxiv.org/abs/1810.02201">arXiv:1810.02201</a>)</li>
+<li><strong>Focus:</strong> <code>MR/Classical</code> — random decision forests + rigid registration.</li>
+<li><strong>Summary:</strong> Generates probabilistic segmentation maps (PSMs) of the LV cavity via random decision forests, then rigidly registers each slice's PSM to a target PSM derived from LAX images. Corrects inter-slice misalignment in ~28% of subjects where it's clinically significant.</li>
+<li><strong>Why it matters:</strong> The canonical classical (non-DL) misalignment correction method from the Rueckert group (who also produced Jantsch 2013). Establishes the correction layer that precedes any volumetric reconstruction in a classical pipeline.</li>
+</ul>
+<h4 id="5-dangi-et-al--cnn-based-inter-slice-misalignment-correction">5. Dangi et al. — CNN-based inter-slice misalignment correction</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Dangi et al., <em>MICCAI workshop</em> 2018. (<a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC6168009/">PMC6168009</a>)</li>
+<li><strong>Focus:</strong> <code>DL</code> — CNN regression for in-plane rigid misalignment prediction.</li>
+<li><strong>Summary:</strong> CNN reduces median inter-slice misalignment from 3.13 to 2.07 pixels (p=1.617e-76) on 97 patients. Residual 2.07 px error is non-trivial. Earliest DL method in the confirmed set for cardiac inter-slice correction.</li>
+<li><strong>Why it matters:</strong> DL counterpart to Tarroni et al.; together they bracket the pre-volume, correction-only literature.</li>
+</ul>
+<h4 id="6-stolt-ansó-et-al--intensity-agreement-based-3d-rigid-slice-alignment-no-anatomy-needed">6. Stolt-Ansó et al. — Intensity-agreement-based 3D rigid slice alignment (no anatomy needed)</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Stolt-Ansó, Sideri-Lampretsa, Dannecker, Rueckert — <em>ISBI</em> 2024. (<a href="https://arxiv.org/pdf/2404.00767">arXiv:2404.00767</a>)</li>
+<li><strong>Focus:</strong> <code>MR/Classical</code>.</li>
+<li><strong>Summary:</strong> Maximizes pairwise intensity agreement at SAX/LAX slice intersections to solve a 3D rigid correction (rotation + translation) per slice, without segmentation or anatomical knowledge. Output is aligned 2D slices, <strong>not a 3D volume</strong>.</li>
+<li><strong>Why it matters:</strong> State-of-art classical slice alignment (2024); the intensity-intersection criterion is a candidate evaluation metric for our volume pipeline's geometric consistency. <strong>Explicitly not SVR</strong> — correction step only.</li>
+</ul>
+<hr />
+<h3 id="tier-3--real-time-cine-regimes-that-generate-the-input-data">Tier 3 — Real-time cine regimes that generate the input data</h3>
+<p><strong>These characterize the acquisition modes our pipeline must eventually handle.</strong></p>
+<h4 id="7-bhat-et-al--retrospective-cardiac-phase-binning-of-real-time-free-breathing-2d-cine">7. Bhat et al. — Retrospective cardiac-phase binning of real-time free-breathing 2D cine</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Bhat et al., <em>JCMR</em> 2013. (<a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3842803/">PMC3842803</a>)</li>
+<li><strong>Focus:</strong> <code>MR</code>.</li>
+<li><strong>Summary:</strong> Retrospective cardiac-phase binning of ~16-20s real-time free-breathing 2D cine acquisitions yields 30 cardiac phases per slice at 1.3-1.8×1.8-2.1 mm², 34.3±9.1 ms temporal resolution. <strong>Per-slice only — no cross-z assembly.</strong></li>
+<li><strong>Why it matters:</strong> Defines the per-slice acquisition regime our simulation targets. It shows that real-time free-breathing cine <em>can</em> yield multi-phase per-slice data (i.e., you can get 30 frames per slice from 16-20s of real-time), but the unresolved step is assembling those per-slice cines across z-depths into a 3D+t volume — exactly our problem. <em>Note: image quality non-inferiority claims were refuted; the acquisition spec figures are reliable.</em></li>
+</ul>
+<hr />
+<h3 id="confirmed-out-of-scope-commonly-cited-as-svr--they-are-not">Confirmed out-of-scope (commonly cited as SVR — they are not)</h3>
+<p>These surfaced as candidates but were refuted by adversarial verification. Do <strong>not</strong> cite as cardiac SVR baselines.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Paper</th>
+<th>Why not SVR</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>XD-GRASP</strong> (Feng et al., MRM 2016)</td>
+<td>Per-slice 2D reconstruction (each slice independently binned into cardiac × respiratory phase space from golden-angle k-space). No cross-z assembly. The &quot;3D XD-GRASP&quot; is abdominal DCE-MRI with kz sampling, not cardiac cine.</td>
+</tr>
+<tr class="even">
+<td><strong>TetHeart</strong> (arXiv:2509.12090, 2025)</td>
+<td>Outputs 4D deformable tetrahedral <strong>meshes</strong> (shape/motion), not voxel intensity volumes. Cannot benchmark with PSNR/SSIM. Out-of-scope for intensity reconstruction.</td>
+</tr>
+<tr class="odd">
+<td><strong>DMCVR</strong> (arXiv:2308.09223, MICCAI'23)</td>
+<td>Listed in <code>docs/02</code> as a Tier 2 finding; <strong>did not survive this sweep's adversarial verification</strong> (1-2 votes twice). The claims about through-plane SR / 3D-from-sparse-stacks were disputed. <strong>Treat with caution.</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="synthesis-what-this-sweep-adds-to-docs02">Synthesis: what this sweep adds to docs/02</h2>
+<table>
+<thead>
+<tr class="header">
+<th>From <code>docs/02</code> (DL/INR sweep)</th>
+<th>From this sweep (classical cardiac SVR sweep)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>NeSVoR, SVoRT — best analogues for scattered-slice→volume (fetal, rigid)</td>
+<td><strong>Jantsch 2013</strong> — only confirmed classical cardiac SVR across z-depths (free-breathing, many frames/slice)</td>
+</tr>
+<tr class="even">
+<td>Kettelkamp 5D-MoCo, M-DIP — phase-DVF template paradigm</td>
+<td><strong>Chen 2024</strong> — only confirmed DL cardiac slice→3D volume (breath-hold, full cine, no phase query)</td>
+</tr>
+<tr class="odd">
+<td>Real-time cine regime (INR/subspace, diffusion)</td>
+<td><strong>Bhat 2013</strong> — acquisition spec for real-time per-slice cine; <strong>Chandler/Tarroni/Dangi</strong> — the misalignment problem</td>
+</tr>
+<tr class="even">
+<td>DMCVR as Tier 2 DL candidate</td>
+<td><strong>DMCVR refuted</strong> here — downgrade to uncertain</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-confirmed-open-gap-from-both-sweeps-combined">The confirmed open gap (from both sweeps combined)</h2>
+<p>All existing cardiac SVR methods — classical and DL — share a hidden assumption: <strong>input slices are pre-selected to the same cardiac phase</strong> (via ECG gating + retrospective frame selection from a full cine). The phase query is therefore trivial (just pick the right frame). No published method handles inputs at <em>scattered, arbitrary</em> cardiac phases and reconstructs at a queried target phase.</p>
+<p>No published method does all five simultaneously:</p>
+<ul>
+<li>✅ Cardiac (not fetal/brain)</li>
+<li>✅ 2D slices → 3D volume across z-depths (SVR, not per-slice reconstruction)</li>
+<li>✅ Free-breathing / real-time (not breath-hold)</li>
+<li>✅ Single or few frames per slice (not full cine video)</li>
+<li>✅ Scattered input phases → queried target phase (not same-phase inputs)</li>
+</ul>
+<p><strong>Jantsch 2013 misses the last three.</strong> Chen 2024 misses the last four. Everything else misses at least three. The same-phase assumption alone rules out essentially the entire literature. This combination is the novelty claim.</p>
+<h2 id="caveats">Caveats</h2>
+<ul>
+<li><strong>52% adversarial kill rate</strong> — this sweep's verifiers were more skeptical than the first sweep (which killed 0/25). Surviving findings are more trustworthy; <code>docs/02</code> findings should be read with slightly lower confidence where they overlap with refuted claims here (especially DMCVR).</li>
+<li>Chen et al. 2024 is <strong>medium confidence</strong> due to a paywall; the quantitative figures (3.33→1.36 mm) are plausible but not directly verified.</li>
+<li>Jantsch 2013 is behind IEEE paywall; the core methodology was confirmed 2-1 and 3-0 on complementary claims.</li>
+<li><strong>Search window:</strong> no classical cardiac SVR paper post-2020 was confirmed in the set — either the field stalled (DL took over and mostly ignored the classical formulation) or there is post-2020 work not indexed in the search sources. Likely some of both.</li>
+</ul>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>docs/ index</title>
+  <style type="text/css">
+      code{white-space: pre-wrap;}
+      span.smallcaps{font-variant: small-caps;}
+      span.underline{text-decoration: underline;}
+      div.column{display: inline-block; vertical-align: top; width: 50%;}
+  </style>  <style>
+  :root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       max-width:860px;margin:0 auto;padding:40px 28px 120px;color:var(--fg);line-height:1.62;font-size:16px}
+  h1{font-size:28px;line-height:1.25;margin:0 0 6px;padding-bottom:10px;border-bottom:3px solid var(--accent)}
+  h2{font-size:21px;margin:42px 0 10px;padding-bottom:6px;border-bottom:2px solid #eee}
+  h3{font-size:17px;margin:26px 0 8px;color:#333}
+  p{margin:10px 0}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+  /* TL;DR / callout blockquotes */
+  blockquote{background:#f0f6ff;border-left:4px solid var(--accent);margin:18px 0;
+       padding:14px 20px;border-radius:0 8px 8px 0}
+  blockquote p{margin:8px 0}
+  blockquote strong:first-child{color:var(--accent)}
+  /* code */
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+       background:#f4f5f7;padding:2px 5px;border-radius:4px;color:#b5295a;white-space:pre-wrap}
+  pre{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+  pre code{background:none;padding:0;color:#1a1a1a;font-size:13px;white-space:pre}
+  /* tables */
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:16px 0;display:block;overflow-x:auto}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f6f7f9;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  /* lists */
+  ul,ol{margin:8px 0;padding-left:26px}
+  li{margin:5px 0}
+  /* table of contents */
+  nav#TOC{background:#fafbfc;border:1px solid var(--line);border-radius:8px;
+       padding:14px 20px 14px 16px;margin:22px 0 30px;font-size:14.5px}
+  nav#TOC::before{content:"Contents";display:block;font-weight:700;font-size:13px;
+       text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px 6px}
+  nav#TOC ul{list-style:none;margin:0;padding-left:14px}
+  nav#TOC>ul{padding-left:0}
+  nav#TOC li{margin:3px 0}
+  nav#TOC a{color:#333}
+  header{display:none}
+  strong{color:#111}
+  em{color:#333}
+  </style>
+</head>
+<body>
+<header>
+<h1 class="title">docs/ index</h1>
+</header>
+<nav id="TOC">
+<ul>
+<li><a href="#docs-index">docs/ index</a></li>
+</ul>
+</nav>
+<h1 id="docs-index">docs/ index</h1>
+<p>Research findings, design decisions, and experiment write-ups for the VGGT-MRI project. Numbered <code>NN_*.md</code>, each opening with a <code>&gt; **TL;DR &amp; takeaway**</code> blockquote (see <code>CLAUDE.md → Docs</code> for the convention). Separate from per-version implementation logs in <code>version_history/</code>.</p>
+<p><strong>This index is the entry point</strong> — skim it to find the right doc, then open only that one. Add a one-line pointer here whenever you create a new <code>docs/NN_*.md</code>.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Doc</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><a href="01_respiratory_motion_simulation.md"><code>01_respiratory_motion_simulation.md</code></a></td>
+<td>Respiratory motion simulation: literature survey (motion models, magnitudes, phantoms, SVR code), current-data format recap, and design plan. <strong>Not implemented</strong> — research + design scoping.</td>
+</tr>
+<tr class="even">
+<td><a href="02_related_work_literature_review.md"><code>02_related_work_literature_review.md</code></a></td>
+<td>Ranked related-work sweep for the project goal (single/few-frame-per-slice → volume at a target phase): INR SVR (NeSVoR/SVoRT), phase-conditioned template-deformation (5D-MoCo/M-DIP/STINR), real-time cine + gated→real-time gap, classical 5D MR baselines, and the VGGT/DUSt3R geometry lineage.</td>
+</tr>
+<tr class="odd">
+<td><a href="03_cardiac_svr_literature_review.md"><code>03_cardiac_svr_literature_review.md</code></a></td>
+<td>Focused classical/DL cardiac SVR sweep (52% adversarial kill rate). Confirms the open gap. Closest classical: Jantsch 2013 (free-breathing 2D cine stacks → 3D+t, many frames/slice). Closest DL: Chen 2024 (motion-correction + through-plane SR → 3D volume, breath-hold). Confirms XD-GRASP, TetHeart, DMCVR are NOT cardiac SVR baselines.</td>
+</tr>
+<tr class="even">
+<td><a href="04_inference_information_contract.md"><code>04_inference_information_contract.md</code></a></td>
+<td><strong>Design stance</strong> (not yet implemented): at inference assume the model knows only <code>z</code> per input slice — input cardiac <code>t</code> and respiratory <code>r</code> are UNAVAILABLE (one-frame-per-slice ⇒ no self-gating; no ECG/respiratory device assumed). Target queries (<code>target_t</code>/<code>target_r</code>) stay free (chosen, sim GT). Pin <code>target_r</code> (4D, correct-not-resolve) since input <code>r</code> is unseeable; ECG/self-gating are the fallback via input-phase dropout.</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>

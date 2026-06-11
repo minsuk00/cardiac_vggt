@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>02 — Related work: ranked literature review</title>
+  <style type="text/css">
+      code{white-space: pre-wrap;}
+      span.smallcaps{font-variant: small-caps;}
+      span.underline{text-decoration: underline;}
+      div.column{display: inline-block; vertical-align: top; width: 50%;}
+  </style>  <style>
+  :root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       max-width:860px;margin:0 auto;padding:40px 28px 120px;color:var(--fg);line-height:1.62;font-size:16px}
+  h1{font-size:28px;line-height:1.25;margin:0 0 6px;padding-bottom:10px;border-bottom:3px solid var(--accent)}
+  h2{font-size:21px;margin:42px 0 10px;padding-bottom:6px;border-bottom:2px solid #eee}
+  h3{font-size:17px;margin:26px 0 8px;color:#333}
+  p{margin:10px 0}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+  /* TL;DR / callout blockquotes */
+  blockquote{background:#f0f6ff;border-left:4px solid var(--accent);margin:18px 0;
+       padding:14px 20px;border-radius:0 8px 8px 0}
+  blockquote p{margin:8px 0}
+  blockquote strong:first-child{color:var(--accent)}
+  /* code */
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+       background:#f4f5f7;padding:2px 5px;border-radius:4px;color:#b5295a;white-space:pre-wrap}
+  pre{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+  pre code{background:none;padding:0;color:#1a1a1a;font-size:13px;white-space:pre}
+  /* tables */
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:16px 0;display:block;overflow-x:auto}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f6f7f9;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  /* lists */
+  ul,ol{margin:8px 0;padding-left:26px}
+  li{margin:5px 0}
+  /* table of contents */
+  nav#TOC{background:#fafbfc;border:1px solid var(--line);border-radius:8px;
+       padding:14px 20px 14px 16px;margin:22px 0 30px;font-size:14.5px}
+  nav#TOC::before{content:"Contents";display:block;font-weight:700;font-size:13px;
+       text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px 6px}
+  nav#TOC ul{list-style:none;margin:0;padding-left:14px}
+  nav#TOC>ul{padding-left:0}
+  nav#TOC li{margin:3px 0}
+  nav#TOC a{color:#333}
+  header{display:none}
+  strong{color:#111}
+  em{color:#333}
+  </style>
+</head>
+<body>
+<header>
+<h1 class="title">02 — Related work: ranked literature review</h1>
+</header>
+<nav id="TOC">
+<ul>
+<li><a href="#02--related-work-ranked-literature-review">02 — Related work: ranked literature review</a><ul>
+<li><a href="#how-to-read-the-ranking">How to read the ranking</a></li>
+<li><a href="#the-ranked-list">The ranked list</a></li>
+<li><a href="#synthesis-how-the-families-map-onto-our-pipeline">Synthesis: how the families map onto our pipeline</a></li>
+<li><a href="#open-questions-from-the-verification-stage">Open questions (from the verification stage)</a></li>
+<li><a href="#caveats-on-this-sweep">Caveats on this sweep</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="02--related-work-ranked-literature-review">02 — Related work: ranked literature review</h1>
+<blockquote>
+<p><strong>TL;DR &amp; takeaway</strong> <em>(human-facing; the rest of this doc is the detailed record for agents)</em></p>
+<p><strong>Nobody has published exactly what we're doing</strong> — reconstruct a 3D heart volume at a <em>chosen</em> cardiac phase from genuinely <em>scattered single-frame-per-slice</em> acquisitions (one frame per arbitrary <code>(t, z)</code>). That's a real novelty gap. But four families of prior art surround it and each nails one piece of our design:</p>
+<ol>
+<li><strong>INR slice-to-volume reconstruction (SVR)</strong> — <strong>NeSVoR</strong> (TMI'23) and <strong>SVoRT</strong> (MICCAI'22) are the strongest <em>deep-learning</em> analogues for &quot;scattered 2D slices → continuous 3D volume.&quot; SVoRT is a <strong>transformer over slices with cross-slice attention</strong> — the closest published cousin to what we do with VGGT. (Both are fetal-brain <em>rigid</em> SVR, not cardiac deformable — that's the gap we fill.)</li>
+<li><strong>Phase-conditioned template deformation</strong> — <strong>Kettelkamp 5D MoCo-DL</strong> (MICCAI'23), <strong>M-DIP</strong> (MRM'25), <strong>MoCo-INR</strong> (2025) all &quot;deform one canonical template per phase via a network-predicted DVF.&quot; This is <em>exactly</em> our <code>world_points = scanner_coords + Δ(t)</code> + splat paradigm. <strong>These are the papers to cite for our method's lineage.</strong></li>
+<li><strong>Real-time free-breathing cine</strong> — <strong>Subspace-INR</strong> (Rueckert, '24), untrained <strong>Fourier-feature INR</strong> (Heckel, '23), <strong>diffusion spiral</strong> (MRM'25), <strong>zero-shot PG-DL</strong> ('23). These define the <strong>gated→real-time domain gap</strong> we must cross (our central transfer risk), and several echo our Fourier z/t embedders.</li>
+<li><strong>Classical 5D MR-physics baseline</strong> — <strong>XD-GRASP 5D</strong> (MRM'18) + <strong>free-running self-gated</strong> (MRM'19): the retrospective-sort + compressed-sensing pipeline <em>we are trying to replace</em>. <strong>DMCVR</strong> (MICCAI'23) is a diffusion 3D-from-sparse-stacks method for the same through-plane problem.</li>
+</ol>
+<p><strong>Read-first shortlist:</strong> NeSVoR, SVoRT, Kettelkamp 5D-MoCo, M-DIP. <strong>Method-lineage to cite:</strong> the family-2 template-deformation papers. <strong>Status:</strong> literature sweep only; no code/design decision attached. Findings below passed unanimous 3-0 adversarial verification; the geometry- foundation and motion-estimation entries (family 5) are surfaced-but-not-deep-verified — treat as leads.</p>
+</blockquote>
+<p><strong>Date:</strong> 2026-06-07 <strong>Status:</strong> Literature sweep (deep-research harness: 6 search angles, 26 sources fetched, 112 claims extracted, 25 verified 3-0, 12 synthesized). No design decision attached yet. <strong>Goal:</strong> map the prior art around our core problem — <em>real-time cine → few/single frames per slice → reconstruct the volume at a target cardiac phase</em> — and rank it by relevance so future work knows what to read, cite, and benchmark against.</p>
+<hr />
+<h2 id="how-to-read-the-ranking">How to read the ranking</h2>
+<p>Each entry is scored on three axes the request asked for:</p>
+<ul>
+<li><strong>(a) Setup match</strong> — how close to <em>single/few-frame-per-slice → volume at a target phase</em>.</li>
+<li><strong>(b) Focus</strong> — <code>DL</code> (deep-learning method) vs <code>MR</code> (MR-physics/reconstruction) vs <code>DL+MR</code>.</li>
+<li><strong>(c) Recency/impact.</strong></li>
+</ul>
+<p>Ranking is <strong>conceptual proximity, not measured transfer</strong> — no source benchmarks our exact scattered-<code>(t,z)</code> setup, so this is &quot;what to read and why,&quot; not &quot;what will work.&quot;</p>
+<hr />
+<h2 id="the-ranked-list">The ranked list</h2>
+<h3 id="tier-1--direct-structural-analogues-slicevolume--phase-conditioned-deform">Tier 1 — Direct structural analogues (slice→volume + phase-conditioned deform)</h3>
+<p><strong>These map onto our architecture piece-for-piece. Read and cite these first.</strong></p>
+<h4 id="1-nesvor--implicit-neural-representation-for-svr">1. NeSVoR — Implicit Neural Representation for SVR</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Xu et al., <em>IEEE TMI</em> 2023. (arXiv 2210.… / <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC10287191/">PMC10287191</a>)</li>
+<li><strong>Focus:</strong> <code>DL+MR</code> (INR method with an explicit MR slice-acquisition forward model).</li>
+<li><strong>Summary:</strong> Learns a <em>continuous, resolution-agnostic</em> 3D volume function from multiple motion-corrupted 2D slices, jointly modeling rigid inter-slice motion, point-spread function, and bias fields. The trained continuous field is sampled at arbitrary resolution at inference.</li>
+<li><strong>Why it matters to us:</strong> This is the canonical &quot;scattered 2D slices → one continuous canonical volume&quot; formulation. Resolution-agnostic sampling = our &quot;query the canonical cube at a target grid.&quot; The explicit slice-acquisition forward model is the principled version of our differentiable splat. <strong>Main gap:</strong> rigid (fetal-brain) motion, not cardiac deformable phase warping.</li>
+</ul>
+<h4 id="2-svort--slice-to-volume-registration-transformer">2. SVoRT — Slice-to-Volume Registration Transformer</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Xu et al., <em>MICCAI</em> 2022. (<a href="https://arxiv.org/abs/2206.10802">arXiv 2206.10802</a>)</li>
+<li><strong>Focus:</strong> <code>DL</code> (transformer).</li>
+<li><strong>Summary:</strong> Treats multiple stacks of 2D slices as a <strong>sequence with cross-slice attention</strong> — predicts each slice's slice-to-volume transform using information from the other slices — and <em>jointly</em> estimates the underlying 3D volume, alternating volume and transform updates.</li>
+<li><strong>Why it matters to us:</strong> The <strong>closest published analogue to the VGGT adaptation</strong>: attention across a set of slices to infer geometry + a shared volume. The set-attention &quot;each slice's prediction depends on the others&quot; is exactly the behavior we rely on (and saw in our own frame-0 / companion-slice analysis). <strong>Gap:</strong> rigid fetal SVR, no target-phase query.</li>
+</ul>
+<h4 id="3-motion-compensated-unsupervised-dl-for-5d-mri-kettelkamp-et-al">3. Motion-Compensated Unsupervised DL for 5D MRI (Kettelkamp et al.)</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Kettelkamp et al., <em>MICCAI</em> 2023. (<a href="https://arxiv.org/pdf/2309.04552">arXiv 2309.04552</a>)</li>
+<li><strong>Focus:</strong> <code>DL+MR</code> (unsupervised, k-space forward model).</li>
+<li><strong>Summary:</strong> Reconstructs motion-resolved 5D cardiac MRI from 3D radial data by modeling every cardiac/respiratory phase as a <strong>single deformed 3D template</strong>, where the deformation maps are produced by a <strong>CNN driven by the physiological phase</strong>; template + deformations are jointly estimated.</li>
+<li><strong>Why it matters to us:</strong> This is <strong>our core paradigm, published.</strong> Phase-conditioned DVF on a canonical template == our <code>t_embedder</code>-conditioned residual <code>Δ</code>, with <code>world_points = scanner_coords + Δ</code>. <strong>The primary method-lineage citation.</strong> <strong>Gap:</strong> k-space forward model + full 3D radial acquisition, vs our image-domain splat from sparse 2D slices.</li>
+</ul>
+<h4 id="4-m-dip--multi-dynamic-deep-image-prior-for-cardiac-mri">4. M-DIP — Multi-dynamic Deep Image Prior for cardiac MRI</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Vornehm et al., <em>MRM</em> 2025. (<a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12501714/">PMC12501714</a>)</li>
+<li><strong>Focus:</strong> <code>DL+MR</code> (instance-specific / scan-specific, trained from scratch per measurement).</li>
+<li><strong>Summary:</strong> Unsupervised reconstruction of accelerated <strong>real-time free-breathing</strong> cardiac MRI that <strong>factorizes dynamics</strong> into (i) a <em>spatial dictionary</em> synthesizing a time-dependent intermediate &quot;template&quot; image and (ii) <em>time-dependent deformation fields</em> explicitly modeling cardiac <strong>and</strong> respiratory motion.</li>
+<li><strong>Why it matters to us:</strong> Template-synthesis + explicit deformation factorization is a near-twin of our canonical-volume + phase-DVF design, and it operates in the <strong>real-time free-breathing</strong> regime we're targeting — including the two-clock (cardiac × respiratory) structure from our <code>docs/01</code>. <strong>Gap:</strong> per-scan optimization (no learned generalization across subjects); k-space.</li>
+</ul>
+<h4 id="5-stinr-mr--spatial-temporal-inr-for-dynamic-cine">5. STINR-MR — Spatial-Temporal INR for dynamic cine</h4>
+<ul>
+<li><strong>Authors / venue:</strong> <em>Phys. Med. Biol.</em> 2023. (<a href="https://arxiv.org/abs/2308.09771">arXiv 2308.09771</a>)</li>
+<li><strong>Focus:</strong> <code>DL+MR</code>.</li>
+<li><strong>Summary:</strong> Joint reconstruction + deformable registration: a <strong>reference frame as a spatial INR</strong>, dynamics encoded via a <strong>temporal INR + basis DVFs</strong>, reaching &lt;100 ms temporal / 3 mm spatial resolution from undersampled k-space.</li>
+<li><strong>Why it matters to us:</strong> Same reference-template + temporal-DVF decomposition; the basis-DVF trick (low-dimensional motion subspace) is a candidate regularizer if our per-pixel <code>Δ</code> proves under-constrained. <strong>Gap:</strong> 3D cine from continuous k-space, not scattered 2D slices.</li>
+</ul>
+<hr />
+<h3 id="tier-2--real-time-regime--the-gatedreal-time-domain-gap">Tier 2 — Real-time regime &amp; the gated→real-time domain gap</h3>
+<p><strong>These define the <em>target domain</em> we must generalize to (our central transfer risk) and supply a method toolbox. Less structural overlap, high strategic relevance.</strong></p>
+<h4 id="6-subspace-implicit-neural-representations-for-real-time-cardiac-cine">6. Subspace Implicit Neural Representations for Real-Time Cardiac Cine</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Huang, Hammernik, Küstner, Rueckert, Dec 2024. (<a href="https://arxiv.org/abs/2412.12742">arXiv 2412.12742</a>)</li>
+<li><strong>Focus:</strong> <code>DL+MR</code>.</li>
+<li><strong>Summary:</strong> Two MLPs learn <strong>separate spatial and temporal subspace bases</strong> exploiting cine's low-rank structure, enabling <strong>continuously sampled, ungated</strong> imaging that <strong>eliminates retrospective binning</strong> and captures beat-to-beat variation.</li>
+<li><strong>Why it matters to us:</strong> This is the cleanest statement of the <strong>no-retrospective-gating, real-time</strong> regime — exactly the pipeline-replacement we pitch. Subspace/low-rank factorization is a regularization idea we could adopt.</li>
+</ul>
+<h4 id="7-moco-inr--inr--motion-compensated-reconstruction">7. MoCo-INR — INR + motion-compensated reconstruction</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Nov 2025. (<a href="https://arxiv.org/abs/2511.11436">arXiv 2511.11436</a>)</li>
+<li><strong>Focus:</strong> <code>DL+MR</code> (unsupervised).</li>
+<li><strong>Summary:</strong> Combines INR with a classical motion-compensated framework for highly undersampled k-t data, yielding a cardiac-motion decomposition + high-quality recon; <strong>evaluated on prospective real-acquired free-breathing scans.</strong></li>
+<li><strong>Why it matters to us:</strong> INR + <em>explicit</em> motion modeling on <strong>real free-breathing</strong> data — both the method blend and the real-data evaluation we ultimately need. (Self-reported eval; very recent.)</li>
+</ul>
+<h4 id="8-dmcvr--morphology-guided-diffusion-for-3d-cardiac-volume-reconstruction">8. DMCVR — Morphology-guided Diffusion for 3D Cardiac Volume Reconstruction</h4>
+<ul>
+<li><strong>Authors / venue:</strong> <em>MICCAI</em> 2023. (<a href="https://arxiv.org/abs/2308.09223">arXiv 2308.09223</a>)</li>
+<li><strong>Focus:</strong> <code>DL</code>.</li>
+<li><strong>Summary:</strong> Morphology-conditioned diffusion model that synthesizes dense slices from <strong>sparse 2D cine stacks</strong> to produce high-resolution 3D cardiac volumes — directly targeting the through-plane / slice-to-volume resolution problem.</li>
+<li><strong>Why it matters to us:</strong> A generative alternative to our splat for the 3D-from-sparse-2D-stacks problem; a natural baseline / ablation for &quot;diffusion inpainting vs explicit splat.&quot; <strong>Gap:</strong> doesn't handle arbitrary scattered <code>(t,z)</code> sampling or a target-phase query.</li>
+</ul>
+<h4 id="9-untrained-inr--fourier-feature-real-time-cine">9. Untrained INR + Fourier-feature real-time cine</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Kunz, Ruschke, Heckel, 2023/2024. (<a href="https://arxiv.org/abs/2305.06822">arXiv 2305.06822</a>)</li>
+<li><strong>Focus:</strong> <code>DL</code>.</li>
+<li><strong>Summary:</strong> Represents the beating heart with an <strong>untrained per-scan MLP + Fourier features</strong> as a signal prior; reconstructs a real-time video from highly undersampled data with <strong>no ECG / biosensors / training data.</strong></li>
+<li><strong>Why it matters to us:</strong> Validates <strong>Fourier-feature embeddings</strong> as a strong prior for cardiac dynamics — echoes our sinusoidal Fourier <code>z/t</code> embedders. <strong>Gap:</strong> 2D real-time <em>video</em>, not 3D volume at a target phase.</li>
+</ul>
+<h4 id="10-diffusion-based-real-time-free-breathing-spiral-cine">10. Diffusion-based real-time free-breathing spiral cine</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Schad et al., <em>MRM</em> 2025. (<a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12309890/">PMC12309890</a>)</li>
+<li><strong>Focus:</strong> <code>MR+DL</code> (score-based/diffusion posterior sampling on real spiral data).</li>
+<li><strong>Summary:</strong> Reconstructs highly undersampled <strong>real-time free-breathing spiral bSSFP</strong> (13 spiral arms/frame, ~48 ms/frame at 1.5T), covering the whole heart in &lt;1 min.</li>
+<li><strong>Why it matters to us:</strong> A <strong>concrete spec of the real-time free-breathing acquisition</strong> we aim to generalize to — useful for grounding the simulated→real domain gap with real numbers (temporal resolution, artifact character). Mostly a reconstruction reference, not a method analogue.</li>
+</ul>
+<h4 id="11-zero-shot-self-supervised-pg-dl-for-real-time-cine">11. Zero-shot self-supervised PG-DL for real-time cine</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Demirel et al., 2023. (<a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC9948950/">PMC9948950</a>)</li>
+<li><strong>Focus:</strong> <code>MR+DL</code>.</li>
+<li><strong>Summary:</strong> Subject-specific <strong>zero-shot self-supervised physics-guided DL</strong> for highly accelerated real-time Cartesian cine — <strong>no training database, no ground truth.</strong></li>
+<li><strong>Why it matters to us:</strong> A pointer toward truly self-supervised real-time recon (relevant to our &quot;drop <code>gt_target_volume</code>&quot; future direction). k-space recon, not slice-to-volume.</li>
+</ul>
+<hr />
+<h3 id="tier-3--classical-mr-physics-baseline-the-pipeline-we-replace">Tier 3 — Classical MR-physics baseline (the pipeline we replace)</h3>
+<h4 id="12-xd-grasp-5d-whole-heart--free-running-self-gated-framework">12. XD-GRASP 5D whole-heart + free-running self-gated framework</h4>
+<ul>
+<li><strong>Authors / venue:</strong> Feng et al., <em>MRM</em> 2018 (<a href="https://onlinelibrary.wiley.com/doi/10.1002/mrm.27898">5D whole-heart</a>); Di Sopra et al., <em>MRM</em> 2019 (<a href="https://onlinelibrary.wiley.com/doi/10.1002/mrm.26745">free-running, self-gated</a>).</li>
+<li><strong>Focus:</strong> <code>MR</code> (compressed sensing; self-gating signal extraction).</li>
+<li><strong>Summary:</strong> Continuous non-ECG-triggered 3D radial golden-angle bSSFP, <strong>retrospectively sorted</strong> into 5D (3 spatial + cardiac + respiratory) motion-resolved volumes via a self-extracted respiratory signal (+ recorded ECG), reconstructed with compressed sensing. Di Sopra removes external gating entirely (<strong>fully self-gated</strong>).</li>
+<li><strong>Why it matters to us:</strong> This <strong>is</strong> the retrospective-sort + SVR/CS baseline our pitch replaces, and the <strong>self-gating</strong> route is exactly the bridge for the gated→real-time gap (recover <code>(cardiac, respiratory)</code> per readout). Cite as the established comparator. <strong>Gap:</strong> no learning; long acquisition; the cost we're trying to remove.</li>
+</ul>
+<hr />
+<h3 id="tier-4--geometry-foundation-models-the-vggt-lineage--motion-estimation-nets">Tier 4 — Geometry foundation models (the VGGT lineage) &amp; motion-estimation nets</h3>
+<p><strong>Surfaced by the sweep but <em>not</em> in the deep-verified set (budget-dropped or my own identification). Treat as leads, verify titles before citing.</strong> The synthesis explicitly flagged sub-topic 6 (multi-view-3D geometry transformers) as under-covered.</p>
+<ul>
+<li><strong>VGGT — Visual Geometry Grounded Transformer.</strong> Wang et al., <em>CVPR</em> 2025 (<a href="https://arxiv.org/abs/2503.11651">arXiv 2503.11651</a>). <code>DL</code>. <strong>The base model this project adapts.</strong> Feed-forward multi-view transformer predicting cameras + per-pixel point maps. Our whole approach is &quot;VGGT point head → world points → splat,&quot; so this is the architectural parent.</li>
+<li><strong>DUSt3R — Geometric 3D Vision Made Easy.</strong> Wang et al., <em>CVPR</em> 2024 (<a href="https://arxiv.org/abs/2312.14132">arXiv 2312.14132</a>). <code>DL</code>. Predicts dense pointmaps directly from uncalibrated image pairs — the conceptual ancestor of VGGT's pointmap regression; explains <em>why</em> a geometry transformer can map 2D views to 3D points without explicit camera calibration (we exploit exactly this: no real cameras, just <code>(z,t)</code> embeddings).</li>
+<li><strong>Additional geometry-transformer sources</strong> (surfaced, unverified — likely DUSt3R/MASt3R/VGGT follow-ups and a medical-imaging geometry-transformer): <a href="https://arxiv.org/abs/2503.01661">arXiv 2503.01661</a>, <a href="https://arxiv.org/abs/2507.08448">arXiv 2507.08448</a>, <a href="https://arxiv.org/html/2507.14501v1">arXiv 2507.14501</a>, <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12227771/">PMC12227771</a>. Verify titles before relying on these.</li>
+<li><strong>Cardiac motion estimation / DVF registration networks</strong> (sub-topic 5; surfaced, not deep-verified) — relevant for the warping/DVF half of the design and as priors/regularizers: <a href="https://arxiv.org/pdf/2209.00726">arXiv 2209.00726</a>, <a href="https://www.sciencedirect.com/science/article/pii/S1361841522003103">MedIA S1361841522003103</a>, <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC11466156/">PMC11466156</a>, <a href="https://www.sciencedirect.com/science/article/abs/pii/S0010482523004663">Comput. Biol. Med. S0010482523004663</a>, <a href="https://arxiv.org/pdf/2103.16695">arXiv 2103.16695</a> (likely a biomechanics-informed registration net), <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC7586816/">PMC7586816</a>. These cover learned DVF prediction and biomechanics-informed regularization — directly applicable if our per-pixel <code>Δ</code> needs smoothness/physically-plausible constraints.</li>
+</ul>
+<hr />
+<h2 id="synthesis-how-the-families-map-onto-our-pipeline">Synthesis: how the families map onto our pipeline</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Our component</th>
+<th>Closest prior art</th>
+<th>What to borrow</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Scattered 2D slices → canonical volume</td>
+<td>NeSVoR, SVoRT</td>
+<td>Forward model (NeSVoR); slice-set attention (SVoRT)</td>
+</tr>
+<tr class="even">
+<td><code>world_points = scanner_coords + Δ(t)</code> (phase-DVF on a template)</td>
+<td><strong>Kettelkamp 5D-MoCo, M-DIP, STINR-MR</strong></td>
+<td>The exact template-deform paradigm; basis-DVF / dictionary regularization</td>
+</tr>
+<tr class="odd">
+<td>Arbitrary target-phase query (our <code>target_t_indices</code>)</td>
+<td>Phase-conditioned deformation (family 2)</td>
+<td>Conditioning a single template on a queried phase</td>
+</tr>
+<tr class="even">
+<td>Fourier <code>z/t</code> embedders</td>
+<td>Heckel Fourier-feature INR, NeRF positional enc.</td>
+<td>Fourier features as a cardiac-dynamics prior</td>
+</tr>
+<tr class="odd">
+<td>Splat → V_canon</td>
+<td>NeSVoR forward model; DMCVR (diffusion alt.)</td>
+<td>Explicit forward model vs generative inpainting (ablation)</td>
+</tr>
+<tr class="even">
+<td>gated→real-time transfer</td>
+<td>Subspace-INR, MoCo-INR, XD-GRASP/self-gated, diffusion-spiral</td>
+<td>Self-gating; real free-breathing eval; ungated low-rank priors</td>
+</tr>
+<tr class="odd">
+<td>VGGT backbone</td>
+<td>VGGT, DUSt3R</td>
+<td>Why pointmap regression works without cameras</td>
+</tr>
+</tbody>
+</table>
+<h2 id="open-questions-from-the-verification-stage">Open questions (from the verification stage)</h2>
+<ol>
+<li><strong>Genuine novelty gap:</strong> no verified source reconstructs a 3D cardiac volume at a <em>chosen</em> phase from genuinely scattered <strong>single-frame-per-slice</strong> <code>(t,z)</code> data. Closest are full-per-slice cine or continuous k-space. This is likely our publishable delta.</li>
+<li><strong>Quantified gated→real-time transfer</strong> is unmeasured anywhere — our central risk, and an evaluation nobody has reported.</li>
+<li><strong>Splat vs INR vs k-space forward model</strong> for volumetric cardiac recon — no head-to-head exists; an ablation worth running (ties to the &quot;UNet ablation — replace the splat&quot; future item).</li>
+<li><strong>Geometry-transformer ↔ medical SVR bridge</strong> is thin in the literature — adapting VGGT to slices is relatively unexplored territory.</li>
+</ol>
+<h2 id="caveats-on-this-sweep">Caveats on this sweep</h2>
+<ul>
+<li>All 12 Tier 1–3 findings are from primary peer-reviewed (TMI, MRM, PMB, MICCAI) or primary arXiv sources and passed <strong>unanimous 3-0 adversarial verification</strong>. Tier 4 is <strong>surfaced-but-not-deep- verified</strong> — verify exact titles/authors before citing.</li>
+<li>Relevance ranking is <strong>interpretive</strong> (conceptual proximity), not benchmarked on our setup.</li>
+<li>Several &quot;real-time applicability&quot; claims (MoCo-INR, M-DIP, subspace-INR) are the <strong>authors' own evaluations</strong> without independent replication.</li>
+<li>DL methods skew 2023–2025 (fast-moving — newer work may exist past the search window); the classical 5D MR-physics references (2017–2019) are foundational and stable.</li>
+</ul>
+</body>
+</html>

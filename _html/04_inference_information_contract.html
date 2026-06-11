@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>04 — Inference information contract: what the model is allowed to know per input slice</title>
+  <style type="text/css">
+      code{white-space: pre-wrap;}
+      span.smallcaps{font-variant: small-caps;}
+      span.underline{text-decoration: underline;}
+      div.column{display: inline-block; vertical-align: top; width: 50%;}
+  </style>  <style>
+  :root{ --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --accent:#1f77b4; --accent2:#0a7d28; }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       max-width:860px;margin:0 auto;padding:40px 28px 120px;color:var(--fg);line-height:1.62;font-size:16px}
+  h1{font-size:28px;line-height:1.25;margin:0 0 6px;padding-bottom:10px;border-bottom:3px solid var(--accent)}
+  h2{font-size:21px;margin:42px 0 10px;padding-bottom:6px;border-bottom:2px solid #eee}
+  h3{font-size:17px;margin:26px 0 8px;color:#333}
+  p{margin:10px 0}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+  /* TL;DR / callout blockquotes */
+  blockquote{background:#f0f6ff;border-left:4px solid var(--accent);margin:18px 0;
+       padding:14px 20px;border-radius:0 8px 8px 0}
+  blockquote p{margin:8px 0}
+  blockquote strong:first-child{color:var(--accent)}
+  /* code */
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13.5px;
+       background:#f4f5f7;padding:2px 5px;border-radius:4px;color:#b5295a;white-space:pre-wrap}
+  pre{background:#f6f7f9;border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto}
+  pre code{background:none;padding:0;color:#1a1a1a;font-size:13px;white-space:pre}
+  /* tables */
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:16px 0;display:block;overflow-x:auto}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f6f7f9;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  /* lists */
+  ul,ol{margin:8px 0;padding-left:26px}
+  li{margin:5px 0}
+  /* table of contents */
+  nav#TOC{background:#fafbfc;border:1px solid var(--line);border-radius:8px;
+       padding:14px 20px 14px 16px;margin:22px 0 30px;font-size:14.5px}
+  nav#TOC::before{content:"Contents";display:block;font-weight:700;font-size:13px;
+       text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 8px 6px}
+  nav#TOC ul{list-style:none;margin:0;padding-left:14px}
+  nav#TOC>ul{padding-left:0}
+  nav#TOC li{margin:3px 0}
+  nav#TOC a{color:#333}
+  header{display:none}
+  strong{color:#111}
+  em{color:#333}
+  </style>
+</head>
+<body>
+<header>
+<h1 class="title">04 — Inference information contract: what the model is allowed to know per input slice</h1>
+</header>
+<nav id="TOC">
+<ul>
+<li><a href="#04--inference-information-contract-what-the-model-is-allowed-to-know-per-input-slice">04 — Inference information contract: what the model is allowed to know per input slice</a><ul>
+<li><a href="#1-the-question">1. The question</a></li>
+<li><a href="#2-why-this-is-the-core-question">2. Why this is the <em>core</em> question</a></li>
+<li><a href="#3-input-vs-target--the-load-bearing-split">3. Input vs target — the load-bearing split</a></li>
+<li><a href="#4-why-one-frame-per-slice--no-self-gated-input-phase">4. Why one frame per slice ⇒ no self-gated input phase</a></li>
+<li><a href="#5-why-we-assume-no-ecg--no-respiratory-device-and-the-asymmetry">5. Why we assume no ECG / no respiratory device (and the asymmetry)</a></li>
+<li><a href="#6-consequence-for-the-output-pin-target_r-4d-correct-not-resolve">6. Consequence for the output: pin <code>target_r</code> (4D, correct-not-resolve)</a></li>
+<li><a href="#7-fallbacks-if-blind-underperforms-kept-in-reserve">7. Fallbacks if blind underperforms (kept in reserve)</a></li>
+<li><a href="#8-what-this-changes-in-the-code-not-yet-done">8. What this changes in the code (not yet done)</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="04--inference-information-contract-what-the-model-is-allowed-to-know-per-input-slice">04 — Inference information contract: what the model is allowed to know per input slice</h1>
+<blockquote>
+<p><strong>TL;DR &amp; takeaway</strong> <em>(human-facing; the rest is the detailed record for agents)</em></p>
+<p><strong>Decision: target the <em>blind-input</em> extreme — at inference, assume the model knows only <code>z</code> (the prescribed slice position) per input slice. Input cardiac phase <code>t</code> and input respiratory phase <code>r</code> are assumed UNAVAILABLE.</strong> This follows from the headline goal of <em>one frame per slice</em>: a single frame carries no temporal signal, so per-slice self-gating is impossible, and we deliberately assume <strong>no ECG and no respiratory device</strong> either (we want a method that needs zero auxiliary hardware, to maximize generality and match true sparse real-time).</p>
+<p><strong>Key distinction that makes this coherent:</strong> <em>input</em> phase and <em>target</em> phase are independent.</p>
+<ul>
+<li><strong>Target</strong> <code>target_t</code> / <code>target_r</code> are always available — they are <em>queries we choose</em>, with ground truth <em>generated</em> in simulation. Dropping input phase never costs us the target query.</li>
+<li><strong>Input</strong> <code>t</code> / <code>r</code> are the only thing the deployment environment dictates. <code>z</code> is always known (geometry). The contract is therefore: <strong><code>z</code> known; input <code>t</code>, <code>r</code> unknown.</strong></li>
+</ul>
+<p><strong>Asymmetry to respect:</strong> cardiac phase is fairly recoverable from a single slice's <em>appearance</em> (chamber size, wall thickness); respiratory phase is <strong>not</strong> (it barely shows in a cropped short-axis slice). So a blind model can plausibly content-infer cardiac state but has <em>no cue</em> for respiratory state → don't ask it to <em>resolve</em> an arbitrary <code>target_r</code>; <strong>pin <code>target_r</code> to the reference (4D, &quot;correct-not-resolve&quot;)</strong> so the model only has to <em>undo</em> respiratory displacement back to the breath-hold reference.</p>
+<p><strong>ECG / self-gating are the documented FALLBACK, not the assumption.</strong> If the blind model underperforms, recover phase and feed it: ECG-label cardiac <code>t</code> (decoupled clock, works at any sparsity), self-gate <code>t</code>/<code>r</code> from a temporal stream, or add a respiratory navigator. Implement the bridge as <strong>input-phase dropout (+ noise)</strong> so ONE model uses phase when present and content-infers when absent.</p>
+<p><strong>Status: design stance, not yet implemented.</strong> The current pipeline still <em>conditions on</em> input <code>t</code> (the <code>t_embedder</code>); respiratory <code>r</code> is not implemented at all. Moving to the blind contract means training input phase with dropout up to the fully-dropped case. See [[01_respiratory_motion_simulation]] for the respiratory-sim side and the &quot;Future enhancements&quot; bullets in CLAUDE.md.</p>
+</blockquote>
+<hr />
+<h2 id="1-the-question">1. The question</h2>
+<p>For each input slice the model could in principle be told three things: its cardiac phase <code>t</code>, its respiratory phase <code>r</code>, and its slice position <code>z</code>. Which of these does the <em>real-world deployment environment</em> actually hand us at inference? That set — the <strong>information contract</strong> — is the one thing we don't get to choose by architecture; it's dictated by the acquisition. Everything else (target queries, 4D-vs-5D output, GT definition) is free design, because that information is always available by construction (we choose the query; we generate the GT in sim).</p>
+<h2 id="2-why-this-is-the-core-question">2. Why this is the <em>core</em> question</h2>
+<p>Train/inference <strong>parity</strong>: a model can only rely at inference on information it will actually have at inference. If we train with clean input <code>t</code>/<code>r</code> (free in sim) but deploy with none, the model learns to lean on a crutch that's gone at test time — silently invalidating everything trained on that assumption. So the contract must be decided <em>first</em>, and the training setup must honor it.</p>
+<h2 id="3-input-vs-target--the-load-bearing-split">3. Input vs target — the load-bearing split</h2>
+<table>
+<thead>
+<tr class="header">
+<th>role</th>
+<th>variable</th>
+<th>known at inference?</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>query</strong> (we choose)</td>
+<td><code>target_t</code>, <code>target_r</code></td>
+<td><strong>always</strong> — never measured, just set; GT generated in sim</td>
+</tr>
+<tr class="even">
+<td><strong>source state</strong> (per input slice)</td>
+<td>input <code>t</code>, input <code>r</code></td>
+<td><strong>the contested part</strong></td>
+</tr>
+<tr class="odd">
+<td><strong>geometry</strong> (per input slice)</td>
+<td>input <code>z</code></td>
+<td><strong>yes</strong> — prescribed slice position from scanner</td>
+</tr>
+</tbody>
+</table>
+<p>Dropping input <code>t</code>/<code>r</code> does <strong>not</strong> block target <code>t</code>/<code>r</code>. The only coupling: if the model can't <em>observe</em> input <code>r</code>, don't ask it to <em>resolve</em> an arbitrary <code>target_r</code> (no cue) — pin it (§6).</p>
+<h2 id="4-why-one-frame-per-slice--no-self-gated-input-phase">4. Why one frame per slice ⇒ no self-gated input phase</h2>
+<p>A &quot;phase&quot; is a position within a <em>cycle</em>, and a cycle only exists across <em>time</em>. <strong>Self-gating</strong> recovers phase by watching a 1-D motion signal (k-space DC, navigator line, region intensity) <em>oscillate over time</em> and reading off where each frame sits in the recovered cardiac/respiratory waveform. It needs a <strong>temporal stream</strong>:</p>
+<ul>
+<li>Cardiac (<del>1 Hz): need ≥</del>12–30 frames/cycle over a few beats.</li>
+<li>Respiratory (~0.2–0.3 Hz): the binding constraint — need to span <strong>multiple breaths</strong> (~5+), i.e. tens of seconds and <strong>hundreds of frames per slice</strong>.</li>
+</ul>
+<p>Per-slice self-gating therefore needs the exact many-frames-per-slice density the project exists to eliminate. A <em>single</em> frame has no cycle to locate yourself in → self-gating is <strong>impossible</strong>, not just inaccurate. (A <em>different</em> mechanism — <strong>content-inference</strong>, reading phase from one image's appearance — needs no stream; that's what a blind model does internally. §5.)</p>
+<p><strong>Gating vs labeling (why ECG is special).</strong> Retrospective <em>gating</em> = binning many frames by phase (slow, many frames/slice — eliminated by the project). <em>Labeling</em> = attaching a phase to whatever frame you have, which needs only a <strong>clock</strong> + timestamp. The <strong>ECG is a clock decoupled from the imaging-frame count</strong>: one frame at wall-clock time τ → look up the ECG cardiac phase at τ. So ECG labeling gives input <code>t</code> at <em>any</em> sparsity, including one frame per slice — <em>if</em> an ECG is recorded.</p>
+<h2 id="5-why-we-assume-no-ecg--no-respiratory-device-and-the-asymmetry">5. Why we assume no ECG / no respiratory device (and the asymmetry)</h2>
+<p>ECG is, in fact, standard and effectively free in cardiac MR (4-lead setup on every patient), so assuming it is realistic. <strong>But we deliberately target the harder extreme — no ECG, no respiratory device — because we want a method that needs zero auxiliary hardware</strong> and generalizes to arbitrary sparse real-time cine (incl. datasets where no ECG was logged). ECG/self-gating then sit in reserve as a fallback (§7).</p>
+<p>Recoverability of input phase from slice <em>content</em> (the blind fallback inside the model) is asymmetric:</p>
+<ul>
+<li><strong>Cardiac <code>t</code>: plausibly recoverable</strong> from a single short-axis slice — chamber area / wall thickness strongly encode cardiac phase (some ambiguity between look-alike phases).</li>
+<li><strong>Respiratory <code>r</code>: near-unrecoverable</strong> from a single <em>cropped</em> short-axis slice — the main cue is the heart's absolute SI position shift, much of which the canonical crop/registration removes, and the diaphragm is usually out of FOV.</li>
+</ul>
+<p>Two risks of going fully blind: (a) respiratory correction is <strong>underdetermined</strong> (no cue); (b) <strong>phase-averaged blur</strong> — if the model can't infer source phase it may regress the safe L1 minimizer (a mush averaged over the unknown phase), same degeneracy family as the &quot;fully-unsupervised <code>V_canon≈0</code>&quot; risk in CLAUDE.md.</p>
+<h2 id="6-consequence-for-the-output-pin-target_r-4d-correct-not-resolve">6. Consequence for the output: pin <code>target_r</code> (4D, correct-not-resolve)</h2>
+<p>Because input <code>r</code> is unobservable, the respiratory axis enters <strong>asymmetrically</strong> from cardiac:</p>
+<table>
+<thead>
+<tr class="header">
+<th></th>
+<th>input (per slot)</th>
+<th>output query</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>cardiac</td>
+<td><code>t</code> (recoverable-ish / fallback ECG)</td>
+<td><code>target_t</code> — <strong>queried dial</strong></td>
+</tr>
+<tr class="even">
+<td>respiratory</td>
+<td><code>r</code> (assumed unknown)</td>
+<td><code>target_r</code> — <strong>pinned to reference</strong>, not queried</td>
+</tr>
+</tbody>
+</table>
+<p>Reconstruct the full cardiac cycle at <strong>one</strong> respiratory phase (end-expiration ≈ the breath-hold reference) → 4D output (XYZ × cardiac), which also matches the breath-hold GT we actually have. Full 5D (queryable <code>target_r</code>) is cheap to <em>build</em> but its value is capped by sim fidelity (it would learn to reproduce our own respiratory-sim motion model) and there's no real 5D reference — defer it. The simulation gives respiratory-correction GT <em>for free precisely because</em> we only ever target the single breath-hold respiratory phase. See [[01_respiratory_motion_simulation]].</p>
+<h2 id="7-fallbacks-if-blind-underperforms-kept-in-reserve">7. Fallbacks if blind underperforms (kept in reserve)</h2>
+<p>Implement all of these as <strong>input-phase dropout (+ noise)</strong> on the existing/new embedders, so a single model spans the spectrum from &quot;phase available&quot; to &quot;fully blind&quot;:</p>
+<ol>
+<li><strong>ECG-label cardiac <code>t</code></strong> — decoupled clock; works at any imaging sparsity. In-bore ECG can be degraded by the magnetohydrodynamic effect, so feed it with mild label noise.</li>
+<li><strong>Self-gate <code>t</code>/<code>r</code></strong> — only if a <em>temporal stream</em> (and/or a cheap continuous navigator) exists; self-gate the dense stream, label frames, then sparsify.</li>
+<li><strong>Respiratory navigator / bellows</strong> — gives <code>r</code> for an upgrade to true 5D.</li>
+</ol>
+<h2 id="8-what-this-changes-in-the-code-not-yet-done">8. What this changes in the code (not yet done)</h2>
+<ul>
+<li>Current: <code>t_embedder</code> conditions on input <code>t</code>; <code>target_t_embedder</code> provides the query; no <code>r</code>.</li>
+<li>Target stance: train input <code>t</code> (and a future input-<code>r</code> embedder) with <strong>dropout up to fully dropped</strong>, so the default inference path is blind; keep <code>target_t</code> (and a pinned <code>target_r</code>) as queries. The blind model must then content-infer cardiac state internally.</li>
+<li>Watch for the <strong>phase-averaged blur</strong> degeneracy (§5) — may need a coverage/completeness or stronger smoothness term, mirroring the fully-unsupervised note in CLAUDE.md.</li>
+</ul>
+</body>
+</html>
