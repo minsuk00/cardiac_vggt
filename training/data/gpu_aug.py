@@ -318,6 +318,9 @@ def gpu_augment_batch(batch, transforms, device,
             phases_cur, batch["timesteps"], batch["slice_indices"], disp,
         )                                                       # (B, S, 518, 518, 3) [0,255]
         batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
+        # Surface the per-slot displacement (canonical D,H,W mm) for diagnostics only
+        # — captions + the aug/resp_disp scalar. Inert for the model/loss (read-only).
+        batch["resp_disp_mm"] = disp
     elif affine_applied:
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
         images = extract_slices_from_phases(
