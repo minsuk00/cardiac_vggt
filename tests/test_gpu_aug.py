@@ -161,12 +161,14 @@ _REF_KEYS = ["phases", "gt_target_volume", "anatomy_bbox", "content_mask", "scan
 
 
 def test_resp_disabled_is_identity():
-    """respiratory_cfg.enable=False with affine off → batch returned unchanged."""
+    """respiratory_cfg.enable=False with affine off → batch returned unchanged, no
+    resp_disp_mm surfaced (training stays bit-identical when breathing is off)."""
     batch = _fake_batch()
     pre = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in batch.items()}
     out = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=_resp_cfg(enable=False), train=True)
     for k in ["phases", "images", "gt_target_volume", "anatomy_bbox", "content_mask"]:
         assert torch.equal(out[k], pre[k]), f"{k} changed with respiratory disabled"
+    assert "resp_disp_mm" not in out  # no diagnostic key leaks when breathing is off
 
 
 def test_resp_on_changes_only_images():
@@ -178,9 +180,19 @@ def test_resp_on_changes_only_images():
     out = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=_resp_cfg(), train=True, resp_generator=g)
     for k in _REF_KEYS:
         assert torch.equal(out[k], pre[k]), f"{k} must stay at the reference under respiratory"
-    assert not torch.equal(out["images"], pre_images)          # inputs did change
+    # Prove breathing actually MOVED content: the output must differ from the
+    # zero-displacement (clean) reslice of the SAME phases — not merely from the
+    # random seed images — AND a nonzero breath must have been drawn.
+    clean = extract_slices_from_phases(out["phases"].float(), out["timesteps"], out["slice_indices"])
+    clean = clean.permute(0, 1, 4, 2, 3).contiguous() / 255.0
+    assert not torch.equal(out["images"], clean)               # breathing shifted the anatomy
     assert out["images"].shape == pre_images.shape
     assert float(out["images"].min()) >= 0.0 and float(out["images"].max()) <= 1.0
+    # The per-slot displacement is surfaced for diagnostics (captions + scalar).
+    B, S = pre_images.shape[0], pre_images.shape[1]
+    assert out["resp_disp_mm"].shape == (B, S, 3)
+    assert float(out["resp_disp_mm"].abs().max()) > 0.0        # a real (nonzero) breath
+    assert torch.isfinite(out["resp_disp_mm"]).all()
 
 
 def test_resp_val_deterministic_per_seq_index():
