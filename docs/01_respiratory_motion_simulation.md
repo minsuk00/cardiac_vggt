@@ -13,11 +13,17 @@
 > **Model:** rigid superior-inferior translation **~10–15 mm** (heart tracks the diaphragm at
 > ~0.6×), smaller front-back component, end-of-exhale as the rest position. That's 1–2.5× our
 > 8 mm slice spacing — i.e. breathing is a real *multi-slice* shift, not a tiny nudge.
-> **Status: simulation core implemented** (2026-06-11) — the motion model + unit tests + an example
-> report are built (`training/data/respiratory.py`, `tests/test_respiratory.py`,
-> `tools/render_respiratory_examples.py` → `_html/06_respiratory_motion_simulation_examples.html`).
-> Wiring into the GPU aug pipeline / config / trainer is **deferred** (design in §5). Decided the
-> *correct* framing (model blind to `r`; target stays at reference — no embedder yet).
+> **Status: WIRED INTO TRAINING** (2026-06-11) — the motion model, randomized SI direction, unit +
+> integration + e2e tests, and the example report are all built and the augmentation now runs in the
+> training loop (`data.augmentation.respiratory.enable=true`, off by default). It applies in **train**
+> (iid per epoch, private RNG) **and val** (deterministic per `seq_index`, so val measures the real
+> corrupted→clean task). It overwrites **only the input slices**; target / `scanner_coords` / GT stay
+> at the unshifted reference, so the model learns to *correct* breathing (blind to `r`; no `r`-embedder
+> yet). **Direction randomization** (`direction_jitter_deg`, default 30°) tilts the coupled SI+AP
+> vector to handle the SAX-stack obliquity (§3.1). Files: `training/data/respiratory.py`,
+> `training/data/gpu_aug.py` (independent affine/resp gates), `training/trainer.py`, `mri_volume.yaml`,
+> `tests/test_respiratory.py` / `test_gpu_aug.py` / `test_respiratory_e2e.py`,
+> `_html/06_respiratory_motion_simulation_examples.html`.
 > **Reference code worth reusing:** NeSVoR/SVRTK (slice-to-volume reconstruction),
 > MRXCAT / LGE_CMRI_Simulation (cardiac motion phantoms).
 >
@@ -32,9 +38,9 @@
 > **rigid 6-DOF transform** we reimplement on our own cine voxels. **Conclusion: path A (reimplement
 > on our data) is the only viable path; XCAT/MRXCAT is not used.** Detail in §6.
 
-**Date:** 2026-06-07 (sim core implemented 2026-06-11)
-**Status:** Design + **simulation core implemented** (`training/data/respiratory.py` + tests +
-example report); GPU-aug/config/trainer wiring deferred (§5).
+**Date:** 2026-06-07 (sim core 2026-06-11; **wired into training 2026-06-11**)
+**Status:** Design + simulation core + **training wiring complete** (train iid + deterministic val,
+randomized SI direction). See §7 "As-built" for the wiring (no longer deferred).
 **Goal:** decide whether (and how) to simulate breathing motion on top of our breath-hold
 gated cine, to push the scattered-slice reconstruction pipeline toward real-time
 free-breathing transfer (the headline direction in `CLAUDE.md → Future enhancements`).
@@ -116,9 +122,21 @@ normalized. Output per subject: `phases (T=12, 256, 256, 12) float16` + `content
 bilinear-upsampled to 518² for DINOv2.
 
 ### Three facts that shape the respiratory design
-1. **No true SI axis is recoverable** (affine is axis-aligned). Practically: model SI motion as
-   **translation along canonical Z** (the SAX normal — the dominant through-plane direction), a
-   well-justified proxy.
+1. **The canonical "SI" axis (D) is the SAX stack normal — oblique to *true* SI (a documented
+   approximation).** The preprocess sets `Orientationd("LPS")` and the on-disk affine is diagonal
+   (axis codes L,P,S), so the canonical axes are *nominally labelled* **D = Superior, H = Posterior
+   (AP), W = Left (LR)** — i.e. orientation is defined and consistent (`ap_axis="H"` is genuinely
+   the AP axis). **But the affine is axis-aligned — the SAX rotation is baked out** — and the slices
+   are short-axis, so **D is really the LV long axis, tilted ~20–45° from true body SI**. We model
+   SI motion as **translation along D**, which captures the *dominant* through-plane misregistration
+   (the reconstruction-relevant effect) but is a **first-order approximation**: true SI motion, in
+   the SAX frame, is an oblique vector = a D-component (`cos(tilt)`) **plus** an in-plane component
+   (`sin(tilt)`). The exact tilt is **not recoverable from the `3d_recon` we use** (rotation baked
+   out; it would need raw `cine_sax.mat` / DICOM `ImageOrientationPatient`). **Limitation, not a bug:
+   the simulation injects realistic-magnitude through-plane motion but not the exact 3D SI direction.**
+   Mitigation (unimplemented): randomize the *translation direction* (a small random oblique tilt of
+   the displacement vector — NOT a volume rotation, which would conflate anatomy rotation and hit the
+   8 mm through-plane anisotropy) so the model is robust to the unknown tilt. See §8.
 2. **A per-slot scalar-embedder pattern already exists** (`z_indices`, `t_indices` → Fourier
    embedders). A **respiratory-phase embedder** drops in identically — one more per-slot scalar
    `r ∈ [0,1)`.
@@ -350,6 +368,38 @@ A phantom route (**(B) MRXCAT/XCAT** for ground-truth motion) was considered and
 it only validates on synthetic anatomy and needs the closed XCAT binary to generate matched motion
 (§6). So the plan is simply: implement **(A)** as the training augmentation; no phantom dependency.
 
+### As-built (2026-06-11) — what shipped, and where it deviated from the §7 sketch
+
+Implemented as a training augmentation toggled by `data.augmentation.respiratory.enable` (off by
+default; the whole feature is inert and bit-identical to before when off). Key as-built decisions:
+
+1. **Insertion point: trainer-side, not `get_data`.** The §7 sketch suggested inserting between the
+   `phases` lookup and slice extraction *inside* `get_data`. As-built it lives in
+   `gpu_aug.gpu_augment_batch` (where the affine aug already is), to preserve the architecture
+   invariant that **the dataset stays augmentation-agnostic — all spatial aug is trainer-side**, and
+   so respiratory composes with affine (runs *after* it, on the affine-warped `phases`). The dataset's
+   only change is emitting a `seq_index` scalar (the val determinism key).
+2. **Overwrites ONLY the input slices.** `gt_target_volume` / `anatomy_bbox` / `content_mask` /
+   `scanner_coords` / `phases` stay at the unshifted end-expiration reference. The two augs share a
+   single image-extraction call (no double `grid_sample`). Affine and respiratory have **independent
+   enable gates**.
+3. **Applies in val too — deterministically.** Decided val *should* breathe so it measures the real
+   corrupted→clean task. Determinism mirrors the dataset's z/t scheme: **train** draws iid per epoch
+   from a **private** `torch.Generator` (seeded `seed_value + rank`; never perturbs the global RNG
+   that batchaug/dropout consume, so turning breathing on doesn't change affine draws); **val** draws
+   from a **per-row** generator seeded by `seq_index` (per-row, not per-batch, because
+   `DynamicBatchSampler` groups variable rows). Per-slot iid, exactly like z/t sampling.
+4. **Direction randomization added** (`direction_jitter_deg`, default 30°). The §3.1 SAX-stack tilt
+   limitation is mitigated by Rodrigues-rotating the *coupled* SI+AP mm vector by θ~U(0,jitter) about a
+   random azimuth, in physical mm space (per-axis normalization happens after). Magnitude-preserving;
+   `direction_jitter_deg=0` reduces exactly to pure SI+AP.
+5. **Backward-compatible module refactor.** `extract_slices_with_respiratory` / `reslice_volume` keep
+   their scalar (SI+AP) signatures as thin shims over a canonical-3-vector core
+   (`extract_slices_with_respiratory_vec`), so the renderer + the original unit tests are untouched.
+
+Not done (still future work): the `r`-embedder (condition-on-`r` fork), continuous-phase query, and
+the realistic acquisition physics (bSSFP transient, single-shot artifacts).
+
 ---
 
 ## 8. Open design questions (decide before coding)
@@ -363,6 +413,17 @@ it only validates on synthetic anatomy and needs the closed XCAT binary to gener
 3. **Amplitude distribution / hysteresis fidelity** — rigid-only first, or include hysteresis +
    small rotation from the start?
 4. **Augment-real (A) vs. phantom (B)** as the primary training substrate.
+5. **SI-direction tilt (SAX-normal vs true SI, §3.1).** Our D-translation is oblique to true SI
+   (~20–45° heart tilt), and the true tilt is baked out. Options: (a) accept pure-D as a first-order
+   proxy (current); (b) **randomize the translation direction** — build the coupled displacement in
+   the anatomical frame `(LR=0, AP=0.35·d, SI=d)` and apply **one** random rotation R (the unknown
+   heart tilt) to the *whole* vector, then translate along the resulting oblique canonical vector
+   (D+H+W components). SI and AP rotate together as a rigid unit — NOT independent per-axis tilts —
+   since one heart tilt rotates the entire anatomical frame. Current behaviour = R fixed to identity;
+   randomization samples R. Cheap, the principled domain-randomization choice; an oblique sampling
+   vector in `extract_slices_with_respiratory`, NOT a volume rotation (which would conflate anatomy
+   rotation + hit the 8 mm anisotropy). (c) recover the true SAX→world rotation from raw
+   `cine_sax.mat`/DICOM and translate along true SI (most faithful, most work).
 
 ---
 
