@@ -1739,8 +1739,13 @@ class Trainer:
             else:
                 name = f"Val_Visuals_subj{self._val_iter}"
 
-            # Render both figures and log.
-            self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption)
+            # Render both figures and log. Diagnostic only — a render error (e.g. a
+            # shape regression in the per-slot r/|d| titles, or a matplotlib/wandb
+            # hiccup) must NEVER crash training/validation, so guard the whole call.
+            try:
+                self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption)
+            except Exception as e:
+                logging.warning(f"volume/DVF visual log failed (ignored): {e}")
 
 
 def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mapping]:
