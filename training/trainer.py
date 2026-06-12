@@ -35,6 +35,7 @@ from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
+from data.respiratory import RespiratoryConfig
 from train_utils.checkpoint import DDPCheckpointSaver
 from train_utils.distributed import get_machine_local_and_dist_rank
 from train_utils.freeze import freeze_modules
@@ -208,7 +209,21 @@ class Trainer:
         # (module-scope) logging rather than logging here.
         aug_cfg = self.data_conf.get("augmentation", None) if self.data_conf is not None else None
         self.gpu_transforms = build_gpu_transforms(aug_cfg)
-        self.val_gpu_transforms = None  # val never augments
+        self.val_gpu_transforms = None  # val never AFFINE-augments
+
+        # ── Respiratory-motion augmentation (off by default) ───────────────
+        # Unlike affine, respiratory applies in BOTH train and val: train draws
+        # iid per epoch from a PRIVATE generator (so it never perturbs the global
+        # RNG stream batchaug/dropout draw from — turning breathing on doesn't
+        # change affine draws); val draws deterministically per seq_index. It
+        # overwrites ONLY the input slices (see gpu_aug.gpu_augment_batch).
+        # NOTE: `logging` is shadowed by the `logging` kwarg in this __init__ scope
+        # (see the gpu_transforms comment above), so we log respiratory status from
+        # the module-scope `RespiratoryConfig.from_cfg` path / leave it to the config.
+        self.respiratory_cfg = RespiratoryConfig.from_cfg(
+            aug_cfg.get("respiratory", None) if aug_cfg is not None else None)
+        self.resp_generator = torch.Generator(device=self.device).manual_seed(
+            int(self.seed_value) + int(self.distributed_rank))
 
         # Compute identity-Δ baseline once at startup.
         if self.mode in ["train", "val"] and self.rank == 0:
@@ -1085,8 +1100,11 @@ class Trainer:
             with torch.cuda.amp.autocast(enabled=False):
                 batch = self._process_batch(batch)
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
-            # Val never augments (identity passthrough). Kept symmetric with train for clarity.
-            batch = gpu_augment_batch(batch, self.val_gpu_transforms, self.device)
+            # Val never AFFINE-augments, but respiratory (if enabled) applies
+            # deterministically per seq_index so val measures the real corrupted->clean task.
+            batch = gpu_augment_batch(
+                batch, self.val_gpu_transforms, self.device,
+                respiratory_cfg=self.respiratory_cfg, train=False)
 
             amp_type = self.optim_conf.amp.amp_dtype
             assert amp_type in ["bfloat16", "float16"], f"Invalid Amp type: {amp_type}"
@@ -1257,12 +1275,15 @@ class Trainer:
             # can log a before/after augmentation example. This never alters the batch the
             # model trains on — gpu_augment_batch runs identically either way.
             _aug_log = (
-                self.gpu_transforms is not None and self.rank == 0
+                (self.gpu_transforms is not None or self.respiratory_cfg.enable) and self.rank == 0
                 and self.logging_conf.log_visuals and data_iter == 0
                 and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
             )
             _orig_images = batch["images"].detach().clone() if (_aug_log and "images" in batch) else None
-            batch = gpu_augment_batch(batch, self.gpu_transforms, self.device)
+            batch = gpu_augment_batch(
+                batch, self.gpu_transforms, self.device,
+                respiratory_cfg=self.respiratory_cfg, train=True,
+                resp_generator=self.resp_generator)
             if _aug_log:
                 self._log_augmentation_to_wandb(_orig_images, batch.get("images"), self.steps["train"])
 

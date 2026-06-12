@@ -37,6 +37,11 @@ try:
 except ImportError:  # pragma: no cover — batchaug is a hard dep for aug
     _B = None
 
+from data.respiratory import (
+    extract_slices_with_respiratory_vec,
+    sample_resp_disp,
+)
+
 # Local constants (kept in sync with preprocess.py / mri_dataset.py).
 INPUT_IMG_SIZE = 518   # DINOv2 input — must match MRIDataset.target_size
 CANON_HW = 256         # canonical slice height/width
@@ -224,71 +229,99 @@ def extract_slices_from_phases(phases, t_seq, z_seq):
 # ──────────────────────────────────────────────────────────────────────────────
 # Main entry: apply aug to the batch in place
 # ──────────────────────────────────────────────────────────────────────────────
-def gpu_augment_batch(batch, transforms, device):
+def gpu_augment_batch(batch, transforms, device,
+                      respiratory_cfg=None, train=True, resp_generator=None):
     """Apply GPU augmentations to a batch and re-derive the dependent fields.
 
-    If `transforms is None`, return the batch unchanged (identity — used in val
-    and in train-with-aug-off).
+    Two INDEPENDENT augmentations, each separately gated:
 
-    Required batch keys (when transforms is not None):
+      * **Affine/photometric** (`transforms`, whole-subject): warps `phases`+
+        `content_mask` and re-derives `gt_target_volume`/`anatomy_bbox`/`images`.
+        Affects BOTH target and inputs. `None` → skipped.
+      * **Respiratory** (`respiratory_cfg.enable`, per-input-slice): a deform-then-
+        reslice shift that overwrites **ONLY** `images` — the target,
+        `scanner_coords`, `gt_target_volume`, `anatomy_bbox`, `content_mask`, and
+        `phases` stay at the unshifted end-expiration reference (the model learns to
+        CORRECT breathing, blind to `r`). Runs even when affine is off, and AFTER
+        affine when both are on.
+
+    Train uses the private `resp_generator` (iid per epoch); val seeds breathing
+    deterministically per row from `batch["seq_index"]` (required when val + resp).
+
+    If neither augmentation is active, the batch is returned unchanged.
+
+    Required batch keys:
         phases           (B, T, D, H, W) float16/float32
-        content_mask     (B, D, H, W)    uint8
-        t_target         (B, 1)          int64
+        content_mask     (B, D, H, W)    uint8        (affine)
+        t_target         (B, 1)          int64        (affine)
         timesteps        (B, S)          int64 — original t per slot
         slice_indices    (B, S)          int64 — original z per slot
-
-    Updates (in place; returns the same dict):
-        phases               replaced with augmented float
-        content_mask         replaced with augmented uint8
-        gt_target_volume     re-derived from augmented phases
-        anatomy_bbox         recomputed from augmented mask
-        images               re-extracted from augmented phases (B, S, 3, H, W) in [0, 1]
+        seq_index        (B, 1)          int64 — required for val respiratory
     """
-    if transforms is None:
+    do_affine = transforms is not None
+    do_resp = respiratory_cfg is not None and getattr(respiratory_cfg, "enable", False)
+    if not do_affine and not do_resp:
         return batch
 
     phases = batch["phases"]                 # (B, T, D, H, W) any float
-    mask = batch["content_mask"]             # (B, D, H, W) uint8
-
     Bsize = phases.shape[0]
-    phases_f = phases.to(device=device, dtype=torch.float32, non_blocking=True)
-    # batchaug grid_sample needs float; mask must keep its semantics (0/1) under
-    # nearest-neighbor interp.
-    mask_f = mask.to(device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
-    # mask is (B, D, H, W); add a channel dim for batchaug → (B, 1, D, H, W).
+    affine_applied = False
 
-    aug_dict = {"phases": phases_f, "content_mask": mask_f}
-    try:
-        aug_dict = transforms(aug_dict)
-    except Exception as e:
-        # Aug must never crash training; log and fall through with identity.
-        logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
-        return batch
+    # ── Affine/photometric (whole-subject) ───────────────────────────────────
+    if do_affine:
+        mask = batch["content_mask"]         # (B, D, H, W) uint8
+        phases_f = phases.to(device=device, dtype=torch.float32, non_blocking=True)
+        # batchaug grid_sample needs float; mask keeps 0/1 under nearest interp.
+        mask_f = mask.to(device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
+        aug_dict = {"phases": phases_f, "content_mask": mask_f}
+        try:
+            aug_dict = transforms(aug_dict)
+        except Exception as e:
+            # Aug must never crash training; log and fall through with identity affine.
+            logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
+        else:
+            phases_aug = aug_dict["phases"]                    # (B, T, D, H, W) float32
+            mask_aug = aug_dict["content_mask"].squeeze(1)      # (B, D, H, W) float (0/1)
+            mask_aug_u8 = (mask_aug > 0.5).to(torch.uint8)
 
-    phases_aug = aug_dict["phases"]                       # (B, T, D, H, W) float32
-    mask_aug = aug_dict["content_mask"].squeeze(1)         # (B, D, H, W) float (0 or 1)
-    mask_aug_u8 = (mask_aug > 0.5).to(torch.uint8)
+            t_target = batch["t_target"]
+            if t_target.ndim > 1:
+                t_target = t_target.squeeze(-1)  # (B,)
+            gt_target_volume = phases_aug[torch.arange(Bsize, device=device), t_target]
 
-    # Re-derive V_gt = phases_aug[b, t_target[b]]
-    t_target = batch["t_target"]
-    if t_target.ndim > 1:
-        t_target = t_target.squeeze(-1)  # (B,)
-    gt_target_volume = phases_aug[torch.arange(Bsize, device=device), t_target]  # (B, D, H, W)
+            bboxes = torch.stack([recompute_bbox_gpu(mask_aug_u8[b]) for b in range(Bsize)])
 
-    # Recompute bbox per sample (variable-shape result per sample → loop).
-    bboxes = torch.stack([recompute_bbox_gpu(mask_aug_u8[b]) for b in range(Bsize)])
+            batch["phases"] = phases_aug.to(phases.dtype)
+            batch["content_mask"] = mask_aug_u8
+            batch["gt_target_volume"] = gt_target_volume
+            batch["anatomy_bbox"] = bboxes
+            affine_applied = True
 
-    # Re-extract input slices from augmented phases.
-    images = extract_slices_from_phases(
-        phases_aug,
-        batch["timesteps"],
-        batch["slice_indices"],
-    )                                                       # (B, S, 518, 518, 3) in [0, 255]
-    images = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0  # (B, S, 3, 518, 518) in [0, 1]
-
-    batch["phases"] = phases_aug.to(phases.dtype)
-    batch["content_mask"] = mask_aug_u8
-    batch["gt_target_volume"] = gt_target_volume
-    batch["anatomy_bbox"] = bboxes
-    batch["images"] = images
+    # ── Re-extract input slices EXACTLY ONCE ──────────────────────────────────
+    # Respiratory (if on) overwrites `images` with the breathing-shifted reslice;
+    # gt/bbox/scanner_coords above stay at the reference. Extracting once avoids a
+    # wasted (and immediately-discarded) affine extraction. If affine failed AND
+    # respiratory is off, nothing changed → leave the dataset's `images` untouched.
+    if do_resp:
+        S = batch["timesteps"].shape[1]
+        seq_index = batch.get("seq_index")
+        if not train and seq_index is None:
+            raise ValueError(
+                "respiratory val augmentation requires batch['seq_index'] for determinism"
+            )
+        phases_cur = batch["phases"].to(device=device, non_blocking=True)
+        disp = sample_resp_disp(
+            Bsize, S, respiratory_cfg, device,
+            train=train, seq_index=seq_index, generator=resp_generator,
+        )                                                       # (B, S, 3) mm
+        images = extract_slices_with_respiratory_vec(
+            phases_cur, batch["timesteps"], batch["slice_indices"], disp,
+        )                                                       # (B, S, 518, 518, 3) [0,255]
+        batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
+    elif affine_applied:
+        phases_cur = batch["phases"].to(device=device, non_blocking=True)
+        images = extract_slices_from_phases(
+            phases_cur, batch["timesteps"], batch["slice_indices"],
+        )                                                       # (B, S, 518, 518, 3) [0,255]
+        batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
     return batch

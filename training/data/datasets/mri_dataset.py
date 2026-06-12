@@ -419,4 +419,7 @@ class MRIDataset(BaseDataset):
             "anatomy_bbox": anatomy_bbox,
             "content_mask": content_mask_np,
             "phases": phases_full,
+            # Stable per-sample id → deterministic val respiratory seeding (mirrors
+            # the val `random.Random(seq_index)` z/t determinism). See gpu_aug.py.
+            "seq_index": np.array([seq_index], dtype=np.int64),
         }

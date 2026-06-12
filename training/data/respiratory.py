@@ -25,6 +25,7 @@ import these functions, so the visualized motion is exactly what training applie
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -54,7 +55,7 @@ def lujan_displacement(r, amplitude_mm, n: int = 2):
     The even power makes the curve flat (≈ 0) over a WIDE range near r = 0/1 — i.e.
     it **dwells at end-expiration** (the rest position) and passes more quickly
     through inspiration, the physiological breathing trace. Larger `n` → longer
-    exhale dwell (n=2 → sin^4).
+    exhale dwell (default n=3 → sin^6).
 
     `r` and `amplitude_mm` may be Python floats or broadcastable tensors; returns
     the same shape/type. Pure torch (runs on GPU).
@@ -72,12 +73,15 @@ def lujan_displacement(r, amplitude_mm, n: int = 2):
 class RespiratoryConfig:
     """Config for the respiratory-motion augmentation (see docs §4 for numbers)."""
     enable: bool = False
-    amplitude_mm: float = 12.0     # mean SI breath-depth A (mm); ~10-15mm literature
-    amplitude_jitter: float = 4.0  # +/- uniform jitter on A (mm); 0 disables
-    cos2n: int = 2                 # n in the Lujan cos^{2n} waveform
+    amplitude_mm: float = 16.0     # mean SI breath-depth A (mm); peak at full inspiration
+    amplitude_jitter: float = 8.0  # +/- uniform jitter on A (mm) → ~8-24mm (tidal → deep)
+    cos2n: int = 3                 # n in the Lujan sin^{2n} waveform (n=3 → sin^6, longer exhale dwell)
     ap_ratio: float = 0.35         # k: AP displacement = k * SI
     ap_axis: str = "H"             # in-plane axis carrying AP ("H" or "W")
     per_slot: bool = True          # independent breath per input slice (scattered regime)
+    direction_jitter_deg: float = 30.0  # max random tilt (deg) of the SI+AP vector off the D axis;
+                                        # 0 → pure SI+AP (no randomization). Handles the SAX-stack
+                                        # tilt (D is the LV long axis, ~20-45° off true SI).
     seed: int | None = None        # int → deterministic sampling (val/report); None → global RNG
 
     @classmethod
@@ -98,6 +102,7 @@ class RespiratoryConfig:
             ap_ratio=float(g("ap_ratio", cls.ap_ratio)),
             ap_axis=str(g("ap_axis", cls.ap_axis)),
             per_slot=bool(g("per_slot", cls.per_slot)),
+            direction_jitter_deg=float(g("direction_jitter_deg", cls.direction_jitter_deg)),
             seed=g("seed", cls.seed),
         )
 
@@ -131,6 +136,93 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Canonical displacement VECTOR (SI + AP, optionally tilted off the D axis)
+# ──────────────────────────────────────────────────────────────────────────────
+def _build_disp_dhw(d_si, d_ap, ap_axis: str):
+    """Stack scalar SI/AP displacements into a canonical (..., 3) = (d_D, d_H, d_W)
+    mm vector. SI → D; AP → the chosen in-plane axis; the other in-plane axis → 0."""
+    zeros = torch.zeros_like(d_si)
+    if ap_axis == "H":
+        return torch.stack([d_si, d_ap, zeros], dim=-1)
+    if ap_axis == "W":
+        return torch.stack([d_si, zeros, d_ap], dim=-1)
+    raise ValueError(f"ap_axis must be 'H' or 'W', got {ap_axis!r}")
+
+
+def _rotate_disp(v, theta, phi):
+    """Rodrigues-rotate canonical mm vectors `v` (..., 3) = (d_D, d_H, d_W) by angle
+    `theta` (...) about an axis lying in the in-plane (H-W) plane at azimuth `phi`.
+
+    The axis `k = (0, -sinφ, cosφ)` is chosen so that θ tilts the D (SI) direction
+    toward the in-plane direction `(cosφ along H, sinφ along W)`. Rotation is rigid →
+    **mm magnitude is preserved**; θ=0 → identity (v unchanged). Applied to the WHOLE
+    SI+AP vector (SI and AP tilt together as a coupled rigid unit), in PHYSICAL mm
+    space (so the anisotropic 8 mm D vs 1.4 mm in-plane spacing is handled later, by
+    per-axis normalization in the reslice core — NOT here).
+    """
+    kD = torch.zeros_like(phi)
+    kH = -torch.sin(phi)
+    kW = torch.cos(phi)
+    k = torch.stack([kD, kH, kW], dim=-1)             # (..., 3) unit axis
+    cos = torch.cos(theta).unsqueeze(-1)
+    sin = torch.sin(theta).unsqueeze(-1)
+    kxv = torch.cross(k, v, dim=-1)
+    kdotv = (k * v).sum(dim=-1, keepdim=True)
+    return v * cos + kxv * sin + k * kdotv * (1.0 - cos)
+
+
+def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=None):
+    """Sample per-slot canonical displacement vectors `(B, S, 3)` = (d_D, d_H, d_W) mm.
+
+    Builds the SI+AP vector via `sample_displacements`, then (if
+    `cfg.direction_jitter_deg > 0`) tilts each slot's vector by a random
+    θ~U(0, jitter) about a random azimuth φ~U(0, 2π) — the randomized translation
+    direction. All draws share ONE generator so determinism (val/report) is exact.
+    """
+    # Resolve the generator ONCE so SI/AP and θ/φ draw from the same stream
+    # (otherwise a cfg.seed would only seed the SI/AP draw, breaking determinism).
+    if generator is None and cfg.seed is not None:
+        generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
+
+    d_si, d_ap = sample_displacements(B, S, cfg, device, generator=generator)  # (B,S) each
+    v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                # (B,S,3)
+
+    if cfg.direction_jitter_deg and cfg.direction_jitter_deg > 0:
+        def rand(shape):
+            return torch.rand(shape, device=device, generator=generator, dtype=torch.float32)
+        theta = rand((B, S)) * math.radians(float(cfg.direction_jitter_deg))
+        phi = rand((B, S)) * (2.0 * math.pi)
+        v = _rotate_disp(v, theta, phi)
+    return v.to(torch.float32)
+
+
+def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
+                     seq_index=None, generator=None):
+    """Determinism wrapper used by the trainer GPU path. Returns `(B, S, 3)` mm.
+
+    - **train** → one batched draw from the passed private `generator` (iid per epoch;
+      never perturbs the global RNG stream).
+    - **val** → a per-ROW generator seeded from `seq_index[b]`, so breathing is fully
+      reproducible across epochs/runs regardless of how rows are grouped into batches
+      (mirrors the dataset's `random.Random(seq_index)` z/t determinism). Per-ROW (not
+      per-batch) because `DynamicBatchSampler` groups variable rows per batch.
+    """
+    if train:
+        return sample_displacement_vectors(B, S, cfg, device, generator=generator)
+
+    if seq_index is None:
+        raise ValueError(
+            "respiratory val augmentation requires seq_index for deterministic sampling"
+        )
+    seq = seq_index.reshape(-1).tolist()
+    rows = []
+    for b in range(B):
+        g = torch.Generator(device=device).manual_seed(int(seq[b]))
+        rows.append(sample_displacement_vectors(1, S, cfg, device, generator=g)[0])
+    return torch.stack(rows, dim=0)  # (B, S, 3)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Deform-then-reslice core (grid_sample)
 # ──────────────────────────────────────────────────────────────────────────────
 def _norm_delta(d_mm, spacing_mm, size):
@@ -139,35 +231,31 @@ def _norm_delta(d_mm, spacing_mm, size):
     return (d_mm / spacing_mm) * (2.0 / (size - 1))
 
 
-def extract_slices_with_respiratory(
-    phases, t_seq, z_seq, d_si_mm, d_ap_mm,
-    ap_axis: str = "H", spacing=SPACING_MM,
-):
-    """Drop-in alternative to `gpu_aug.extract_slices_from_phases`, with a per-slot
-    SI (through-plane) + AP (in-plane) shift applied at reslice time.
+def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing=SPACING_MM):
+    """Reslice S input slices per batch element with a per-slot CANONICAL 3-vector
+    displacement (the general, rotation-aware core). Drop-in for
+    `gpu_aug.extract_slices_from_phases` (identical output contract).
 
     Args:
         phases:   (B, T, D, H, W) float (any dtype; cast to f32 internally)
         t_seq:    (B, S) int64 — cardiac t per slot
         z_seq:    (B, S) int64 — canonical z plane per slot
-        d_si_mm:  (B, S) float — SI displacement (mm, along D)
-        d_ap_mm:  (B, S) float — AP displacement (mm, along ap_axis)
-        ap_axis:  "H" or "W"
+        disp_dhw: (B, S, 3) float — per-slot (d_D, d_H, d_W) mm (canonical axes)
         spacing:  (D, H, W) mm
 
     Returns:
-        (B, S, 518, 518, 3) float in [0, 255] — RGB-replicated, IDENTICAL contract
-        to `extract_slices_from_phases` (ready for `permute(0,1,4,2,3)/255`).
+        (B, S, 518, 518, 3) float in [0, 255] — RGB-replicated (ready for
+        `permute(0,1,4,2,3)/255`).
 
-    Sign convention: d > 0 samples the volume at plane `z + d_vox` (so anatomy from
-    deeper planes appears at `z`). Consistent for SI and AP and with `reslice_volume`.
-    At d = 0 the grid reduces to the integer-plane reslice → output matches
-    `extract_slices_from_phases` (pinned by tests).
+    Sign convention: d > 0 samples the volume at coord `+ d_vox` (so deeper anatomy
+    appears at the fixed plane). At disp = 0 the grid reduces to the integer-plane
+    reslice → output matches `extract_slices_from_phases` (pinned by tests).
     """
     B, T, D, H, W = phases.shape
     S = t_seq.shape[1]
     device = phases.device
     pf = phases.float()
+    disp = disp_dhw.to(device=device, dtype=torch.float32).reshape(B * S, 3)
 
     # Gather per-slot D-stacks (over T only — need full D to interpolate through-plane).
     b_idx = torch.arange(B, device=device).view(B, 1).expand(B, S)
@@ -181,22 +269,15 @@ def extract_slices_with_respiratory(
     y_base = (ys / (H - 1) * 2.0 - 1.0).view(1, H, 1).expand(1, H, W)   # (1,H,W)
     x_base = (xs / (W - 1) * 2.0 - 1.0).view(1, 1, W).expand(1, H, W)   # (1,H,W)
 
-    # Depth base per slot + SI shift.
-    z_base = (z_seq.to(torch.float32) / (D - 1) * 2.0 - 1.0).reshape(N)     # (N,)
-    dz_norm = _norm_delta(d_si_mm.reshape(N), spacing[0], D)                # (N,)
-    z_coord = (z_base + dz_norm).view(N, 1, 1, 1).expand(N, 1, H, W)        # (N,1,H,W)
+    # Per-slot, per-axis mm → normalized deltas (each axis uses its own spacing).
+    dz_norm = _norm_delta(disp[:, 0], spacing[0], D)       # (N,)
+    dy_norm = _norm_delta(disp[:, 1], spacing[1], H)       # (N,)
+    dx_norm = _norm_delta(disp[:, 2], spacing[2], W)       # (N,)
 
-    # AP shift along the chosen in-plane axis.
-    if ap_axis == "H":
-        d_ap_norm = _norm_delta(d_ap_mm.reshape(N), spacing[1], H).view(N, 1, 1, 1)
-        y_coord = y_base.unsqueeze(0).expand(N, 1, H, W) + d_ap_norm
-        x_coord = x_base.unsqueeze(0).expand(N, 1, H, W)
-    elif ap_axis == "W":
-        d_ap_norm = _norm_delta(d_ap_mm.reshape(N), spacing[2], W).view(N, 1, 1, 1)
-        x_coord = x_base.unsqueeze(0).expand(N, 1, H, W) + d_ap_norm
-        y_coord = y_base.unsqueeze(0).expand(N, 1, H, W)
-    else:
-        raise ValueError(f"ap_axis must be 'H' or 'W', got {ap_axis!r}")
+    z_base = (z_seq.to(torch.float32) / (D - 1) * 2.0 - 1.0).reshape(N)     # (N,)
+    z_coord = (z_base + dz_norm).view(N, 1, 1, 1).expand(N, 1, H, W)        # (N,1,H,W)
+    y_coord = y_base.unsqueeze(0).expand(N, 1, H, W) + dy_norm.view(N, 1, 1, 1)
+    x_coord = x_base.unsqueeze(0).expand(N, 1, H, W) + dx_norm.view(N, 1, 1, 1)
 
     # grid last-dim order is (x, y, z) = (W, H, D) — grid_sample's REVERSE of tensor dims.
     grid = torch.stack([x_coord, y_coord, z_coord], dim=-1)   # (N, 1, H, W, 3)
@@ -212,16 +293,32 @@ def extract_slices_with_respiratory(
     return up.unsqueeze(-1).expand(B, S, INPUT_IMG_SIZE, INPUT_IMG_SIZE, 3)
 
 
-def reslice_volume(V, d_si_mm, d_ap_mm, ap_axis: str = "H", spacing=SPACING_MM):
-    """Shift a whole single-phase volume `V` (D,H,W) by a constant (SI, AP)
-    displacement and resample onto the canonical grid (one grid_sample, D_out=D).
+def extract_slices_with_respiratory(
+    phases, t_seq, z_seq, d_si_mm, d_ap_mm,
+    ap_axis: str = "H", spacing=SPACING_MM,
+):
+    """Scalar (SI + AP, no tilt) convenience shim over
+    `extract_slices_with_respiratory_vec`. Kept for the renderer + existing tests.
 
-    Used by the example renderer for coronal/sagittal/axial views — same math as
-    `extract_slices_with_respiratory`, no upsample/RGB. Returns (D, H, W) float32.
+    `d_si_mm` / `d_ap_mm` are `(B, S)`; builds the canonical 3-vector with zero tilt
+    (SI→D, AP→ap_axis, other in-plane→0) and delegates to the vector core.
     """
+    if not torch.is_tensor(d_si_mm):
+        d_si_mm = torch.as_tensor(d_si_mm, dtype=torch.float32)
+    if not torch.is_tensor(d_ap_mm):
+        d_ap_mm = torch.as_tensor(d_ap_mm, dtype=torch.float32)
+    disp = _build_disp_dhw(d_si_mm.to(torch.float32), d_ap_mm.to(torch.float32), ap_axis)
+    return extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp, spacing)
+
+
+def reslice_volume_vec(V, disp_dhw, spacing=SPACING_MM):
+    """Shift a whole single-phase volume `V` (D,H,W) by a constant canonical 3-vector
+    `disp_dhw` = (d_D, d_H, d_W) mm and resample onto the canonical grid (one
+    grid_sample, D_out=D). Returns (D, H, W) float32."""
     D, H, W = V.shape
     device = V.device
     inp = V.float().view(1, 1, D, H, W)
+    disp = torch.as_tensor(disp_dhw, dtype=torch.float32, device=device).reshape(3)
 
     zs = torch.arange(D, device=device, dtype=torch.float32)
     ys = torch.arange(H, device=device, dtype=torch.float32)
@@ -230,21 +327,22 @@ def reslice_volume(V, d_si_mm, d_ap_mm, ap_axis: str = "H", spacing=SPACING_MM):
     y_base = ys / (H - 1) * 2.0 - 1.0
     x_base = xs / (W - 1) * 2.0 - 1.0
 
-    dz = _norm_delta(float(d_si_mm), spacing[0], D)
+    dz = _norm_delta(disp[0], spacing[0], D)
+    dy = _norm_delta(disp[1], spacing[1], H)
+    dx = _norm_delta(disp[2], spacing[2], W)
     z_coord = (z_base + dz).view(D, 1, 1).expand(D, H, W)
-
-    if ap_axis == "H":
-        d_ap = _norm_delta(float(d_ap_mm), spacing[1], H)
-        y_coord = (y_base + d_ap).view(1, H, 1).expand(D, H, W)
-        x_coord = x_base.view(1, 1, W).expand(D, H, W)
-    elif ap_axis == "W":
-        d_ap = _norm_delta(float(d_ap_mm), spacing[2], W)
-        x_coord = (x_base + d_ap).view(1, 1, W).expand(D, H, W)
-        y_coord = y_base.view(1, H, 1).expand(D, H, W)
-    else:
-        raise ValueError(f"ap_axis must be 'H' or 'W', got {ap_axis!r}")
+    y_coord = (y_base + dy).view(1, H, 1).expand(D, H, W)
+    x_coord = (x_base + dx).view(1, 1, W).expand(D, H, W)
 
     grid = torch.stack([x_coord, y_coord, z_coord], dim=-1).unsqueeze(0)  # (1,D,H,W,3)
     out = F.grid_sample(inp, grid, mode="bilinear", padding_mode="zeros",
                         align_corners=True)                              # (1,1,D,H,W)
     return out.view(D, H, W)
+
+
+def reslice_volume(V, d_si_mm, d_ap_mm, ap_axis: str = "H", spacing=SPACING_MM):
+    """Scalar (SI + AP, no tilt) shim over `reslice_volume_vec`. Used by the example
+    renderer for coronal/sagittal/axial views. Returns (D, H, W) float32."""
+    disp = _build_disp_dhw(
+        torch.as_tensor(float(d_si_mm)), torch.as_tensor(float(d_ap_mm)), ap_axis)
+    return reslice_volume_vec(V, disp, spacing)
