@@ -452,6 +452,22 @@ class Trainer:
         if self.wandb_writer:
             self.wandb_writer.log_visuals(name, data, step, fps, caption=caption)
 
+    def _log_resp_disp_scalar(self, batch, step: int, prefix: str):
+        """Log the per-slot respiratory displacement magnitude (mm) as scalars under
+        `{prefix}/resp_disp_mm_{mean,max}`. No-op when breathing is off (key absent)
+        or off rank 0. Read-only diagnostic — never affects training."""
+        if self.rank != 0 or not self.wandb_writer:
+            return
+        disp = batch.get("resp_disp_mm")
+        if disp is None:
+            return
+        try:
+            mag = disp.float().norm(dim=-1)  # (B, S) per-slot |d| in mm
+            self._log_scalar(f"{prefix}/resp_disp_mm_mean", float(mag.mean().item()), step)
+            self._log_scalar(f"{prefix}/resp_disp_mm_max", float(mag.max().item()), step)
+        except Exception as e:
+            logging.warning(f"resp_disp scalar log failed (ignored): {e}")
+
     def _compute_identity_baseline(self):
         """Run identity-Δ (no motion correction) on the val set and log PSNR as constants.
         Called ONCE at trainer setup. Read-only over the val dataset; never touches the
@@ -513,6 +529,18 @@ class Trainer:
                 if "phases" in data:
                     batch["phases"] = torch.from_numpy(
                         np.asarray(data["phases"]).astype(np.float32)).unsqueeze(0).to(self.device)
+                # Apply the SAME deterministic respiratory shift the val loop uses, so the
+                # identity (do-nothing, Δ=0) reference is the splat of the SAME breathing-
+                # corrupted inputs the model is scored on — NOT the unshifted clean inputs.
+                # Otherwise "Δ vs identity" compares a clean-input splat against a
+                # corrupted-input model and understates motion correction. No-op when
+                # respiratory is disabled (gpu_augment_batch early-returns unchanged).
+                batch["timesteps"] = st("timesteps", np.int64)
+                batch["slice_indices"] = st("slice_indices", np.int64)
+                batch["seq_index"] = torch.tensor([[i]], dtype=torch.int64, device=self.device)
+                batch = gpu_augment_batch(
+                    batch, None, self.device,
+                    respiratory_cfg=self.respiratory_cfg, train=False)
                 # Identity world_points = scanner_coords (Δ = 0).
                 preds = {"world_points": batch["scanner_coords"]}
                 out = compute_volume_intensity_loss(preds, batch, grid_shape=grid_shape, tv_weight=0.0)
@@ -685,6 +713,17 @@ class Trainer:
             # Full canonical phase bundle → per-phase V_gt without re-sampling inputs.
             phases_bundle = torch.from_numpy(
                 np.asarray(data["phases"]).astype(np.float32)).to(self.device)  # (T, D, H, W)
+            # Apply the deterministic val breathing to the INPUT slices (when enabled) so
+            # the filmstrip visualizes the real corrupted->clean task, matching the val
+            # metrics. V_gt (set per-phase below) stays at the unshifted reference. No-op
+            # when respiratory is disabled.
+            batch["phases"] = phases_bundle.unsqueeze(0)
+            batch["timesteps"] = st("timesteps", np.int64)
+            batch["slice_indices"] = st("slice_indices", np.int64)
+            batch["seq_index"] = torch.tensor([[subj_idx]], dtype=torch.int64, device=self.device)
+            batch = gpu_augment_batch(
+                batch, None, self.device,
+                respiratory_cfg=self.respiratory_cfg, train=False)
             model = self.model.module if hasattr(self.model, "module") else self.model
             for t in range(T_total):
                 t_norm = (t / max(1, T_total)) * 2.0 - 1.0  # match dataset normalization
@@ -1105,6 +1144,8 @@ class Trainer:
             batch = gpu_augment_batch(
                 batch, self.val_gpu_transforms, self.device,
                 respiratory_cfg=self.respiratory_cfg, train=False)
+            if data_iter == 0:
+                self._log_resp_disp_scalar(batch, self.steps["train"], "val")
 
             amp_type = self.optim_conf.amp.amp_dtype
             assert amp_type in ["bfloat16", "float16"], f"Invalid Amp type: {amp_type}"
@@ -1286,6 +1327,8 @@ class Trainer:
                 resp_generator=self.resp_generator)
             if _aug_log:
                 self._log_augmentation_to_wandb(_orig_images, batch.get("images"), self.steps["train"])
+            if self.rank == 0 and data_iter == 0:
+                self._log_resp_disp_scalar(batch, self.steps["train"], "train")
 
             accum_steps = self.accum_steps
 
@@ -1647,7 +1690,15 @@ class Trainer:
                     slices = batch["slice_indices"][0]
                     timesteps = batch["timesteps"][0]
                     S = slices.shape[0]
-                    per_slot = " | ".join([f"f{i}: z={slices[i].item()}, t={timesteps[i].item()}" for i in range(S)])
+                    # Per-slot respiratory displacement magnitude (mm), if breathing is on.
+                    resp = batch.get("resp_disp_mm")
+                    dmag = resp[0].norm(dim=-1) if resp is not None else None  # (S,)
+                    def _slot(i):
+                        s = f"f{i}: z={slices[i].item()}, t={timesteps[i].item()}"
+                        if dmag is not None:
+                            s += f", |d|={dmag[i].item():.0f}mm"
+                        return s
+                    per_slot = " | ".join([_slot(i) for i in range(S)])
                     caption_parts.append(per_slot)
                 except Exception:
                     pass
