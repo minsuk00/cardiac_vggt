@@ -310,17 +310,18 @@ def gpu_augment_batch(batch, transforms, device,
                 "respiratory val augmentation requires batch['seq_index'] for determinism"
             )
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
-        disp = sample_resp_disp(
+        disp, resp_r = sample_resp_disp(
             Bsize, S, respiratory_cfg, device,
             train=train, seq_index=seq_index, generator=resp_generator,
-        )                                                       # (B, S, 3) mm
+        )                                                       # (B,S,3) mm, (B,S) phase
         images = extract_slices_with_respiratory_vec(
             phases_cur, batch["timesteps"], batch["slice_indices"], disp,
         )                                                       # (B, S, 518, 518, 3) [0,255]
         batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
-        # Surface the per-slot displacement (canonical D,H,W mm) for diagnostics only
-        # — captions + the aug/resp_disp scalar. Inert for the model/loss (read-only).
+        # Surface per-slot displacement (canonical D,H,W mm) + respiratory phase r for
+        # diagnostics only — captions + the resp scalar. Inert for model/loss (read-only).
         batch["resp_disp_mm"] = disp
+        batch["resp_r"] = resp_r
     elif affine_applied:
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
         images = extract_slices_from_phases(

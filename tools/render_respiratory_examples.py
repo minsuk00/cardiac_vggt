@@ -232,7 +232,7 @@ def render_training_input(path, phases, mask, seed=7):
     z_seq = torch.tensor([zs.tolist()], dtype=torch.int64)
 
     ref = extract_slices_from_phases(phases.unsqueeze(0), t_seq, z_seq)[0, ..., 0].numpy()
-    disp = sample_resp_disp(1, S, CFG, "cpu", train=False, seq_index=torch.tensor([[seed]]))
+    disp, _ = sample_resp_disp(1, S, CFG, "cpu", train=False, seq_index=torch.tensor([[seed]]))
     brt = extract_slices_with_respiratory_vec(
         phases.unsqueeze(0), t_seq, z_seq, disp)[0, ..., 0].numpy()
     dd = disp[0].numpy()                                  # (S, 3) canonical mm (D,H,W)
