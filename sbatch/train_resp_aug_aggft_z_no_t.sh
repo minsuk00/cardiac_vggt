@@ -20,7 +20,7 @@
 # cardiac target phases, fresh from VGGT-1B base, SLURM auto-requeue.
 #
 # Same as run 2/3 (breathing, use_z=T use_t=F) but ALSO enables the affine/photometric
-# GPU augmentation (data.augmentation.enable=true, conservative tier): one in-plane
+# GPU augmentation (data.augmentation.enable=true, AGGRESSIVE tier): one in-plane
 # affine + photometric draw per subject, applied to all phases + mask, on top of the
 # per-slice breathing. Tests whether affine regularization helps the blind-input-t
 # breathing model. target_t stays ON (always available).
@@ -40,7 +40,7 @@
 CONFIG="mri_volume"
 NGPU=1
 EXP_TAG="mri_volume_resp_aug_allphases_aggft_z_no_t"
-RUN_OVERRIDES="max_epochs=200 data.augmentation.respiratory.enable=true data.augmentation.enable=true data.augmentation.tier=conservative use_z_pose_embedding=true use_t_pose_embedding=false use_target_t_pose_embedding=true optim.frozen_module_names=[*patch_embed*] distributed.find_unused_parameters=true logging.wandb_writer.tags=[mri_volume,allphases,multiphase,aggft,resp,aug,no_t]"
+RUN_OVERRIDES="max_epochs=200 data.augmentation.respiratory.enable=true data.augmentation.enable=true data.augmentation.tier=aggressive use_z_pose_embedding=true use_t_pose_embedding=false use_target_t_pose_embedding=true optim.frozen_module_names=[*patch_embed*] distributed.find_unused_parameters=true logging.wandb_writer.tags=[mri_volume,allphases,multiphase,aggft,resp,aug,no_t,aggressive]"
 MASTER_PORT=29553
 # -------------------------------------------------------------------------------
 
