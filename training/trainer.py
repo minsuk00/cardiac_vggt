@@ -209,6 +209,8 @@ class Trainer:
         # (module-scope) logging rather than logging here.
         aug_cfg = self.data_conf.get("augmentation", None) if self.data_conf is not None else None
         self.gpu_transforms = build_gpu_transforms(aug_cfg)
+        self._aug_tier = (aug_cfg.get("tier", "conservative")
+                          if aug_cfg is not None else "conservative")  # for the aug panel caption
         self.val_gpu_transforms = None  # val never AFFINE-augments
 
         # ── Respiratory-motion augmentation (off by default) ───────────────
@@ -875,12 +877,18 @@ class Trainer:
 
             orig, aug = _gray(orig_images), _gray(aug_images)
             S = min(orig.shape[0], aug.shape[0], 6)   # a few slots is enough
-            caption = (
-                "GPU aug (conservative): H-flip p0.5 | in-plane rotate +/-5deg + "
-                "translate <=4px + scale <=5% p0.5 | gaussian-noise p0.3 | gamma "
-                "0.8-1.25 p0.3 | bias-field p0.3 -- one affine/subject across all 12 "
-                f"phases; step={step}"
-            )
+            # Caption reflects what is ACTUALLY applied (affine tier and/or breathing),
+            # not a hardcoded description — so breathing-only runs aren't mislabeled.
+            applied = []
+            if self.gpu_transforms is not None:
+                applied.append(f"affine[{self._aug_tier}] (in-plane flip/rotate/translate/scale "
+                               f"+ noise/gamma/bias, one draw/subject across all 12 phases)")
+            if self.respiratory_cfg.enable:
+                rc = self.respiratory_cfg
+                applied.append(f"breathing (per-slot iid: A={rc.amplitude_mm:.0f}+/-{rc.amplitude_jitter:.0f}mm, "
+                               f"n={rc.cos2n}, tilt<={rc.direction_jitter_deg:.0f}deg)")
+            caption = (f"GPU aug = {' + '.join(applied) if applied else 'none'} | "
+                       f"top=original, bottom=what the model trains on; step={step}")
             fig = plt.figure(figsize=(1.6 * S + 0.4, 3.6), dpi=90)
             gs = _gs.GridSpec(2, S, wspace=0.04, hspace=0.12)
             fig.suptitle("Data augmentation -- original (top) vs augmented (bottom)", fontsize=8)
@@ -933,6 +941,11 @@ class Trainer:
             n_cols = max(S, D)
             t_picks = batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None
             z_picks = batch["slice_indices"][0].cpu().numpy() if "slice_indices" in batch else None
+            # Per-slot breathing (respiratory phase r + displacement magnitude |d| mm),
+            # present only when respiratory augmentation is on.
+            resp_dmag = (batch["resp_disp_mm"][0].float().norm(dim=-1).cpu().numpy()
+                         if "resp_disp_mm" in batch else None)
+            resp_r = batch["resp_r"][0].float().cpu().numpy() if "resp_r" in batch else None
 
             fig = plt.figure(figsize=(1.6 * n_cols + 1.6, 7.5), dpi=90)
             gs = _gs.GridSpec(4, n_cols + 1, width_ratios=[1.0] * n_cols + [0.05], wspace=0.04, hspace=0.18)
@@ -944,7 +957,10 @@ class Trainer:
                 ax.imshow(imgs[s], cmap="gray", vmin=0, vmax=1)
                 ax.set_xticks([]); ax.set_yticks([])
                 if t_picks is not None and z_picks is not None:
-                    ax.set_title(f"t={int(t_picks[s])}, z={int(z_picks[s])}", fontsize=7)
+                    ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
+                    if resp_r is not None:
+                        ttl += f"\nr={resp_r[s]:.2f} |d|={resp_dmag[s]:.0f}mm"
+                    ax.set_title(ttl, fontsize=7)
                 if s == 0:
                     ax.set_ylabel("input slice", fontsize=8)
             for s in range(S, n_cols):
@@ -985,6 +1001,9 @@ class Trainer:
             S = imgs.shape[0]
             t_picks = batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None
             z_picks = batch["slice_indices"][0].cpu().numpy() if "slice_indices" in batch else None
+            resp_dmag = (batch["resp_disp_mm"][0].float().norm(dim=-1).cpu().numpy()
+                         if "resp_disp_mm" in batch else None)
+            resp_r = batch["resp_r"][0].float().cpu().numpy() if "resp_r" in batch else None
             p50 = float(np.percentile(np.abs(pred_dvf), 50))
             p95 = float(np.percentile(np.abs(pred_dvf), 95))
             p99 = float(np.percentile(np.abs(pred_dvf), 99))
@@ -1009,7 +1028,10 @@ class Trainer:
                     last_im = ax.imshow(data[s], cmap=cmap, vmin=vmin, vmax=vmax)
                     ax.set_xticks([]); ax.set_yticks([])
                     if is_top and t_picks is not None and z_picks is not None:
-                        ax.set_title(f"t={int(t_picks[s])}, z={int(z_picks[s])}", fontsize=7)
+                        ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
+                        if resp_r is not None:
+                            ttl += f"\nr={resp_r[s]:.2f} |d|={resp_dmag[s]:.0f}mm"
+                        ax.set_title(ttl, fontsize=7)
                     if s == 0:
                         ax.set_ylabel(lbl, fontsize=8)
                 plt.colorbar(last_im, cax=fig.add_subplot(gs[r, S]))
@@ -1690,13 +1712,15 @@ class Trainer:
                     slices = batch["slice_indices"][0]
                     timesteps = batch["timesteps"][0]
                     S = slices.shape[0]
-                    # Per-slot respiratory displacement magnitude (mm), if breathing is on.
+                    # Per-slot respiratory phase r + displacement |d| (mm), if breathing on.
                     resp = batch.get("resp_disp_mm")
                     dmag = resp[0].norm(dim=-1) if resp is not None else None  # (S,)
+                    rphase = batch.get("resp_r")
+                    rphase = rphase[0] if rphase is not None else None         # (S,)
                     def _slot(i):
                         s = f"f{i}: z={slices[i].item()}, t={timesteps[i].item()}"
                         if dmag is not None:
-                            s += f", |d|={dmag[i].item():.0f}mm"
+                            s += f", r={rphase[i].item():.2f}, |d|={dmag[i].item():.0f}mm"
                         return s
                     per_slot = " | ".join([_slot(i) for i in range(S)])
                     caption_parts.append(per_slot)

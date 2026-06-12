@@ -110,7 +110,8 @@ class RespiratoryConfig:
 def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None):
     """Sample per-slot SI and AP displacement (mm).
 
-    Returns (d_si_mm, d_ap_mm), each `(B, S)` float32 on `device`.
+    Returns (d_si_mm, d_ap_mm, r), each `(B, S)` float32 on `device` (r is the
+    respiratory phase in [0,1) — 0/1=end-exhale, 0.5=peak inspiration).
 
     - r ~ U[0,1) per (B,S) — respiratory phase, decoupled from cardiac t.
     - A = amplitude_mm + U(-jitter, +jitter); shape (B,1) broadcast over S if
@@ -132,7 +133,7 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None):
     A = A.clamp_min(0.0)                              # depth can't be negative
     d_si = lujan_displacement(r, A, n=cfg.cos2n)      # (B,S), A broadcasts
     d_ap = cfg.ap_ratio * d_si
-    return d_si.to(torch.float32), d_ap.to(torch.float32)
+    return d_si.to(torch.float32), d_ap.to(torch.float32), r.to(torch.float32)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -172,7 +173,8 @@ def _rotate_disp(v, theta, phi):
 
 
 def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=None):
-    """Sample per-slot canonical displacement vectors `(B, S, 3)` = (d_D, d_H, d_W) mm.
+    """Sample per-slot canonical displacement vectors. Returns `(v, r)` where
+    `v` is `(B, S, 3)` = (d_D, d_H, d_W) mm and `r` is `(B, S)` respiratory phase.
 
     Builds the SI+AP vector via `sample_displacements`, then (if
     `cfg.direction_jitter_deg > 0`) tilts each slot's vector by a random
@@ -184,8 +186,8 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
     if generator is None and cfg.seed is not None:
         generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
 
-    d_si, d_ap = sample_displacements(B, S, cfg, device, generator=generator)  # (B,S) each
-    v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                # (B,S,3)
+    d_si, d_ap, r = sample_displacements(B, S, cfg, device, generator=generator)  # (B,S) each
+    v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                   # (B,S,3)
 
     if cfg.direction_jitter_deg and cfg.direction_jitter_deg > 0:
         def rand(shape):
@@ -193,12 +195,14 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
         theta = rand((B, S)) * math.radians(float(cfg.direction_jitter_deg))
         phi = rand((B, S)) * (2.0 * math.pi)
         v = _rotate_disp(v, theta, phi)
-    return v.to(torch.float32)
+    return v.to(torch.float32), r
 
 
 def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
                      seq_index=None, generator=None):
     """Determinism wrapper used by the trainer GPU path. Returns `(B, S, 3)` mm.
+
+    Returns `(disp, r)`: `disp` is `(B, S, 3)` mm, `r` is `(B, S)` respiratory phase.
 
     - **train** → one batched draw from the passed private `generator` (iid per epoch;
       never perturbs the global RNG stream).
@@ -215,11 +219,12 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
             "respiratory val augmentation requires seq_index for deterministic sampling"
         )
     seq = seq_index.reshape(-1).tolist()
-    rows = []
+    v_rows, r_rows = [], []
     for b in range(B):
         g = torch.Generator(device=device).manual_seed(int(seq[b]))
-        rows.append(sample_displacement_vectors(1, S, cfg, device, generator=g)[0])
-    return torch.stack(rows, dim=0)  # (B, S, 3)
+        v_b, r_b = sample_displacement_vectors(1, S, cfg, device, generator=g)
+        v_rows.append(v_b[0]); r_rows.append(r_b[0])
+    return torch.stack(v_rows, dim=0), torch.stack(r_rows, dim=0)  # (B,S,3), (B,S)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
