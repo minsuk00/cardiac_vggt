@@ -84,7 +84,25 @@ loss:
 #                    light noise, gamma, mild bias field. No through-plane
 #                    rotation (Z is 8 mm anisotropic), no elastic.
 #   "moderate"     — reserved; not implemented yet.
+#
+# `respiratory`: INDEPENDENT breathing-motion sim (separate toggle from affine).
+# A per-input-slice deform-then-reslice SI+AP shift (Lujan waveform), applied
+# AFTER affine and overwriting ONLY the input slices — target/scanner_coords stay
+# at the end-expiration reference, so the model learns to CORRECT breathing (blind
+# to r). Unlike affine, it applies in BOTH train (iid per epoch, private RNG) AND
+# val (deterministic per seq_index) — so val measures the real corrupted->clean
+# task. `direction_jitter_deg` randomizes the SI direction (SAX stacks are tilted
+# ~20-45° off true SI); 0 → pure SI+AP. Off by default → bit-identical to today.
 data:
   augmentation:
     enable: false
     tier: "conservative"
+    respiratory:
+      enable: false
+      amplitude_mm: 16.0        # mean SI breath depth (mm)
+      amplitude_jitter: 8.0     # +/- jitter → ~8-24mm (tidal → deep)
+      cos2n: 3                  # Lujan sin^{2n} exhale-dwell knob
+      ap_ratio: 0.35            # AP displacement = ap_ratio * SI
+      ap_axis: "H"              # in-plane axis carrying AP ("H" or "W")
+      per_slot: true            # independent breath per input slice (scattered regime)
+      direction_jitter_deg: 30.0  # max random tilt of SI+AP off the D axis (0 → none)

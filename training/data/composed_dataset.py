@@ -163,6 +163,8 @@ class ComposedDataset(Dataset, ABC):
             sample["gt_target_volume"] = torch.from_numpy(batch["gt_target_volume"].astype(np.float32))
         if "t_target" in batch:
             sample["t_target"] = torch.from_numpy(batch["t_target"].astype(np.int64))
+        if "seq_index" in batch:
+            sample["seq_index"] = torch.from_numpy(batch["seq_index"].astype(np.int64))
         if "anatomy_bbox" in batch:
             sample["anatomy_bbox"] = torch.from_numpy(batch["anatomy_bbox"].astype(np.int64))
         if "content_mask" in batch:
