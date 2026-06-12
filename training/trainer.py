@@ -879,16 +879,20 @@ class Trainer:
             S = min(orig.shape[0], aug.shape[0], 6)   # a few slots is enough
             # Caption reflects what is ACTUALLY applied (affine tier and/or breathing),
             # not a hardcoded description — so breathing-only runs aren't mislabeled.
+            # batchaug doesn't expose which ops actually fired, so we can't enumerate the
+            # realized subset; instead label affine ops as PROBABILISTIC candidates (each
+            # fires per-subject at its tier probability) and rely on the bottom row being
+            # the actual draw. Breathing is always-on per-slot (not probabilistic).
             applied = []
             if self.gpu_transforms is not None:
-                applied.append(f"affine[{self._aug_tier}] (in-plane flip/rotate/translate/scale "
-                               f"+ noise/gamma/bias, one draw/subject across all 12 phases)")
+                applied.append(f"affine[{self._aug_tier}] (candidates flip/rotate/translate/scale "
+                               f"+ noise/gamma/bias; each fires per-subject at its tier prob)")
             if self.respiratory_cfg.enable:
                 rc = self.respiratory_cfg
-                applied.append(f"breathing (per-slot iid: A={rc.amplitude_mm:.0f}+/-{rc.amplitude_jitter:.0f}mm, "
+                applied.append(f"breathing (ALWAYS-on, per-slot iid: A={rc.amplitude_mm:.0f}+/-{rc.amplitude_jitter:.0f}mm, "
                                f"n={rc.cos2n}, tilt<={rc.direction_jitter_deg:.0f}deg)")
-            caption = (f"GPU aug = {' + '.join(applied) if applied else 'none'} | "
-                       f"top=original, bottom=what the model trains on; step={step}")
+            caption = (f"GPU aug = {' + '.join(applied) if applied else 'none'} | top=original, "
+                       f"bottom=ACTUAL draw applied (the realized affine subset is visible there); step={step}")
             fig = plt.figure(figsize=(1.6 * S + 0.4, 3.6), dpi=90)
             gs = _gs.GridSpec(2, S, wspace=0.04, hspace=0.12)
             fig.suptitle("Data augmentation -- original (top) vs augmented (bottom)", fontsize=8)
