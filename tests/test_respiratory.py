@@ -11,9 +11,12 @@ from data.gpu_aug import extract_slices_from_phases
 from data.respiratory import (
     RespiratoryConfig,
     extract_slices_with_respiratory,
+    extract_slices_with_respiratory_vec,
     lujan_displacement,
     reslice_volume,
+    sample_displacement_vectors,
     sample_displacements,
+    sample_resp_disp,
 )
 
 DEVICE = "cpu"
@@ -130,3 +133,77 @@ def test_fp16_phases_ok():
     out = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap)
     assert torch.isfinite(out).all()
     assert float(out.min()) >= 0.0 and float(out.max()) <= 255.0
+
+
+# ── 9. Direction randomization (3-vector + rotation) ──────────────────────────
+def test_zero_tilt_reduces_to_si_ap():
+    """direction_jitter_deg=0 → the 3-vector is exactly (d_si, d_ap_on_axis, 0)."""
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=0.0, ap_axis="H", seed=42)
+    v = sample_displacement_vectors(2, 6, cfg, DEVICE)            # (B,S,3)
+    d_si, d_ap = sample_displacements(2, 6, cfg, DEVICE)          # same seed → same draw
+    assert torch.allclose(v[..., 0], d_si, atol=1e-6)            # D = SI
+    assert torch.allclose(v[..., 1], d_ap, atol=1e-6)            # H = AP
+    assert torch.allclose(v[..., 2], torch.zeros_like(v[..., 2]), atol=1e-6)  # W = 0
+
+
+def test_zero_tilt_vec_matches_scalar_extractor():
+    """With zero tilt the vec core output equals the scalar (SI+AP) shim bit-for-bit."""
+    B, T, D, H, W, S = 1, 2, 8, 16, 16, 4
+    phases = torch.rand(B, T, D, H, W, dtype=torch.float32)
+    t_seq = torch.randint(0, T, (B, S))
+    z_seq = torch.randint(0, D, (B, S))
+    d_si = torch.rand(B, S) * 12 - 6
+    d_ap = torch.rand(B, S) * 4 - 2
+    scalar = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap, ap_axis="H")
+    disp = torch.stack([d_si, d_ap, torch.zeros_like(d_si)], dim=-1)
+    vec = extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp)
+    assert torch.allclose(scalar, vec, atol=1e-4)
+
+
+def test_tilt_preserves_mm_magnitude_and_adds_lr():
+    """Rotation is rigid → mm magnitude preserved; tilt injects a nonzero LR (W)
+    component and shrinks the D component vs the untilted vector (same seed)."""
+    base = RespiratoryConfig(enable=True, direction_jitter_deg=0.0, ap_axis="H", seed=7)
+    tilt = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, ap_axis="H", seed=7)
+    v0 = sample_displacement_vectors(4, 8, base, DEVICE)         # (d_si, d_ap, 0)
+    vt = sample_displacement_vectors(4, 8, tilt, DEVICE)         # rotated
+    # Same seed → identical d_si/d_ap draw → identical mm magnitude per slot.
+    assert torch.allclose(v0.norm(dim=-1), vt.norm(dim=-1), atol=1e-4)
+    # Tilt actually moved the vector off the D/H plane (nonzero W somewhere).
+    assert float(vt[..., 2].abs().max()) > 1e-3
+    # The D (SI) component is no larger than the untilted one (tilt bleeds into plane).
+    assert float(vt[..., 0].abs().max()) <= float(v0[..., 0].abs().max()) + 1e-4
+
+
+# ── 10. sample_resp_disp determinism (train vs val) ───────────────────────────
+def test_sample_resp_disp_val_deterministic_per_seq_index():
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0)
+    seq = torch.tensor([[3], [4]], dtype=torch.int64)
+    a = sample_resp_disp(2, 6, cfg, DEVICE, train=False, seq_index=seq)
+    b = sample_resp_disp(2, 6, cfg, DEVICE, train=False, seq_index=seq)
+    assert torch.equal(a, b)                                     # reproducible
+    assert a.shape == (2, 6, 3)
+    # Row-permuted batch (same per-row seq_index) → per-row vectors track the index.
+    seq_swapped = torch.tensor([[4], [3]], dtype=torch.int64)
+    c = sample_resp_disp(2, 6, cfg, DEVICE, train=False, seq_index=seq_swapped)
+    assert torch.equal(a[0], c[1]) and torch.equal(a[1], c[0])  # per-ROW, not per-batch
+    # Distinct seq_index → distinct breathing.
+    assert not torch.equal(a[0], a[1])
+
+
+def test_sample_resp_disp_val_requires_seq_index():
+    cfg = RespiratoryConfig(enable=True)
+    with pytest.raises(ValueError):
+        sample_resp_disp(1, 4, cfg, DEVICE, train=False, seq_index=None)
+
+
+def test_sample_resp_disp_train_uses_generator():
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0)
+    g1 = torch.Generator(device=DEVICE).manual_seed(11)
+    g2 = torch.Generator(device=DEVICE).manual_seed(11)
+    a = sample_resp_disp(2, 6, cfg, DEVICE, train=True, generator=g1)
+    b = sample_resp_disp(2, 6, cfg, DEVICE, train=True, generator=g2)
+    assert torch.equal(a, b)                                     # same seed → same draw
+    # Advancing the same generator → a different draw (iid across steps).
+    c = sample_resp_disp(2, 6, cfg, DEVICE, train=True, generator=g1)
+    assert not torch.equal(a, c)

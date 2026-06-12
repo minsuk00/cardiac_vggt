@@ -8,12 +8,14 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
+import data.gpu_aug as gpu_aug
 from data.gpu_aug import (
     build_gpu_transforms,
     extract_slices_from_phases,
     gpu_augment_batch,
     recompute_bbox_gpu,
 )
+from data.respiratory import RespiratoryConfig
 
 DEVICE = "cpu"
 
@@ -32,7 +34,12 @@ def _fake_batch(B=2, T=12, D=12, H=256, W=256, S=8):
         "slice_indices": torch.tensor([list(range(S))] * B, dtype=torch.int64),
         "images": torch.rand(B, S, 3, 518, 518),
         "scanner_coords": torch.rand(B, S, 518, 518, 3),
+        "seq_index": torch.tensor([[7], [9]][:B], dtype=torch.int64),
     }
+
+
+def _resp_cfg(enable=True, **kw):
+    return RespiratoryConfig(enable=enable, **kw)
 
 
 # ── build_gpu_transforms ──────────────────────────────────────────────────────
@@ -146,3 +153,81 @@ def test_extract_slices_shapes_and_indexing():
     imgs = extract_slices_from_phases(phases, t_seq, z_seq)
     assert imgs.shape == (B, S, 518, 518, 3)
     assert float(imgs.max()) <= 255.0 and float(imgs.min()) >= 0.0
+
+
+# ── respiratory integration in gpu_augment_batch ──────────────────────────────
+
+_REF_KEYS = ["phases", "gt_target_volume", "anatomy_bbox", "content_mask", "scanner_coords"]
+
+
+def test_resp_disabled_is_identity():
+    """respiratory_cfg.enable=False with affine off → batch returned unchanged."""
+    batch = _fake_batch()
+    pre = {k: (v.clone() if torch.is_tensor(v) else v) for k, v in batch.items()}
+    out = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=_resp_cfg(enable=False), train=True)
+    for k in ["phases", "images", "gt_target_volume", "anatomy_bbox", "content_mask"]:
+        assert torch.equal(out[k], pre[k]), f"{k} changed with respiratory disabled"
+
+
+def test_resp_on_changes_only_images():
+    """HEADLINE: respiratory overwrites ONLY images; the reference fields stay put."""
+    batch = _fake_batch()
+    pre = {k: batch[k].clone() for k in _REF_KEYS}
+    pre_images = batch["images"].clone()
+    g = torch.Generator(device=DEVICE).manual_seed(0)
+    out = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=_resp_cfg(), train=True, resp_generator=g)
+    for k in _REF_KEYS:
+        assert torch.equal(out[k], pre[k]), f"{k} must stay at the reference under respiratory"
+    assert not torch.equal(out["images"], pre_images)          # inputs did change
+    assert out["images"].shape == pre_images.shape
+    assert float(out["images"].min()) >= 0.0 and float(out["images"].max()) <= 1.0
+
+
+def test_resp_val_deterministic_per_seq_index():
+    cfg = _resp_cfg()
+    batch = _fake_batch()                                       # same volume both passes
+    a = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=cfg, train=False)["images"].clone()
+    b = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=cfg, train=False)["images"].clone()
+    assert torch.equal(a, b)                                    # same seq_index → identical breath
+
+
+def test_resp_val_requires_seq_index():
+    batch = _fake_batch()
+    del batch["seq_index"]
+    with pytest.raises(ValueError):
+        gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=_resp_cfg(), train=False)
+
+
+def test_resp_train_iid_across_calls():
+    cfg = _resp_cfg()
+    g = torch.Generator(device=DEVICE).manual_seed(123)
+    batch = _fake_batch()                                       # same volume both passes
+    a = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=cfg, train=True, resp_generator=g)["images"].clone()
+    b = gpu_augment_batch(batch, None, DEVICE, respiratory_cfg=cfg, train=True, resp_generator=g)["images"].clone()
+    assert not torch.equal(a, b)                                # generator advances → fresh breath
+
+
+def test_affine_plus_resp_single_extraction(monkeypatch):
+    """With both augs on, images are extracted exactly once (the respiratory path);
+    the affine slice-extractor must NOT also run (wasted + discarded)."""
+    calls = {"plain": 0, "resp": 0}
+    real_plain = gpu_aug.extract_slices_from_phases
+    real_resp = gpu_aug.extract_slices_with_respiratory_vec
+
+    def spy_plain(*a, **k):
+        calls["plain"] += 1
+        return real_plain(*a, **k)
+
+    def spy_resp(*a, **k):
+        calls["resp"] += 1
+        return real_resp(*a, **k)
+
+    monkeypatch.setattr(gpu_aug, "extract_slices_from_phases", spy_plain)
+    monkeypatch.setattr(gpu_aug, "extract_slices_with_respiratory_vec", spy_resp)
+
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
+    g = torch.Generator(device=DEVICE).manual_seed(1)
+    out = gpu_augment_batch(_fake_batch(), t, DEVICE, respiratory_cfg=_resp_cfg(), train=True, resp_generator=g)
+    assert calls["resp"] == 1 and calls["plain"] == 0
+    # gt/bbox were re-derived by affine; images carry breathing.
+    assert out["images"].shape == (2, 8, 3, 518, 518)
