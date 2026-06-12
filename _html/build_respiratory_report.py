@@ -18,7 +18,8 @@ def b64(name):
 
 
 imgs = {k: b64(f"{k}.png") for k in
-        ["lujan_curve", "reslice_sweep", "axial_sweep", "zmontage", "input_view", "combined"]}
+        ["lujan_curve", "reslice_sweep", "axial_sweep", "zmontage", "input_view",
+         "training_input", "combined"]}
 
 html = f"""<!doctype html><html><head><meta charset="utf-8">
 <title>VGGT-MRI: respiratory-motion simulation — examples</title>
@@ -55,16 +56,27 @@ unshifted end-expiration reference — the model learns to <b>correct</b> breath
 <span class="mono">r</span>; no embedder this round). Each input slice draws an <i>independent</i>
 respiratory phase (decoupled from the cardiac phase — the scattered-acquisition regime).</div>
 
-<h2>1. Respiratory waveform — and n=2 vs n=3</h2>
+<h2>1. Respiratory waveform (SI + AP)</h2>
+<div class="callout"><b>Formula.</b> We use <span class="mono">d(r) = A·sin²ⁿ(πr)</span>, with respiratory
+phase <span class="mono">r ∈ [0,1)</span>, <span class="mono">r=0</span> = end-expiration (rest),
+<span class="mono">A</span> = peak SI amplitude. This is the <b>Lujan cos²ⁿ model</b> (Lujan et al. 1999:
+<i>z(t) = z₀ − b·cos²ⁿ(πt/τ − φ)</i>) phase-shifted so the origin sits at end-expiration —
+<span class="mono">sin²ⁿ(πr) = cos²ⁿ(π(r − ½))</span>. Sine vs cosine is only <i>where r=0 lands</i>; the
+waveform shape (exhale dwell, inspiration peak, the n knob) is identical. We use the sine form so
+<span class="mono">r=0</span> is the rest position where the breath-hold reconstruction target is
+defined. AP uses the same waveform × 0.35.</div>
 <img src="data:image/png;base64,{imgs['lujan_curve']}">
-<p class="note">Left: SI displacement vs respiratory phase for n=1/2/3. The <span class="mono">sin²ⁿ</span>
-form dwells at end-expiration (flat near r=0/1) and peaks at inspiration (r=0.5); dots mark the sweep
-used below. Right: the same over 3 breaths (5 s period) — <b>higher n sits at exhale longer</b>.</p>
-<div class="callout"><b>n=2 vs n=3?</b> n is the exhale-dwell knob: n=3 spends visibly more time near
-rest (more realistic for shallow free-breathing), n=1 is a plain sinusoid (symmetric). <b>Default
-n=2</b> (standard, moderate). It's a config knob (<span class="mono">cos2n</span>); for augmentation
-we can also sample n∈{2,3} per breath for diversity. The exact n matters less than the amplitude
-distribution.</div>
+<p class="note">SI (solid) and AP (dashed = 0.35·SI) displacement from rest. Left: one respiratory cycle —
+the <span class="mono">sin²ⁿ</span> form dwells at end-expiration (flat near r=0/1) and peaks at
+inspiration (r=0.5); dots mark the displacement sweep used below. Right: the same over 3 breaths (5 s
+period each).</p>
+<div class="callout"><b>Waveform: n=3.</b> n is the exhale-dwell knob — <b>n=3</b> (sin⁶) keeps the
+heart near its rest position longer, which fits free-breathing. <b>Amplitude:</b> respiratory heart
+motion is ~10–15 mm SI in typical free-breathing and up to ~20–25 mm at deep inspiration (≈ the same
+order as cardiac contraction, which is ~10–15 mm — but cardiac <i>deforms</i> the heart while
+respiratory <i>translates</i> it). The panels below show a <b>deep breath (sweep to 24 mm SI)</b> for
+visibility; in training the per-breath peak A is sampled <span class="mono">16 ± 8 mm</span> (≈ 8–24 mm,
+tidal → deep). AP ≈ 0.35·SI. Knobs: <span class="mono">amplitude_mm / amplitude_jitter / cos2n</span>.</div>
 
 <h2>2. Coronal &amp; sagittal sweep, with difference vs rest</h2>
 <img src="data:image/png;base64,{imgs['reslice_sweep']}">
@@ -87,10 +99,24 @@ free-breathing acquisition sees). This is the effect the model must learn to und
 <p class="note">Depth planes (columns) × displacement (rows). Reading down a column: as the heart
 shifts, a fixed plane index reveals deeper anatomy — the cross-sections "scroll" through the stack.</p>
 
-<h2>5. What the model actually sees</h2>
+<h2>5. What the model actually sees (one slot, displacement sweep)</h2>
 <img src="data:image/png;base64,{imgs['input_view']}">
 <p class="note">The upsampled <b>518² input slice</b> for one slot (fixed t, z) across the sweep — exactly
 what gets fed to the network — with a Δ-vs-rest row. Same geometric plane, shifted anatomy.</p>
+
+<h2>5b. Actual training input — scattered slots, per-slot iid breathing</h2>
+<div class="callout key"><b>This is the real training augmentation.</b> Six scattered input slots, each a
+DIFFERENT <span class="mono">(t, z)</span>, each given an <b>independent</b> respiratory draw (per-slot
+iid — like z/t sampling) WITH a <b>randomized SI direction</b>, sampled by the same
+<span class="mono">sample_resp_disp</span> the trainer uses (the deterministic val branch here, so the
+figure is reproducible). Each breathing slot is labelled with its displacement magnitude
+<span class="mono">|d|</span> and the per-axis <span class="mono">D/H/W</span> mm — note the spread: some
+slots are caught near exhale (small <span class="mono">|d|</span>), some near inspiration (~24 mm), and
+the nonzero <span class="mono">W</span> component is the direction randomization.</div>
+<img src="data:image/png;base64,{imgs['training_input']}">
+<p class="note">Top: reference input (no breathing). Middle: the breathing-corrupted input the model
+actually receives. Bottom: Δ. The <b>reconstruction target stays at the unshifted reference</b>, so the
+model must invert this per-slice motion blind to <span class="mono">r</span>.</p>
 
 <h2>6. Combined: beating + breathing</h2>
 <img src="data:image/png;base64,{imgs['combined']}">

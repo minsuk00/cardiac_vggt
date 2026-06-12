@@ -36,12 +36,15 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training"))
 
+from data.gpu_aug import extract_slices_from_phases  # noqa: E402
 from data.preprocess import build_data_dicts, get_canonical_transforms  # noqa: E402
 from data.respiratory import (  # noqa: E402
     RespiratoryConfig,
     extract_slices_with_respiratory,
+    extract_slices_with_respiratory_vec,
     lujan_displacement,
     reslice_volume,
+    sample_resp_disp,
 )
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
@@ -49,8 +52,8 @@ OUT_DIR = Path("/home/minsukc/vggt/result/respiratory_examples")
 SUBJECT = "Train_P053"          # known decent FOV (bbox z≈[1,10])
 T_FIXED = 0                     # cardiac phase for the single-phase core demo (ED)
 T_PAIR = (0, 6)                # phases for the combined beating+breathing panel
-CFG = RespiratoryConfig(enable=True, amplitude_mm=12.0, ap_ratio=0.35, ap_axis="H", cos2n=2)
-SWEEP_MM = [0.0, 3.0, 6.0, 9.0, 12.0]   # SI displacement sweep (rest → deep inspiration)
+CFG = RespiratoryConfig(enable=True, amplitude_mm=24.0, ap_ratio=0.35, ap_axis="H", cos2n=3)
+SWEEP_MM = [0.0, 6.0, 12.0, 18.0, 24.0]  # SI displacement sweep (rest → deep inspiration ~24mm)
 RESP_PERIOD_S = 5.0             # breathing cycle (for the multi-cycle time trace)
 
 
@@ -85,44 +88,47 @@ def show(ax, img, vmax, title=None, aspect="equal"):
 
 
 def show_diff(ax, img, vlim, title=None, aspect="equal"):
-    ax.imshow(img, cmap="RdBu_r", vmin=-vlim, vmax=vlim, aspect=aspect,
-              origin="lower", interpolation="nearest")
+    im = ax.imshow(img, cmap="RdBu_r", vmin=-vlim, vmax=vlim, aspect=aspect,
+                   origin="lower", interpolation="nearest")
     ax.set_xticks([]); ax.set_yticks([])
     if title:
         ax.set_title(title, fontsize=9)
+    return im
 
 
 # ── (1) Lujan waveform: n-comparison + multi-cycle trace ──────────────────────
 def render_lujan_curve(path):
+    n = CFG.cos2n
+    A = CFG.amplitude_mm
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.4), dpi=110)
 
-    # (left) single cycle, n = 1, 2, 3
+    # (left) single cycle: SI + AP
     r = torch.linspace(0, 1, 400)
-    colors = {1: "#aaaaaa", 2: "#1f77b4", 3: "#d62728"}
-    for n in (1, 2, 3):
-        d = lujan_displacement(r, CFG.amplitude_mm, n=n)
-        lw = 2.6 if n == CFG.cos2n else 1.8
-        ax1.plot(r.numpy(), d.numpy(), color=colors[n], lw=lw,
-                 label=f"n={n}" + ("  (default)" if n == CFG.cos2n else ""))
+    d_si = lujan_displacement(r, A, n=n)
+    d_ap = CFG.ap_ratio * d_si
+    ax1.plot(r.numpy(), d_si.numpy(), color="#1f77b4", lw=2.4, label=f"SI  (A={A:.0f} mm)")
+    ax1.plot(r.numpy(), d_ap.numpy(), color="#0a7d28", lw=2.0, ls="--",
+             label=f"AP  (= {CFG.ap_ratio:.2f}·SI)")
     for d in SWEEP_MM:
-        frac = (d / CFG.amplitude_mm) ** (1.0 / (2 * CFG.cos2n))
+        frac = (d / A) ** (1.0 / (2 * n))
         rm = float(np.arcsin(np.clip(frac, 0, 1)) / np.pi)
         ax1.scatter([rm], [d], color="#1f77b4", zorder=5, s=26)
     ax1.axvline(0.0, color="#bbb", ls=":", lw=1); ax1.axvline(0.5, color="#bbb", ls=":", lw=1)
-    ax1.annotate("end-expiration\n(rest, r=0)", xy=(0.02, CFG.amplitude_mm * 0.5), fontsize=8.5, color="#555")
-    ax1.annotate("peak\ninspiration", xy=(0.52, CFG.amplitude_mm * 0.2), fontsize=8.5, color="#555")
-    ax1.set_xlabel("respiratory phase  r"); ax1.set_ylabel("SI displacement (mm)")
-    ax1.set_title(f"d(r) = A·sin²ⁿ(πr),  A={CFG.amplitude_mm:.0f}mm  — higher n ⇒ longer exhale dwell")
+    ax1.annotate("end-expiration\n(rest, r=0)", xy=(0.02, A * 0.5), fontsize=8.5, color="#555")
+    ax1.annotate("peak\ninspiration", xy=(0.52, A * 0.2), fontsize=8.5, color="#555")
+    ax1.set_xlabel("respiratory phase  r"); ax1.set_ylabel("displacement from rest (mm)")
+    ax1.set_title(f"d(r) = A·sin²ⁿ(πr),  n={n},  A={A:.0f} mm  (dwells at end-expiration)")
     ax1.legend(loc="upper right"); ax1.grid(alpha=0.25)
 
-    # (right) multi-cycle time trace, n=2 vs n=3
+    # (right) over 3 breaths: SI + AP
     t = torch.linspace(0, 3 * RESP_PERIOD_S, 1200)
     r_t = (t / RESP_PERIOD_S) % 1.0
-    for n, c in ((2, "#1f77b4"), (3, "#d62728")):
-        d = lujan_displacement(r_t, CFG.amplitude_mm, n=n)
-        ax2.plot(t.numpy(), d.numpy(), color=c, lw=2.0, label=f"n={n}")
-    ax2.set_xlabel("time (s)"); ax2.set_ylabel("SI displacement (mm)")
-    ax2.set_title(f"Over 3 breaths (period {RESP_PERIOD_S:.0f}s): n=3 sits at exhale longer")
+    d_si_t = lujan_displacement(r_t, A, n=n)
+    d_ap_t = CFG.ap_ratio * d_si_t
+    ax2.plot(t.numpy(), d_si_t.numpy(), color="#1f77b4", lw=2.0, label="SI")
+    ax2.plot(t.numpy(), d_ap_t.numpy(), color="#0a7d28", lw=2.0, ls="--", label="AP")
+    ax2.set_xlabel("time (s)"); ax2.set_ylabel("displacement from rest (mm)")
+    ax2.set_title(f"Over 3 breaths (period {RESP_PERIOD_S:.0f} s),  n={n}")
     ax2.legend(loc="upper right"); ax2.grid(alpha=0.25)
 
     fig.tight_layout(); fig.savefig(path, bbox_inches="tight", facecolor="white"); plt.close(fig)
@@ -154,16 +160,19 @@ def render_axial_sweep(path, V, center, vmax):
     n = len(SWEEP_MM)
     ref = shifted(V, 0.0)
     vlim = 0.6 * vmax
-    fig, axes = plt.subplots(2, n, figsize=(2.5 * n, 5.2), dpi=110)
+    fig, axes = plt.subplots(2, n, figsize=(2.5 * n + 0.7, 5.2), dpi=110, constrained_layout=True)
+    diff_im = None
     for j, d in enumerate(SWEEP_MM):
         Vs = shifted(V, d)
         show(axes[0, j], Vs[cz], vmax, title_for(d))
-        show_diff(axes[1, j], Vs[cz] - ref[cz], vlim)
+        diff_im = show_diff(axes[1, j], Vs[cz] - ref[cz], vlim)
     axes[0, 0].set_ylabel(f"axial z={cz}", fontsize=10)
     axes[1, 0].set_ylabel("Δ vs rest", fontsize=10)
+    cbar = fig.colorbar(diff_im, ax=list(axes[1, :]), fraction=0.046, pad=0.02)
+    cbar.set_label("residual (shifted − rest), norm. intensity", fontsize=9)
     fig.suptitle(f"Same scanner plane z={cz} across the sweep (t={T_FIXED}) — the fixed plane images "
                  f"DIFFERENT anatomy as the heart slides through-plane.", fontsize=10, y=1.02)
-    fig.tight_layout(); fig.savefig(path, bbox_inches="tight", facecolor="white"); plt.close(fig)
+    fig.savefig(path, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 
 # ── (4) through-plane montage: depth planes × displacement ────────────────────
@@ -206,6 +215,46 @@ def render_input_view(path, phases, center):
     fig.tight_layout(); fig.savefig(path, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 
+# ── (5b) ACTUAL training input: scattered slots, per-slot iid breathing draw ──
+def render_training_input(path, phases, mask, seed=7):
+    """The real thing the model trains on: S scattered (t,z) slots, each with an
+    INDEPENDENT respiratory draw (per-slot iid) AND randomized SI direction — sampled
+    by the same `sample_resp_disp` the trainer uses (val/deterministic branch here so
+    the figure is reproducible). Rows: reference (no breathing) | breathing input
+    (what the model sees) | Δ."""
+    T, D, H, W = phases.shape
+    znz = mask.nonzero(as_tuple=False)[:, 0]
+    z0, z1 = int(znz.min()), int(znz.max()) + 1
+    S = 6
+    zs = np.linspace(z0, z1 - 1, S).round().astype(int)
+    ts = [(2 * i) % T for i in range(S)]                 # varied cardiac phases
+    t_seq = torch.tensor([ts], dtype=torch.int64)
+    z_seq = torch.tensor([zs.tolist()], dtype=torch.int64)
+
+    ref = extract_slices_from_phases(phases.unsqueeze(0), t_seq, z_seq)[0, ..., 0].numpy()
+    disp = sample_resp_disp(1, S, CFG, "cpu", train=False, seq_index=torch.tensor([[seed]]))
+    brt = extract_slices_with_respiratory_vec(
+        phases.unsqueeze(0), t_seq, z_seq, disp)[0, ..., 0].numpy()
+    dd = disp[0].numpy()                                  # (S, 3) canonical mm (D,H,W)
+
+    vlim = 0.6 * 255.0
+    fig, axes = plt.subplots(3, S, figsize=(2.5 * S, 7.7), dpi=110)
+    for j in range(S):
+        show(axes[0, j], ref[j], 255.0, f"t={ts[j]}, z={int(zs[j])}")
+        mag = float(np.linalg.norm(dd[j]))
+        show(axes[1, j], brt[j], 255.0,
+             f"|d|={mag:.0f}mm  D/H/W={dd[j, 0]:+.0f}/{dd[j, 1]:+.0f}/{dd[j, 2]:+.0f}")
+        show_diff(axes[2, j], brt[j] - ref[j], vlim)
+    axes[0, 0].set_ylabel("reference input\n(no breathing)", fontsize=10)
+    axes[1, 0].set_ylabel("breathing input\n(what the model sees)", fontsize=10)
+    axes[2, 0].set_ylabel("Δ (breathing − ref)", fontsize=10)
+    fig.suptitle("Actual training input — 6 scattered slots, each an INDEPENDENT per-slot "
+                 "breathing draw with randomized SI direction (D/H/W mm per slot). "
+                 "Some slots land near exhale (small |d|), some near inspiration.",
+                 fontsize=10, y=1.01)
+    fig.tight_layout(); fig.savefig(path, bbox_inches="tight", facecolor="white"); plt.close(fig)
+
+
 # ── (6) combined beating + breathing (multi-phase) ────────────────────────────
 def render_combined(path, phases, center, vmax):
     cz, cy, cx = center
@@ -235,8 +284,10 @@ def main():
     render_axial_sweep(OUT_DIR / "axial_sweep.png", V, center, vmax)
     render_zmontage(OUT_DIR / "zmontage.png", V, center, vmax)
     render_input_view(OUT_DIR / "input_view.png", phases, center)
+    render_training_input(OUT_DIR / "training_input.png", phases, mask)
     render_combined(OUT_DIR / "combined.png", phases, center, vmax)
-    for p in ["lujan_curve", "reslice_sweep", "axial_sweep", "zmontage", "input_view", "combined"]:
+    for p in ["lujan_curve", "reslice_sweep", "axial_sweep", "zmontage",
+              "input_view", "training_input", "combined"]:
         print(f"  saved {OUT_DIR / (p + '.png')}")
 
 
