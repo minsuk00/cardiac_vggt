@@ -40,7 +40,7 @@ SPACING_MM = (8.0, 1.4, 1.4)  # (D=Z, H=Y, W=X) mm — canonical cube
 # ──────────────────────────────────────────────────────────────────────────────
 # Lujan respiratory waveform
 # ──────────────────────────────────────────────────────────────────────────────
-def lujan_displacement(r, amplitude_mm, n: int = 2):
+def lujan_displacement(r, amplitude_mm, n: int = 3):
     """Lujan respiratory waveform: SI displacement (mm) vs respiratory phase `r`.
 
         d(r) = amplitude_mm * sin(pi * r) ** (2n)
