@@ -115,11 +115,23 @@ def test_sample_displacements_deterministic_with_seed():
     # AP is the configured ratio of SI.
     assert torch.allclose(a_ap, cfg.ap_ratio * a_si, atol=1e-5)
 
-def test_per_subject_amplitude_shares_depth_across_slots():
-    cfg = RespiratoryConfig(enable=True, amplitude_jitter=0.0, per_slot=False, seed=7)
-    d_si, _ = sample_displacements(1, 5, cfg, DEVICE)
-    # Same A and ap_ratio across slots; r differs → d differs, but max ≤ amplitude_mm.
-    assert float(d_si.max()) <= cfg.amplitude_mm + 1e-4
+def test_per_slot_flag_controls_amplitude_sharing(monkeypatch):
+    """per_slot=False → ONE breath depth (amplitude A) shared across all slots;
+    per_slot=True → independent A per slot. Patch lujan to return A directly (bypass
+    the per-slot r modulation) so the amplitude broadcast is observable in isolation."""
+    import data.respiratory as R
+    # d := A (broadcast to r's shape), isolating the amplitude from the r draw.
+    monkeypatch.setattr(
+        R, "lujan_displacement",
+        lambda r, A, n=3: torch.as_tensor(A, dtype=torch.float32) * torch.ones_like(r))
+
+    shared = RespiratoryConfig(enable=True, amplitude_jitter=8.0, per_slot=False, seed=5)
+    d_shared, _ = R.sample_displacements(1, 6, shared, DEVICE)
+    assert torch.allclose(d_shared, d_shared[:, :1].expand_as(d_shared))  # all slots == one A
+
+    perslot = RespiratoryConfig(enable=True, amplitude_jitter=8.0, per_slot=True, seed=5)
+    d_ps, _ = R.sample_displacements(1, 6, perslot, DEVICE)
+    assert not torch.allclose(d_ps, d_ps[:, :1].expand_as(d_ps))  # independent A per slot
 
 
 # ── 8. fp16 input is handled ──────────────────────────────────────────────────
