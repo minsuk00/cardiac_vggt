@@ -91,6 +91,36 @@ def splat_to_volume(pos, intensity, grid_shape, weight=None):
     return volume, coverage
 
 
+def splat_predictions(predictions, batch, grid_shape):
+    """Splat per-pixel predicted positions + image intensities into V_canon.
+
+    Pure function of `predictions["world_points"]` (B, S, H, W, 3) and `batch["images"]`
+    (B, S, 3, H, W). Returns `(V_canon, coverage)` each (B, D, H, W). This is the exact
+    splat-prep formerly inline in `training/loss.py:compute_volume_intensity_loss`, factored
+    out so `VGGT.forward` (refiner path) and the loss (no-refiner path) share ONE code path —
+    keeping `V_canon` byte-identical between them. `splat_to_volume` forces fp32 internally.
+    """
+    pos_pred = predictions["world_points"]
+    images = batch["images"]
+
+    B, S, H, W, _ = pos_pred.shape
+    intensity = images.float().mean(dim=2)
+    if intensity.max() > 2.0:
+        intensity = intensity / 255.0
+
+    pos_flat = pos_pred.reshape(B, S * H * W, 3)
+    int_flat = intensity.reshape(B, S * H * W)
+
+    # Intensity gate: exclude zero-intensity input pixels from BOTH the numerator and the
+    # coverage denominator (padded-Z / off-FOV slots are all-zero; gating stops them diluting
+    # V_canon once the model's Δ crosses Z planes).
+    splat_weight = (int_flat > 1e-3).to(int_flat.dtype)
+
+    grid_shape = tuple(grid_shape)
+    V_canon, coverage = splat_to_volume(pos_flat, int_flat, grid_shape, weight=splat_weight)
+    return V_canon, coverage
+
+
 def sample_volume(volume, pos):
     """Trilinear sample of a 3D volume at given normalized positions.
 

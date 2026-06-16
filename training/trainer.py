@@ -694,6 +694,7 @@ class Trainer:
 
         canon_frames = []
         gt_frames = []
+        refined_frames = []  # populated only when the refiner ran (additive gif)
         try:
             self.model.eval()
             amp_dtype = torch.bfloat16
@@ -743,6 +744,8 @@ class Trainer:
                 mid_d = V_canon.shape[0] // 2
                 canon_frames.append(V_canon[mid_d])
                 gt_frames.append(V_gt[mid_d])
+                if "V_refined" in preds:
+                    refined_frames.append(preds["V_refined"][0].float().cpu().numpy()[mid_d])
         except Exception as e:
             logging.warning(f"cardiac filmstrip render failed (ignored): {e}")
             return
@@ -803,6 +806,27 @@ class Trainer:
             )
         except Exception as e:
             logging.warning(f"cardiac cycle gif log failed (ignored): {e}")
+
+        # Refiner gif — additive, only when the refiner ran. V_gt | V_refined side-by-side.
+        if len(refined_frames) == len(gt_frames) and refined_frames:
+            try:
+                rmax = float(max(max(f.max() for f in refined_frames),
+                                 max(f.max() for f in gt_frames), 1e-3))
+                H, W = gt_frames[0].shape
+                T = len(gt_frames)
+                frames = np.zeros((T, 3, H, 2 * W), dtype=np.uint8)
+                for t in range(T):
+                    side = np.concatenate([gt_frames[t], refined_frames[t]], axis=1)
+                    gray = np.clip(side / rmax * 255.0, 0, 255).astype(np.uint8)
+                    frames[t, 0] = frames[t, 1] = frames[t, 2] = gray
+                self.wandb_writer.log(
+                    "refiner_viz/cardiac_cycle_gif",
+                    wandb.Video(frames, fps=4, format="gif",
+                                caption=f"step={log_step} (V_gt left / V_refined right){mode_note}"),
+                    log_step,
+                )
+            except Exception as e:
+                logging.warning(f"refiner cardiac gif log failed (ignored): {e}")
 
     def _save_val_volumes(self, batch: Mapping, loss_dict: Mapping) -> None:
         """Dump predicted + GT volumes to ${log_dir}/val_volumes/, one pair per val subject.
@@ -1043,6 +1067,54 @@ class Trainer:
             self.wandb_writer.log(f"{name}_DVF", wandb.Image(fig, caption=caption), step)
             plt.close(fig)
 
+    def _log_refiner_viz_to_wandb(self, batch: dict, name: str, step: int, caption: str):
+        """Log one figure `refiner_viz/{name}_Volume` (4 rows × D cols): V_gt, V_canon (raw
+        splat), V_refined (refiner output), and the refined signed-diff (V_refined - V_gt) per z.
+        Purely additive: returns immediately unless the refiner ran (`V_refined` present), so it
+        NEVER fires — and never touches the existing panels — when the refiner is off.
+        """
+        if not self.wandb_writer or "V_refined" not in batch or "V_gt" not in batch:
+            return
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+            from matplotlib import gridspec as _gs
+        except ImportError:
+            return
+
+        V_refined = batch["V_refined"][0].detach().float().cpu().numpy()  # (D, H, W)
+        V_gt = batch["V_gt"][0].detach().float().cpu().numpy()
+        V_canon = (batch["V_canon"][0].detach().float().cpu().numpy()
+                   if "V_canon" in batch else V_refined)
+        D, _, _ = V_refined.shape
+        v_vmax = float(max(V_refined.max(), V_canon.max(), V_gt.max(), 1e-3))
+        ERR = 0.1
+        diff = V_refined - V_gt
+
+        fig = plt.figure(figsize=(1.6 * D + 1.6, 7.5), dpi=90)
+        gs = _gs.GridSpec(4, D + 1, width_ratios=[1.0] * D + [0.05], wspace=0.04, hspace=0.18)
+        fig.suptitle(f"Refiner — {caption}", fontsize=8)
+
+        def _row(r, vol, cmap, vmin, vmax, ylabel, titles=False):
+            last_im = None
+            for d in range(D):
+                ax = fig.add_subplot(gs[r, d])
+                last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
+                ax.set_xticks([]); ax.set_yticks([])
+                if titles:
+                    ax.set_title(f"z={d}", fontsize=7)
+                if d == 0:
+                    ax.set_ylabel(ylabel, fontsize=8)
+            plt.colorbar(last_im, cax=fig.add_subplot(gs[r, D]))
+
+        _row(0, V_gt,      "gray",   0,    v_vmax, "V_gt", titles=True)
+        _row(1, V_canon,   "gray",   0,    v_vmax, "V_canon (splat)")
+        _row(2, V_refined, "gray",   0,    v_vmax, "V_refined")
+        _row(3, diff,      "RdBu_r", -ERR, ERR,    f"V_refined-V_gt\n(±{ERR})")
+
+        self.wandb_writer.log(f"refiner_viz/{name}_Volume", wandb.Image(fig, caption=caption), step)
+        plt.close(fig)
+
     def run(self):
         """Main entry point to start the training or validation process."""
         assert self.mode in ["train", "val"], f"Invalid mode: {self.mode}"
@@ -1107,6 +1179,9 @@ class Trainer:
         self._per_phase_val_psnr_full = defaultdict(list)
         self._per_phase_val_psnr_bbox = defaultdict(list)
         self._per_phase_val_psnr_motion = defaultdict(list)
+        # Refiner per-phase accumulators (only populated when the refiner ran; additive).
+        self._per_phase_val_psnr_bbox_refined = defaultdict(list)
+        self._per_phase_val_psnr_motion_refined = defaultdict(list)
         # Per-epoch val iter, read by _log_tb_visuals so subject-specific visuals fire every
         # epoch (not just the first one — self.steps["val"] is monotonic and resumes carry it).
         self._val_iter = 0
@@ -1236,6 +1311,13 @@ class Trainer:
                  self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
                 ("val_motion", self._per_phase_val_psnr_motion,
                  self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
+                # Refiner panels — additive; empty (skipped) unless the refiner ran. Same
+                # identity baselines as their V_canon counterparts so val_psnr_bbox vs
+                # val_psnr_bbox_refined are directly comparable.
+                ("val_psnr_bbox_refined", self._per_phase_val_psnr_bbox_refined,
+                 self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
+                ("val_motion_refined", self._per_phase_val_psnr_motion_refined,
+                 self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
             ]:
                 if self.t_target_fixed is not None or len(accum) == 0:
                     continue
@@ -1299,6 +1381,16 @@ class Trainer:
         loss_meters = {name: AverageMeter(name, self.device, ":.4f") for name in loss_names}
 
         for config in self.gradient_clipper.configs:
+            # Skip ONLY the refiner clip group when it has no params (enable_refiner=false),
+            # so an OFF run's console/meters stay byte-identical to before the refiner existed.
+            # NB: don't skip other empty groups — the aggregator group is also always-empty in
+            # mri runs (fully frozen) yet its `Grad/aggregator: 0.0000` meter was historically
+            # created + displayed; preserve that.
+            if "refiner" in config["module_names"]:
+                has_refiner = any(p.requires_grad and "refiner" in n
+                                  for n, p in self.model.named_parameters())
+                if not has_refiner:
+                    continue
             param_names = ",".join(config["module_names"])
             loss_meters[f"Grad/{param_names}"] = AverageMeter(f"Grad/{param_names}", self.device, ":.4f")
 
@@ -1621,8 +1713,33 @@ class Trainer:
                             mse_motion = (Vc_m - Vg_m).pow(2).mean().clamp(min=1e-10)
                             psnr_motion = (10.0 * torch.log10(1.0 / mse_motion)).item()
                             self._per_phase_val_psnr_motion[t].append(psnr_motion)
+                    # Refiner per-phase PSNR — additive, only when the refiner ran.
+                    if "V_refined" in data:
+                        Vr = data["V_refined"][b].float()
+                        if bboxes is not None:
+                            z0, z1, y0, y1, x0, x1 = [int(v) for v in bboxes[b].tolist()]
+                            if (z1 > z0) and (y1 > y0) and (x1 > x0):
+                                Vr_bb, Vg_bb = Vr[z0:z1, y0:y1, x0:x1], Vg[z0:z1, y0:y1, x0:x1]
+                            else:
+                                Vr_bb, Vg_bb = Vr, Vg
+                            mse_rb = (Vr_bb - Vg_bb).pow(2).mean().clamp(min=1e-10)
+                            self._per_phase_val_psnr_bbox_refined[t].append((10.0 * torch.log10(1.0 / mse_rb)).item())
+                        if motion_masks is not None and bool(motion_masks[b].any()):
+                            mm = motion_masks[b]
+                            mse_rm = (Vr[mm] - Vg[mm]).pow(2).mean().clamp(min=1e-10)
+                            self._per_phase_val_psnr_motion_refined[t].append((10.0 * torch.log10(1.0 / mse_rm)).item())
             except Exception as e:
                 logging.warning(f"per-phase PSNR accumulation failed (ignored): {e}")
+
+        # Refiner train scalars — additive, logged directly (NOT via the meter allowlist, so
+        # an OFF run's console/meters are byte-identical to today). Only fires when the refiner
+        # ran (keys present). Val is covered by the per-phase val_psnr_*_refined panels above.
+        if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
+            for key in ("loss_refiner", "metric_psnr_3d_full_refined",
+                        "metric_psnr_3d_bbox_refined", "metric_psnr_3d_motion_refined"):
+                if key in data:
+                    val = data[key].item() if torch.is_tensor(data[key]) else data[key]
+                    self._log_scalar(f"Train_Loss/{key}", val, step)
 
         # Log Frame and Slice selection for the first few slots (if available).
         # NOTE: with the decoupled-target design, slot 0 is NO LONGER the t_target slice —
@@ -1746,6 +1863,13 @@ class Trainer:
                 self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption)
             except Exception as e:
                 logging.warning(f"volume/DVF visual log failed (ignored): {e}")
+
+            # Refiner panel — additive, only when the refiner ran (key present). Logs to a
+            # SEPARATE namespace (refiner_viz/...), never touches the existing panels.
+            try:
+                self._log_refiner_viz_to_wandb(batch, name, log_step, caption)
+            except Exception as e:
+                logging.warning(f"refiner visual log failed (ignored): {e}")
 
 
 def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mapping]:

@@ -18,6 +18,9 @@ train_on_residual_dvf: true
 use_z_pose_embedding: true
 use_t_pose_embedding: true
 use_target_t_pose_embedding: true
+# Optional 3D UNet refiner on the splat (default OFF ⇒ bit-identical to today).
+enable_refiner: false
+refiner_use_coverage: true   # feed coverage as a 2nd input channel (only used when enabled)
 limit_train_batches: 1000
 limit_val_batches: 200
 max_epochs: 200
@@ -212,6 +215,12 @@ model:
   use_t_pose_embedding: ${use_t_pose_embedding}
   use_target_t_pose_embedding: ${use_target_t_pose_embedding}
   train_on_residual_dvf: ${train_on_residual_dvf}
+  # Optional 3D UNet refiner on the splatted volume (default OFF ⇒ pipeline unchanged).
+  enable_refiner: ${enable_refiner}
+  grid_shape: ${gt_grid_shape}
+  refiner_base_channels: 16
+  refiner_levels: 2
+  refiner_use_coverage: ${refiner_use_coverage}
 
 # Configure Loss
 loss:
@@ -260,6 +269,11 @@ optim:
         max_norm: 1.0
         norm_type: 2
       - module_name: ["point"]
+        max_norm: 1.0
+        norm_type: 2
+      # Refiner params (only exist when enable_refiner=true). Empty group ⇒ skipped
+      # by the clipper when off (see gradient_clip.py:95), so this is a no-op then.
+      - module_name: ["refiner"]
         max_norm: 1.0
         norm_type: 2
 

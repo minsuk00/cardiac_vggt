@@ -68,6 +68,7 @@ loss:
     weight: 1.0
     grid_shape: ${gt_grid_shape}  # (D, H, W); shared with MRIDataset.gt_grid_shape
     tv_weight: 0.1
+    refiner_lambda: 1.0  # λ on the deep-supervised L_post (only used when enable_refiner=true)
 
 # ── GPU augmentation (batchaug) ─────────────────────────────────────────────
 # Off by default. Flip `enable: true` to opt in. Augmentation is applied to the
