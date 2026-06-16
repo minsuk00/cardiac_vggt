@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=5
 #SBATCH --mem=48g
-#SBATCH --time=1-16:00:00
+#SBATCH --time=14-00:00:00
 #SBATCH --mail-user=minsukc@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE,TIME_LIMIT
 #SBATCH --gpu_cmode=shared
@@ -43,8 +43,9 @@ RUN_OVERRIDES="max_epochs=200 data.augmentation.respiratory.enable=false use_z_p
 MASTER_PORT=29554
 # -------------------------------------------------------------------------------
 
-# Fresh-run series: do NOT seed from the (non-transferable) 4-day baseline.
-RESUME_FROM=""
+# Resuming the disk-quota-killed run: continue the SAME exp dir (epoch 43 ckpt,
+# optimizer+scaler intact) + reattach the same wandb run. Set to "" for a fresh run.
+RESUME_FROM="/home/minsukc/vggt/scratch/logs/218643188_mri_volume_noresp_allphases_aggft_z_no_t"
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
@@ -84,6 +85,26 @@ if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
         OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
     fi
     echo "Requeue restart #${SLURM_RESTART_COUNT}: exp_name=${EXP_NAME}, resume_id=${WANDB_RESUME_ID:-<new>}, extra='${EXTRA_OVERRIDES}'"
+elif [ ! -z "$RESUME_FROM" ]; then
+    # First launch but resuming a prior exp dir: reuse its exp_name so the trainer's
+    # save_dir auto-detect finds checkpoint_last.pt (epoch+steps+optimizer+scaler), and
+    # reattach the same wandb run.
+    EXP_NAME=$(basename "$RESUME_FROM")
+    CKPT_PATH="${RESUME_FROM}/ckpts/checkpoint_last.pt"
+    if [ ! -f "$CKPT_PATH" ]; then
+        echo "ERROR: RESUME_FROM is set but $CKPT_PATH does not exist."
+        exit 1
+    fi
+    EXTRA_OVERRIDES="${RUN_OVERRIDES}"
+    OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH} ${EXTRA_OVERRIDES}"
+    echo "Resuming (same exp + wandb) from: $CKPT_PATH"
+    WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
+    if [ ! -z "$WANDB_DIR" ]; then
+        WANDB_RESUME_ID=$(basename "$WANDB_DIR" | sed -E 's|^(offline-)?run-[0-9_]+-||; s|/$||')
+        OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
+        echo "Auto-detected WandB resume_id: $WANDB_RESUME_ID"
+    fi
+    { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 else
     REV_TS=$((2000000000 - $(date +%s)))
     EXP_NAME="${REV_TS}_${EXP_TAG}"
