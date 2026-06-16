@@ -12,11 +12,14 @@ from vggt.heads.camera_head import CameraHead
 from vggt.heads.dpt_head import DPTHead
 from vggt.heads.track_head import TrackHead
 from vggt.models.aggregator import Aggregator
+from vggt.models.refiner import VolumeRefiner
+from vggt.utils.splat import splat_predictions
 
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, use_target_t_pose_embedding=False, train_on_residual_dvf=False
+        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, use_target_t_pose_embedding=False, train_on_residual_dvf=False,
+        enable_refiner=False, grid_shape=(12, 256, 256), refiner_base_channels=16, refiner_levels=2, refiner_use_coverage=False
     ):
         super().__init__()
         self.train_on_residual_dvf = train_on_residual_dvf
@@ -29,6 +32,18 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         self.point_head = DPTHead(dim_in=2 * embed_dim, output_dim=4, activation=point_activation, conf_activation="expp1") if enable_point else None
         self.depth_head = DPTHead(dim_in=2 * embed_dim, output_dim=2, activation="exp", conf_activation="expp1") if enable_depth else None
         self.track_head = TrackHead(dim_in=2 * embed_dim, patch_size=patch_size) if enable_track else None
+
+        # Optional 3D UNet refiner on the splatted volume (default OFF → pipeline unchanged).
+        # Runs INSIDE forward (so its params are used in the DDP-wrapped forward); the loss
+        # then consumes predictions["V_canon"/"V_refined"]. See vggt/models/refiner.py.
+        self.enable_refiner = enable_refiner
+        self.grid_shape = tuple(grid_shape)
+        self.refiner_use_coverage = refiner_use_coverage
+        self.refiner = VolumeRefiner(
+            in_channels=2 if refiner_use_coverage else 1,
+            base_channels=refiner_base_channels, levels=refiner_levels,
+            use_coverage=refiner_use_coverage,
+        ) if enable_refiner else None
 
     def forward(self, images: torch.Tensor, query_points: torch.Tensor = None, batch: dict = None):
         """
@@ -97,6 +112,17 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
                 predictions["world_points"] = world_points
                 predictions["world_points_conf"] = head_conf
+
+                # Optional refiner: splat HERE (so refiner params are used inside the
+                # DDP-wrapped forward) and refine. Loss consumes these keys. OFF ⇒ skipped
+                # ⇒ no V_canon/V_refined keys ⇒ loss splats as before (bitwise identical).
+                if self.refiner is not None:
+                    assert batch is not None and "images" in batch, "refiner requires batch['images']"
+                    V_canon, coverage = splat_predictions(predictions, batch, self.grid_shape)
+                    V_refined = self.refiner(V_canon, coverage if self.refiner_use_coverage else None)
+                    predictions["V_canon"] = V_canon
+                    predictions["coverage"] = coverage
+                    predictions["V_refined"] = V_refined
 
         if self.track_head is not None and query_points is not None:
             track_list, vis, conf = self.track_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx, query_points=query_points)

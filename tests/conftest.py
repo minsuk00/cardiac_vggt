@@ -9,6 +9,10 @@ from omegaconf import OmegaConf
 # Make training/ importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
 
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: heavier tests (e.g. full-model construction)")
+
 # Synthetic native shape/spacing. T=12 to match the canonical pipeline's
 # NUM_PHASES. Spatial shape kept small for fast tests; it resamples into the
 # fixed canonical (256, 256, 12) cube, occupying a centered sub-region.
