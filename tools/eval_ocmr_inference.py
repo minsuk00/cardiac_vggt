@@ -160,15 +160,54 @@ def build_batch(cine, meta, scale, z_map, rng, device):
 def reconstruct_cycle(model, batch, S, device):
     """Sweep target_t over 12 phases -> V_canon[t] (D,H,W). Same inputs, varying query."""
     vols = []
+    wp_by_t = []  # predicted world_points per phase (for the DVF figure)
     for t in range(D_CANON):
         t_norm = t / max(1, D_CANON) * 2.0 - 1.0
         batch["target_t_indices"] = torch.full((1, S, 1), t_norm, dtype=torch.float32, device=device)
         with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
-        V_canon, _ = splat_predictions({"world_points": preds["world_points"].float()},
-                                       batch, GRID_SHAPE)
+        wp = preds["world_points"].float()
+        V_canon, _ = splat_predictions({"world_points": wp}, batch, GRID_SHAPE)
         vols.append(V_canon[0].float().cpu().numpy())
-    return vols  # list of (D,H,W)
+        wp_by_t.append(wp[0].cpu().numpy())  # (S, 518, 518, 3)
+    return vols, wp_by_t  # list of (D,H,W), list of (S,518,518,3)
+
+
+# in-plane: (256-1)/2 * 1.4 mm ; through-plane: (12-1)/2 * 8.0 mm  (norm[-1,1] -> mm)
+MM_PER_NORM = (178.5, 178.5, 44.0)
+
+
+def save_dvf_png(world_points, coords, picks, path, t=0):
+    """Per-slot predicted displacement Δ = world_points - scanner_coords, in mm
+    (Δx/Δy/Δz rows), masked to anatomy. Mirrors training's _DVF figure. No GT needed."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    delta = (world_points - coords)                    # (S,518,518,3) normalized
+    S = delta.shape[0]
+    labels = ["Δx (mm)", "Δy (mm)", "Δz (mm)"]
+    fig, axes = plt.subplots(4, S, figsize=(1.7 * S, 7.0), squeeze=False)
+    for ax in axes.ravel():
+        ax.set_xticks([]); ax.set_yticks([])
+    for s in range(S):
+        z_canon, slice_idx, f, up = picks[s]
+        mask = up > 0.03
+        axes[0][s].imshow(up, cmap="gray")
+        axes[0][s].set_title(f"z{z_canon} s{slice_idx} f{f}", fontsize=7)
+        for c in range(3):
+            dm = delta[s, ..., c] * MM_PER_NORM[c]
+            vlim = float(np.percentile(np.abs(dm[mask]), 99)) if mask.any() else 1.0
+            vlim = max(vlim, 1e-3)
+            disp = np.where(mask, dm, np.nan)
+            im = axes[c + 1][s].imshow(disp, cmap="bwr", vmin=-vlim, vmax=vlim)
+            if s == 0:
+                axes[c + 1][s].set_ylabel(labels[c], fontsize=9)
+            if s == S - 1:
+                fig.colorbar(im, ax=axes[c + 1][s], fraction=0.046, pad=0.02)
+    axes[0][0].set_ylabel("input slice", fontsize=9)
+    fig.suptitle(f"{os.path.basename(path)}  predicted DVF (target t={t}, anatomy-masked)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=90); plt.close(fig)
 
 
 def _u8(a, vmax):
@@ -252,11 +291,13 @@ def main():
         for d in range(args.draws):
             rng = np.random.default_rng(args.seed + d)
             batch, S, picks = build_batch(cine, meta, scale, z_map, rng, device)
-            vols = reconstruct_cycle(model, batch, S, device)
+            coords0 = batch["scanner_coords"][0].cpu().numpy()  # (S,518,518,3)
+            vols, wp_by_t = reconstruct_cycle(model, batch, S, device)
             save_cycle_gif(vols, os.path.join(odir, f"draw{d}_cycle.gif"))
             save_inputs_png(picks, os.path.join(odir, f"draw{d}_inputs.png"))
             if d == 0:
                 save_volume_png(vols, os.path.join(odir, "draw0_volume_t0.png"))
+                save_dvf_png(wp_by_t[0], coords0, picks, os.path.join(odir, "draw0_dvf_t0.png"), t=0)
             print(f"  draw {d}: S={S} -> {odir}/draw{d}_cycle.gif", flush=True)
     print("DONE", flush=True)
 
