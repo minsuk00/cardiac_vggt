@@ -143,6 +143,100 @@ def test_multitask_objective_includes_refiner():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 2D-SSIM term on the refined volume (fused_ssim, CUDA-only)
+# ─────────────────────────────────────────────────────────────────────────────
+def test_ssim_reshape_channel_order():
+    """The loss folds (B, D, H, W) → (B·D, 1, H, W) so each in-plane (H,W) slice is one
+    SSIM image. Guard that the reshape never scrambles slices (pure CPU property test)."""
+    B, D, H, W = 2, 4, 6, 5
+    V = torch.arange(B * D * H * W).float().reshape(B, D, H, W)
+    R = V.reshape(B * D, 1, H, W)
+    for b in range(B):
+        for d in range(D):
+            assert torch.equal(R[b * D + d, 0], V[b, d]), "slice scrambled by reshape"
+
+
+def _cuda_toy(B=1, D=4, H=32, W=32, seed=0):
+    """A V_canon/V_refined-bearing predictions/batch pair on GPU (in-plane ≥ SSIM window)."""
+    g = torch.Generator().manual_seed(seed)
+    Vc = torch.rand(B, D, H, W, generator=g).cuda()
+    cov = torch.rand(B, D, H, W, generator=g).cuda()
+    gt = torch.rand(B, D, H, W, generator=g).cuda()
+    wp = (torch.rand(B, 2, H, W, 3, generator=g) * 2 - 1).cuda()
+    bbox = torch.tensor([[0, D, 0, H, 0, W]], dtype=torch.int64).repeat(B, 1).cuda()
+    phases = torch.rand(B, 6, D, H, W, generator=g).cuda()
+    preds = {"world_points": wp, "V_canon": Vc, "coverage": cov}
+    batch = {"gt_target_volume": gt, "anatomy_bbox": bbox, "phases": phases,
+             "scanner_coords": wp}
+    return preds, batch
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="fused_ssim is CUDA-only")
+def test_ssim_weight_zero_is_l1_only():
+    """w_ssim=0 ⇒ no SSIM keys and loss_refiner is exactly λ·L1 (bit-identical to pre-SSIM)."""
+    preds, batch = _cuda_toy()
+    V_refined = preds["V_canon"] + 0.05
+    preds = dict(preds, V_refined=V_refined)
+    out = compute_volume_intensity_loss(preds, batch, grid_shape=(4, 32, 32),
+                                        refiner_lambda=1.0, refiner_ssim_weight=0.0)
+    assert "loss_refiner_ssim" not in out
+    assert "metric_ssim_2d_refined" not in out
+    expected = (V_refined - batch["gt_target_volume"]).abs().mean()
+    assert torch.allclose(out["loss_refiner"], expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="fused_ssim is CUDA-only")
+def test_ssim_term_added_and_value():
+    """w_ssim>0 ⇒ loss_refiner == λ·L1 + w·(1 − SSIM_2d), with SSIM on per-slice images."""
+    from fused_ssim import fused_ssim
+    preds, batch = _cuda_toy()
+    Vc = preds["V_canon"]
+    V_refined = Vc + 0.05
+    preds = dict(preds, V_refined=V_refined)
+    out = compute_volume_intensity_loss(preds, batch, grid_shape=(4, 32, 32), tv_weight=0.1,
+                                        refiner_lambda=1.0, refiner_ssim_weight=0.1)
+    assert "loss_refiner_ssim" in out and "metric_ssim_2d_refined" in out
+    gt = batch["gt_target_volume"]
+    B, D, H, W = V_refined.shape
+    ssim = fused_ssim(V_refined.float().reshape(B * D, 1, H, W).contiguous(),
+                      gt.float().reshape(B * D, 1, H, W).contiguous(), train=True)
+    expected = 1.0 * (V_refined - gt).abs().mean() + 0.1 * (1.0 - ssim)
+    assert torch.allclose(out["loss_refiner"], expected, atol=1e-5)
+    assert torch.allclose(out["metric_ssim_2d_refined"], ssim, atol=1e-5)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="fused_ssim is CUDA-only")
+def test_ssim_gradient_flows_through_refined():
+    """The SSIM term is differentiable wrt V_refined (so it reaches the refiner / splat)."""
+    preds, batch = _cuda_toy()
+    V_refined = (preds["V_canon"] + 0.05).clone().requires_grad_(True)
+    preds = dict(preds, V_refined=V_refined)
+    out = compute_volume_intensity_loss(preds, batch, grid_shape=(4, 32, 32),
+                                        refiner_lambda=1.0, refiner_ssim_weight=0.1)
+    out["loss_refiner"].backward()
+    assert V_refined.grad is not None and torch.isfinite(V_refined.grad).all()
+    assert V_refined.grad.abs().sum() > 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="fused_ssim is CUDA-only")
+def test_ssim_penalises_blur():
+    """Sanity: a blurred V_refined scores lower SSIM (higher 1−SSIM loss) than the sharp GT."""
+    import torch.nn.functional as F
+    preds, batch = _cuda_toy()
+    gt = batch["gt_target_volume"]
+    B, D, H, W = gt.shape
+    sharp = dict(preds, V_refined=gt.clone())                       # == GT → SSIM 1
+    blur = F.avg_pool2d(gt.reshape(B * D, 1, H, W), 5, 1, 2).reshape(B, D, H, W)
+    blurred = dict(preds, V_refined=blur)
+    o_sharp = compute_volume_intensity_loss(sharp, batch, grid_shape=(4, 32, 32),
+                                            refiner_ssim_weight=0.1)
+    o_blur = compute_volume_intensity_loss(blurred, batch, grid_shape=(4, 32, 32),
+                                           refiner_ssim_weight=0.1)
+    assert float(o_sharp["metric_ssim_2d_refined"]) > float(o_blur["metric_ssim_2d_refined"])
+    assert float(o_sharp["loss_refiner_ssim"]) < float(o_blur["loss_refiner_ssim"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Freeze isolation (full VGGT, construction only — no forward)
 # ─────────────────────────────────────────────────────────────────────────────
 def _build_vggt(enable_refiner):

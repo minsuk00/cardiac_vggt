@@ -1735,7 +1735,8 @@ class Trainer:
         # an OFF run's console/meters are byte-identical to today). Only fires when the refiner
         # ran (keys present). Val is covered by the per-phase val_psnr_*_refined panels above.
         if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
-            for key in ("loss_refiner", "metric_psnr_3d_full_refined",
+            for key in ("loss_refiner", "loss_refiner_ssim", "metric_ssim_2d_refined",
+                        "metric_psnr_3d_full_refined",
                         "metric_psnr_3d_bbox_refined", "metric_psnr_3d_motion_refined"):
                 if key in data:
                     val = data[key].item() if torch.is_tensor(data[key]) else data[key]
