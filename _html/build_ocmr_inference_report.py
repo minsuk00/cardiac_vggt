@@ -64,7 +64,7 @@ A("<p class='sub'>2026-06-18 · qualitative gated→real-time transfer test · "
 
 A("<div class='tldr'><b>TL;DR.</b> The model trains entirely on <i>simulated</i> sparse sampling "
   "of gated breath-hold cine; its headline risk is whether that transfers to <b>real</b> real-time "
-  "free-breathing acquisition. We ran the trained <b>z-only</b> model on <b>11 real OCMR real-time "
+  "free-breathing acquisition. We ran the trained <b>z-only</b> model on <b>10 real OCMR real-time "
   "SAX cines</b> (reconstructed from R≈9 k-space; see <span class='mono'>docs/06</span>). From <b>one "
   "fixed scattered single-frame-per-slice input</b> the model synthesizes a coherent beating heart "
   "across 12 queried cardiac phases — including canonical depth planes that had <i>no</i> input slice. "
@@ -74,7 +74,8 @@ A("<div class='tldr'><b>TL;DR.</b> The model trains entirely on <i>simulated</i>
 # ── what / how ──
 A("<h2>What this is</h2>")
 A("<p>OCMR <span class='mono'>us_*</span> series are genuine real-time, non-gated, free-breathing "
-  "SAX stacks. We previously reconstructed 11 of them to image-domain cines "
+  "SAX stacks. We reconstructed image-domain cines for these (11 passed recon QC; us_0179 was later "
+  "excluded as a milder FOV-aliasing failure → 10 clean) "
   "(<span class='mono'>scratch/data/ocmr/recon/&lt;subj&gt;/sax_cine.nii.gz</span>, "
   "k-t CS-SENSE, λ=0.02 — full story in <span class='mono'>docs/06</span>). Here we feed those through "
   "the trained model. There is <b>no paired clean 3-D reference</b>, so this is a visual check of "
@@ -133,6 +134,9 @@ A("<h2>How to read each card</h2>")
 A("<ul>"
   "<li><b>Inputs</b> — the 9–10 scattered slices actually fed (label <span class='mono'>z=canonical "
   "plane, s=physical slice, f=frame</span>). Different (cardiac, respiratory) state per slice.</li>"
+  "<li><b>Predicted DVF @ ED</b> — per-slot displacement <span class='mono'>Δ = world_points − "
+  "scanner_coords</span> in mm (Δx/Δy/Δz rows), anatomy-masked. The motion the model applies to each "
+  "input slice; structured (not ≈0) = the head is actively warping, not passing through.</li>"
   "<li><b>V_canon @ ED</b> — the reconstructed volume across all 12 canonical depth planes at target "
   "phase t=0. Empty planes here are the ones with no input slice.</li>"
   "<li><b>Beating-heart GIFs (×3 draws)</b> — mid-depth slice of V_canon swept over the 12 queried "
@@ -150,9 +154,14 @@ for f in FACTS:
       f"<span class='badge'>{f['spacing']} mm spacing</span><span class='badge'>{f['planes']}/12 planes</span></div>")
     inp = png(s, "draw0_inputs.png")
     vol = png(s, "draw0_volume_t0.png")
+    dvf = png(s, "draw0_dvf_t0.png")
     if inp:
         A(f"<figure class='panel'><img src='{inp}'><figcaption>Inputs (draw 0): scattered single-frame "
           f"slices fed to the model</figcaption></figure>")
+    if dvf:
+        A(f"<figure class='panel'><img src='{dvf}'><figcaption>Predicted DVF (draw 0, target t=0): per-slot "
+          f"displacement Δ = world_points − scanner_coords in mm (Δx/Δy/Δz rows), anatomy-masked. This is the "
+          f"motion the model applies to warp each input slice into the target-phase volume.</figcaption></figure>")
     if vol:
         A(f"<figure class='panel'><img src='{vol}'><figcaption>V_canon at ED across all 12 canonical "
           f"depth planes (empty planes = no input slice)</figcaption></figure>")
