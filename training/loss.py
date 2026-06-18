@@ -300,7 +300,7 @@ def tv_loss(prediction, mask):
 
 
 def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256), tv_weight=0.1,
-                                  refiner_lambda=1.0, **kwargs):
+                                  refiner_lambda=1.0, refiner_ssim_weight=0.0, **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -370,12 +370,34 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     # Present ONLY when VGGT.forward ran the refiner (enable_refiner=true). L_pre above
     # (loss_volume on the raw splat) keeps the point head honest; this L_post trains the
     # refiner. λ (refiner_lambda) is folded in here; MultitaskLoss adds loss_refiner to the
-    # objective. L1 for now — TODO: add SSIM / gradient / perceptual to push sharpness
-    # (L1 is mean-seeking and caps achievable high-frequency detail).
+    # objective.
+    #
+    # L_post = λ·L1 + w_ssim·(1 − SSIM_2d). L1 is mean-seeking and caps high-frequency
+    # detail; the optional SSIM term (Zhao 2017, "Loss Functions for Image Restoration")
+    # rewards matching GT's local structure/contrast ⇒ pushes sharpness while still
+    # penalising hallucinated/misplaced edges (it's reference-based, two-sided). SSIM is
+    # contrast-normalised so it's blind to a uniform intensity offset — L1 covers that.
+    # 2D per-slice, NOT 3D: the cube is anisotropic (8 mm Z over 12 slices vs 1.4 mm
+    # in-plane), so SSIM runs on each axial (H,W) slice independently. w_ssim=0 ⇒ no-op
+    # (L1-only, bit-identical to the pre-SSIM refiner).
     V_refined = predictions.get("V_refined")
     if V_refined is not None:
         out["V_refined"] = V_refined
-        out["loss_refiner"] = refiner_lambda * (V_refined - V_gt).abs().mean()
+        loss_refiner = refiner_lambda * (V_refined - V_gt).abs().mean()
+        if refiner_ssim_weight > 0.0 and V_refined.is_cuda:
+            from fused_ssim import fused_ssim
+            # (B, D, H, W) → (B·D, 1, H, W): D folds into the batch dim, each in-plane
+            # (H,W)=(Y,X) slice is one single-channel SSIM image. Contiguous fp32 (fused_ssim
+            # is CUDA-only, assumes [0,1] data range — our normalised intensity is ~[0,1]).
+            # Only the first arg (prediction) carries gradient; V_gt is the reference.
+            Bv, Dv, Hv, Wv = V_refined.shape
+            pred_s = V_refined.float().reshape(Bv * Dv, 1, Hv, Wv).contiguous()
+            targ_s = V_gt.float().reshape(Bv * Dv, 1, Hv, Wv).contiguous()
+            ssim_2d = fused_ssim(pred_s, targ_s, train=True)
+            out["loss_refiner_ssim"] = refiner_ssim_weight * (1.0 - ssim_2d)
+            out["metric_ssim_2d_refined"] = ssim_2d.detach()
+            loss_refiner = loss_refiner + out["loss_refiner_ssim"]
+        out["loss_refiner"] = loss_refiner
 
     with torch.no_grad():
         # ── Full-volume metrics (over all D*H*W voxels of the canonical cube) ──
