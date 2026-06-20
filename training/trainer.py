@@ -1035,19 +1035,26 @@ class Trainer:
             p50 = float(np.percentile(np.abs(pred_dvf), 50))
             p95 = float(np.percentile(np.abs(pred_dvf), 95))
             p99 = float(np.percentile(np.abs(pred_dvf), 99))
-            DVF_R = 0.05
+            # Normalized [-1,1] residual → physical mm (align_corners convention:
+            # 1 norm unit = (size-1)/2 * spacing). In-plane (256 vox @1.4mm) and
+            # through-plane (12 vox @8mm) have very different mm/norm, so the colorbars
+            # are per-axis (a single norm range would make Δz look ~4x bigger than it is).
+            IN_PLANE_MM = (256 - 1) / 2.0 * 1.4      # ≈178.5 mm per norm unit (Δx, Δy)
+            THROUGH_MM = (12 - 1) / 2.0 * 8.0        # ≈44.0 mm per norm unit (Δz)
+            IN_PLANE_R = 15.0                         # in-plane colorbar half-range (mm)
+            THROUGH_R = 25.0                          # through-plane colorbar half-range (mm)
 
             fig = plt.figure(figsize=(1.6 * S + 1.6, 7.5), dpi=90)
             gs = _gs.GridSpec(4, S + 1, width_ratios=[1.0] * S + [0.05], wspace=0.04, hspace=0.18)
             fig.suptitle(
-                f"DVF — {caption}    |Δ| p50={p50:.3f} p95={p95:.3f} p99={p99:.3f}",
+                f"DVF — {caption}    |Δ|(norm) p50={p50:.3f} p95={p95:.3f} p99={p99:.3f}",
                 fontsize=8,
             )
             rows = [
-                ("input intensity", imgs,            "gray",   0,      1.0,    True),
-                ("Δx (norm)",       pred_dvf[..., 0], "RdBu_r", -DVF_R, DVF_R, False),
-                ("Δy (norm)",       pred_dvf[..., 1], "RdBu_r", -DVF_R, DVF_R, False),
-                ("Δz (norm)",       pred_dvf[..., 2], "RdBu_r", -DVF_R, DVF_R, False),
+                ("input intensity", imgs,                          "gray",   0,           1.0,        True),
+                ("Δx (mm)",         pred_dvf[..., 0] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
+                ("Δy (mm)",         pred_dvf[..., 1] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
+                ("Δz (mm)",         pred_dvf[..., 2] * THROUGH_MM,  "RdBu_r", -THROUGH_R,  THROUGH_R,  False),
             ]
             for r, (lbl, data, cmap, vmin, vmax, is_top) in enumerate(rows):
                 last_im = None
