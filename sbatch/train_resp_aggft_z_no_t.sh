@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=5
 #SBATCH --mem=48g
-#SBATCH --time=2-18:00:00
+#SBATCH --time=14-00:00:00
 #SBATCH --mail-user=minsukc@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE,TIME_LIMIT
 #SBATCH --gpu_cmode=shared
@@ -44,8 +44,11 @@ RUN_OVERRIDES="max_epochs=200 data.augmentation.respiratory.enable=true use_z_po
 MASTER_PORT=29552
 # -------------------------------------------------------------------------------
 
-# Fresh-run series: do NOT seed from the (non-transferable) 4-day baseline.
-RESUME_FROM=""
+# RESUME_FROM: path to a previous run's experiment dir → continue SAME exp_name +
+#   SAME wandb run, resuming epoch/optimizer/scaler from its checkpoint_last.pt.
+#   RUN_OVERRIDES (architecture/freeze knobs) are re-applied so the resumed model
+#   matches the checkpoint. Leave "" for a fresh-from-base run.
+RESUME_FROM="/home/minsukc/vggt/scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t"
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
@@ -86,11 +89,34 @@ if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
     fi
     echo "Requeue restart #${SLURM_RESTART_COUNT}: exp_name=${EXP_NAME}, resume_id=${WANDB_RESUME_ID:-<new>}, extra='${EXTRA_OVERRIDES}'"
 else
-    REV_TS=$((2000000000 - $(date +%s)))
-    EXP_NAME="${REV_TS}_${EXP_TAG}"
+    # First launch. RUN_OVERRIDES (architecture/freeze knobs) always apply and are
+    # persisted so requeue restarts keep them.
     EXTRA_OVERRIDES="${RUN_OVERRIDES}"
-    OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
-    echo "Fresh run: exp_name=${EXP_NAME}  overrides='${EXTRA_OVERRIDES}'"
+    if [ ! -z "$RESUME_FROM" ]; then
+        # Continue same experiment dir + same wandb run.
+        EXP_NAME=$(basename "$RESUME_FROM")
+        CKPT_PATH="${RESUME_FROM}/ckpts/checkpoint_last.pt"
+        if [ ! -f "$CKPT_PATH" ]; then
+            echo "ERROR: RESUME_FROM is set but $CKPT_PATH does not exist."
+            exit 1
+        fi
+        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH} ${EXTRA_OVERRIDES}"
+        echo "Resuming (same exp + wandb) from: $CKPT_PATH"
+        # Re-attach the same wandb run.
+        WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
+        if [ ! -z "$WANDB_DIR" ]; then
+            WANDB_RESUME_ID=$(basename "$WANDB_DIR" | sed -E 's|^(offline-)?run-[0-9_]+-||; s|/$||')
+            OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
+            echo "Auto-detected WandB resume_id: $WANDB_RESUME_ID"
+        else
+            echo "Warning: no WandB run dir found under $RESUME_FROM/wandb/wandb/ — a new WandB run will be created."
+        fi
+    else
+        REV_TS=$((2000000000 - $(date +%s)))
+        EXP_NAME="${REV_TS}_${EXP_TAG}"
+        OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
+        echo "Fresh run: exp_name=${EXP_NAME}  overrides='${EXTRA_OVERRIDES}'"
+    fi
     { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi
 
