@@ -81,6 +81,8 @@ def percentile_scale(cine):
     Frame-selection-invariant so different random draws share one intensity scale.
     Mirrors preprocess.py's clip-and-rescale to [0, 1]."""
     nz = cine[cine > 0]
+    if nz.size == 0:                      # degenerate all-zero cine: fall back to all voxels
+        nz = cine.reshape(-1)            # (matches preprocess.py's nonzero->all fallback)
     vmin = np.percentile(nz, PCT_LO)
     vmax = np.percentile(nz, PCT_HI)
     return float(vmin), float(max(vmax, vmin + 1e-6))
@@ -97,7 +99,8 @@ def assign_canonical_z(positions):
     d = (pos - pos[0]) @ axis                            # signed depth along stack (mm)
     d = d - d.mean()                                     # center the stack
     cont = d / CANON_Z_SPACING_MM + (D_CANON - 1) / 2.0  # continuous canonical index
-    idx = np.round(cont).astype(int)
+    idx = np.floor(cont + 0.5).astype(int)  # round-half-up: deterministic (np.round uses banker's
+    #                                         rounding → even/odd-dependent collisions on exact .5)
     best = {}                                            # z_canon -> (slice, |residual|)
     for s, (k, c) in enumerate(zip(idx, cont)):
         if 0 <= k <= D_CANON - 1:
