@@ -17,8 +17,8 @@ import numpy as np
 import h5py
 import nibabel as nib
 
-DEFAULT_SRC = "/home/minsukc/vggt/scratch/data/freerunning_demo_15033956/recon_nufft_5D1.mat"
-DEFAULT_OUT = "/home/minsukc/vggt/scratch/data/freerunning_demo_15033956/nifti"
+DEFAULT_SRC = "/home/minsukc/vggt/scratch/data/FRF/recon_nufft_5D1.mat"
+DEFAULT_OUT = "/home/minsukc/vggt/scratch/data/FRF/nifti"
 # voxel spacing for array axes (200, 186, 234), from FOV/matrix
 SPACING = (300.0 / 200, 280.0 / 186, 350.0 / 234)
 

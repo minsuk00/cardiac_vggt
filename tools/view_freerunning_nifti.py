@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-DEFAULT_NIFTI = "/home/minsukc/vggt/scratch/data/freerunning_demo_15033956/nifti"
+DEFAULT_NIFTI = "/home/minsukc/vggt/scratch/data/FRF/nifti"
 DEFAULT_OUT = "/home/minsukc/vggt/result/freerunning_demo"
 
 
