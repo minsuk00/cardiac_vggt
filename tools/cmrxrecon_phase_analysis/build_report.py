@@ -113,9 +113,46 @@ def fig_es_compare(cmrx, acdc_gt, acdc12):
     ax.legend(fontsize=8); fig.tight_layout(); return fig
 
 
+def acdc_group_stats(acdc_gt):
+    from scipy import stats
+    rows = acdc_gt["rows"]
+    groups = ["NOR", "HCM", "MINF", "RV", "DCM"]
+    data = {g: np.array([r["es_frac"] for r in rows if r["group"] == g]) for g in groups}
+    H, p = stats.kruskal(*[data[g] for g in groups])
+    dcm, nor = data["DCM"], data["NOR"]
+    d = (dcm.mean() - nor.mean()) / np.sqrt((dcm.std() ** 2 + nor.std() ** 2) / 2)
+    return p, float(d)
+
+
+def fig_es_validation(acdc_gt, acdc_an):
+    """Per-subject: GT-labeled ES vs segmentation argmin-LV ES (both on 12-phase grid)."""
+    an = {p["subj"]: p for p in acdc_an["per_subj"]}
+    gt = {r["pid"]: r for r in acdc_gt["rows"]}
+    gx, my, grp = [], [], []
+    cols = {"NOR": "#4477aa", "HCM": "#66ccee", "MINF": "#228833", "RV": "#ccbb44", "DCM": "#cc3311"}
+    for pid in set(an) & set(gt):
+        g = gt[pid]
+        gx.append(((g["es"] - g["ed"]) % g["nb"]) / g["nb"] * 12.0)
+        my.append(an[pid]["es_subframe"]); grp.append(g["group"])
+    gx, my = np.array(gx), np.array(my)
+    r = np.corrcoef(gx, my)[0, 1]
+    within1 = (np.abs(my - gx) <= 1.0).mean() * 100
+    fig, ax = plt.subplots(figsize=(5.2, 4.6))
+    for g in cols:
+        m = [i for i, gg in enumerate(grp) if gg == g]
+        ax.scatter(gx[m], my[m], s=22, color=cols[g], alpha=0.8, label=g)
+    ax.plot([0, 11], [0, 11], "k--", lw=1, alpha=0.6)
+    ax.set_xlabel("GT-labeled ES phase (ACDC Info.cfg)")
+    ax.set_ylabel("segmentation argmin-LV ES phase")
+    ax.set_title(f"Per-subject ES: GT vs segmentation\nr={r:.2f}, {within1:.0f}% within ±1 phase")
+    ax.legend(fontsize=8, loc="upper left"); ax.set_xlim(2, 11); ax.set_ylim(2, 11)
+    fig.tight_layout(); return fig
+
+
 def fig_acdc_groups(acdc_gt):
     rows = acdc_gt["rows"]
     groups = ["NOR", "HCM", "MINF", "RV", "DCM"]
+    p_kw, d = acdc_group_stats(acdc_gt)
     fig, ax = plt.subplots(figsize=(8, 3.4))
     colors = {"NOR": "#4477aa", "HCM": "#66ccee", "MINF": "#228833", "RV": "#ccbb44", "DCM": "#cc3311"}
     for i, g in enumerate(groups):
@@ -127,8 +164,9 @@ def fig_acdc_groups(acdc_gt):
         ax.scatter(jit, fr, s=14, color=colors.get(g, "#888"), alpha=0.7)
         ax.plot([i - 0.25, i + 0.25], [np.mean(fr)] * 2, color="k", lw=2)
     ax.set_xticks(range(len(groups))); ax.set_xticklabels(groups)
-    ax.set_ylabel("ES fraction of cycle"); ax.set_xlabel("ACDC pathology group")
-    ax.set_title("Disease shifts systolic timing: DCM contracts latest & most variably")
+    ax.set_ylabel("ES fraction of cycle (GT labels)"); ax.set_xlabel("ACDC pathology group")
+    ax.set_title(f"Disease shifts systolic timing (GT labels): Kruskal–Wallis p={p_kw:.1e}, "
+                 f"DCM vs NOR Cohen's d={d:.2f}")
     fig.tight_layout(); return fig
 
 
@@ -294,13 +332,21 @@ def main():
                  "distributions peak at different target_t, so a fixed target_t means a different cardiac state "
                  "depending on which dataset a sample came from — the core mixing hazard.</div></div>")
         H.append(f"<div class='fig'>{img_tag(fig_acdc_groups(ag))}"
-                 "<div class='cap'>Why ACDC is more spread: pathology shifts systolic timing. <b>DCM</b> (dilated, "
-                 "failing — EF≈20%) reaches end-systole latest (mean "
-                 f"{ag['by_group']['DCM']['es_frac_mean']:.2f}, out to {ag['by_group']['DCM']['es_frac_max']:.2f}) "
-                 f"and most variably; <b>HCM/NOR</b> are earliest and tightest "
+                 "<div class='cap'>Why ACDC is more spread — and this uses ACDC's <b>ground-truth</b> ED/ES "
+                 "labels, not the segmentation. Pathology shifts systolic timing significantly "
+                 "(Kruskal–Wallis p≈3×10⁻⁶, large effect): <b>DCM</b> (dilated, failing — EF≈20%) reaches "
+                 f"end-systole latest (mean {ag['by_group']['DCM']['es_frac_mean']:.2f}, out to "
+                 f"{ag['by_group']['DCM']['es_frac_max']:.2f}); <b>HCM/NOR</b> earliest and tightest "
                  f"({ag['by_group']['NOR']['es_frac_mean']:.2f}). CMRxRecon's narrower, healthier-looking "
                  f"distribution (EF {summ['ef_mean']:.0f}±{summ['ef_std']:.0f}% vs ACDC "
                  f"{ag['ef_mean']:.0f}±{ag['ef_std']:.0f}%) has no equivalent late-ES tail.</div></div>")
+        H.append(f"<div class='fig'>{img_tag(fig_es_validation(ag, json.load(open(args.acdc_analysis))), w='60%')}"
+                 "<div class='cap'>Validation that the label-free “min-LV = ES” definition (the only one "
+                 "possible for CMRxRecon) is trustworthy: on ACDC, segmentation-derived ES agrees with the "
+                 "ground-truth ES per subject (r=0.72, 87% within ±1 phase, small +0.31-phase late bias). The "
+                 "outliers are diseased hearts (DCM/MINF) where the cavity-volume minimum legitimately diverges "
+                 "from clinical ES — so the definition is <i>most</i> reliable on healthy hearts, i.e. exactly the "
+                 "regime CMRxRecon lives in.</div></div>")
         H.append(f"<div class='fig'>{img_tag(fig_state_compare(summ, aa))}"
                  "<div class='cap'>Per-<code>target_t</code> cross-subject state spread, both cohorts on the same "
                  "12-phase axis. ACDC sits above CMRxRecon across systole and mid-cycle (t1–t8) and peaks higher "
@@ -309,12 +355,16 @@ def main():
                  "Mixing pools these, "
                  "so the same <code>target_t</code> carries CMRxRecon-state and ACDC-state samples together: the "
                  "bounded within-cohort ambiguity becomes a genuinely contradictory cross-cohort one.</div></div>")
-        H.append("<div class='verdict'><b>Mixing verdict.</b> ACDC's ES distribution is shifted and "
-                 f"~{aa['es_frame_std']/summ['es_frame_std']:.0%} wider than CMRxRecon's under the identical "
-                 "measurement, driven by DCM/HCM timing and a 4× wider EF spread, and it re-anchors "
-                 "<code>k/N</code> at a different native frame count (ACDC NbFrame "
-                 f"{ag['nbframe_min']}–{ag['nbframe_max']}). So mixing without physiological ED↔ES normalization "
-                 "(which neither dataset's labels fully support) <b>does</b> inject contradictory "
+        gt_ratio = ag['es_frac_std'] / (summ['es_frame_std'] / 12)
+        seg_ratio = aa['es_frame_std'] / summ['es_frame_std']
+        H.append("<div class='verdict'><b>Mixing verdict.</b> ACDC's ES distribution is both shifted (peaks at a "
+                 "different <code>target_t</code>) and "
+                 f"<b>{gt_ratio:.1f}×–{seg_ratio:.1f}× wider</b> than CMRxRecon's "
+                 "(the range spans the conservative ground-truth-label comparison to the same-segmentation one), "
+                 "driven by DCM/HCM timing and a 4× wider EF spread, and it re-anchors <code>k/N</code> at a "
+                 f"different native frame count (ACDC NbFrame {ag['nbframe_min']}–{ag['nbframe_max']}). So mixing "
+                 "without physiological ED↔ES normalization (which neither dataset's labels fully support — "
+                 "CMRxRecon has no ES label at all) <b>does</b> inject contradictory "
                  "<code>target_t→state</code> supervision — empirically confirmed, not just argued.</div>")
 
     # ---- methods ----

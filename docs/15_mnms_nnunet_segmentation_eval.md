@@ -90,7 +90,23 @@ All three modes ran cleanly and gave clean LV/MYO/RV on both GT and predicted vo
 | 2d        | 0.934 | 0.804 | 0.905 |
 | ensemble  | 0.941 | 0.811 | 0.931 |
 
-Ensemble marginally best; 2d/3d both solid. MYO lowest as expected (thin structure). Overlays:
+## 2D vs 3D vs ensemble — which to use (the winner flips with the data)
+| mode | ACDC vs human GT (mean) | our recon, all phases (mean) |
+|---|---|---|
+| 2d | 0.896 | 0.799 (LV .847 / MYO .744 / RV .805) |
+| **3d_fullres** | 0.893 | **0.820** (LV .876 / MYO .738 / RV .847) |
+| ensemble | **0.902** | 0.805 (LV .848 / MYO .739 / RV .828) |
+
+On **ACDC** (sharp clinical images) the **ensemble wins** (2d≈3d). On **our reconstructions** the picture
+**inverts: `3d_fullres` alone is best** (+0.04 RV, +0.03 LV over 2d; MYO a wash) and the **ensemble is
+*worse* than 3d alone** — averaging in the weaker 2d softmax drags it down. Our recon is blurry (splat)
+and anisotropic; 2d leans on sharp in-plane edges we lack and has no cross-slice context (the weak link),
+while 3d's volumetric context is robust to that blur (esp. RV, which spans slices). **Recommendation for
+this project: use `3d_fullres` alone** on our recon — most accurate AND ~2× cheaper than the ensemble.
+Reserve the full ensemble for clean clinical images (ACDC/raw cine).
+
+Note the figures just below are the 6-subject ED-only first run where ensemble edged 3d marginally;
+the all-phases n=30 comparison above is the decisive one. MYO lowest as expected (thin structure). Overlays:
 `result/nnunet_mnms_overlays_3d/` (red=LV, yellow=MYO, cyan=RV) — anatomically correct rings/crescents.
 
 ## Validation vs human GT — ACDC test set (the "is it actually good" test)
