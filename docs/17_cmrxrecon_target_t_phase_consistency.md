@@ -80,8 +80,15 @@ matches the literature 0.38 ± 0.08, range 0.25–0.69).
 | EF | 64 ± 6 % | 45 ± 19 % | 48 ± 21 % |
 | ED = frame 0 | 97 % | 71 % | — |
 
+The pathology effect uses **GT labels only** and is statistically strong: Kruskal–Wallis
+across the 5 groups **p = 3.5×10⁻⁶**, DCM-vs-NOR **Cohen's d = 1.32**, ranking robust to the
+`/N` vs `/(N−1)` fraction convention. The label-free "min-LV = ES" definition was validated
+per-subject against ACDC GT: **r = 0.72, 87% within ±1 phase**, +0.31-phase late bias,
+outliers concentrated in DCM/MINF (cavity-min legitimately ≠ clinical ES in diseased hearts)
+— so the definition is most reliable on healthy hearts, i.e. CMRxRecon's regime.
+
 Two independent mixing hazards, both measured not argued: (1) ACDC's ES distribution is
-**1.67× wider** (driven by pathology: GT ES frac **DCM 0.435 → 0.69 @ EF 20%**, RV 0.394,
+**1.3× (GT-label) – 1.7× (same-segmentation) wider** (driven by pathology: GT ES frac **DCM 0.435 → 0.69 @ EF 20%**, RV 0.394,
 MINF 0.364, HCM/NOR 0.345); (2) the two cohorts **peak at different `target_t`** (0.49 vs
 0.40) — so a fixed `target_t` is a *systematically* different cardiac state depending on
 which dataset a sample came from, on top of being noisier. Per-phase state spread: ACDC sits

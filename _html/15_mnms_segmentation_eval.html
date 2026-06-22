@@ -69,7 +69,7 @@ fine. Two things had to be right:</p>
 <ul>
 <li><b>Geometry.</b> Our <code>val_volumes</code> are saved in splat order <code>(Z,Y,X)</code> with an
 identity affine. We transpose to nibabel <code>(X,Y,Z)</code> and write the true canonical spacing
-<code>(1.4, 1.4, 8.0)</code> mm before inference (else nnU-Net resamples wrong).</li>
+<code>(1.4, 1.4, 12.0)</code> mm before inference (else nnU-Net resamples wrong).</li>
 <li><b>Label convention (critical).</b> The model emits <code>1=LV, 2=MYO, 3=RV</code>; <b>ACDC GT is
 <code>1=RV, 2=MYO, 3=LV</code></b>. We remap per structure when scoring against ACDC. Forget this and
 LV/RV Dice collapse to ~0.</li>
@@ -138,12 +138,25 @@ signal (and the ACDC result above licenses trusting the segmenter itself). It al
 segmenter's own ~0.1 Dice error, so treat it as a comparative metric across models/phases, not an
 absolute anatomical truth.</div>
 
-<h2>4. 2D vs 3D vs ensemble</h2>
-<p>All three modes ran end-to-end on both datasets. On ACDC they are within ~0.01 Dice of each other;
-the <b>2D+3D ensemble is best on every structure</b> (mean 0.902 vs 0.896 / 0.893). 2D edges 3D on RV
-(thin through-plane), 3D edges 2D on ES-LV (3D context helps the small cavity). <b>Recommendation:</b>
-use the <b>ensemble</b> for headline numbers (it is the published M&amp;Ms model and strictly best
-here); 3D-fullres alone is a fine ~2× cheaper proxy when iterating.</p>
+<h2>4. 2D vs 3D vs ensemble — which to use</h2>
+<p>All three modes ran on both datasets, and <b>the winner flips with the data</b>:</p>
+<table>
+<tr><th class="l">mode</th><th>ACDC vs human GT (mean)</th><th>our recon, all phases (mean)</th></tr>
+<tr><td class="l">2D</td><td>0.896</td><td>0.799&nbsp; (LV .847 / MYO .744 / RV .805)</td></tr>
+<tr><td class="l"><b>3D-fullres</b></td><td>0.893</td><td><b class="good">0.820</b>&nbsp; (LV .876 / MYO .738 / RV .847)</td></tr>
+<tr><td class="l">ensemble (2D+3D)</td><td><b class="good">0.902</b></td><td>0.805&nbsp; (LV .848 / MYO .739 / RV .828)</td></tr>
+</table>
+<p>On <b>ACDC</b> (sharp clinical images) the <b>ensemble is best</b> and 2D≈3D — 2D's crisp in-plane
+boundaries are as good as 3D's, so blending helps. On <b>our reconstructions</b> the picture inverts:
+<b>3D-fullres is clearly best</b> (+0.04 RV, +0.03 LV over 2D; MYO a wash), and the <b>ensemble is
+<i>worse</i> than 3D alone</b> because averaging in the weaker 2D softmax drags it down. The reason is
+that our recon is <b>blurry</b> (the splat) and <b>anisotropic</b>: 2D leans on sharp in-plane edges our
+recon lacks and has no cross-slice context, so it is the weak link, while 3D's volumetric context is
+robust to that blur (most visibly on the RV, which spans slices).</p>
+<div class="win box"><b>Recommendation for this project: use <code>3d_fullres</code> alone</b> on our
+reconstructions — it is the most accurate <i>and</i> ~2× cheaper than the ensemble (one model set, no
+npz/ensemble step). Reserve the full 2D+3D ensemble for clean clinical images (e.g. ACDC/raw cine),
+where it is strictly best.</div>
 
 <h2>5. Reproduce</h2>
 <div class="box"><pre style="margin:0;white-space:pre-wrap;font-size:13px">
