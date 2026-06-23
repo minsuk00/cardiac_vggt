@@ -1,15 +1,23 @@
-"""3-row layout focused on bpblrai2 (frozen-backbone SSIM refiner):
+"""5-row OOD-vs-in-dist comparison across all 4 modes:
 
-  Row 1: OLD ckpt V_canon       (218747856 — backbone, no refiner)
-  Row 2: bpblrai2 V_canon       (218246076 — same frozen backbone; this row SHOULD match Row 1
-                                  if backbone is truly frozen — built-in sanity check)
-  Row 3: bpblrai2 V_refined     (SSIM refiner trained on top of the frozen backbone)
+  Row 1: OLD V_canon            (218747856, backbone only) — OOD baseline
+  Row 2: newseed V_canon        (217891050, OLD backbone FROZEN; sanity ≡ Row 1)
+  Row 3: newseed V_refined      (SSIM refiner on top of frozen OLD backbone)
+  Row 4: joint V_canon          (218349151, jointly-trained backbone, pre-refiner)
+  Row 5: joint V_refined        (jointly-trained refiner)
 
-4 PNGs (one per mode), native 256x256, pct99.5 per panel:
-  result/4way_refiner/bpblrai2_val_ON.png
-  result/4way_refiner/bpblrai2_val_OFF.png
-  result/4way_refiner/bpblrai2_OCMR.png
-  result/4way_refiner/bpblrai2_Goettingen.png
+Reads:
+  Row 1 ≡ Row 2 → backbone freeze confirmed (sanity).
+  Row 2 → Row 3 → pure SSIM-refiner contribution on OLD backbone.
+  Row 1 → Row 4 → joint training's damage to the backbone alone.
+  Row 3 vs Row 5 → the joint-vs-separate headline.
+
+Outputs (one per mode, native 256x256, pct99.5):
+  result/4way_refiner/five_row_val_ON.png
+  result/4way_refiner/five_row_val_OFF.png
+  result/4way_refiner/five_row_OCMR.png
+  result/4way_refiner/five_row_Goett.png
+  result/4way_refiner/five_row_MIITT.png   (3rd OOD set, no GT — cross-validates OCMR/Göttingen)
 """
 import os
 import sys
@@ -31,9 +39,11 @@ from vggt.utils.splat import splat_predictions
 from tools.eval_ocmr_inference import load_cine, percentile_scale, assign_canonical_z, build_batch
 from tools.diagnose_ood_clean_paradox import build_val_dataset
 from eval.adapters.goettingen import GoettingenAdapter
+from eval.adapters.miitt import MIITTAdapter
 
-OLD_CKPT = "/home/minsukc/vggt/scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt"
-SSIM_CKPT = "/home/minsukc/vggt/scratch/logs/218246076_mri_refiner_frozen_ssim/ckpts/checkpoint_last.pt"
+OLD_CKPT  = "/home/minsukc/vggt/scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt"
+NEWSEED_CKPT = "/home/minsukc/vggt/scratch/logs/217891050_mri_refiner_frozen_ssim_newseed/ckpts/checkpoint_last.pt"
+JOINT_CKPT = "/home/minsukc/vggt/scratch/logs/218349151_mri_refiner_joint/ckpts/checkpoint_last.pt"
 OUT = os.path.join(_ROOT, "result", "4way_refiner")
 DEV = torch.device("cuda")
 GRID_SHAPE = (12, 256, 256)
@@ -43,6 +53,8 @@ OCMR_SUBJECTS = ["us_0084_1_5T", "us_0173_pt_1_5T", "us_0183_pt_1_5T",
 GOTT_RECON = "/home/minsukc/vggt/scratch/data/goettingen/recon"  # native RT recons (direct adapter)
 GOTT_SUBJECTS = ["vol0001_vis1", "vol0002_vis1", "vol0003_vis1",
                  "vol0009_vis1", "vol0023_vis1"]
+MIITT_RECON = "/home/minsukc/vggt/scratch/data/MIITT/nifti"  # RT free-breathing arm (PLACEHOLDER spacing)
+MIITT_SUBJECTS = ["Volunteer1", "Volunteer2", "Volunteer3", "Volunteer4", "Volunteer5"]
 VAL_SEQS = [0, 1, 2, 3, 4]
 
 
@@ -66,7 +78,6 @@ def load_state(model, ckpt_path):
 
 
 def _forward(model, batch, target_t=-1.0):
-    """Returns (V_canon, V_refined or None)."""
     S = batch["images"].shape[1]
     batch["target_t_indices"] = torch.full((1, S, 1), target_t, dtype=torch.float32, device=DEV)
     with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
@@ -117,41 +128,51 @@ def build_gott_dataset():
     return None  # Göttingen now uses the direct adapter; no MRIDataset needed
 
 
+def miitt_batch(subj):
+    # Direct RTFB adapter on the MIITT RT arm (placeholder spacing — qualitative only).
+    nii = os.path.join(MIITT_RECON, subj, "realtime", "sax", "4d_recon.nii.gz")
+    return MIITTAdapter(nii).build_batch(np.random.default_rng(0), DEV)[0]
+
+
 def window_pct(sl, V):
     hi = float(np.percentile(V, 99.5))
     lo = float(np.percentile(V, 1.0))
     return np.clip((sl - lo) / (hi - lo + 1e-9), 0, 1)
 
 
-def render_3row(old_canons, ssim_canons, ssim_refs, labels, title, path):
+def render_5row(rows_data, labels, title, path):
     N = len(labels)
-    fig, axes = plt.subplots(3, N, figsize=(N * 3.0, 9.4))
+    fig, axes = plt.subplots(5, N, figsize=(N * 3.0, 15.0))
     if N == 1:
-        axes = np.array(axes).reshape(3, 1)
-    sources = [
-        ("OLD ckpt\nV_canon\n(backbone, no refiner)", old_canons),
-        ("bpblrai2\nV_canon\n(SHOULD match Row 1 — frozen backbone)", ssim_canons),
-        ("bpblrai2\nV_refined\n(SSIM refiner on top)", ssim_refs),
+        axes = np.array(axes).reshape(5, 1)
+    row_labels = [
+        "OLD ckpt\nV_canon\n(no refiner)\n[OOD baseline]",
+        "newseed ckpt\nV_canon\n(OLD bb FROZEN)\n[≡ Row 1?]",
+        "newseed ckpt\nV_refined\n(SSIM refiner on\nOLD backbone)",
+        "joint ckpt\nV_canon\n(jointly trained,\npre-refiner)",
+        "joint ckpt\nV_refined\n(jointly trained\nrefiner)",
     ]
-    for r, (rlbl, vols) in enumerate(sources):
+    for r, vols in enumerate(rows_data):
         for i, (lbl, V) in enumerate(zip(labels, vols)):
             mid = V.shape[0] // 2
             axes[r, i].imshow(window_pct(V[mid], V), cmap="gray", vmin=0, vmax=1)
             axes[r, i].axis("off")
             if r == 0:
-                axes[r, i].set_title(lbl, fontsize=8)
+                axes[r, i].set_title(lbl, fontsize=9)
             if i == 0:
-                axes[r, i].text(-0.22, 0.5, rlbl, transform=axes[r, i].transAxes,
+                axes[r, i].text(-0.25, 0.5, row_labels[r],
+                                transform=axes[r, i].transAxes,
                                 fontsize=8, ha="right", va="center")
-    fig.suptitle(f"{title}  (native 256x256, pct99.5 per volume)", fontsize=10)
+    fig.suptitle(f"{title}  (native 256x256, pct99.5 per volume)", fontsize=11)
     fig.tight_layout()
     fig.savefig(path, dpi=140, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {path}")
 
 
-def run_across_modes(model, val_ds, rcfg, gott_ds):
-    out = {"val_ON": [], "val_OFF": [], "OCMR": [], "Goett": []}
+def run_canon_across_modes(model, val_ds, rcfg, gott_ds):
+    """Returns dict[mode] -> list of (V_canon, V_refined) tuples."""
+    out = {"val_ON": [], "val_OFF": [], "OCMR": [], "Goett": [], "MIITT": []}
     for i in VAL_SEQS:
         out["val_ON"].append(_forward(model, val_batch(val_ds, rcfg, i, True)))
     for i in VAL_SEQS:
@@ -162,6 +183,10 @@ def run_across_modes(model, val_ds, rcfg, gott_ds):
             out["OCMR"].append(_forward(model, ocmr_batch(sd)))
     for sub in GOTT_SUBJECTS:
         out["Goett"].append(_forward(model, goettingen_batch(gott_ds, sub)))
+    for sub in MIITT_SUBJECTS:
+        nii = os.path.join(MIITT_RECON, sub, "realtime", "sax", "4d_recon.nii.gz")
+        if os.path.exists(nii):
+            out["MIITT"].append(_forward(model, miitt_batch(sub)))
     return out
 
 
@@ -170,48 +195,41 @@ def main():
     val_ds, rcfg = build_val_dataset()
     gott_ds = build_gott_dataset()
 
-    print("\n[1/2] OLD ckpt -> V_canon for all 4 modes ...")
+    print("\n[1/3] OLD ckpt (no refiner) -> V_canon ...")
     m = load_state(build_model(use_refiner=False), OLD_CKPT)
-    old_outs = run_across_modes(m, val_ds, rcfg, gott_ds)
-    del m
-    torch.cuda.empty_cache()
+    old_outs = run_canon_across_modes(m, val_ds, rcfg, gott_ds)
+    del m; torch.cuda.empty_cache()
 
-    print("\n[2/2] bpblrai2 -> (V_canon, V_refined) for all 4 modes ...")
-    m = load_state(build_model(use_refiner=True), SSIM_CKPT)
-    ssim_outs = run_across_modes(m, val_ds, rcfg, gott_ds)
-    del m
-    torch.cuda.empty_cache()
+    print("\n[2/3] newseed ckpt (frozen OLD bb + SSIM refiner) -> V_canon, V_refined ...")
+    m = load_state(build_model(use_refiner=True), NEWSEED_CKPT)
+    new_outs = run_canon_across_modes(m, val_ds, rcfg, gott_ds)
+    del m; torch.cuda.empty_cache()
+
+    print("\n[3/3] joint ckpt -> V_canon, V_refined ...")
+    m = load_state(build_model(use_refiner=True), JOINT_CKPT)
+    joint_outs = run_canon_across_modes(m, val_ds, rcfg, gott_ds)
+    del m; torch.cuda.empty_cache()
 
     val_labels = [f"seq{i}" for i in VAL_SEQS]
-
-    render_3row(
-        [V for V, _ in old_outs["val_ON"]],
-        [V for V, _ in ssim_outs["val_ON"]],
-        [Vr for _, Vr in ssim_outs["val_ON"]],
-        val_labels, "val ON (in-dist, breathing sim)",
-        os.path.join(OUT, "bpblrai2_val_ON.png"),
-    )
-    render_3row(
-        [V for V, _ in old_outs["val_OFF"]],
-        [V for V, _ in ssim_outs["val_OFF"]],
-        [Vr for _, Vr in ssim_outs["val_OFF"]],
-        val_labels, "val OFF (in-dist, no breathing)",
-        os.path.join(OUT, "bpblrai2_val_OFF.png"),
-    )
-    render_3row(
-        [V for V, _ in old_outs["OCMR"]],
-        [V for V, _ in ssim_outs["OCMR"]],
-        [Vr for _, Vr in ssim_outs["OCMR"]],
-        OCMR_SUBJECTS, "OCMR (OOD real-time free-breathing)",
-        os.path.join(OUT, "bpblrai2_OCMR.png"),
-    )
-    render_3row(
-        [V for V, _ in old_outs["Goett"]],
-        [V for V, _ in ssim_outs["Goett"]],
-        [Vr for _, Vr in ssim_outs["Goett"]],
-        GOTT_SUBJECTS, "Göttingen (OOD radial RT free-breathing)",
-        os.path.join(OUT, "bpblrai2_Goettingen.png"),
-    )
+    modes = [
+        ("val_ON",  val_labels,      "val ON (in-dist, breathing sim)"),
+        ("val_OFF", val_labels,      "val OFF (in-dist, no breathing)"),
+        ("OCMR",    OCMR_SUBJECTS,   "OCMR (OOD real-time free-breathing)"),
+        ("Goett",   GOTT_SUBJECTS,   "Göttingen (OOD radial RT free-breathing)"),
+        ("MIITT",   MIITT_SUBJECTS,  "MIITT (OOD paired RT free-breathing; placeholder spacing)"),
+    ]
+    for key, labels, title in modes:
+        if not old_outs[key]:
+            print(f"  skip {key} (no subjects found)"); continue
+        rows = [
+            [V for V, _ in old_outs[key]],     # row 1: OLD V_canon
+            [V for V, _ in new_outs[key]],     # row 2: newseed V_canon (≡ row 1?)
+            [Vr for _, Vr in new_outs[key]],   # row 3: newseed V_refined
+            [V for V, _ in joint_outs[key]],   # row 4: joint V_canon
+            [Vr for _, Vr in joint_outs[key]], # row 5: joint V_refined
+        ]
+        render_5row(rows, labels, title,
+                    os.path.join(OUT, f"five_row_{key}.png"))
 
 
 if __name__ == "__main__":

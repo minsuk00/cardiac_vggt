@@ -24,13 +24,12 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from omegaconf import OmegaConf
 
 from vggt.models.vggt import VGGT
 from vggt.utils.splat import splat_predictions
-from data.datasets.mri_dataset import MRIDataset
 from tools.eval_ocmr_inference import load_cine, percentile_scale, assign_canonical_z, build_batch
 from tools.diagnose_ood_clean_paradox import build_val_dataset
+from eval.adapters.goettingen import GoettingenAdapter
 
 OLD_CKPT = "/home/minsukc/vggt/scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt"
 SSIM_CKPT = "/home/minsukc/vggt/scratch/logs/218246076_mri_refiner_frozen_ssim/ckpts/checkpoint_last.pt"
@@ -41,8 +40,7 @@ GRID_SHAPE = (12, 256, 256)
 
 OCMR_SUBJECTS = ["us_0084_1_5T", "us_0173_pt_1_5T", "us_0183_pt_1_5T",
                  "us_0197_pt_1_5T", "us_0169_pt_1_5T"]
-GOTT_ROOT = "/home/minsukc/vggt/scratch/data/goettingen/canonical_subjects"
-GOTT_SPLIT = GOTT_ROOT + "/gott_split.txt"
+GOTT_RECON = "/home/minsukc/vggt/scratch/data/goettingen/recon"  # native RT recons (direct adapter)
 GOTT_SUBJECTS = ["vol0001_vis1", "vol0002_vis1", "vol0003_vis1",
                  "vol0009_vis1", "vol0023_vis1"]
 VAL_SEQS = [0, 1, 2, 3, 4]
@@ -111,23 +109,13 @@ def ocmr_batch(subj_dir):
 
 
 def goettingen_batch(ds, subj):
-    idx = next(i for i, s in enumerate(ds.subjects) if subj in s)
-    data = ds.get_data(seq_index=idx, img_per_seq=12)
-    def st(k, dt=np.float32):
-        return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(DEV)
-    imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
-    return {"images": imgs, "scanner_coords": st("scanner_coords"),
-            "z_indices": st("z_indices"), "t_indices": st("t_indices"),
-            "slice_indices": torch.from_numpy(
-                np.stack(data["slice_indices"]).astype(np.int64)).unsqueeze(0).to(DEV)}
+    # Direct RTFB adapter on the native recon (real slices, no 6->8mm interp); `ds` unused.
+    nii = os.path.join(GOTT_RECON, subj, subj + ".nii.gz")
+    return GoettingenAdapter(nii).build_batch(np.random.default_rng(0), DEV)[0]
 
 
 def build_gott_dataset():
-    common_conf = OmegaConf.create({"img_size": 518, "patch_size": 14, "rescale": True,
-                                    "rescale_aug": False, "landscape_check": False,
-                                    "augs": {"scales": [1.0, 1.0]}})
-    return MRIDataset(common_conf, GOTT_ROOT, split="val", split_file=GOTT_SPLIT,
-                      mode="dynamic", mri_mode="axial", num_slices=12, target_size=518)
+    return None  # Göttingen now uses the direct adapter; no MRIDataset needed
 
 
 def window_pct(sl, V):
