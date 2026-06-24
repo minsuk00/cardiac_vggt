@@ -2,7 +2,7 @@
 
 Each subject's 12 cine phases live on disk as `sax_frame_{tt:02d}.nii.gz`. A
 monai `PersistentDataset` preprocess pipeline (see `training/data/preprocess.py`)
-resamples every native NIfTI to a fixed (1.4, 1.4, 8.0) mm spacing and crops
+resamples every native NIfTI to a fixed (1.4, 1.4, 12.0) mm spacing and crops
 /zero-pads to (256, 256, 12) voxels, geometric-center-aligned. The cached
 output is a single `(T=12, 1, X=256, Y=256, Z=12)` float16 tensor per subject,
 plus a `(1, X, Y, Z)` content mask that tracks which voxels came from native
@@ -96,6 +96,7 @@ class MRIDataset(BaseDataset):
         gt_grid_shape=GRID_SHAPE_SPLAT,  # legacy override; must match preprocess.py
         t_target_fixed=None,
         t_target_phases=None,
+        reference_slot=False,
         cache_dir=None,
     ):
         """
@@ -117,6 +118,12 @@ class MRIDataset(BaseDataset):
         self.mri_mode = mri_mode
         self.t_target_fixed = t_target_fixed
         self.t_target_phases = list(t_target_phases) if t_target_phases is not None else None
+        # Reference-slice conditioning (docs/25): when True, slot 0 is forced to OBSERVE the
+        # target phase at the mid-ventricular plane (z = bbox z-center), and the remaining
+        # slots are scattered with that plane excluded. The model reads the target phase from
+        # slot-0's image content (via the native camera_token anchor) instead of a target_t
+        # index. Default False → legacy decoupled sampling (slot 0 not special).
+        self.reference_slot = bool(reference_slot)
         if self.t_target_phases is not None and len(self.t_target_phases) == 0:
             raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
 
@@ -278,13 +285,44 @@ class MRIDataset(BaseDataset):
         # t_target itself is chosen above (a deterministic cycle in val) for balanced
         # per-phase coverage; only the INPUT (t, z) is randomized here.
         # Static mode: all slots == t_target (z still drawn as below).
+        #
+        # REFERENCE-SLOT MODE (self.reference_slot, docs/25): slot 0 is forced to OBSERVE the
+        # target phase at the mid-ventricular plane (z = bbox z-center) — the model reads the
+        # target phase from slot-0's image content (via the native camera_token anchor), not a
+        # target_t index. The remaining slots stay scattered, but the reference plane is
+        # EXCLUDED from their z pool so no slot re-observes it. Determinism is preserved (z_mid
+        # and t_target are deterministic; the rest still draw from the same `rng`).
         rng = random if self.split == "train" else random.Random(seq_index)
         if self.mode == "static":
             t_sequence = [t_target] * S
         else:
             t_sequence = [rng.randrange(T_total) for _ in range(S)]
+        # ── ABLATION HOOK (gated, default no-op) ───────────────────────────
+        # Force the first `n_forced_target` slots to OBSERVE the target phase
+        # (their input image becomes phases[t_target] at the same z). Only the
+        # t is overridden — z_sequence is untouched — so the coverage ablation
+        # varies "how many slots see the target phase" with everything else fixed.
+        # Training never passes this kwarg → bit-identical. Inference-only.
+        _n_forced = int(kwargs.get("n_forced_target", 0))
+        if _n_forced > 0:
+            for _i in range(min(_n_forced, len(t_sequence))):
+                t_sequence[_i] = t_target
         in_bbox_z = list(range(bbox_z0, bbox_z1))
-        if len(in_bbox_z) >= S:
+        if self.reference_slot:
+            # Slot 0 = target-phase reference at the mid-ventricular plane.
+            z_mid = (bbox_z0 + bbox_z1) // 2
+            t_sequence[0] = t_target
+            rest_pool = [z for z in in_bbox_z if z != z_mid]
+            if len(rest_pool) >= S - 1:
+                rng.shuffle(rest_pool)
+                z_rest = rest_pool[: S - 1]
+            else:
+                # Tiny FOV: not enough distinct non-reference planes → sample with replacement
+                # (or repeat z_mid if the bbox is a single plane). Defensive; S is capped to
+                # bbox_z_size above so this is rare.
+                z_rest = rng.choices(rest_pool, k=S - 1) if rest_pool else [z_mid] * (S - 1)
+            z_sequence = [z_mid] + z_rest
+        elif len(in_bbox_z) >= S:
             rng.shuffle(in_bbox_z)
             z_sequence = in_bbox_z[:S]
         else:

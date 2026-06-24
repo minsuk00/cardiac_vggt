@@ -176,9 +176,14 @@ class Trainer:
         # When None → multi-phase val sampling: log per-phase PSNR + cardiac-cycle filmstrip.
         # When int → single-phase mode: those diagnostics are skipped (meaningless).
         self.t_target_fixed = None
+        # Reference-slice conditioning (docs/25): when True the cardiac-cycle filmstrip must
+        # rebuild slot 0 (the reference) at each queried phase, since the model reads the target
+        # phase from slot-0's image content rather than a broadcast target_t index.
+        self.reference_slot = False
         mri_ds = self._get_mri_dataset()
         if mri_ds is not None:
             self.t_target_fixed = mri_ds.t_target_fixed
+            self.reference_slot = getattr(mri_ds, "reference_slot", False)
         # Accumulator for per-phase val PSNR, cleared at the start of each val epoch.
         # Two parallel namespaces: `_full` (whole canonical cube) and `_bbox` (subject's
         # geometric native-FOV region only).
@@ -698,10 +703,11 @@ class Trainer:
         try:
             self.model.eval()
             amp_dtype = torch.bfloat16
-            # Build the input batch ONCE (decoupled-target design): the SAME scattered
-            # input slices are reused for every target phase — only the global target_t
-            # query (and the V_gt we compare against) varies. This is the faithful
-            # "one acquisition → beating heart" 4D cine, not a different input per phase.
+            # Build the input batch ONCE. In the legacy decoupled-target design the SAME
+            # scattered input slices are reused for every target phase — only the global
+            # target_t query (and the V_gt) varies. In reference-slice mode (docs/25) slot 0
+            # is additionally rebuilt to the target-phase reference at each phase (see loop
+            # below); slots 1..S-1 (the scattered inputs) are still reused across phases.
             data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=num_slices)
             def st(k, dt=np.float32):
                 return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
@@ -716,22 +722,52 @@ class Trainer:
             # Full canonical phase bundle → per-phase V_gt without re-sampling inputs.
             phases_bundle = torch.from_numpy(
                 np.asarray(data["phases"]).astype(np.float32)).to(self.device)  # (T, D, H, W)
-            # Apply the deterministic val breathing to the INPUT slices (when enabled) so
-            # the filmstrip visualizes the real corrupted->clean task, matching the val
-            # metrics. V_gt (set per-phase below) stays at the unshifted reference. No-op
-            # when respiratory is disabled.
+            # The filmstrip visualizes the REAL corrupted->clean val task (V_gt stays at the
+            # unshifted reference), so val breathing is applied to the INPUT slices when enabled.
+            # Legacy (decoupled) mode: inputs are identical for every target phase → apply
+            # breathing ONCE and reuse. Reference-slot mode: slot 0 changes per phase → breathing
+            # is (re-)applied INSIDE the loop instead. No-op when respiratory is disabled.
             batch["phases"] = phases_bundle.unsqueeze(0)
             batch["timesteps"] = st("timesteps", np.int64)
             batch["slice_indices"] = st("slice_indices", np.int64)
             batch["seq_index"] = torch.tensor([[subj_idx]], dtype=torch.int64, device=self.device)
-            batch = gpu_augment_batch(
-                batch, None, self.device,
-                respiratory_cfg=self.respiratory_cfg, train=False)
+            do_resp = (self.respiratory_cfg is not None
+                       and getattr(self.respiratory_cfg, "enable", False))
+            if not self.reference_slot:
+                batch = gpu_augment_batch(
+                    batch, None, self.device,
+                    respiratory_cfg=self.respiratory_cfg, train=False)
             model = self.model.module if hasattr(self.model, "module") else self.model
+            # Reference-slice mode (docs/25): slot 0 defines the queried phase via its IMAGE, not a
+            # target_t index, so it must OBSERVE phase t at each query. z_mid (the bbox z-center) is
+            # constant across the sweep, so scanner_coords[0]/z_indices[0] from get_data stay valid;
+            # only slot-0's phase (and image) change. We set timesteps[0]=t and re-extract through
+            # the SAME val input pipeline: when breathing is on slot 0 is corrupted exactly as in
+            # val (scattered slots 1..S-1 re-extract identically each phase); else a clean reslice.
+            # (target_t_indices is set below but inert when use_target_t=false.)
+            import torch.nn.functional as _F
+            ref_zmid = None
+            hw = batch["images"].shape[-1]
+            if self.reference_slot:
+                _bb = np.asarray(data["anatomy_bbox"]).astype(np.int64)
+                ref_zmid = (int(_bb[0]) + int(_bb[1])) // 2
             for t in range(T_total):
                 t_norm = (t / max(1, T_total)) * 2.0 - 1.0  # match dataset normalization
                 batch["target_t_indices"] = torch.full(
                     (1, S, 1), t_norm, dtype=torch.float32, device=self.device)
+                if self.reference_slot:
+                    batch["timesteps"][:, 0] = t  # slot 0 observes the target phase t
+                    if do_resp:
+                        # Re-extract all inputs via the deterministic val breathing pipeline:
+                        # slot 0 → breathing-shifted (t, z_mid); scattered slots identical each phase.
+                        batch = gpu_augment_batch(
+                            batch, None, self.device,
+                            respiratory_cfg=self.respiratory_cfg, train=False)
+                    else:
+                        ref_up = _F.interpolate(
+                            phases_bundle[t, ref_zmid][None, None].float(), size=(hw, hw),
+                            mode="bilinear", align_corners=True)  # (1, 1, 518, 518) in [0, 1]
+                        batch["images"][:, 0] = ref_up.repeat(1, 3, 1, 1)
                 batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)  # (1, D, H, W)
                 with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
                     preds = model(batch["images"], batch=batch)

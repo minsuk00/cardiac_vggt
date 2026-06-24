@@ -1,0 +1,29 @@
+# Variant 2: B-spline control-grid warp head instead of the per-pixel DPT head.
+# Predicts a coarse (bspline_grid_size per side) grid of 3-vectors and bicubic-upsamples to
+# the dense Δ — smooth by construction (no 14-px patch ripple ⇒ no splat lattice).
+# Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config mri_volume_bspline
+#
+# NOTE: the B-spline head's params differ from the DPT head, so the 4-day-baseline warm-start
+# (CKPT_ONLY, DPT head) will NOT load into it (strict=false ⇒ head trains from scratch; it's
+# small/fast). Sweet-spot grid ≈ 32 (toy: control spacing ~12–16 px ≈ 8–11 mm).
+
+defaults:
+  - mri_volume
+  - _self_
+
+exp_name: "${rev_ts:}_mri_volume_bspline_${mri_data_mode}_${mri_mode}_${dataset_name}"
+config_name: "mri_volume_bspline"
+
+model:
+  warp_head_type: "bspline"
+  bspline_grid_size: 32
+
+# aggft: train the DINOv2 attention blocks + embedders (freeze only patch_embed), not head-only.
+# ~2.8× slower, ~27 GB/A40. find_unused_parameters=true is required once the aggregator is
+# unfrozen (camera/register tokens + disabled depth/track heads get no gradient). Matches the
+# train_run8_multiphase_allphases_aggft.sh reference regime.
+optim:
+  frozen_module_names: ["*patch_embed*"]
+
+distributed:
+  find_unused_parameters: true

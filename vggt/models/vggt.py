@@ -10,6 +10,7 @@ from huggingface_hub import PyTorchModelHubMixin  # used for model hub
 
 from vggt.heads.camera_head import CameraHead
 from vggt.heads.dpt_head import DPTHead
+from vggt.heads.bspline_head import BSplineWarpHead
 from vggt.heads.track_head import TrackHead
 from vggt.models.aggregator import Aggregator
 from vggt.models.refiner import VolumeRefiner
@@ -18,18 +19,27 @@ from vggt.utils.splat import splat_predictions
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, use_target_t_pose_embedding=False, train_on_residual_dvf=False,
-        enable_refiner=False, grid_shape=(12, 256, 256), refiner_base_channels=16, refiner_levels=2, refiner_use_coverage=False
+        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, use_target_t_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
+        enable_refiner=False, grid_shape=(12, 256, 256), refiner_base_channels=16, refiner_levels=2, refiner_use_coverage=False,
+        warp_head_type="dpt", bspline_grid_size=32
     ):
         super().__init__()
         self.train_on_residual_dvf = train_on_residual_dvf
 
-        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_t_pose_embedding=use_t_pose_embedding, use_target_t_pose_embedding=use_target_t_pose_embedding)
+        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_t_pose_embedding=use_t_pose_embedding, use_target_t_pose_embedding=use_target_t_pose_embedding, use_reference_token=use_reference_token)
 
         self.camera_head = CameraHead(dim_in=2 * embed_dim) if enable_camera else None
 
         point_activation = "linear" if train_on_residual_dvf else "inv_log"
-        self.point_head = DPTHead(dim_in=2 * embed_dim, output_dim=4, activation=point_activation, conf_activation="expp1") if enable_point else None
+        if not enable_point:
+            self.point_head = None
+        elif warp_head_type == "bspline":
+            # Smooth-by-construction warp head: coarse control grid + B-spline upsample.
+            self.point_head = BSplineWarpHead(dim_in=2 * embed_dim, patch_size=patch_size, grid_size=bspline_grid_size, output_dim=4, activation=point_activation, conf_activation="expp1")
+        elif warp_head_type == "dpt":
+            self.point_head = DPTHead(dim_in=2 * embed_dim, output_dim=4, activation=point_activation, conf_activation="expp1")
+        else:
+            raise ValueError(f"Unknown warp_head_type: {warp_head_type!r} (expected 'dpt' or 'bspline')")
         self.depth_head = DPTHead(dim_in=2 * embed_dim, output_dim=2, activation="exp", conf_activation="expp1") if enable_depth else None
         self.track_head = TrackHead(dim_in=2 * embed_dim, patch_size=patch_size) if enable_track else None
 

@@ -24,7 +24,7 @@ _RESNET_STD = [0.229, 0.224, 0.225]
 
 
 class ZIndexEmbedder(nn.Module):
-    def __init__(self, embed_dim=1024, num_freqs=6):
+    def __init__(self, embed_dim=1024, num_freqs=3):
         super().__init__()
         self.num_freqs = num_freqs
         in_dim = 1 + 2 * num_freqs
@@ -53,10 +53,14 @@ class TIndexEmbedder(nn.Module):
     normalization). The raw t_norm scalar is kept in the feature list; it
     breaks pure cyclicity but provides a useful monotonic ordering for the
     discrete training case (Option A). For continuous-phase queries (Option B,
-    not implemented), drop the raw term and lower num_freqs to ~3 to avoid
-    aliasing above Nyquist.
+    not implemented), additionally drop the raw term to avoid breaking pure
+    cyclicity.
+
+    num_freqs=3 is the Nyquist-safe basis: V_gt has 12 z-planes and T=12
+    phases, so structure above the 12-sample Nyquist (bands 8π/16π/32π, i≥3)
+    is unsupervised and only invites overfitting. Bands kept: π, 2π, 4π.
     """
-    def __init__(self, embed_dim=1024, num_freqs=6):
+    def __init__(self, embed_dim=1024, num_freqs=3):
         super().__init__()
         self.num_freqs = num_freqs
         in_dim = 1 + 2 * num_freqs
@@ -122,9 +126,10 @@ class Aggregator(nn.Module):
         use_z_pose_embedding=False,
         use_t_pose_embedding=False,
         use_target_t_pose_embedding=False,
+        use_reference_token=False,
     ):
         super().__init__()
-        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}, use_t_pose_embedding={use_t_pose_embedding}, use_target_t_pose_embedding={use_target_t_pose_embedding}")
+        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}, use_t_pose_embedding={use_t_pose_embedding}, use_target_t_pose_embedding={use_target_t_pose_embedding}, use_reference_token={use_reference_token}")
 
         self.use_z_pose_embedding = use_z_pose_embedding
         if self.use_z_pose_embedding:
@@ -143,6 +148,13 @@ class Aggregator(nn.Module):
         self.use_target_t_pose_embedding = use_target_t_pose_embedding
         if self.use_target_t_pose_embedding:
             self.target_t_embedder = TIndexEmbedder(embed_dim=embed_dim)
+
+        # Reference-slice conditioning: mark slot 0 as the target-phase reference via VGGT's
+        # NATIVE two-token camera_token (index 0 = first frame, index 1 = the rest) instead of
+        # a content-free target_t index. The model reads the target phase from slot-0's image
+        # content; this token just says "slot 0 is the anchor". No new module — reuses the
+        # pretrained `self.camera_token` (built below). See docs/25.
+        self.use_reference_token = use_reference_token
 
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
@@ -287,8 +299,15 @@ class Aggregator(nn.Module):
         use_z = getattr(self, "use_z_pose_embedding", False)
         use_t = getattr(self, "use_t_pose_embedding", False)
         use_target_t = getattr(self, "use_target_t_pose_embedding", False)
-        if use_z or use_t or use_target_t:
+        use_reference_token = getattr(self, "use_reference_token", False)
+        if use_z or use_t or use_target_t or use_reference_token:
             camera_token = 0
+            if use_reference_token:
+                # Native VGGT anchor token: index 0 → slot 0 (the target-phase reference),
+                # index 1 → all other (scattered) slots. Added ON TOP of the per-slot z
+                # embedding so the model both knows each slice's depth AND which slot defines
+                # the query phase. Reuses the pretrained `self.camera_token`. See docs/25.
+                camera_token = camera_token + slice_expand_and_flatten(self.camera_token, B, S)  # [B*S, 1, C]
             if use_z:
                 if z_indices is None:
                     raise ValueError("use_z_pose_embedding is True but z_indices not provided in batch.")

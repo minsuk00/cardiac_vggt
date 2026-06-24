@@ -1,0 +1,31 @@
+# Variant 1: per-pixel DPT head + VoxelMorph-style L2 diffusion smoothness ‖∇u‖² on the DVF.
+# Clean swap vs the baseline's weak L1 TV: tv_weight=0, diffusion_weight>0.
+# Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config mri_volume_diffusion
+#
+# diffusion_weight is a STARTING value to tune — the DVF is in normalized [-1,1] coords so
+# its gradients are tiny and a meaningful penalty is O(10–1000). Sweep this.
+
+defaults:
+  - mri_volume
+  - _self_
+
+exp_name: "${rev_ts:}_mri_volume_diffusion_${mri_data_mode}_${mri_mode}_${dataset_name}"
+config_name: "mri_volume_diffusion"
+
+loss:
+  volume:
+    tv_weight: 0.0            # drop the L1 TV (clean swap)
+    # L2 diffusion ‖∇u‖². At 1000 a 1e-2 14-px ripple contributes ~1e-2 vs loss_volume~0.25
+    # (~4%). The squared-on-normalized-coords penalty is small, so this may still need
+    # sweeping higher (1e3–1e4) to actually flatten the warp — watch loss_diffusion vs loss_volume.
+    diffusion_weight: 1000.0
+
+# aggft: train the DINOv2 attention blocks + embedders (freeze only patch_embed), not head-only.
+# ~2.8× slower, ~27 GB/A40. find_unused_parameters=true is required once the aggregator is
+# unfrozen (camera/register tokens + disabled depth/track heads get no gradient). Matches the
+# train_run8_multiphase_allphases_aggft.sh reference regime.
+optim:
+  frozen_module_names: ["*patch_embed*"]
+
+distributed:
+  find_unused_parameters: true
