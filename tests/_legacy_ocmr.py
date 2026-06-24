@@ -13,7 +13,7 @@ INPUT_IMG_SIZE = 518
 TARGET_INPLANE_MM = 1.4
 GRID_SHAPE = (12, 256, 256)
 D_CANON = GRID_SHAPE[0]
-CANON_Z_SPACING_MM = 12.0  # tracks eval.adapters.base canonical pitch (docs/18); guard tests structure not 8mm
+CANON_Z_SPACING_MM = 12.0  # tracks eval.adapters.base canonical pitch (docs/27); guard tests structure not 8mm
 PCT_LO, PCT_HI = 0.5, 99.9
 
 

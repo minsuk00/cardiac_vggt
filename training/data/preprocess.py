@@ -34,7 +34,7 @@ from monai.transforms import (
 TARGET_SPACING = (1.4, 1.4, 12.0)       # mm per voxel; ~4% X-downsample for most subjects, Y near-identity.
                                         # Z=12mm = CMRx TRUE slice pitch (8mm thickness + 4mm gap, CMRxRecon2024
                                         # protocol). Source NIfTI affines were relabeled 8→12 on disk (the 8mm was
-                                        # slice thickness) so this Spacingd is a Z-identity — see docs/18 +
+                                        # slice thickness) so this Spacingd is a Z-identity — see docs/27 +
                                         # tools/relabel_slice_spacing.py.
 TARGET_SHAPE = (256, 256, 12)           # (X, Y, Z) in monai order
 NUM_PHASES = 12

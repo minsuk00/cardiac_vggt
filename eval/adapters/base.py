@@ -15,7 +15,7 @@ INPUT_IMG_SIZE = 518
 TARGET_INPLANE_MM = 1.4
 GRID_SHAPE = (12, 256, 256)          # (D, H, W) canonical splat grid
 D_CANON = GRID_SHAPE[0]
-CANON_Z_SPACING_MM = 12.0            # canonical plane spacing = CMRx true pitch (was 8mm thickness); docs/18
+CANON_Z_SPACING_MM = 12.0            # canonical plane spacing = CMRx true pitch (was 8mm thickness); docs/27
 PCT_LO, PCT_HI = 0.5, 99.9           # matches ScaleIntensityByT0PercentilesD
 # in-plane: (256-1)/2 * 1.4 mm ; through-plane: (12-1)/2 * 12.0 mm  (norm[-1,1] -> mm)
 MM_PER_NORM = (178.5, 178.5, 66.0)

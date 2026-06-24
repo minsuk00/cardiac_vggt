@@ -12,7 +12,7 @@ import argparse, glob, os
 import numpy as np
 import nibabel as nib
 
-CANON_SPACING = (1.4, 1.4, 12.0)  # x, y, z mm — true CMRx pitch (preprocess.TARGET_SPACING); docs/18
+CANON_SPACING = (1.4, 1.4, 12.0)  # x, y, z mm — true CMRx pitch (preprocess.TARGET_SPACING); docs/27
 
 
 def convert(src, dst):

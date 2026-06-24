@@ -1,4 +1,4 @@
-# 18 — Slice spacing: thickness vs. true pitch (canonical Z = 12 mm)
+# 27 — Slice spacing: thickness vs. true pitch (canonical Z = 12 mm)
 
 > **TL;DR & takeaway**
 > Our CMRx (and OCMR) recon NIfTIs were stamped with Z spacing = **8 mm**, but

@@ -3,7 +3,7 @@
 
 WHY: our k-space->NIfTI recons stamped Z spacing = slice THICKNESS (8 mm), not the true
 center-to-center PITCH. This rewrites ONLY the affine's slice-axis spacing to the true pitch
-so the geometry is physically honest (the canonical pipeline uses 12 mm; see docs/18).
+so the geometry is physically honest (the canonical pipeline uses 12 mm; see docs/27).
 
   CMRx : 8 -> 12 mm   (8 mm thickness + 4 mm gap, CMRxRecon2024 protocol; constant)
   OCMR : 8 -> per-subject measured pitch = mean consecutive distance of
