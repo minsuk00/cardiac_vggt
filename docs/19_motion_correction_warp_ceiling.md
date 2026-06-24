@@ -1,5 +1,14 @@
 # 19 — Motion correction is warp-architecture-limited, not motion-estimation-limited
 
+> **⚠️ PARTIAL CORRECTION (2026-06-22, see [[20_appearance_synthesis_test]]):** the *diagnosis* below
+> (warp-limited, ~21 dB ceiling, the 14 dB gap is the appearance wall) **stands**. But the §5
+> *prescription* — "appearance synthesis (learned renderer/decoder) is the lever that breaks ~21" — was
+> **tested and REFUTED**: a feature-splat + 3-D decoder adds **+0.03 dB** on held-out, and the recoverable
+> appearance ceiling is ~28 dB *even with dense data the model lacks* (population prior useless at 14.4).
+> The subject-specific appearance simply isn't in the sparse, r/t-blind inputs, so no renderer can
+> synthesize it. The real lever is **relaxing the input contract** (more frames / input-t / 5-D reference),
+> not a fancier decoder. See doc 20.
+
 > **TL;DR & takeaway** *(human-facing; the rest is the agent-facing record)*
 >
 > **Toy-experiment investigation** (`/toy-experiment`) into the best way to improve motion

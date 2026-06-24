@@ -28,8 +28,9 @@
 >    between ~21 and ~35 dB. Direction is unambiguous — the model under-corrects, doc 07 slope 0.42.)*
 > 2. **Sharpness IS renderer-limited, and the culprit is the 256→518→256 RESIZE, not the trilinear kernel.**
 >    Perfect-placement splat = **0.768× GT**; the same splat at **native 256 (no resize) = 0.997×**.
->    Nearest≈native-trilinear (kernel innocent). Fix = render the splat at native 256 ("518 in, 256 out",
->    §4). **Sharpness-only and PSNR-neutral at today's geometry** — it buys crispness, not the 14 dB.
+>    Nearest≈native-trilinear (kernel innocent). *(⚠️ UPDATE 2026-06-22: rendering at native 256 was measured
+>    end-to-end and **DEMOTED** — it's −0.13 dB and leaves visible holes in the sparse regime; the 0.997 was a
+>    dense-oracle artifact. Keep 518. See §4 banner.)*
 > 3. *(Out of scope per owner)* The gated→real-time **domain gap** is real (single-shot R=8 input drops the
 >    model −3.03 dB to near the floor) but we **assume good input images for now**, so it is deferred.
 >
@@ -93,6 +94,19 @@ real but low-headroom (already 34 dB); pragmatist's "fancy losses are a trap" co
 subspace** are scoped-but-unrun training experiments.
 
 ## 4. The renderer fix (sharpness): "518 in, 256 out"
+
+> **⚠️ UPDATE (2026-06-22) — native-256 render measured end-to-end; DEMOTED, keep 518.**
+> A no-retrain side-by-side on the trained model (same Δ field, splat at 518 vs downsampled-256;
+> `tools/compare_splat_resolution.py`, n=24 breathing-val) found native-256 is **slightly WORSE on every
+> sample**: motion **−0.13 dB**, bbox **−0.17**, SSIM **−0.002**, coverage 0.702→0.698. Crucially it is
+> **not visually sharper** — at the real sparse-slice density (~12 slices) the 256 render leaves **black
+> speckle holes** (1 point/voxel → gaps), while the 518 oversampling (~4 points/voxel) acts as **beneficial
+> anti-aliasing + hole-fill** that also matches how the GT cube was itself resampled.
+> Reconciliation with the 0.997 "sharpness win" below: that ratio was measured in the **dense
+> perfect-placement oracle** (full coverage, no holes), and a gradient/sharpness ratio is **inflated by
+> hole-edges** — so it does not transfer to the sparse regime. **Verdict: the native-256 lever is dead**
+> (≤0.2 dB, wrong sign, introduces holes); keep the 518 render. The deeper point stands and is reinforced by
+> [[19_motion_correction_warp_ceiling]]/[[20_appearance_synthesis_test]]: **no renderer change is the lever.**
 
 **Why 518 exists:** DINOv2 (frozen backbone) has patch_size=14 and was pretrained on 518² images (518/14=37
 patches), so its *input* must be 518. That is the only reason 518 is in the pipeline — it is not the real
@@ -172,5 +186,6 @@ under-correction (the r-blind part is unreachable by contract).
 2. **Low-rank / smooth Δ** (§5.2) — the biggest structural fix for the ill-posed through-plane motion.
 3. **Keep/accelerate the aggregator fine-tune** (§5.4) — proven; let it run / speed it up.
 4. **Auxiliary cardiac-phase head** (§5.3) — probe-then-commit; bounded by r-blindness.
-5. **Native-resolution splat** (§4) — cheap sharpness win; needs a head re-fit; PSNR-neutral.
+5. ~~**Native-resolution splat** (§4) — cheap sharpness win~~ — **DROPPED (2026-06-22):** measured −0.13 dB
+   and introduces holes in the sparse regime; the 518 oversampling is beneficial anti-aliasing. Keep 518.
 6. *(deferred)* real-data motion metric + degraded-input augmentation — when real-time transfer is in scope.
