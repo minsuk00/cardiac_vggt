@@ -18,6 +18,13 @@ train_on_residual_dvf: true
 use_z_pose_embedding: true
 use_t_pose_embedding: true
 use_target_t_pose_embedding: true
+# Reference-slice conditioning (docs/25): slot 0 = target-phase reference at the mid-ventricular
+# plane, marked via the native camera_token anchor instead of a target_t index. Default off here
+# (parent config keeps the legacy decoupled behavior); mri_volume.yaml turns it on and disables
+# use_t/use_target_t. `reference_slot` is the DATASET half (slot-0 sampling); `use_reference_token`
+# is the MODEL half (camera_token anchor). They must move together.
+use_reference_token: false
+reference_slot: false
 # Optional 3D UNet refiner on the splat (default OFF ⇒ bit-identical to today).
 enable_refiner: false
 refiner_use_coverage: true   # feed coverage as a 2nd input channel (only used when enabled)
@@ -155,6 +162,7 @@ data:
           gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
+          reference_slot: ${reference_slot}
   val:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
@@ -204,6 +212,7 @@ data:
           gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
+          reference_slot: ${reference_slot}
 
 # Enable Point Head, disable others
 model:
@@ -214,6 +223,7 @@ model:
   use_z_pose_embedding: ${use_z_pose_embedding}
   use_t_pose_embedding: ${use_t_pose_embedding}
   use_target_t_pose_embedding: ${use_target_t_pose_embedding}
+  use_reference_token: ${use_reference_token}
   train_on_residual_dvf: ${train_on_residual_dvf}
   # Optional 3D UNet refiner on the splatted volume (default OFF ⇒ pipeline unchanged).
   enable_refiner: ${enable_refiner}
@@ -221,6 +231,10 @@ model:
   refiner_base_channels: 16
   refiner_levels: 2
   refiner_use_coverage: ${refiner_use_coverage}
+  # Warp head: "dpt" (default per-pixel DPT) or "bspline" (coarse control grid + B-spline
+  # upsample, smooth-by-construction). bspline_grid_size = control points per side.
+  warp_head_type: "dpt"
+  bspline_grid_size: 32
 
 # Configure Loss
 loss:

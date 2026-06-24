@@ -106,7 +106,8 @@ class MultitaskLoss(torch.nn.Module):
         # Direct volume-to-volume loss against the GT phase-0 volume loaded from disk.
         if "world_points" in predictions and self.volume is not None and self.volume.get("weight", 0) > 0:
             vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **self.volume)
-            vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]) * self.volume["weight"]
+            vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]
+                        + vol_loss_dict.get("loss_diffusion", 0.0)) * self.volume["weight"]
             # Deep-supervised refiner term (present only when enable_refiner=true; λ already
             # folded into loss_refiner). OFF ⇒ key absent ⇒ vol_loss unchanged (bitwise).
             if "loss_refiner" in vol_loss_dict:
@@ -299,8 +300,25 @@ def tv_loss(prediction, mask):
     return gradient_loss(pred_flat, torch.zeros_like(pred_flat), mask_flat)
 
 
+def diffusion_loss_l2(field):
+    """L2 diffusion (Tikhonov) smoothness regularizer ‖∇u‖² on a displacement field.
+
+    Mean of SQUARED in-plane (H, W) neighbor differences over a (B, S, H, W, C) field.
+    Unlike `tv_loss` (L1, edge-preserving, ∝|ω|), the squared gradient is ∝ω² and
+    smoothness-promoting — the VoxelMorph diffusion regularizer that actively suppresses
+    high-frequency (e.g. ViT-patch-period) ripples in the predicted warp. fp32-forced so
+    the reduction stays accurate under autocast(bf16).
+    """
+    with torch.cuda.amp.autocast(enabled=False):
+        f = field.float()
+        return (
+            (f[:, :, 1:, :, :] - f[:, :, :-1, :, :]).pow(2).mean()
+            + (f[:, :, :, 1:, :] - f[:, :, :, :-1, :]).pow(2).mean()
+        )
+
+
 def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256), tv_weight=0.1,
-                                  refiner_lambda=1.0, refiner_ssim_weight=0.0, **kwargs):
+                                  diffusion_weight=0.0, refiner_lambda=1.0, refiner_ssim_weight=0.0, **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -358,9 +376,20 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
             + (pos_fp[:, :, :, 1:, :] - pos_fp[:, :, :, :-1, :]).abs().mean()
         ) * tv_weight
 
+    # Optional L2 diffusion regularizer ‖∇u‖² on the DISPLACEMENT field (VoxelMorph-style).
+    # Penalizes squared in-plane gradients of the residual DVF (the true displacement u),
+    # not the absolute world position — so a smooth warp pays nothing and the ViT-patch
+    # ripple is actively suppressed. diffusion_weight=0.0 ⇒ exactly 0.0 ⇒ no-op (bit-identical).
+    if diffusion_weight > 0:
+        u = predictions.get("dvfs", pos_pred)   # residual DVF if present, else world_points
+        loss_diffusion = diffusion_loss_l2(u) * diffusion_weight
+    else:
+        loss_diffusion = pos_pred.new_zeros(())
+
     out = {
         "loss_volume": loss_volume,
         "loss_pos_tv": loss_pos_tv,
+        "loss_diffusion": loss_diffusion,
         "V_canon": V_canon,
         "V_gt": V_gt,
         "coverage": coverage,
@@ -377,7 +406,7 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     # rewards matching GT's local structure/contrast ⇒ pushes sharpness while still
     # penalising hallucinated/misplaced edges (it's reference-based, two-sided). SSIM is
     # contrast-normalised so it's blind to a uniform intensity offset — L1 covers that.
-    # 2D per-slice, NOT 3D: the cube is anisotropic (8 mm Z over 12 slices vs 1.4 mm
+    # 2D per-slice, NOT 3D: the cube is anisotropic (12 mm Z over 12 slices vs 1.4 mm
     # in-plane), so SSIM runs on each axial (H,W) slice independently. w_ssim=0 ⇒ no-op
     # (L1-only, bit-identical to the pre-SSIM refiner).
     V_refined = predictions.get("V_refined")
