@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=5
 #SBATCH --mem=48g
-#SBATCH --time=48:00:00
+#SBATCH --time=14-00:00:00
 #SBATCH --mail-user=minsukc@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE,TIME_LIMIT
 #SBATCH --gpu_cmode=shared
@@ -15,29 +15,32 @@
 #SBATCH --open-mode=append
 
 # --- Configuration ---
-# ED-only variant of train_mri_volume.sh: forces t_target=0 every sample
-# (matches the pre-multi-phase pipeline that produced the 4-day baseline).
+# Target-phase REFERENCE-SLICE conditioning (docs/24, docs/25). mri_volume.yaml is now the
+# reference pipeline: slot 0 = a real target-phase reference slice (mid-ventricular plane),
+# marked via VGGT's native camera_token anchor; the model reads the target phase from slot-0's
+# image content instead of a content-free target_t index. This fixes the flat-EF amplitude
+# regression (pred-EF-vs-true slope ≈0 → expected ≈1) + the target_t=k/12 timing ambiguity.
+#
+# WARM-START: FRESH FROM BASE VGGT-1B (the config default resume path,
+# ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM
+# and CKPT_ONLY empty for that. aggft (aggregator unfrozen, find_unused_parameters=true): ~2.8×
+# slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via mri_volume.yaml
+# (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe), affine aug off.
 CONFIG="mri_volume"
 NGPU=1
 MASTER_PORT=29522
 
-# Force ED-only (t_target=0 every sample). Baked in for this script; do not remove.
-PHASE_OVERRIDE="t_target_fixed=0"
-
-# --- Resume settings (set ONE of these or leave both empty for a fresh run) ---
-# RESUME_FROM: path to a previous run's experiment directory.
-#   Continues SAME exp_name → overwrites that run's checkpoints.
-#   Reuses SAME wandb run id → metrics overlay on the old run's wandb dashboard.
+# --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
+# RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
 RESUME_FROM=""
-
-# CKPT_ONLY: load model weights from this checkpoint but start a FRESH exp dir
-# + FRESH wandb run. Ignored if RESUME_FROM is set.
+# CKPT_ONLY: load weights from a checkpoint into a fresh exp dir. EMPTY here on purpose →
+# fresh-from-base (the config's base-weights resume path is used). Ignored if RESUME_FROM set.
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    JOB_NAME="vggt_${CONFIG}_ed"
+    JOB_NAME="vggt_${CONFIG}_reference"
     if [ ! -z "$RESUME_FROM" ]; then
         JOB_NAME="${JOB_NAME}_resume"
     elif [ ! -z "$CKPT_ONLY" ]; then
@@ -66,15 +69,12 @@ sleep $((SLURM_PROCID * 2))  # stagger startup
 export WANDB_MODE=online
 
 # --- Build Hydra overrides ---
-# REQUEUE_STATE persists the pinned exp_name (and inherited overrides) across requeues.
-# exp_name normally embeds a per-launch reverse timestamp (${rev_ts:}) that would change
-# on every requeue → trainer's checkpoint auto-detect points at a fresh empty dir →
-# restart-from-scratch. Pin it once on first launch, reuse on every restart.
+# REQUEUE_STATE pins exp_name (and EXTRA_OVERRIDES) across requeues so checkpoint auto-detect
+# finds checkpoint_last.pt instead of a fresh rev_ts dir. (See train_mri_volume.sh for detail.)
 REQUEUE_STATE="/home/minsukc/vggt/slurm_logs/.requeue_${SLURM_JOB_ID}.env"
 
 if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
-    # --- Requeue restart: reuse pinned exp_name, resume from THIS run's own
-    #     checkpoint_last.pt (auto-detected from save_dir). ---
+    # Requeue restart: reuse pinned exp_name, resume from THIS run's checkpoint_last.pt.
     source "$REQUEUE_STATE"
     OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
     WANDB_DIR=$(ls -dt "./scratch/logs/${EXP_NAME}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
@@ -84,7 +84,6 @@ if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
     fi
     echo "Requeue restart #${SLURM_RESTART_COUNT}: exp_name=${EXP_NAME}, resume_id=${WANDB_RESUME_ID:-<new>}, extra='${EXTRA_OVERRIDES}'"
 else
-    # --- First launch: decide exp_name, then persist it for requeue restarts. ---
     EXTRA_OVERRIDES=""
     if [ ! -z "$RESUME_FROM" ]; then
         EXP_NAME=$(basename "$RESUME_FROM")
@@ -95,46 +94,37 @@ else
         fi
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH}"
         echo "Resuming (same exp + wandb) from: $CKPT_PATH"
-
         WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
         if [ ! -z "$WANDB_DIR" ]; then
             WANDB_RESUME_ID=$(basename "$WANDB_DIR" | sed -E 's|^(offline-)?run-[0-9_]+-||; s|/$||')
             OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
             echo "Auto-detected WandB resume_id: $WANDB_RESUME_ID"
-        else
-            echo "Warning: no WandB run dir found under $RESUME_FROM/wandb/wandb/ — a new WandB run will be created."
         fi
     elif [ ! -z "$CKPT_ONLY" ]; then
         if [ ! -f "$CKPT_ONLY" ]; then
             echo "ERROR: CKPT_ONLY is set but $CKPT_ONLY does not exist."
             exit 1
         fi
-        # Pin a stable exp_name; carry max_epochs + limit_val_batches across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_dynamic_axial_Cine_combined"
-        EXTRA_OVERRIDES="max_epochs=500 limit_val_batches=30"
+        EXP_NAME="${REV_TS}_mri_volume_reference_dynamic_axial_Cine_combined"
+        EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
-        echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run, max_epochs=500, limit_val_batches=30)"
+        echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run, max_epochs=200)"
     else
-        # Fresh run. Pin a stable exp_name for requeue restarts.
+        # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
+        # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_dynamic_axial_Cine_combined"
-        OVERRIDES="exp_name=${EXP_NAME}"
-        echo "Fresh run: exp_name=${EXP_NAME}"
+        EXP_NAME="${REV_TS}_mri_volume_reference_dynamic_axial_Cine_combined"
+        EXTRA_OVERRIDES="max_epochs=200"
+        OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
+        echo "Fresh-from-base reference run: exp_name=${EXP_NAME}, max_epochs=200"
     fi
     { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi
 
-# Always-on ED-only override (appended last so it can't be accidentally clobbered).
-OVERRIDES="$OVERRIDES $PHASE_OVERRIDE"
-
 echo "Running: torchrun ... --config $CONFIG $OVERRIDES"
 
-# --- SLURM auto-requeue signal forwarding ---
-# SLURM sends SIGUSR1 to THIS batch shell 120s before walltime (--signal=B:USR1@120).
-# torchrun runs in the background; the trap forwards USR1 to torchrun's worker child
-# (launch.py installs a SIGUSR1 handler that runs `scontrol requeue` then exits 0).
-# `wait` after forwarding keeps the job cgroup alive until the worker has exited.
+# --- SLURM auto-requeue signal forwarding (see train_mri_volume.sh) ---
 _forward_usr1() {
     echo "[requeue] batch shell caught SIGUSR1 — forwarding to torchrun workers (children of ${TORCHRUN_PID})"
     pkill -USR1 -P "$TORCHRUN_PID" 2>/dev/null
