@@ -5,7 +5,7 @@ detail the splat smooths away (see `_html/08_breathing_failure_mode.html`: ~75% 
 reconstruction blur is the splat renderer). Small, self-contained, no new deps.
 
 Design:
-  - Anisotropic: pools ONLY H/W (D=12 at 8mm is already coarse; keep it). Convs are 3x3x3.
+  - Anisotropic: pools ONLY H/W (D=12 at 12mm is already coarse; keep it). Convs are 3x3x3.
   - Residual: `V_refined = V_canon + Δ`, with the output conv zero-initialized so Δ≈0 at init
     ⇒ the refiner starts as the identity (gentle warm-up, no early disruption to V_canon).
   - Input channels: V_canon, optionally + coverage (tells the net where data is trustworthy vs

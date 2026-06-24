@@ -4,7 +4,7 @@ Tests for MRIDataset — canonical-grid edition (CMRxRecon2024 / Cine_combined).
 All tests use a synthetic in-memory dataset (conftest.py) — no real data needed.
 
 Canonical contract (post-resample refactor):
-  - Every subject resampled to (1.4, 1.4, 8.0) mm, cropped/padded to (256, 256, 12).
+  - Every subject resampled to (1.4, 1.4, 12.0) mm, cropped/padded to (256, 256, 12).
   - Input slices: canonical 256×256 → bilinear-resize to 518×518 (NO letterbox/pad).
   - scanner_coords: purely geometric, in [-1, +1], same formula for every subject.
   - world_points == scanner_coords (DVF supervision removed).

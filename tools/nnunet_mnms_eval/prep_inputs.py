@@ -3,7 +3,7 @@
 Our val_volumes NIfTIs are saved in splat order (Z,Y,X) with an identity affine
 (1mm isotropic placeholder). nnU-Net resamples by header spacing, so we rewrite
 each volume into nibabel (X,Y,Z) order with the true canonical spacing
-(1.4, 1.4, 8.0) mm. nnU-Net does its own per-image z-score normalization, so the
+(1.4, 1.4, 12.0) mm. nnU-Net does its own per-image z-score normalization, so the
 [-1,1]/percentile-normalized intensities are fine to pass through.
 
 Files are named <case>_0000.nii.gz (single modality 0000) as nnU-Net requires.
@@ -12,7 +12,7 @@ import argparse, glob, os
 import numpy as np
 import nibabel as nib
 
-CANON_SPACING = (1.4, 1.4, 8.0)  # x, y, z mm (see CLAUDE.md "CMR data notes")
+CANON_SPACING = (1.4, 1.4, 12.0)  # x, y, z mm — true CMRx pitch (preprocess.TARGET_SPACING); docs/18
 
 
 def convert(src, dst):

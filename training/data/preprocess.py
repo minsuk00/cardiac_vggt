@@ -5,7 +5,7 @@ monai (X, Y, Z) axis order. The downstream consumer (`mri_dataset.get_data`)
 permutes to splat-order `(T, D=12, H=256, W=256)` once at cache-load time.
 
 Key invariants this pipeline preserves:
-- All subjects map to the same physical cube: 358.4 mm × 358.4 mm × 96 mm.
+- All subjects map to the same physical cube: 358.4 mm × 358.4 mm × 144 mm.
 - Intensity is normalized against phase_00's percentiles for ALL 12 phases,
   so the unsupervised |V_canon - V_gt| loss isn't biased by per-phase drift
   (matches the legacy contract at mri_dataset.py:155-169).
@@ -31,10 +31,14 @@ from monai.transforms import (
     Spacingd,
 )
 
-TARGET_SPACING = (1.4, 1.4, 8.0)        # mm per voxel; ~4% X-downsample for most subjects, Y/Z near-identity
+TARGET_SPACING = (1.4, 1.4, 12.0)       # mm per voxel; ~4% X-downsample for most subjects, Y near-identity.
+                                        # Z=12mm = CMRx TRUE slice pitch (8mm thickness + 4mm gap, CMRxRecon2024
+                                        # protocol). Source NIfTI affines were relabeled 8→12 on disk (the 8mm was
+                                        # slice thickness) so this Spacingd is a Z-identity — see docs/18 +
+                                        # tools/relabel_slice_spacing.py.
 TARGET_SHAPE = (256, 256, 12)           # (X, Y, Z) in monai order
 NUM_PHASES = 12
-HALF_EXTENT_MM_SPLAT = (48.0, 179.2, 179.2)   # (D=Z, H=Y, W=X) — splat-order. 12/2*8.0, 256/2*1.4, 256/2*1.4
+HALF_EXTENT_MM_SPLAT = (72.0, 179.2, 179.2)   # (D=Z, H=Y, W=X) — splat-order. 12/2*12.0, 256/2*1.4, 256/2*1.4
 
 
 # ──────────────────────────────────────────────────────────────────────────────

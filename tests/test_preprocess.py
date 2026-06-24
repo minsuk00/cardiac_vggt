@@ -83,5 +83,5 @@ def test_canonical_content_mask_is_binary_and_nonempty(synthetic_root):
     uniq = set(torch.unique(m).tolist())
     assert uniq.issubset({0, 1}), f"mask must be binary, got values {uniq}"
     assert int(m.sum()) > 0, "content mask must mark the subject's FOV"
-    # Synthetic native FOV (64, 60, 8 @ 1.4,1.4,8.0) < canonical cube → some zero-pad exists.
+    # Synthetic native FOV (64, 60, 8 @ 1.4,1.4,12.0) < canonical cube → some zero-pad exists.
     assert int(m.sum()) < m.numel(), "small-FOV synthetic subject must have some zero-pad"

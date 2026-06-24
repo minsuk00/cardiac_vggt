@@ -54,7 +54,7 @@ def test_zero_displacement_matches_baseline_extractor():
 def test_known_si_shift_one_voxel():
     D, H, W = 8, 4, 4
     V = torch.arange(D, dtype=torch.float32).view(D, 1, 1).expand(D, H, W).contiguous()  # V[z]=z
-    out = reslice_volume(V, d_si_mm=8.0, d_ap_mm=0.0)   # +1 voxel along D (8mm spacing)
+    out = reslice_volume(V, d_si_mm=12.0, d_ap_mm=0.0)  # +1 voxel along D (12mm Z pitch)
     for z in range(D - 1):
         assert float(out[z, 0, 0]) == pytest.approx(z + 1, abs=1e-4)  # samples plane z+1
     assert float(out[D - 1, 0, 0]) == pytest.approx(0.0, abs=1e-4)    # off-stack → padding 0
@@ -100,7 +100,7 @@ def test_batch_equals_loop():
 def test_offstack_shift_reads_zero():
     D, H, W = 8, 8, 8
     V = torch.rand(D, H, W) + 1.0                # strictly positive content
-    out = reslice_volume(V, d_si_mm=8.0 * 20, d_ap_mm=0.0)   # 20 voxels → fully off-stack
+    out = reslice_volume(V, d_si_mm=12.0 * 20, d_ap_mm=0.0)  # 20 voxels → fully off-stack
     assert float(out.abs().max()) < 1e-4
 
 

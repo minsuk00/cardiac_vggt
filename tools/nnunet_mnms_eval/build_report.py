@@ -82,7 +82,7 @@ fine. Two things had to be right:</p>
 <ul>
 <li><b>Geometry.</b> Our <code>val_volumes</code> are saved in splat order <code>(Z,Y,X)</code> with an
 identity affine. We transpose to nibabel <code>(X,Y,Z)</code> and write the true canonical spacing
-<code>(1.4, 1.4, 8.0)</code> mm before inference (else nnU-Net resamples wrong).</li>
+<code>(1.4, 1.4, 12.0)</code> mm before inference (else nnU-Net resamples wrong).</li>
 <li><b>Label convention (critical).</b> The model emits <code>1=LV, 2=MYO, 3=RV</code>; <b>ACDC GT is
 <code>1=RV, 2=MYO, 3=LV</code></b>. We remap per structure when scoring against ACDC. Forget this and
 LV/RV Dice collapse to ~0.</li>
