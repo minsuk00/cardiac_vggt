@@ -10,7 +10,7 @@ aggregator-finetuned weights (only patch_embed was frozen — irrelevant at eval
 
 mm/norm (splat align_corners, pos=(p+1)/2*(size-1)):
     in-plane (256 vox @1.4mm) → 178.5 mm per norm unit (Δx, Δy)
-    through  (12 vox  @8.0mm) →  44.0 mm per norm unit (Δz)
+    through  (12 vox  @12.0mm) →  66.0 mm per norm unit (Δz)
 
 Run: PYTHONPATH=training:. micromamba run -n svr python tools/dump_predicted_dvf.py
 """
@@ -39,7 +39,7 @@ SPLIT_FILE = str(ROOT / "training/splits/random_8_1_1.txt")
 OUT_PNG = str(ROOT / "result/predicted_dvf_ranges.png")
 NUM_SLICES = 12
 IN_PLANE_MM = (256 - 1) / 2.0 * 1.4      # 178.5
-THROUGH_MM = (12 - 1) / 2.0 * 8.0        # 44.0
+THROUGH_MM = (12 - 1) / 2.0 * 12.0       # 66.0 (12mm true pitch)
 MASK_THRESH = 0.05                        # input-intensity gate (real anatomy pixels)
 
 

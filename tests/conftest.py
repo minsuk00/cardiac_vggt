@@ -17,14 +17,14 @@ def pytest_configure(config):
 # NUM_PHASES. Spatial shape kept small for fast tests; it resamples into the
 # fixed canonical (256, 256, 12) cube, occupying a centered sub-region.
 SYN_W, SYN_H, SYN_Z, SYN_T = 64, 60, 8, 12
-SYN_SPACING = (1.4, 1.4, 8.0)
+SYN_SPACING = (1.4, 1.4, 12.0)  # mirrors the on-disk-relabeled CMRx (true 12mm pitch); Spacingd→12 = Z-identity
 
 
 @pytest.fixture(scope="module")
 def synthetic_root(tmp_path_factory):
     """
     Creates a minimal Cine_combined-like directory:
-      Train_P001/sax/3d_recon/sax_frame_{00..11}.nii.gz  — shape (64, 60, 8), spacing (1.4, 1.4, 8.0)
+      Train_P001/sax/3d_recon/sax_frame_{00..11}.nii.gz  — shape (64, 60, 8), spacing (1.4, 1.4, 12.0)
       Val_P001/sax/...  — same structure
       splits/default.txt       — Train_P001 in [train], Val_P001 in [val]
       splits/overfit_p001.txt  — Train_P001 in both [train] and [val]

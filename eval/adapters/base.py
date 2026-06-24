@@ -15,10 +15,10 @@ INPUT_IMG_SIZE = 518
 TARGET_INPLANE_MM = 1.4
 GRID_SHAPE = (12, 256, 256)          # (D, H, W) canonical splat grid
 D_CANON = GRID_SHAPE[0]
-CANON_Z_SPACING_MM = 8.0             # canonical plane spacing
+CANON_Z_SPACING_MM = 12.0            # canonical plane spacing = CMRx true pitch (was 8mm thickness); docs/18
 PCT_LO, PCT_HI = 0.5, 99.9           # matches ScaleIntensityByT0PercentilesD
-# in-plane: (256-1)/2 * 1.4 mm ; through-plane: (12-1)/2 * 8.0 mm  (norm[-1,1] -> mm)
-MM_PER_NORM = (178.5, 178.5, 44.0)
+# in-plane: (256-1)/2 * 1.4 mm ; through-plane: (12-1)/2 * 12.0 mm  (norm[-1,1] -> mm)
+MM_PER_NORM = (178.5, 178.5, 66.0)
 DEFAULT_CKPT = ("scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t/"
                 "ckpts/checkpoint_last.pt")
 
@@ -37,7 +37,8 @@ def percentile_scale(cine):
 
 def assign_canonical_z(positions):
     """Map each physical slice to a canonical z-index using the TRUE slice spacing
-    (center-to-center along the stack axis, ~10 mm), not the 8 mm thickness.
+    (center-to-center along the stack axis, ~10 mm for OCMR), not the 8 mm thickness.
+    Canonical planes are CANON_Z_SPACING_MM (12 mm) apart — the CMRx true pitch.
     Returns list of (z_canon_idx, slice_idx) for slices landing in [0, D-1];
     on collision keeps the slice closest to that plane center. No through-plane interp."""
     pos = np.asarray(positions, dtype=np.float64)       # (nS, 3) scanner mm

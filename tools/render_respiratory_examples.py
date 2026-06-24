@@ -13,7 +13,7 @@ training augmentation uses (so the panels show exactly what training applies):
   combined.png      — multi-phase (beating + breathing), axial at a fixed plane.
 
 All grayscale panels use nearest-neighbour display (no smoothing) so the 12-plane
-(8 mm) through-plane sampling is shown honestly, not smeared.
+(12 mm) through-plane sampling is shown honestly, not smeared.
 
 No model/checkpoint — a pure data-transform visualization.
 
@@ -72,7 +72,7 @@ def heart_center(mask):
 
 
 def title_for(d_mm):
-    return f"d={d_mm:+.0f}mm ({d_mm / 8.0:+.2f} vox)"
+    return f"d={d_mm:+.0f}mm ({d_mm / 12.0:+.2f} vox)"
 
 
 def shifted(V, d):
@@ -150,7 +150,7 @@ def render_reslice_sweep(path, V, center, vmax):
     for r, lab in zip(range(4), ["coronal (D×W)", "Δ vs rest", "sagittal (D×H)", "Δ vs rest"]):
         axes[r, 0].set_ylabel(lab, fontsize=10)
     fig.suptitle(f"Respiratory sweep — single cardiac phase t={T_FIXED}. Depth axis D vertical "
-                 f"(12 planes @ 8mm, nearest-interp). Δ = shifted − rest.", fontsize=11, y=1.0)
+                 f"(12 planes @ 12mm, nearest-interp). Δ = shifted − rest.", fontsize=11, y=1.0)
     fig.tight_layout(); fig.savefig(path, bbox_inches="tight", facecolor="white"); plt.close(fig)
 
 

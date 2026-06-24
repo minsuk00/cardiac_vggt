@@ -12,7 +12,7 @@ The reconstruction target and `scanner_coords` stay at the unshifted end-
 expiration reference — the model learns to *correct* breathing (blind to `r`).
 
 Geometry (splat order, matching `gpu_aug.py` / `mri_dataset.py`):
-    phases  (B, T=12, D=12, H=256, W=256)   spacing (D=Z=8.0, H=Y=1.4, W=X=1.4) mm
+    phases  (B, T=12, D=12, H=256, W=256)   spacing (D=Z=12.0, H=Y=1.4, W=X=1.4) mm
     D = SI (through-plane)   H/W = in-plane (AP vs LR not recoverable → AP axis
     is configurable, default H).
 
@@ -34,7 +34,7 @@ import torch.nn.functional as F
 INPUT_IMG_SIZE = 518          # DINOv2 input — must match MRIDataset.target_size
 CANON_HW = 256
 CANON_D = 12
-SPACING_MM = (8.0, 1.4, 1.4)  # (D=Z, H=Y, W=X) mm — canonical cube
+SPACING_MM = (12.0, 1.4, 1.4)  # (D=Z, H=Y, W=X) mm — canonical cube (Z=true CMRx pitch, was thickness 8.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -158,7 +158,7 @@ def _rotate_disp(v, theta, phi):
     toward the in-plane direction `(cosφ along H, sinφ along W)`. Rotation is rigid →
     **mm magnitude is preserved**; θ=0 → identity (v unchanged). Applied to the WHOLE
     SI+AP vector (SI and AP tilt together as a coupled rigid unit), in PHYSICAL mm
-    space (so the anisotropic 8 mm D vs 1.4 mm in-plane spacing is handled later, by
+    space (so the anisotropic 12 mm D vs 1.4 mm in-plane spacing is handled later, by
     per-axis normalization in the reslice core — NOT here).
     """
     kD = torch.zeros_like(phi)

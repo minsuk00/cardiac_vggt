@@ -83,7 +83,7 @@ def build_gpu_transforms(aug_cfg=None):
     if tier == "conservative":
         # Conservative tier: in-plane H-flip, ±5° in-plane rotation, small
         # translate/scale, light photometric. NO through-plane rotation
-        # (slices are physically anisotropic 8 mm Z vs 1.4 mm X/Y), NO elastic
+        # (slices are physically anisotropic 12 mm Z vs 1.4 mm X/Y), NO elastic
         # (defer to moderate tier once conservative is stable).
         # batchaug is POSITIONAL, not semantic: each tuple slot i maps to tensor
         # spatial dim i+2 (our dims are D=0, H=1, W=2 after the channel). BUT
@@ -114,7 +114,7 @@ def build_gpu_transforms(aug_cfg=None):
 
     if tier == "moderate":
         # Moderate tier: same IN-PLANE-ONLY discipline as conservative (NO
-        # through-plane rotation, NO elastic — Z is 8 mm anisotropic), but with
+        # through-plane rotation, NO elastic — Z is 12 mm anisotropic), but with
         # stronger ranges and higher fire-probabilities so the effect is clearly
         # visible and provides real regularization rather than near-identity draws.
         # Same positional/plane semantics as the conservative block above:
@@ -139,7 +139,7 @@ def build_gpu_transforms(aug_cfg=None):
 
     if tier == "aggressive":
         # Aggressive tier: still IN-PLANE ONLY (no through-plane rotation, no
-        # elastic — Z is 8 mm anisotropic), but large, clearly-visible ranges and
+        # elastic — Z is 12 mm anisotropic), but large, clearly-visible ranges and
         # high fire-probabilities for strong regularization. Same plane/axis
         # semantics as the blocks above (rotate slot 0 = in-plane H-W;
         # translate/scale slots = (D,H,W) with D frozen; flip W = in-plane L-R).
