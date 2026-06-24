@@ -140,6 +140,28 @@ def window_pct(sl, V):
     return np.clip((sl - lo) / (hi - lo + 1e-9), 0, 1)
 
 
+def save_refined_niftis(new_outs, out_dir):
+    """Dump the newseed-ckpt V_refined volume (row 3) per mode/subject as NIfTI.
+
+    Identity affine — V_refined lives in the dimensionless canonical [-1,1] grid
+    (12,256,256)=(Z,Y,X), same convention as trainer.save_val_volumes.
+    """
+    import nibabel as nib
+    os.makedirs(out_dir, exist_ok=True)
+    labels_by_mode = {"val_ON": [f"seq{i}" for i in VAL_SEQS],
+                      "val_OFF": [f"seq{i}" for i in VAL_SEQS],
+                      "OCMR": OCMR_SUBJECTS, "Goett": GOTT_SUBJECTS,
+                      "MIITT": MIITT_SUBJECTS}
+    affine = np.eye(4, dtype=np.float32)
+    for mode, outs in new_outs.items():
+        for (_V_canon, V_ref), lbl in zip(outs, labels_by_mode[mode]):
+            if V_ref is None:
+                continue
+            path = os.path.join(out_dir, f"{mode}_{lbl}_Vrefined.nii.gz")
+            nib.save(nib.Nifti1Image(V_ref.astype(np.float32), affine), path)
+            print(f"  wrote {path}")
+
+
 def render_5row(rows_data, labels, title, path):
     N = len(labels)
     fig, axes = plt.subplots(5, N, figsize=(N * 3.0, 15.0))
@@ -230,6 +252,9 @@ def main():
         ]
         render_5row(rows, labels, title,
                     os.path.join(OUT, f"five_row_{key}.png"))
+
+    print("\nSaving newseed V_refined NIfTIs ...")
+    save_refined_niftis(new_outs, os.path.join(OUT, "nifti_newseed_refined"))
 
 
 if __name__ == "__main__":
