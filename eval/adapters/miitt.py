@@ -4,16 +4,20 @@ Reads the converted real-time NIfTI `<vol>/realtime/sax/4d_recon.nii.gz`
 (X=128, Y=128, Z=13, T=180 frames), produced by `tools/convert_miitt_to_nifti.py`.
 
 WARNING — PLACEHOLDER spacing. The MIITT .mat files carry no spatial metadata; the
-in-plane (2.6 mm) and slice (8.0 mm) spacings are literature/CMRxRecon-based ESTIMATES
-(see convert_miitt_to_nifti.py). They are fine for qualitative beating-heart inference but
-NOT for physical distances / EF. `run_rtfb.py` prints a warning when `SPACING_IS_PLACEHOLDER`.
+in-plane (2.1 mm) and slice (8.0 mm) spacings are ESTIMATES. They are fine for qualitative
+beating-heart inference but NOT for physical distances / EF. `run_rtfb.py` prints a warning
+when `SPACING_IS_PLACEHOLDER`.
+
+2.1 mm in-plane is LV-size-calibrated (docs/23 follow-up): at 2.6 mm the MIITT LV cavity came
+out ~20% larger than the in-dist GT reference (59 vs 49 mm ⌀); 2.6 × 49/59 ≈ 2.1 mm brings it
+in line and reduces the low-res-splat gridding. Replace with the true FOV/matrix when available.
 """
 import numpy as np
 import nibabel as nib
 
 from eval.adapters.base import BaseRTFBAdapter
 
-INPLANE_MM = (2.6, 2.6)          # PLACEHOLDER — convert_miitt_to_nifti SPACING["realtime"]
+INPLANE_MM = (2.1, 2.1)          # PLACEHOLDER — LV-size-calibrated (docs/23); was 2.6
 SLICE_SPACING_MM = 8.0           # PLACEHOLDER
 SPACING_IS_PLACEHOLDER = True
 
