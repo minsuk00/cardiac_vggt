@@ -14,48 +14,38 @@
 #SBATCH --signal=B:USR1@120
 #SBATCH --open-mode=append
 
-# =============================================================================
-# RESPIRATORY run 2/3 — breathing ON, z input embedding but NO input-t embedding.
-# Head + aggregator finetune (only DINOv2 patch_embed frozen), all 12 cardiac
-# target phases, fresh from VGGT-1B base, SLURM auto-requeue.
+# --- Configuration ---
+# B-SPLINE-HEAD variant of the reference run (docs/24, docs/25). Identical to
+# train_mri_volume_reference.sh EXCEPT the warp head: mri_volume_bspline.yaml uses the B-spline
+# control-grid head (warp_head_type=bspline, grid 32) instead of the per-pixel DPT head (keeps the
+# L1 TV reg). Everything else inherits mri_volume: reference-slice conditioning (slot 0 =
+# target-phase reference via the camera_token anchor), aggft (freeze only patch_embed), NO refiner,
+# respiration ON, max_epochs=200.
 #
-# Same as run 1/3 but use_t_pose_embedding=false: the model no longer knows which
-# cardiac phase each INPUT slice came from (blind to input t — the realistic
-# one-frame-per-slice regime where input t is unavailable). target_t stays ON
-# (use_target_t_pose_embedding=true) — it's always a free query. Tests whether
-# input-t conditioning matters once the model must content-infer cardiac phase.
-#
-# COMPARISON SET (identical except the embedding/aug knobs):
-#   1        breathing, use_z=T use_t=T          → input z + input t conditioning
-#   2 (this) breathing, use_z=T use_t=F          → drop input-t conditioning
-#   3        breathing + affine aug, use_z=T use_t=F
-# All three keep use_target_t_pose_embedding=true (target_t is always available).
-#
-# Unfreezing the aggregator exposes params with no gradient in the point-only
-# forward → DDP needs find_unused_parameters=true even on 1 GPU. ~27GB on the A40,
-# ~2.8x slower than head-only. 200 epochs (limit_train_batches=1000, 1 GPU).
-# =============================================================================
-
-# ---- PER-RUN CONFIG (the only block that differs across the run scripts) ----
-CONFIG="mri_volume"
+# WARM-START: FRESH FROM BASE VGGT-1B (config default resume path,
+# ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM and
+# CKPT_ONLY empty. aggft: ~2.8× slower, ~27 GB/A40. (The B-spline head's params differ from DPT, so
+# it always trains from scratch regardless of warm-start — it's small/fast.)
+CONFIG="mri_volume_bspline"
 NGPU=1
-EXP_TAG="mri_volume_resp_allphases_aggft_z_no_t"
-RUN_OVERRIDES="max_epochs=200 data.augmentation.respiratory.enable=true use_z_pose_embedding=true use_t_pose_embedding=false use_target_t_pose_embedding=true optim.frozen_module_names=[*patch_embed*] distributed.find_unused_parameters=true logging.wandb_writer.tags=[mri_volume,allphases,multiphase,aggft,resp,no_t]"
-MASTER_PORT=29552
-# -------------------------------------------------------------------------------
+MASTER_PORT=29524
 
-# RESUME_FROM: path to a previous run's experiment dir → continue SAME exp_name +
-#   SAME wandb run, resuming epoch/optimizer/scaler from its checkpoint_last.pt.
-#   RUN_OVERRIDES (architecture/freeze knobs) are re-applied so the resumed model
-#   matches the checkpoint. Leave "" for a fresh-from-base run.
-RESUME_FROM="/home/minsukc/vggt/scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t"
+# --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
+RESUME_FROM=""
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    JOB_NAME="vggt_${EXP_TAG}"
+    JOB_NAME="vggt_${CONFIG}"
+    if [ ! -z "$RESUME_FROM" ]; then
+        JOB_NAME="${JOB_NAME}_resume"
+    elif [ ! -z "$CKPT_ONLY" ]; then
+        JOB_NAME="${JOB_NAME}_ckptonly"
+    fi
+
     mkdir -p /home/minsukc/vggt/slurm_logs/
+
     echo "Submitting: $JOB_NAME"
     sbatch --job-name="$JOB_NAME" \
            --output="/home/minsukc/vggt/slurm_logs/${TIMESTAMP}_${JOB_NAME}_%j.log" \
@@ -76,10 +66,12 @@ sleep $((SLURM_PROCID * 2))  # stagger startup
 export WANDB_MODE=online
 
 # --- Build Hydra overrides ---
-# REQUEUE_STATE persists the pinned exp_name + EXTRA_OVERRIDES across requeues.
+# REQUEUE_STATE pins exp_name (and EXTRA_OVERRIDES) across requeues so checkpoint auto-detect
+# finds checkpoint_last.pt instead of a fresh rev_ts dir. (See train_mri_volume.sh for detail.)
 REQUEUE_STATE="/home/minsukc/vggt/slurm_logs/.requeue_${SLURM_JOB_ID}.env"
 
 if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
+    # Requeue restart: reuse pinned exp_name, resume from THIS run's checkpoint_last.pt.
     source "$REQUEUE_STATE"
     OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
     WANDB_DIR=$(ls -dt "./scratch/logs/${EXP_NAME}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
@@ -89,40 +81,47 @@ if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
     fi
     echo "Requeue restart #${SLURM_RESTART_COUNT}: exp_name=${EXP_NAME}, resume_id=${WANDB_RESUME_ID:-<new>}, extra='${EXTRA_OVERRIDES}'"
 else
-    # First launch. RUN_OVERRIDES (architecture/freeze knobs) always apply and are
-    # persisted so requeue restarts keep them.
-    EXTRA_OVERRIDES="${RUN_OVERRIDES}"
+    EXTRA_OVERRIDES=""
     if [ ! -z "$RESUME_FROM" ]; then
-        # Continue same experiment dir + same wandb run.
         EXP_NAME=$(basename "$RESUME_FROM")
         CKPT_PATH="${RESUME_FROM}/ckpts/checkpoint_last.pt"
         if [ ! -f "$CKPT_PATH" ]; then
             echo "ERROR: RESUME_FROM is set but $CKPT_PATH does not exist."
             exit 1
         fi
-        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH} ${EXTRA_OVERRIDES}"
+        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH}"
         echo "Resuming (same exp + wandb) from: $CKPT_PATH"
-        # Re-attach the same wandb run.
         WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
         if [ ! -z "$WANDB_DIR" ]; then
             WANDB_RESUME_ID=$(basename "$WANDB_DIR" | sed -E 's|^(offline-)?run-[0-9_]+-||; s|/$||')
             OVERRIDES="$OVERRIDES +logging.wandb_writer.resume_id=${WANDB_RESUME_ID}"
             echo "Auto-detected WandB resume_id: $WANDB_RESUME_ID"
-        else
-            echo "Warning: no WandB run dir found under $RESUME_FROM/wandb/wandb/ — a new WandB run will be created."
         fi
-    else
+    elif [ ! -z "$CKPT_ONLY" ]; then
+        if [ ! -f "$CKPT_ONLY" ]; then
+            echo "ERROR: CKPT_ONLY is set but $CKPT_ONLY does not exist."
+            exit 1
+        fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_${EXP_TAG}"
+        EXP_NAME="${REV_TS}_mri_volume_bspline_dynamic_axial_Cine_combined"
+        EXTRA_OVERRIDES="max_epochs=200"
+        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
+        echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run, max_epochs=200)"
+    else
+        # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
+        # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
+        REV_TS=$((2000000000 - $(date +%s)))
+        EXP_NAME="${REV_TS}_mri_volume_bspline_dynamic_axial_Cine_combined"
+        EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
-        echo "Fresh run: exp_name=${EXP_NAME}  overrides='${EXTRA_OVERRIDES}'"
+        echo "Fresh-from-base bspline run: exp_name=${EXP_NAME}, max_epochs=200"
     fi
     { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi
 
 echo "Running: torchrun ... --config $CONFIG $OVERRIDES"
 
-# --- SLURM auto-requeue signal forwarding ---
+# --- SLURM auto-requeue signal forwarding (see train_mri_volume.sh) ---
 _forward_usr1() {
     echo "[requeue] batch shell caught SIGUSR1 — forwarding to torchrun workers (children of ${TORCHRUN_PID})"
     pkill -USR1 -P "$TORCHRUN_PID" 2>/dev/null
@@ -131,7 +130,6 @@ _forward_usr1() {
 trap _forward_usr1 USR1
 
 export PYTHONPATH=training:.
-set -f
 torchrun \
     --nproc_per_node=$NGPU \
     --master_port=$MASTER_PORT \
