@@ -1037,10 +1037,10 @@ class Trainer:
             p99 = float(np.percentile(np.abs(pred_dvf), 99))
             # Normalized [-1,1] residual → physical mm (align_corners convention:
             # 1 norm unit = (size-1)/2 * spacing). In-plane (256 vox @1.4mm) and
-            # through-plane (12 vox @8mm) have very different mm/norm, so the colorbars
+            # through-plane (12 vox @12mm) have very different mm/norm, so the colorbars
             # are per-axis (a single norm range would make Δz look ~4x bigger than it is).
             IN_PLANE_MM = (256 - 1) / 2.0 * 1.4      # ≈178.5 mm per norm unit (Δx, Δy)
-            THROUGH_MM = (12 - 1) / 2.0 * 8.0        # ≈44.0 mm per norm unit (Δz)
+            THROUGH_MM = (12 - 1) / 2.0 * 12.0       # ≈66.0 mm per norm unit (Δz); 12mm true pitch
             IN_PLANE_R = 15.0                         # in-plane colorbar half-range (mm)
             THROUGH_R = 25.0                          # through-plane colorbar half-range (mm)
 
@@ -1326,7 +1326,13 @@ class Trainer:
                 ("val_motion_refined", self._per_phase_val_psnr_motion_refined,
                  self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
             ]:
-                if self.t_target_fixed is not None or len(accum) == 0:
+                if len(accum) == 0:
+                    continue
+                # Single-phase runs log ONLY the motion panels: full/bbox already go to the
+                # standard Loss/val_metric_* meters, so per-phase full/bbox would be redundant
+                # (that's why fixed-phase originally skipped this loop entirely). Motion is the
+                # one metric the standard meters don't cover, so it must still be logged.
+                if self.t_target_fixed is not None and not namespace.startswith("val_motion"):
                     continue
                 try:
                     all_psnrs = []
@@ -1681,9 +1687,12 @@ class Trainer:
 
         # ── Val-only diagnostic: per-phase PSNR accumulation (gated, never touches train) ──
         # Compute per-sample PSNR from V_canon/V_gt and bucket by the batch's t_target.
+        # Runs in BOTH phase modes: multi-phase buckets across all 12 t_targets; single-phase
+        # (t_target_fixed) buckets everything under its one fixed phase. The logging side then
+        # selects which panels to emit — single-phase logs only val_motion (see the gate below).
         # All conditions must hold; if anything raises, we log a warning and continue —
         # diagnostics must NEVER crash training.
-        if (phase == "val" and self.t_target_fixed is None
+        if (phase == "val"
                 and "V_canon" in data and "V_gt" in data and "t_target" in data):
             try:
                 from loss import compute_motion_mask

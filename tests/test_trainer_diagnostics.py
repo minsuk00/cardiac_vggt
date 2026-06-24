@@ -119,13 +119,20 @@ def test_per_phase_accumulator_skipped_for_train_phase():
         f"train phase incorrectly populated val accumulator: {dict(stub._per_phase_val_psnr_full)}"
 
 
-def test_per_phase_accumulator_skipped_when_t_target_fixed():
-    """Val calls with t_target_fixed set must NOT accumulate per-phase PSNR."""
+def test_per_phase_accumulator_runs_when_t_target_fixed():
+    """Fixed-target val NOW accumulates (bucketed under the single fixed phase) so the motion
+    scalar can still be logged. Previously the whole block was skipped, which dropped motion —
+    the headline metric — for single-phase runs. The per-phase full/bbox panels are filtered
+    out at LOG time (val_epoch), not here: this path just fills the accumulators.
+    """
     stub = _make_stub_trainer(t_target_fixed=0)
-    data = _make_data([0, 0, 0])
-    stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr_full) == 0, \
-        f"fixed-target mode populated accumulator: {dict(stub._per_phase_val_psnr_full)}"
+    # Two val batches (B=2 each), phases present so motion is computed; all t_target=0.
+    for _ in range(2):
+        stub._update_and_log_scalars(_make_data_with_phases([0, 0]), phase="val", step=0, loss_meters={})
+    # Motion + full bucket under the one fixed phase 0 (4 samples total).
+    assert {t: len(v) for t, v in stub._per_phase_val_psnr_motion.items()} == {0: 4}, \
+        f"fixed-target motion not accumulated under phase 0: {dict(stub._per_phase_val_psnr_motion)}"
+    assert {t: len(v) for t, v in stub._per_phase_val_psnr_full.items()} == {0: 4}
 
 
 def test_per_phase_accumulator_handles_missing_keys():
