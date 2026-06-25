@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO = "/home/minsukc/vggt"
-OUT = os.path.join(REPO, "_html", "28_reference_conditioning_ef_recovery.html")
+OUT = os.path.join(REPO, "_html", "23_reference_conditioning_ef_recovery.html")
 
 # (name, color, analysis-json, vols-dir, epoch-note)
 MODELS = [
@@ -73,28 +73,40 @@ for name, col, jpath, vdir, note in MODELS:
 
 NAMES = [n for n, *_ in MODELS if n in DATA]
 
+# Prior target_t-index baseline EF data (docs/24) — for a consistent scatter panel.
+BASELINE = load("scratch/phase_analysis/model_contraction.json")
+BSTAT = stats(BASELINE) if BASELINE is not None else None
+
 
 # ─────────────────────────────────────────────────────────────────────
-# FIG 1 — EF scatter (pred vs true) per model, with regression + identity
+# FIG 1 — EF scatter (pred vs true): target_t baseline + the 3 reference models.
+# Fixed 0–100 axes so the flat (baseline) vs sloped (reference) clouds are obvious.
 # ─────────────────────────────────────────────────────────────────────
 def fig_ef_scatter():
-    n = len(NAMES)
-    fig, axes = plt.subplots(1, n, figsize=(5.0 * n, 4.6), squeeze=False)
-    for ax, name in zip(axes[0], NAMES):
-        st = DATA[name]["stat"]; col = DATA[name]["col"]
-        ax.scatter(st["gt"], st["pr"], c=col, s=42, alpha=0.8, edgecolor="white", linewidth=0.6, zorder=3)
-        xs = np.linspace(st["gt"].min() - 2, st["gt"].max() + 2, 50)
-        ax.plot(xs, st["slope"] * xs + st["intcpt"], color=col, lw=2,
-                label=f"fit: slope={st['slope']:+.2f}\nr={st['r']:+.2f}")
-        ax.plot(xs, xs, "--", color="0.6", lw=1, label="identity (slope 1)")
+    panels = []
+    if BSTAT is not None:
+        panels.append(("target_t index", "prior baseline (docs/24)", BSTAT, "#888"))
+    for name in NAMES:
+        panels.append((name, DATA[name]["note"], DATA[name]["stat"], DATA[name]["col"]))
+    n = len(panels)
+    fig, axes = plt.subplots(1, n, figsize=(4.6 * n, 4.8), squeeze=False)
+    for ax, (name, note, st, col) in zip(axes[0], panels):
+        ax.scatter(st["gt"], st["pr"], c=col, s=46, alpha=0.85, edgecolor="white", linewidth=0.6, zorder=3)
+        xs = np.linspace(0, 100, 50)
+        ax.plot(xs, st["slope"] * xs + st["intcpt"], color=col, lw=2.2,
+                label=f"fit: slope={st['slope']:+.2f}, r={st['r']:+.2f}")
+        ax.plot(xs, xs, "--", color="0.55", lw=1, label="identity (slope 1)")
+        ax.set_xlim(0, 100); ax.set_ylim(0, 100)
+        ax.set_aspect("equal", adjustable="box")
         ax.set_xlabel("true EF (%)  [nnU-Net on V_gt]")
         ax.set_ylabel("predicted EF (%)  [nnU-Net on V_canon]")
-        ax.set_title(f"{name}\n{DATA[name]['note']}", fontsize=11)
-        ax.legend(fontsize=9, loc="upper left")
+        ax.set_title(f"{name}\n{note}", fontsize=11)
+        ax.legend(fontsize=8.5, loc="upper left")
         ax.grid(alpha=0.25)
-    fig.suptitle("Per-patient predicted vs true ejection fraction — amplitude recovery "
-                 "(prior target_t-index baseline: slope −0.03, r −0.02 = FLAT)",
-                 fontsize=12, y=1.04)
+    fig.suptitle("Per-patient predicted vs true EF (axes fixed 0–100). LEFT = prior target_t "
+                 "index: horizontal cloud = every patient predicted ~48% = FLAT. "
+                 "RIGHT 3 = reference models: sloped, tight clouds = pred-EF tracks each patient.",
+                 fontsize=11.5, y=1.02)
     return fig_b64(fig)
 
 
@@ -128,32 +140,33 @@ def fig_bars():
 # FIG 3 — per-patient LV-volume-vs-phase curves (a few example subjects)
 # ─────────────────────────────────────────────────────────────────────
 def fig_curves(n_ex=4):
-    # pick example subjects spanning the GT-EF range (using the first model's rows)
+    # pick example subjects spanning the GT-EF range (low -> high true EF)
     base = DATA[NAMES[0]]["stat"]
     order = np.argsort(base["gt"])
     pick = [order[int(k)] for k in np.linspace(0, len(order) - 1, n_ex)]
     subjects = [base["rows"][i]["subj"] for i in pick]
-    fig, axes = plt.subplots(1, n_ex, figsize=(4.2 * n_ex, 4.0), squeeze=False)
+    fig, axes = plt.subplots(1, n_ex, figsize=(4.4 * n_ex, 4.2), squeeze=False)
     for ax, subj in zip(axes[0], subjects):
-        # GT curve (same across models) from first model's row
         row0 = next(r for r in base["rows"] if r["subj"] == subj)
-        gtc = np.array(row0["gt"]); gtc = gtc / gtc.max() * 100
-        ax.plot(range(12), gtc, "k-o", lw=2.2, ms=4, label=f"GT (EF {row0['gt_ef']:.0f}%)", zorder=5)
+        gtc = np.array(row0["gt"])  # ABSOLUTE mL (no normalization)
+        ax.plot(range(12), gtc, "k-o", lw=2.4, ms=4, label=f"GT (EF {row0['gt_ef']:.0f}%)", zorder=5)
         for name in NAMES:
             st = DATA[name]["stat"]
             r = next((x for x in st["rows"] if x["subj"] == subj), None)
             if r is None:
                 continue
-            pc = np.array(r["pred"]); pc = pc / pc.max() * 100
-            ax.plot(range(12), pc, "-o", color=DATA[name]["col"], lw=1.6, ms=3,
+            ax.plot(range(12), np.array(r["pred"]), "-o", color=DATA[name]["col"], lw=1.7, ms=3,
                     alpha=0.85, label=f"{name} (EF {r['pred_ef']:.0f}%)")
-        ax.set_title(subj, fontsize=10)
+        ax.set_title(f"{subj}\ntrue EF {row0['gt_ef']:.0f}%", fontsize=10)
         ax.set_xlabel("cardiac phase  t (k/12)")
-        ax.set_ylabel("LV blood-pool vol (% of max)")
+        ax.set_ylabel("LV blood-pool volume (mL)")
+        ax.set_ylim(bottom=0)
         ax.legend(fontsize=7.5)
         ax.grid(alpha=0.25)
-    fig.suptitle("LV-volume-vs-phase: SHAPE/timing tracked per patient (curves normalized to max); "
-                 "absolute swing compressed by splat-blur", fontsize=12, y=1.04)
+    fig.suptitle("Absolute LV volume across the cycle (mL). All models DIP at the right phase (timing). "
+                 "The DPT heads' dips are SHALLOW (renderer-compressed amplitude), bspline's deeper — "
+                 "but dip DEPTH scales with the patient's true EF (left→right), which is the fix.",
+                 fontsize=11, y=1.04)
     return fig_b64(fig)
 
 
@@ -314,18 +327,33 @@ shape</b>, and read the slope as a lower bound. (3) These are <b>observed-phase<
 true slices slope 1.03 → the architecture can reach 1.0 when it observes the target phase).</i></p>
 
 <h2>1 · Per-patient EF: predicted vs true</h2>
-<p>Each dot is one held-out subject. A flat (horizontal) cloud = regression to the cohort mean
-(the old failure). A positively-sloped, tight cloud = the model reads per-patient contraction
-amplitude from the reference slice.</p>
+<p>Each dot is one held-out subject; axes fixed 0–100% so the shape of the cloud is honest.
+The <b>leftmost panel is the prior <code>target_t</code> index model</b> — a <b>horizontal</b> cloud
+at ~48%: every patient predicted the same EF regardless of truth (r −0.02 = the flat-EF failure).
+The three reference models show <b>positively-sloped, tight</b> clouds: predicted EF rises with the
+patient's true EF (r +0.73…+0.87) — the model reads per-patient amplitude from the reference slice.
+(The clouds sit <i>below</i> the identity line because the splat renderer compresses absolute EF; the
+slope/correlation, not the absolute height, is what shows the fix.)</p>
 <img src="data:image/png;base64,{F_scatter}">
 
 <h2>2 · Correlation &amp; slope vs baseline and oracle</h2>
 <img src="data:image/png;base64,{F_bars}">
 
 <h2>3 · LV-volume across the cardiac cycle (example patients)</h2>
-<p>Curves normalized to each curve's max so the <i>shape and timing</i> are comparable. The predicted
-curves follow GT's contraction/relaxation shape (curve corr ≈ {ref['curve_corr']:.2f}); the absolute
-depth is compressed by the renderer.</p>
+<p>These curves are the <b>nnU-Net LV blood-pool volumes</b> (the data behind the EF numbers) — <b>not</b>
+the image filmstrips in §5. Shown in <b>absolute mL</b>, low→high true-EF patients left→right. Two
+distinct things to read here:</p>
+<ul>
+<li><b>Timing</b> — every model dips at the correct phase; shape corr ≈ {ref['curve_corr']:.2f}.</li>
+<li><b>Amplitude</b> — the DPT heads (reference, diffusion) render <i>shallow</i> dips and bspline a
+<i>deeper</i> one. <b>This shallow-vs-deep is RENDERING (splat-blur), not model quality</b>: the smooth
+bspline warp yields a sharper <code>V_canon</code> so the measured swing is larger. Critically, the
+<i>dip depth scales with the patient's true EF</i> (deeper as you move right) — that scaling is the fix.</li>
+</ul>
+<p><b>Why "shallow" ≠ "broken":</b> the old <code>target_t</code> baseline actually rendered a <b>deep</b>
+~48% swing — but the <i>same</i> depth for <i>every</i> patient (it had no per-patient information). The
+reference DPT heads render shallower swings that <b>correctly track each patient</b> (the §1 slope). Depth
+alone is the wrong axis to judge the fix; per-patient ordering (§1) is the right one.</p>
 <img src="data:image/png;base64,{F_curves}">
 
 <h2>4 · End-systole timing</h2>
