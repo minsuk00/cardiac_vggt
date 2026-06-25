@@ -13,13 +13,14 @@ canonical volumes, both swept over target_t=0..11 per subject. Computes:
     the caveat that the splat renderer itself blurs/under-segments V_canon (docs/10),
     so an EF gap mixes model error + rendering, bounded above by the model-free 2% ceiling.
 
-Canonical voxel = 1.4*1.4*8.0 mm = 0.01568 mL (constant).
+Canonical voxel = 1.4*1.4*12.0 mm = 0.02352 mL (constant). EF/ES are spacing-invariant
+(EF is a ratio, ES an argmin) so this only scales the absolute mL printout.
 """
 import argparse, glob, json, os, re
 import numpy as np
 import nibabel as nib
 
-VOX_ML = 1.4 * 1.4 * 8.0 / 1000.0
+VOX_ML = 1.4 * 1.4 * 12.0 / 1000.0
 T = 12
 LV = 1
 
