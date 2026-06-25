@@ -1,16 +1,18 @@
-"""Measure the TRAINED model's contraction vs GT: does target_t-conditioning regress
-toward the mean (under-contract)?
+"""Measure the TRAINED model's contraction vs GT: does REFERENCE-SLICE conditioning
+recover per-patient amplitude, or still regress toward the mean (under-contract)?
 
-For each val subject we hold the scattered INPUT slices FIXED (one acquisition) and
-sweep target_t = 0..11, reconstructing V_canon at each. We save both the predicted
-V_canon and the GT canonical phase V_gt as nnU-Net inputs. A later seg + analysis
-step turns these into LV-volume curves -> predicted EF vs GT EF.
+For each val subject we sweep target_t = 0..11, reconstructing V_canon at each. We
+save both the predicted V_canon and the GT canonical phase V_gt as nnU-Net inputs. A
+later seg + analysis step turns these into LV-volume curves -> predicted EF vs GT EF.
 
-Fixed-inputs-across-t is valid because input (t,z) sampling is seeded by seq_index
-INDEPENDENTLY of t_target (see mri_dataset.py "DECOUPLED TARGET PHASE"). We ASSERT
-the input slices are bit-identical across the 12 sweeps as a guard.
+REFERENCE-SLICE CONTRACT (docs/25): slot 0 = a real target-phase slice at the
+mid-ventricular plane (reference_slot=True), marked via VGGT's native camera_token
+anchor (use_reference_token=True). The model reads the target phase from slot-0's
+image CONTENT, not a target_t index. Consequently slot 0's image CHANGES across the
+t-sweep (it IS the reference) while slots 1..S-1 stay bit-identical (seq_index-seeded,
+independent of t_target). The cross-t guard therefore fingerprints slots 1..S-1 only.
 
-Model: 218643188 (noresp, z-only, target_t ON, aggft). use_t_pose_embedding=False.
+Model: 217721337 (reference, resp-on, z-only, reference-token, aggft, DPT head).
 """
 import os, sys, argparse
 import numpy as np
@@ -25,10 +27,10 @@ from data.datasets.mri_dataset import MRIDataset
 from vggt.models.vggt import VGGT
 from loss import compute_volume_intensity_loss
 
-CKPT = "/home/minsukc/vggt/scratch/logs/218643188_mri_volume_noresp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt"
+CKPT = "/home/minsukc/vggt/scratch/logs/217721337_mri_volume_reference_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
-CANON_SPACING = (1.4, 1.4, 8.0)
+CANON_SPACING = (1.4, 1.4, 12.0)  # canonical Z relabeled 8->12mm true pitch (docs/27)
 T = 12
 
 
@@ -69,6 +71,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out_dir", required=True)
     ap.add_argument("--n_subjects", type=int, default=30)
+    ap.add_argument("--ckpt", default=CKPT, help="checkpoint .pt (default: reference model)")
+    ap.add_argument("--warp_head_type", default="dpt", choices=["dpt", "bspline"])
+    ap.add_argument("--bspline_grid_size", type=int, default=32)
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     device = "cuda"
@@ -78,15 +83,18 @@ def main():
         "landscape_check": False, "augs": {"scales": [1.0, 1.0]},
     })
     ds = MRIDataset(common_conf, DATA_ROOT, split="val", split_file=SPLIT_FILE,
-                    mode="dynamic", mri_mode="axial", num_slices=12, target_size=518)
+                    mode="dynamic", mri_mode="axial", num_slices=12, target_size=518,
+                    reference_slot=True)
     n_val = len(ds.subjects)
     print(f"{n_val} val subjects; measuring {min(args.n_subjects, n_val)}")
 
     model = VGGT(img_size=518, patch_size=14, embed_dim=1024,
                  enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
                  use_z_pose_embedding=True, use_t_pose_embedding=False,
-                 use_target_t_pose_embedding=True, train_on_residual_dvf=True).to(device)
-    ck = torch.load(CKPT, map_location=device, weights_only=False)
+                 use_target_t_pose_embedding=False, use_reference_token=True,
+                 train_on_residual_dvf=True,
+                 warp_head_type=args.warp_head_type, bspline_grid_size=args.bspline_grid_size).to(device)
+    ck = torch.load(args.ckpt, map_location=device, weights_only=False)
     missing, unexpected = model.load_state_dict(ck["model"], strict=False)
     print(f"loaded ckpt: missing={len(missing)} unexpected={len(unexpected)}")
     assert len(missing) == 0 and len(unexpected) == 0, \
@@ -100,15 +108,17 @@ def main():
             ds.t_target_fixed = t
             data = ds.get_data(seq_index=si, img_per_seq=12)
             batch = build_batch(data, device)
-            # GUARD: input slices identical across the t-sweep (decoupled target).
+            # GUARD: scattered slots 1..S-1 are identical across the t-sweep (seq_index-
+            # seeded, independent of t_target). Slot 0 is the target-phase REFERENCE and is
+            # EXPECTED to change with t — so it's excluded from the fingerprint.
             # Fingerprint t + z + scanner_coords (per reviewer: t alone is weaker).
-            cur = (batch["t_indices"].cpu().numpy().round(5).tobytes()
-                   + batch["z_indices"].cpu().numpy().round(5).tobytes()
-                   + batch["scanner_coords"].cpu().numpy().round(5).tobytes())
+            cur = (batch["t_indices"][:, 1:].cpu().numpy().round(5).tobytes()
+                   + batch["z_indices"][:, 1:].cpu().numpy().round(5).tobytes()
+                   + batch["scanner_coords"][:, 1:].cpu().numpy().round(5).tobytes())
             if ref_t_idx is None:
                 ref_t_idx = cur
             elif cur != ref_t_idx:
-                raise RuntimeError(f"INPUT SLICES CHANGED across t for subj {subj}! "
+                raise RuntimeError(f"SCATTERED INPUT SLICES CHANGED across t for subj {subj}! "
                                    "fixed-inputs assumption violated.")
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
                 preds = model(batch["images"], batch=batch)
