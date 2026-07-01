@@ -25,6 +25,12 @@ use_target_t_pose_embedding: true
 # is the MODEL half (camera_token anchor). They must move together.
 use_reference_token: false
 reference_slot: false
+# Continuous physical z (docs/28): when true, non-reference input slots are sampled at a
+# CONTINUOUS z (nominal plane + jitter ∈ [-z_jitter, +z_jitter]) and extracted by interpolation,
+# teaching z as a continuous physical coordinate (off-grid inference slices). Default false ⇒
+# integer planes (numerically identical to the discrete-grid pipeline).
+continuous_z: false
+z_jitter: 0.5
 # Optional 3D UNet refiner on the splat (default OFF ⇒ bit-identical to today).
 enable_refiner: false
 refiner_use_coverage: true   # feed coverage as a 2nd input channel (only used when enabled)
@@ -48,7 +54,7 @@ t_target_phases: null
 dataset_name: "${basename:${data_root}}"
 exp_name: "${rev_ts:}_mri_${mri_data_mode}_${mri_mode}_${dataset_name}"
 num_workers: 4
-max_img_per_gpu: 12
+max_img_per_gpu: 20
 accum_steps: 1
 
 # Redirect Logging and Checkpoints to Scratch
@@ -134,7 +140,7 @@ data:
       debug: False
       get_nearby: True
       load_depth: False
-      img_nums: [12, 12]  # fixed S=12 (capped per-subject by min(T_total, Z_total))
+      img_nums: [20, 20]  # fixed S=20 slot budget (multi-frame: full z-coverage + uniform-random extras)
       max_img_per_gpu: ${max_img_per_gpu}
       allow_duplicate_img: True
       repeat_batch: False
@@ -157,12 +163,14 @@ data:
           split_file: ${split_file}
           mode: ${mri_data_mode}
           mri_mode: ${mri_mode}
-          num_slices: 12
+          num_slices: 20
           target_size: ${img_size}
           gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
+          continuous_z: ${continuous_z}
+          z_jitter: ${z_jitter}
   val:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
@@ -184,7 +192,7 @@ data:
       debug: False
       get_nearby: True
       load_depth: False
-      img_nums: [12, 12]  # fixed S=12 (capped per-subject by min(T_total, Z_total))
+      img_nums: [20, 20]  # fixed S=20 slot budget (multi-frame: full z-coverage + uniform-random extras)
       max_img_per_gpu: ${max_img_per_gpu}
       allow_duplicate_img: True
       repeat_batch: False
@@ -207,12 +215,14 @@ data:
           split_file: ${split_file}
           mode: ${mri_data_mode}
           mri_mode: ${mri_mode}
-          num_slices: 12
+          num_slices: 20
           target_size: ${img_size}
           gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
+          continuous_z: ${continuous_z}
+          z_jitter: ${z_jitter}
 
 # Enable Point Head, disable others
 model:

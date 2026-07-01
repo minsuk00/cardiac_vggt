@@ -97,6 +97,8 @@ class MRIDataset(BaseDataset):
         t_target_fixed=None,
         t_target_phases=None,
         reference_slot=False,
+        continuous_z=False,
+        z_jitter=0.5,
         cache_dir=None,
     ):
         """
@@ -124,6 +126,14 @@ class MRIDataset(BaseDataset):
         # slot-0's image content (via the native camera_token anchor) instead of a target_t
         # index. Default False → legacy decoupled sampling (slot 0 not special).
         self.reference_slot = bool(reference_slot)
+        # Continuous physical z (docs/28): when True, each non-reference input slot is sampled at
+        # a CONTINUOUS z (its nominal in-bbox plane + bounded jitter ∈ [-z_jitter, +z_jitter]),
+        # extracted by linear interpolation between the two bracketing planes. Teaches the model
+        # z as a continuous physical coordinate so off-grid inference slices splat correctly.
+        # Slot 0 (reference, when reference_slot) stays on its integer plane. Default False →
+        # integer planes (numerically identical to the discrete-grid pipeline).
+        self.continuous_z = bool(continuous_z)
+        self.z_jitter = float(z_jitter)
         if self.t_target_phases is not None and len(self.t_target_phases) == 0:
             raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
 
@@ -247,89 +257,88 @@ class MRIDataset(BaseDataset):
         else:
             t_target = random.randrange(T_total)
 
-        # ── S = min(T, in-bbox z count, requested) ────────────────────────
-        # Cap by the subject's in-FOV z extent (bbox_z_size), NOT the padded
-        # canonical D=12. A small-FOV subject thus gets FEWER than 12 input
-        # slices rather than wrapping z back over already-sampled planes
-        # (e.g. slot (t=10,z=10) → (t=11,z=0)). t still cycles mod T (phases are
-        # cyclic, so distinct phases), but z never repeats within a sample.
-        # Before the canonical-grid refactor `D` was the subject's native Z, so
-        # this min naturally shrank S; padding Z to 12 silently pinned S=12.
-        S = min(T_total, bbox_z_size, img_per_seq or self.num_slices)
+        # ── S = requested slot budget (multi-frame; NOT capped by T or bbox) ──
+        # Multi-frame-per-slice allows phase reuse (t with replacement) and plane
+        # reuse (LV-weighted extras), so S is no longer clamped to T_total or the
+        # in-FOV z extent. Full z-coverage is GUARANTEED in the slot-building block
+        # below (every in-bbox plane appears ≥once), so V_canon has no coverage
+        # holes and the full-volume L1 loss stays valid.
+        S = img_per_seq or self.num_slices
 
-        # ── Build (t, z) slot sequences ───────────────────────────────────
-        # IMPORTANT: z is sampled from WITHIN the anatomy bbox (in-FOV z planes
-        # only). Otherwise small-Z subjects (e.g., native Z=6 → bbox z=[3,9])
-        # waste up to half their slots on zero-padded Z planes, where input
-        # intensity = 0 → splat writes 0 → matches V_gt = 0 → loss = 0 (harmless
-        # but useless compute, and uneven data efficiency across subjects).
+        # ── Build (t, z) slot sequences — multi-frame, full coverage ──────
+        # Matches real multi-frame-per-slice acquisition (+ classical SVR, + closer
+        # to original VGGT's many-view input):
+        #   • Every in-bbox z plane is covered AT LEAST once → full V_canon coverage.
+        #   • The remaining slots are EXTRA frames whose planes are drawn UNIFORMLY at
+        #     random (with replacement) over the in-bbox planes.
+        #   • t per slot is a random phase WITH replacement, used ONLY to extract the
+        #     slice's image CONTENT — input cardiac phase is NEVER a model input
+        #     (t_indices/target_t are inert; real-time CMR carries no phase label).
         #
-        # DECOUPLED TARGET PHASE: the reconstruction target phase t_target is
-        # injected globally via `target_t_indices` (broadcast to every slot, built
-        # below) — NOT by forcing slot 0 to be a slice at t_target. So input-slice
-        # phases are sampled INDEPENDENTLY of t_target; slot 0 is no longer special.
-        # A slice that happens to land on t_target still acts as a free anchor, but
-        # it's no longer guaranteed (the honest sparse/unobserved-phase regime).
+        # Train vs val differ ONLY in the RNG source (determinism + no global-RNG
+        # leak): train → global `random` (fresh each epoch); val → a private
+        # `random.Random(seq_index)` (reproducible across epochs/runs).
         #
-        # Train AND val draw from the SAME distribution: each slot t = random phase
-        # WITH replacement (independent of t_target); z = random WITHOUT replacement
-        # within the bbox (distinct planes). They differ ONLY in the RNG source:
-        #   Train → the global `random` module: varies every epoch (the model should
-        #           see fresh scattered acquisitions, like augmentation).
-        #   Val   → a LOCAL `random.Random(seq_index)`: random-LOOKING but fully
-        #           reproducible across runs AND epochs (same seq_index → same draw),
-        #           and a PRIVATE generator that NEVER perturbs the global RNG stream
-        #           the train split draws from. Each val seq_index is therefore a
-        #           distinct, reproducible scattered acquisition — no rigid pattern and
-        #           no bit-identical duplicates when (subject, t_target) recur.
-        # t_target itself is chosen above (a deterministic cycle in val) for balanced
-        # per-phase coverage; only the INPUT (t, z) is randomized here.
-        # Static mode: all slots == t_target (z still drawn as below).
-        #
-        # REFERENCE-SLOT MODE (self.reference_slot, docs/25): slot 0 is forced to OBSERVE the
-        # target phase at the mid-ventricular plane (z = bbox z-center) — the model reads the
-        # target phase from slot-0's image content (via the native camera_token anchor), not a
-        # target_t index. The remaining slots stay scattered, but the reference plane is
-        # EXCLUDED from their z pool so no slot re-observes it. Determinism is preserved (z_mid
-        # and t_target are deterministic; the rest still draw from the same `rng`).
+        # REFERENCE-SLOT MODE (self.reference_slot, docs/25): slot 0 OBSERVES the
+        # target phase at z_mid; the model reads the target phase from slot-0's image
+        # content via the native camera_token anchor (NOT a target_t index). z_mid is
+        # still covered by other slots/extras — multi-frame redundancy there is desired.
         rng = random if self.split == "train" else random.Random(seq_index)
+
+        z_mid = (bbox_z0 + bbox_z1) // 2
+        in_bbox_z = list(range(bbox_z0, bbox_z1)) or [z_mid]   # guard degenerate/empty bbox
+
+        if self.reference_slot:
+            z_sequence = [z_mid]                                # slot 0 = target-phase reference
+            coverage = [z for z in in_bbox_z if z != z_mid]     # cover the remaining planes once
+        else:
+            z_sequence = []
+            coverage = list(in_bbox_z)                          # cover all planes once
+
+        room = S - len(z_sequence)
+        if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < bbox_z_size)
+            rng.shuffle(coverage)
+            coverage = coverage[: max(0, room)]                 # can't fully cover; subsample
+        n_extra = max(0, room - len(coverage))
+
+        # Extra frames: uniform random over the in-bbox planes (with replacement). LOCAL rng →
+        # val deterministic, global RNG stream never perturbed.
+        extras = rng.choices(in_bbox_z, k=n_extra) if n_extra else []
+
+        tail = coverage + extras
+        rng.shuffle(tail)                                       # order is irrelevant to the
+        z_sequence += tail                                      # set-attention model; keeps val
+        #                                                         inputs varying per seq_index and
+        #                                                         interleaves extras with coverage.
+        # len(z_sequence) == S; slot 0 (if reference) stays the z_mid anchor.
+
+        # ── t per slot (extraction-only; never a model conditioning input) ──
         if self.mode == "static":
             t_sequence = [t_target] * S
         else:
             t_sequence = [rng.randrange(T_total) for _ in range(S)]
-        # ── ABLATION HOOK (gated, default no-op) ───────────────────────────
-        # Force the first `n_forced_target` slots to OBSERVE the target phase
-        # (their input image becomes phases[t_target] at the same z). Only the
-        # t is overridden — z_sequence is untouched — so the coverage ablation
-        # varies "how many slots see the target phase" with everything else fixed.
-        # Training never passes this kwarg → bit-identical. Inference-only.
+        # ABLATION HOOK (gated, default no-op): force the first n_forced_target slots
+        # to OBSERVE the target phase. Inference-only; training never passes it.
         _n_forced = int(kwargs.get("n_forced_target", 0))
-        if _n_forced > 0:
-            for _i in range(min(_n_forced, len(t_sequence))):
-                t_sequence[_i] = t_target
-        in_bbox_z = list(range(bbox_z0, bbox_z1))
+        for _i in range(min(_n_forced, S)):
+            t_sequence[_i] = t_target
         if self.reference_slot:
-            # Slot 0 = target-phase reference at the mid-ventricular plane.
-            z_mid = (bbox_z0 + bbox_z1) // 2
-            t_sequence[0] = t_target
-            rest_pool = [z for z in in_bbox_z if z != z_mid]
-            if len(rest_pool) >= S - 1:
-                rng.shuffle(rest_pool)
-                z_rest = rest_pool[: S - 1]
-            else:
-                # Tiny FOV: not enough distinct non-reference planes → sample with replacement
-                # (or repeat z_mid if the bbox is a single plane). Defensive; S is capped to
-                # bbox_z_size above so this is rare.
-                z_rest = rng.choices(rest_pool, k=S - 1) if rest_pool else [z_mid] * (S - 1)
-            z_sequence = [z_mid] + z_rest
-        elif len(in_bbox_z) >= S:
-            rng.shuffle(in_bbox_z)
-            z_sequence = in_bbox_z[:S]
-        else:
-            # Fewer in-bbox z planes than requested slots → sample z with replacement.
-            # (Unreachable under the S = min(..., bbox_z_size, ...) cap above; kept as a
-            # defensive guard.) t is independent per slot, so coverage stays diverse.
-            z_sequence = rng.choices(in_bbox_z, k=S)
+            t_sequence[0] = t_target                            # slot 0 observes the target phase
+
+        # ── Continuous physical z (gated; default OFF → integer planes) ────
+        # Jitter each non-reference slot's nominal integer plane into a CONTINUOUS physical z
+        # so the model learns z as a continuous coordinate (real inference slices land off the
+        # discrete grid). Slot 0 (reference) stays on its integer plane so the filmstrip's
+        # integer reference gather is unaffected. Bounded to ±z_jitter and clamped to
+        # [0, D-1-eps] so the 2-plane blend and the splat in-bounds gate stay valid. Uses the
+        # LOCAL rng → val-deterministic, no global-RNG leak.
+        if self.continuous_z:
+            eps = 1e-3
+            z_sequence = [
+                z if (self.reference_slot and i == 0)
+                else float(min(max(0.0, z + rng.uniform(-self.z_jitter, self.z_jitter)), D - 1 - eps))
+                for i, z in enumerate(z_sequence)
+            ]
 
         # ── Build per-slot tensors ────────────────────────────────────────
         images_list = []
@@ -357,10 +366,21 @@ class MRIDataset(BaseDataset):
 
         # Pre-resize ALL S canonical slices in one batched F.interpolate call.
         # `to_resize` shape (S, 1, 256, 256) float32; output (S, 1, 518, 518).
-        slot_indices = torch.tensor(z_sequence, dtype=torch.long)
         slot_ts = torch.tensor(t_sequence, dtype=torch.long)
-        # phases_splat[slot_ts, slot_indices] would do fancy indexing; use it.
-        canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
+        if self.continuous_z:
+            # Continuous z → linear blend between the two bracketing planes. eps-clamp above
+            # guarantees floor ≤ D-2, so z0/z1 are valid indices. Reduces to the exact integer
+            # plane when z is integer-valued (frac = 0), so the OFF path is numerically identical.
+            z_f = torch.tensor(z_sequence, dtype=torch.float32)
+            z0 = torch.floor(z_f).long().clamp(0, D - 1)
+            z1 = (z0 + 1).clamp(0, D - 1)
+            frac = (z_f - z0.float()).view(-1, 1, 1)                 # (S, 1, 1)
+            s0 = phases_splat[slot_ts, z0].float()                  # (S, H, W)
+            s1 = phases_splat[slot_ts, z1].float()
+            canon_slices = (1.0 - frac) * s0 + frac * s1
+        else:
+            slot_indices = torch.tensor(z_sequence, dtype=torch.long)
+            canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
         canon_slices = canon_slices.unsqueeze(1)                    # (S, 1, 256, 256)
         upsampled = F.interpolate(
             canon_slices, size=(INPUT_IMG_SIZE, INPUT_IMG_SIZE),

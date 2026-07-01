@@ -1,8 +1,8 @@
 """Tests for target-phase reference-slice conditioning (docs/24, docs/25).
 
 Two flag-gated halves replace the content-free target_t index:
-  - DATASET (`reference_slot`): slot 0 = (t_target, mid-ventricular z); other slots scattered
-    with the reference plane excluded.
+  - DATASET (`reference_slot`): slot 0 = (t_target, mid-ventricular z); the remaining slots
+    provide full z-coverage + LV-weighted extra frames (multi-frame; planes may repeat).
   - MODEL (`use_reference_token`): the native two-token camera_token marks slot 0 as the anchor
     (index 0 = first frame, index 1 = the rest), added onto the per-slot z embedding.
 
@@ -65,14 +65,19 @@ def test_reference_slot0_observes_target_phase_at_midz(ref_train_ds):
         assert d["slice_indices"][0] == z_mid, f"slot 0 z {d['slice_indices'][0]} != z_mid {z_mid}"
 
 
-def test_reference_other_slots_exclude_ref_plane_and_are_distinct(ref_train_ds):
-    """Slots 1..S-1 never re-observe the reference plane; all z planes are distinct."""
+def test_reference_multiframe_full_coverage_with_repeats(ref_train_ds):
+    """Multi-frame reference contract: slot 0 = z_mid; the remaining slots provide FULL
+    z-coverage (every in-bbox plane ≥once) plus LV-weighted extra frames — so planes MAY
+    repeat (including z_mid, the LV plane where multi-frame redundancy is desired)."""
     for seq in range(5):
         d = ref_train_ds.get_data(seq_index=seq, img_per_seq=12)
-        z_mid = _zmid(d)
-        rest_z = d["slice_indices"][1:]
-        assert z_mid not in rest_z, "a scattered slot duplicated the reference plane"
-        assert len(set(d["slice_indices"])) == len(d["slice_indices"]), "z planes not distinct"
+        bb = np.asarray(d["anatomy_bbox"]).astype(np.int64)
+        z0, z1 = int(bb[0]), int(bb[1])
+        zs = [int(z) for z in d["slice_indices"]]
+        assert len(zs) == 12, f"S must equal the budget (12), got {len(zs)}"
+        assert zs[0] == _zmid(d), "slot 0 must be the z_mid reference plane"
+        assert set(zs) >= set(range(z0, z1)), f"every in-bbox plane must be covered, got {sorted(set(zs))}"
+        assert len(zs) > len(set(zs)), "extras must repeat planes (multi-frame)"
 
 
 def test_reference_other_slots_are_scattered_in_phase(ref_train_ds):

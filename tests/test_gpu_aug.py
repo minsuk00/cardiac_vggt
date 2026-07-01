@@ -155,6 +155,28 @@ def test_extract_slices_shapes_and_indexing():
     assert float(imgs.max()) <= 255.0 and float(imgs.min()) >= 0.0
 
 
+def test_extract_slices_float_z_exact_at_integer_and_interpolates():
+    """continuous-z support: float z_seq must (a) be accepted and (b) match the integer gather
+    EXACTLY at integer-valued z (so the discrete-grid pipeline is numerically unchanged), and
+    (c) linearly interpolate between bracketing planes at fractional z."""
+    B, T, D, H, W, S = 1, 12, 12, 256, 256, 4
+    phases = torch.rand(B, T, D, H, W)
+    t_seq = torch.zeros(B, S, dtype=torch.int64)
+    # (a)+(b): integer-valued FLOAT z must equal the int64 gather byte-for-byte.
+    z_int = torch.tensor([[2, 5, 7, 9]], dtype=torch.int64)
+    out_int = extract_slices_from_phases(phases, t_seq, z_int)
+    out_flt = extract_slices_from_phases(phases, t_seq, z_int.float())
+    assert torch.allclose(out_int, out_flt), "float z at integer values must match the integer gather"
+    # (c): z=5.5 must be the mean of planes 5 and 6 (linear blend), checked on the raw plane.
+    z_half = torch.tensor([[5.5]], dtype=torch.float32)
+    blended = extract_slices_from_phases(phases, torch.zeros(1, 1, dtype=torch.int64), z_half)
+    expect = 0.5 * phases[0, 0, 5] + 0.5 * phases[0, 0, 6]   # (H, W)
+    expect_up = torch.nn.functional.interpolate(
+        (expect * 255.0).clamp(0, 255)[None, None], size=(518, 518), mode="bilinear", align_corners=True
+    )[0, 0]
+    assert torch.allclose(blended[0, 0, :, :, 0], expect_up, atol=1e-3), "fractional z must linearly blend planes"
+
+
 # ── respiratory integration in gpu_augment_batch ──────────────────────────────
 
 _REF_KEYS = ["phases", "gt_target_volume", "anatomy_bbox", "content_mask", "scanner_coords"]

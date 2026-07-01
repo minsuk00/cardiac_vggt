@@ -161,38 +161,127 @@ def test_z_sampled_within_bbox(train_ds):
             assert z0 <= z < z1, f"slot z={z} outside bbox z[{z0}:{z1}]"
 
 
-# ── 6b. S capped to in-bbox z extent — no z wrap / no duplicate z ──────────────
+# ── 6b. Multi-frame: S = requested budget, full z-coverage + repeated extras ───
 
-def test_S_capped_to_bbox_no_wrap_val(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """Requesting MORE slices than the subject's in-FOV z extent must shrink S to
-    bbox_z_size (fewer than 12 input slices) instead of wrapping z back to bbox_z0.
-    Regression for the canonical-padding bug: S was pinned to the padded D=12, so the
-    val diagonal wrapped — e.g. slot (t=10,z=10) → (t=11,z=0) — re-sampling z planes."""
+def test_multiframe_full_coverage_val(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Multi-frame contract: requesting MORE slices than the in-FOV z extent FILLS the
+    budget (S == img_per_seq) with FULL z-coverage (every in-bbox plane ≥once) + extra
+    frames (planes may repeat), instead of capping S to bbox_z_size. Deterministic in val."""
     from data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
-                    mode="dynamic", mri_mode="axial", num_slices=12, cache_dir=monai_cache_dir)
-    s = ds.get_data(0, img_per_seq=12)  # ask for 12 — more than the synthetic's z extent
+                    mode="dynamic", mri_mode="axial", num_slices=20, cache_dir=monai_cache_dir)
+    s = ds.get_data(0, img_per_seq=20)  # ask for 20 — more than the synthetic's z extent
     z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
     bbox_z_size = z1 - z0
     zs = [int(z) for z in s["slice_indices"]]
-    assert bbox_z_size < 12, "fixture should have a sub-12 z extent to exercise the cap"
-    assert len(zs) == bbox_z_size, f"S must cap to bbox_z_size={bbox_z_size}, got {len(zs)} slices"
-    assert len(set(zs)) == len(zs), f"val z must not repeat (no wrap), got {zs}"
-    # z is now seeded-random WITHOUT replacement (no longer the monotonic diagonal), so it
-    # must COVER every in-bbox plane exactly once — check as a set, not in order.
-    assert set(zs) == set(range(z0, z0 + len(zs))), f"val z must cover the in-bbox planes, got {zs}"
+    assert bbox_z_size < 20, "fixture should have a sub-20 z extent to exercise extras"
+    assert len(zs) == 20, f"S must equal the requested budget (20), got {len(zs)}"
+    assert all(z0 <= z < z1 for z in zs), f"all z must lie in bbox [{z0}:{z1}), got {zs}"
+    assert set(zs) >= set(range(z0, z1)), f"every in-bbox plane must be covered, got {sorted(set(zs))}"
+    assert len(zs) > len(set(zs)), f"extras must repeat planes (multi-frame), got {zs}"
 
 
-def test_S_capped_to_bbox_no_dup_train(train_ds):
-    """Train: asking for more slices than bbox_z_size shrinks S and samples z WITHOUT
-    replacement — no duplicate z planes."""
+def test_multiframe_full_coverage_train(train_ds):
+    """Train: budget > bbox_z_size fills with full coverage + repeated extras (with replacement)."""
     for _ in range(5):
-        s = train_ds.get_data(0, img_per_seq=12)
+        s = train_ds.get_data(0, img_per_seq=20)
         z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
-        bbox_z_size = z1 - z0
         zs = [int(z) for z in s["slice_indices"]]
-        assert len(zs) == bbox_z_size, f"S must cap to bbox_z_size={bbox_z_size}, got {len(zs)}"
-        assert len(set(zs)) == len(zs), f"train z must be distinct (no replacement), got {zs}"
+        assert len(zs) == 20, f"S must equal the budget (20), got {len(zs)}"
+        assert all(z0 <= z < z1 for z in zs), f"all z in bbox, got {zs}"
+        assert set(zs) >= set(range(z0, z1)), f"full coverage required, got {sorted(set(zs))}"
+        assert len(zs) > len(set(zs)), f"extras must repeat planes, got {zs}"
+
+
+def test_multiframe_extras_spread_across_planes(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Extra frames are drawn UNIFORMLY at random over the in-bbox planes: aggregated over many
+    val draws, every in-bbox plane is represented (no plane starved). Robust (not per-sample)."""
+    from collections import Counter
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=20, cache_dir=monai_cache_dir)
+    counts = Counter()
+    for seq_index in range(40):
+        s = ds.get_data(seq_index, img_per_seq=20)
+        counts.update(int(z) for z in s["slice_indices"])
+    z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
+    for plane in range(z0, z1):
+        assert counts[plane] > 0, f"plane {plane} never sampled over 40 draws: {dict(counts)}"
+
+
+def test_multiframe_reference_slot0_is_target(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """Reference mode: slot 0 = (t_target, z_mid); full coverage still holds with extras."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=20, reference_slot=True,
+                    cache_dir=monai_cache_dir)
+    s = ds.get_data(3, img_per_seq=20)
+    z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
+    z_mid = (z0 + z1) // 2
+    t_target = int(np.asarray(s["t_target"]).item())
+    zs = [int(z) for z in s["slice_indices"]]
+    ts = [int(t) for t in s["timesteps"]]
+    assert zs[0] == z_mid, f"slot 0 must be z_mid={z_mid}, got {zs[0]}"
+    assert ts[0] == t_target, f"slot 0 must observe t_target={t_target}, got {ts[0]}"
+    assert len(zs) == 20 and set(zs) >= set(range(z0, z1)), "full coverage required with reference slot"
+
+
+# ── 6c. Continuous physical z (gated; default OFF) ────────────────────────────
+
+def _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir, split="val", **kw):
+    from data.datasets.mri_dataset import MRIDataset
+    return MRIDataset(common_conf, synthetic_root, split=split, split_file=split_file,
+                      mode="dynamic", mri_mode="axial", num_slices=20, continuous_z=True,
+                      cache_dir=monai_cache_dir, **kw)
+
+
+def test_continuous_z_off_is_integer(train_ds):
+    """Default (continuous_z=False): every z is integer-valued (discrete-grid, Phase A)."""
+    s = train_ds.get_data(0, img_per_seq=20)
+    zs = [float(z) for z in s["slice_indices"]]
+    assert all(z == int(z) for z in zs), f"continuous_z off must keep integer planes, got {zs}"
+
+
+def test_continuous_z_on_is_fractional_within_grid(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """continuous_z=True: z stays in [0, D-1] and at least some slots are non-integer (jittered)."""
+    ds = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
+    s = ds.get_data(0, img_per_seq=20)
+    zs = [float(z) for z in s["slice_indices"]]
+    assert all(0.0 <= z <= 11.0 for z in zs), f"z must stay in [0, D-1=11], got {zs}"
+    assert any(z != int(z) for z in zs), f"continuous_z on must produce fractional z, got {zs}"
+
+
+def test_continuous_z_reference_slot0_stays_integer(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """continuous_z + reference: slot 0 stays the integer z_mid plane (filmstrip ref gather)."""
+    ds = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir, reference_slot=True)
+    s = ds.get_data(3, img_per_seq=20)
+    bb = np.asarray(s["anatomy_bbox"]).astype(np.int64)
+    z_mid = (int(bb[0]) + int(bb[1])) // 2
+    z0_slot = float(s["slice_indices"][0])
+    assert z0_slot == z_mid, f"reference slot 0 must stay integer z_mid={z_mid}, got {z0_slot}"
+
+
+def test_continuous_z_val_deterministic(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """continuous z val draws are reproducible per seq_index (seeded local rng)."""
+    a = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
+    b = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
+    for seq in (0, 2, 5):
+        za = [float(z) for z in a.get_data(seq, img_per_seq=20)["slice_indices"]]
+        zb = [float(z) for z in b.get_data(seq, img_per_seq=20)["slice_indices"]]
+        assert za == zb, f"continuous z not reproducible at seq {seq}: {za} vs {zb}"
+
+
+def test_continuous_z_coverage_preserved(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """±0.5 jitter preserves output-plane coverage: every integer plane in the bbox has a slot
+    within 0.5 of it, so the splat still deposits to it (no coverage holes)."""
+    ds = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
+    s = ds.get_data(0, img_per_seq=20)
+    bb = np.asarray(s["anatomy_bbox"]).astype(np.int64)
+    z0, z1 = int(bb[0]), int(bb[1])
+    zs = [float(z) for z in s["slice_indices"]]
+    for plane in range(z0, z1):
+        assert any(abs(z - plane) <= 0.5 + 1e-6 for z in zs), \
+            f"plane {plane} has no slot within 0.5 (coverage hole), zs={sorted(zs)}"
 
 
 # ── 7. Timesteps and frame indexing ──────────────────────────────────────────

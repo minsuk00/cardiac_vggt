@@ -201,7 +201,8 @@ def extract_slices_from_phases(phases, t_seq, z_seq):
     Args:
         phases: `(B, T, D, H=256, W=256)` float.
         t_seq:  `(B, S)` int64 — t index per slot.
-        z_seq:  `(B, S)` int64 — z index per slot.
+        z_seq:  `(B, S)` z index per slot — int OR continuous float (linearly
+                interpolated between the two bracketing z planes; exact at integer z).
 
     Returns:
         `(B, S, 518, 518, 3)` float in `[0, 255]` — RGB-replicated, ready to
@@ -211,8 +212,16 @@ def extract_slices_from_phases(phases, t_seq, z_seq):
     Bsize, T, D, H, W = phases.shape
     S = t_seq.shape[1]
     b_idx = torch.arange(Bsize, device=phases.device).view(Bsize, 1).expand(Bsize, S)
-    # Fancy indexing: pick `phases[b, t_seq[b, s], z_seq[b, s], :, :]` for all (b, s)
-    slices_canon = phases[b_idx, t_seq, z_seq]  # (B, S, H, W)
+    t_seq = t_seq.long()
+    # Continuous-z safe: linear blend between the two bracketing z planes. At integer z the
+    # fraction is 0 → exact plane, so the discrete-grid path is numerically unchanged.
+    z_f = z_seq.float()
+    z0 = torch.floor(z_f).long().clamp(0, D - 1)
+    z1 = (z0 + 1).clamp(0, D - 1)
+    frac = (z_f - z0.float()).view(Bsize, S, 1, 1)
+    s0 = phases[b_idx, t_seq, z0]               # (B, S, H, W)
+    s1 = phases[b_idx, t_seq, z1]
+    slices_canon = (1.0 - frac) * s0 + frac * s1
     slices_canon = slices_canon.reshape(Bsize * S, 1, H, W)
     upsampled = F.interpolate(
         slices_canon,
@@ -255,7 +264,7 @@ def gpu_augment_batch(batch, transforms, device,
         content_mask     (B, D, H, W)    uint8        (affine)
         t_target         (B, 1)          int64        (affine)
         timesteps        (B, S)          int64 — original t per slot
-        slice_indices    (B, S)          int64 — original z per slot
+        slice_indices    (B, S)          float32 — original z per slot (may be continuous)
         seq_index        (B, 1)          int64 — required for val respiratory
     """
     do_affine = transforms is not None

@@ -154,7 +154,11 @@ class ComposedDataset(Dataset, ABC):
         if "timesteps" in batch:
             sample["timesteps"] = torch.from_numpy(np.stack(batch["timesteps"]).astype(np.int64))
         if "slice_indices" in batch:
-            sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.int64))
+            # float32 (not int64): z may be CONTINUOUS (continuous_z). Re-extraction paths
+            # (respiratory grid_sample, gpu_aug 2-plane blend) interpolate; integer-valued z
+            # is exact, so the discrete-grid pipeline is numerically unchanged. timesteps stays
+            # int64 — cardiac phase is always discrete.
+            sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.float32))
         if "geom_masks" in batch:
             sample["geom_masks"] = torch.from_numpy(np.stack(batch["geom_masks"]))
         if "rotations" in batch:

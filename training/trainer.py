@@ -543,7 +543,7 @@ class Trainer:
                 # corrupted-input model and understates motion correction. No-op when
                 # respiratory is disabled (gpu_augment_batch early-returns unchanged).
                 batch["timesteps"] = st("timesteps", np.int64)
-                batch["slice_indices"] = st("slice_indices", np.int64)
+                batch["slice_indices"] = st("slice_indices", np.float32)  # may be continuous z
                 batch["seq_index"] = torch.tensor([[i]], dtype=torch.int64, device=self.device)
                 batch = gpu_augment_batch(
                     batch, None, self.device,
@@ -729,7 +729,7 @@ class Trainer:
             # is (re-)applied INSIDE the loop instead. No-op when respiratory is disabled.
             batch["phases"] = phases_bundle.unsqueeze(0)
             batch["timesteps"] = st("timesteps", np.int64)
-            batch["slice_indices"] = st("slice_indices", np.int64)
+            batch["slice_indices"] = st("slice_indices", np.float32)  # may be continuous z
             batch["seq_index"] = torch.tensor([[subj_idx]], dtype=torch.int64, device=self.device)
             do_resp = (self.respiratory_cfg is not None
                        and getattr(self.respiratory_cfg, "enable", False))
