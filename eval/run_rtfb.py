@@ -2,32 +2,39 @@
 """Single-subject RTFB inference runner — one entry point for all OOD real-time datasets.
 
 Replaces the per-dataset scripts (tools/eval_ocmr_inference.py CLI + goettingen_infer.py):
-loads the trained z-only + target_t model, adapts a real real-time cine into the canonical
-input contract via the dataset's RTFB adapter, sweeps target_t over the cardiac cycle, and
-renders a beating-heart GIF (+ per-z volume sheet, input contact sheet, predicted-DVF panel).
+loads the reference-slot z-only model (docs/25), adapts a real real-time cine into a
+multi-frame + reference-slot canonical batch via the dataset's RTFB adapter (docs/28), sweeps
+the reference slot over real acquired frames at the mid-z plane, and renders a beating-heart
+GIF (+ per-z volume sheet, input contact sheet, predicted-DVF panel).
 
 There is NO ground-truth volume for these prospectively-acquired datasets — this is a
 qualitative beating-heart transfer check, not a metric.
 
+Deterministic — no random draws (that's a training-time augmentation only): every discovered
+z-plane is sampled at its first `--frames-per-slice` CONSECUTIVE real frames (simulating a
+short acquisition burst per slice, the whole point of the fast-acquisition project — not an
+even subsample of a recording that ran far longer), except the mid-ventricular reference plane
+which gets a longer consecutive burst (`--frames-for-reference`) to drive the beating-heart
+animation.
+
 Usage:
   micromamba run -n svr python eval/run_rtfb.py --dataset ocmr      [--subjects us_0084_1_5T ...]
   micromamba run -n svr python eval/run_rtfb.py --dataset goettingen --refiner [--ckpt PATH]
-  micromamba run -n svr python eval/run_rtfb.py --dataset miitt     [--draws 3]
+  micromamba run -n svr python eval/run_rtfb.py --dataset miitt
 """
 import argparse
 import glob
 import os
 import sys
 
-import numpy as np
 import torch
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
 from eval.adapters import OCMRAdapter, GoettingenAdapter, MIITTAdapter
-from eval.inference import load_rtfb_model, phase_sweep
+from eval.inference import load_rtfb_model_reference, reference_sweep
 from eval.render import save_cycle_gif, save_dvf_png, save_inputs_png, save_volume_png
-from eval.adapters.base import DEFAULT_CKPT
+from eval.adapters.base import DEFAULT_CKPT_REFERENCE
 
 # Per-dataset: default recon root, subject discovery, adapter factory (subject -> adapter).
 DATASETS = {
@@ -58,13 +65,13 @@ DATASETS = {
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True, choices=list(DATASETS))
-    ap.add_argument("--ckpt", default=DEFAULT_CKPT)
+    ap.add_argument("--ckpt", default=DEFAULT_CKPT_REFERENCE)
+    ap.add_argument("--frames-per-slice", type=int, default=5, help="first N consecutive real frames per non-reference z-plane")
+    ap.add_argument("--frames-for-reference", type=int, default=30, help="first N consecutive real frames at the mid-z reference plane, swept as the query")
     ap.add_argument("--refiner", action="store_true", help="model has a coverage refiner head")
     ap.add_argument("--root", default=None, help="override the dataset recon root")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all discovered")
-    ap.add_argument("--draws", type=int, default=3, help="random input draws per subject")
     ap.add_argument("--out", default=None, help="default: result/<dataset>_eval")
-    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     spec = DATASETS[args.dataset]
@@ -77,7 +84,7 @@ def main():
               flush=True)
 
     device = torch.device("cuda")
-    model = load_rtfb_model(args.ckpt, refiner=args.refiner, device=device)
+    model = load_rtfb_model_reference(args.ckpt, refiner=args.refiner, device=device)
 
     subjects = args.subjects or spec["discover"](root)
     if not subjects:
@@ -87,17 +94,15 @@ def main():
     for name in subjects:
         adapter = spec["adapter"](root, name)
         odir = os.path.join(out, name); os.makedirs(odir, exist_ok=True)
-        for d in range(args.draws):
-            rng = np.random.default_rng(args.seed + d)
-            batch, S, picks = adapter.build_batch(rng, device)
-            coords0 = batch["scanner_coords"][0].cpu().numpy()        # (S,518,518,3)
-            vols, wp_by_t = phase_sweep(model, batch, return_world_points=True, device=device)
-            save_cycle_gif(vols, os.path.join(odir, f"draw{d}_cycle.gif"))
-            save_inputs_png(picks, os.path.join(odir, f"draw{d}_inputs.png"))
-            if d == 0:
-                save_volume_png(vols, os.path.join(odir, "draw0_volume_t0.png"))
-                save_dvf_png(wp_by_t[0], coords0, picks, os.path.join(odir, "draw0_dvf_t0.png"), t=0)
-            print(f"[{name}] draw {d}: S={S} -> {odir}/draw{d}_cycle.gif", flush=True)
+        batch, S, picks, ref_ctx = adapter.build_batch_multiframe(
+            device, frames_per_slice=args.frames_per_slice, frames_for_reference=args.frames_for_reference)
+        coords0 = batch["scanner_coords"][0].cpu().numpy()        # (S,518,518,3)
+        vols, wp_by_t, _ = reference_sweep(model, batch, ref_ctx, return_world_points=True, device=device)
+        save_cycle_gif(vols, os.path.join(odir, "cycle.gif"))
+        save_inputs_png(picks, os.path.join(odir, "inputs.png"))
+        save_volume_png(vols, os.path.join(odir, "volume_t0.png"))
+        save_dvf_png(wp_by_t[0], coords0, picks, os.path.join(odir, "dvf_t0.png"), t=0)
+        print(f"[{name}]: S={S} -> {odir}/cycle.gif", flush=True)
     print("DONE", flush=True)
 
 

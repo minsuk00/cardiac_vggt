@@ -11,8 +11,8 @@ from eval.adapters.base import MM_PER_NORM
 
 
 def save_dvf_png(world_points, coords, picks, path, t=0):
-    """Per-slot predicted displacement Δ = world_points - scanner_coords, in mm
-    (Δx/Δy/Δz rows), masked to anatomy. Mirrors training's _DVF figure. No GT needed."""
+    """Per-slot predicted displacement Δ = world_points - scanner_coords, in mm (Δx/Δy/Δz rows),
+    full field with a faint input overlay for context. Mirrors training's _DVF figure. No GT."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -24,35 +24,51 @@ def save_dvf_png(world_points, coords, picks, path, t=0):
         ax.set_xticks([]); ax.set_yticks([])
     for s in range(S):
         z_canon, slice_idx, f, up = picks[s]
-        mask = up > 0.03
         axes[0][s].imshow(up, cmap="gray")
         axes[0][s].set_title(f"z{z_canon} s{slice_idx} f{f}", fontsize=7)
         for c in range(3):
             dm = delta[s, ..., c] * MM_PER_NORM[c]
-            vlim = float(np.percentile(np.abs(dm[mask]), 99)) if mask.any() else 1.0
-            vlim = max(vlim, 1e-3)
-            disp = np.where(mask, dm, np.nan)
-            im = axes[c + 1][s].imshow(disp, cmap="bwr", vmin=-vlim, vmax=vlim)
+            # Full Δ field, NO intensity mask (the old up>0.03 mask erased low-signal anatomy);
+            # vlim from the 99th pct over the whole slice + a faint input overlay for context.
+            vlim = max(float(np.percentile(np.abs(dm), 99)), 1e-3)
+            im = axes[c + 1][s].imshow(dm, cmap="bwr", vmin=-vlim, vmax=vlim)
+            axes[c + 1][s].imshow(up, cmap="gray", alpha=0.15)   # faint anatomy overlay
             if s == 0:
                 axes[c + 1][s].set_ylabel(labels[c], fontsize=9)
             if s == S - 1:
                 fig.colorbar(im, ax=axes[c + 1][s], fraction=0.046, pad=0.02)
     axes[0][0].set_ylabel("input slice", fontsize=9)
-    fig.suptitle(f"{os.path.basename(path)}  predicted DVF (target t={t}, anatomy-masked)", fontsize=9)
+    fig.suptitle(f"{os.path.basename(path)}  predicted DVF (target t={t}, full field)", fontsize=9)
     fig.tight_layout()
     fig.savefig(path, dpi=90); plt.close(fig)
 
 
-def _u8(a, vmax):
-    return np.clip(a / vmax * 255.0, 0, 255).astype(np.uint8)
-
-
-def save_cycle_gif(vols, path, mid_d=None):
-    """Mid-z V_canon across the 12 target phases -> beating-heart GIF."""
-    if mid_d is None:
-        mid_d = vols[0].shape[0] // 2
-    vmax = max(float(v[mid_d].max()) for v in vols) or 1e-3
-    frames = [Image.fromarray(_u8(v[mid_d], vmax)) for v in vols]
+def save_cycle_gif(vols, path, planes=None, n_slices=5):
+    """1×n pred strip — n z-planes spanning the reconstructed content — animated over the swept
+    frames (beating heart). Pred only (OOD: no GT). `planes` overrides the auto-picked z indices;
+    otherwise pick n planes evenly spanning the planes that carry signal."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from io import BytesIO
+    stack = np.stack(vols)                                   # (F, D, H, W)
+    D = stack.shape[1]
+    if planes is None:
+        e = stack.max(0).reshape(D, -1).max(1)              # per-plane peak intensity over frames
+        nz = np.where(e > 0.05 * (float(e.max()) or 1e-3))[0]
+        z0, z1 = (int(nz.min()), int(nz.max())) if len(nz) else (0, D - 1)
+        planes = np.unique(np.clip(np.linspace(z0, z1, n_slices).round().astype(int), 0, D - 1))
+    vmax = max(float(stack[:, planes].max()), 1e-3)
+    frames = []
+    for v in vols:
+        fig, axes = plt.subplots(1, len(planes), figsize=(1.6 * len(planes), 2.0), squeeze=False)
+        for c, z in enumerate(planes):
+            ax = axes[0][c]
+            ax.imshow(v[z], cmap="gray", vmin=0, vmax=vmax)
+            ax.set_xticks([]); ax.set_yticks([]); ax.set_title(f"z={z}", fontsize=8)
+        fig.tight_layout()
+        buf = BytesIO(); fig.savefig(buf, format="png", dpi=90); buf.seek(0)
+        frames.append(Image.open(buf).convert("RGB")); plt.close(fig)
     frames[0].save(path, save_all=True, append_images=frames[1:], duration=200, loop=0)
 
 

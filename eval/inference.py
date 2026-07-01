@@ -5,11 +5,15 @@ One place for: building the z-only + target_t VGGT model, a single target-phase 
 target_t phase sweep that produces the beating-heart stack. Dataset-agnostic — the adapter
 already normalized the batch.
 """
+import numpy as np
 import torch
+import torch.nn.functional as F
 
 from vggt.models.vggt import VGGT
 from vggt.utils.splat import splat_predictions
-from eval.adapters.base import GRID_SHAPE, DEFAULT_CKPT
+from eval.adapters.base import (
+    GRID_SHAPE, DEFAULT_CKPT, DEFAULT_CKPT_REFERENCE, INPUT_IMG_SIZE, to_canonical_inplane,
+)
 
 
 def load_rtfb_model(ckpt=DEFAULT_CKPT, *, refiner=False, device="cuda"):
@@ -34,6 +38,29 @@ def load_rtfb_model(ckpt=DEFAULT_CKPT, *, refiner=False, device="cuda"):
     if bad:
         raise RuntimeError(f"missing critical weights: {bad[:5]} ...")
     print(f"  loaded {ckpt}  (refiner={refiner}, missing={len(missing)}, unexpected={len(unexpected)})",
+          flush=True)
+    return model.to(device).eval()
+
+
+def load_rtfb_model_reference(ckpt=DEFAULT_CKPT_REFERENCE, *, refiner=False, device="cuda"):
+    """Reference-slot z-only VGGT-MRI model (docs/25 + docs/28): slot 0 is the native
+    camera_token anchor (`use_reference_token`) instead of a content-free `target_t` index —
+    the query is read from slot-0's real image content via `reference_sweep`, not a scalar."""
+    model = VGGT(
+        img_size=518, patch_size=14, embed_dim=1024,
+        enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
+        use_z_pose_embedding=True, use_t_pose_embedding=False,
+        use_target_t_pose_embedding=False, use_reference_token=True, train_on_residual_dvf=True,
+        enable_refiner=refiner, refiner_use_coverage=refiner, grid_shape=GRID_SHAPE,
+    )
+    ck = torch.load(ckpt, map_location="cpu", weights_only=False)
+    state = ck["model"] if "model" in ck else ck
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    bad = [k for k in missing if any(s in k for s in
+           ("aggregator", "point_head", "refiner", "z_embedder"))]
+    if bad:
+        raise RuntimeError(f"missing critical weights: {bad[:5]} ...")
+    print(f"  loaded {ckpt}  (reference-slot, refiner={refiner}, missing={len(missing)}, unexpected={len(unexpected)})",
           flush=True)
     return model.to(device).eval()
 
@@ -92,3 +119,35 @@ def phase_sweep(model, batch, *, n_phases=12, return_world_points=False,
         if return_world_points:
             wp_by_t.append(r["world_points"])
     return vols, (wp_by_t if return_world_points else None)
+
+
+@torch.no_grad()
+def reference_sweep(model, batch, ref_ctx, *, return_world_points=False,
+                    device="cuda", grid_shape=GRID_SHAPE):
+    """Reference-slot analogue of `phase_sweep` (docs/25 + docs/28): sweeps slot 0 over REAL
+    acquired frames at the reference z-plane instead of a synthetic `target_t` scalar, mirroring
+    the trainer's cardiac-cycle filmstrip (`_log_cardiac_cycle_filmstrip`) but fed from the
+    dataset's own real-time cine rather than the cached phase bundle.
+
+    -> (vols, wp_by_t|None, frame_indices) — `ref_ctx["frame_indices"]` (set by
+    `build_batch_multiframe`'s `frames_for_reference`), the single source of truth for which
+    real frames get swept.
+    """
+    frame_indices = ref_ctx["frame_indices"]
+    vmin, vmax = ref_ctx["scale"]
+    inplane = ref_ctx["inplane"]
+    cine_slice = ref_ctx["cine_slice"]  # (n_frames, H, W)
+
+    want = ("V", "world_points") if return_world_points else ("V",)
+    vols, wp_by_t = [], []
+    for f in frame_indices:
+        norm = np.clip((cine_slice[f] - vmin) / (vmax - vmin), 0.0, 1.0)
+        canon = to_canonical_inplane(norm, inplane)
+        up = F.interpolate(canon[None, None], size=(INPUT_IMG_SIZE, INPUT_IMG_SIZE),
+                           mode="bilinear", align_corners=True)[0, 0].numpy()
+        batch["images"][:, 0] = torch.from_numpy(up).to(device).repeat(3, 1, 1)
+        r = forward(model, batch, want=want, device=device, grid_shape=grid_shape)
+        vols.append(r["V"])
+        if return_world_points:
+            wp_by_t.append(r["world_points"])
+    return vols, (wp_by_t if return_world_points else None), frame_indices
