@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=jjparkcv98
+#SBATCH --account=jjparkcv0
 #SBATCH --partition=spgpu
 #SBATCH --gres=gpu:a40:1
 #SBATCH --nodes=1
@@ -15,32 +15,33 @@
 #SBATCH --open-mode=append
 
 # --- Configuration ---
-# Target-phase REFERENCE-SLICE conditioning (docs/24, docs/25). mri_volume.yaml is now the
-# reference pipeline: slot 0 = a real target-phase reference slice (mid-ventricular plane),
-# marked via VGGT's native camera_token anchor; the model reads the target phase from slot-0's
-# image content instead of a content-free target_t index. This fixes the flat-EF amplitude
-# regression (pred-EF-vs-true slope ≈0 → expected ≈1) + the target_t=k/12 timing ambiguity.
+# VARIANT A: multi-frame S=20 diffusion-reg reference run (continuous_z=false).
+# Base config = mri_volume_diffusion (docs/24, docs/25): reference-slice conditioning (slot 0 =
+# target-phase reference via camera_token anchor), aggft (freeze only patch_embed), NO refiner,
+# respiration ON with group_by_burst (one breath per z-plane; docs/01), warp reg = VoxelMorph L2
+# diffusion ‖∇u‖² (diffusion_weight=1000, tv_weight=0), max_epochs=200.
+# NEW since wandb 4wokxzov (single-frame S=12): S=20 multi-frame per slice (docs/28) — full
+# z-coverage + uniform-random extras. continuous_z=false here (integer planes); the A/B partner
+# train_mri_volume_diffusion_s20_contz.sh flips it on. Fresh-from-base retrain (NOT a warm-start
+# from 4wokxzov — that checkpoint memorized the S=12 single-frame regime).
 #
-# WARM-START: FRESH FROM BASE VGGT-1B (the config default resume path,
-# ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM
-# and CKPT_ONLY empty for that. aggft (aggregator unfrozen, find_unused_parameters=true): ~2.8×
-# slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via mri_volume.yaml
-# (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe), affine aug off.
-CONFIG="mri_volume"
+# WARM-START: FRESH FROM BASE VGGT-1B (config default resume path,
+# ./scratch/base_weights/vggt1b_base.pt, strict=false). Leave RESUME_FROM and CKPT_ONLY empty.
+# aggft: ~2.8× slower, ~27 GB/A40.
+CONFIG="mri_volume_diffusion"
 NGPU=1
-MASTER_PORT=29522
+MASTER_PORT=29531
+VARIANT_TAG="s20"                       # exp_name/dir suffix (avoids collision with the contz partner)
+VARIANT_OVERRIDES=""                    # continuous_z=false is the config default
 
-# --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
-# RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
+# --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
 RESUME_FROM=""
-# CKPT_ONLY: load weights from a checkpoint into a fresh exp dir. EMPTY here on purpose →
-# fresh-from-base (the config's base-weights resume path is used). Ignored if RESUME_FROM set.
 CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    JOB_NAME="vggt_${CONFIG}_reference"
+    JOB_NAME="vggt_${CONFIG}_${VARIANT_TAG}"
     if [ ! -z "$RESUME_FROM" ]; then
         JOB_NAME="${JOB_NAME}_resume"
     elif [ ! -z "$CKPT_ONLY" ]; then
@@ -84,7 +85,6 @@ if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
     fi
     echo "Requeue restart #${SLURM_RESTART_COUNT}: exp_name=${EXP_NAME}, resume_id=${WANDB_RESUME_ID:-<new>}, extra='${EXTRA_OVERRIDES}'"
 else
-    EXTRA_OVERRIDES=""
     if [ ! -z "$RESUME_FROM" ]; then
         EXP_NAME=$(basename "$RESUME_FROM")
         CKPT_PATH="${RESUME_FROM}/ckpts/checkpoint_last.pt"
@@ -92,7 +92,8 @@ else
             echo "ERROR: RESUME_FROM is set but $CKPT_PATH does not exist."
             exit 1
         fi
-        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH}"
+        EXTRA_OVERRIDES="${VARIANT_OVERRIDES}"
+        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH} ${EXTRA_OVERRIDES}"
         echo "Resuming (same exp + wandb) from: $CKPT_PATH"
         WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
         if [ ! -z "$WANDB_DIR" ]; then
@@ -106,18 +107,17 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_reference_dynamic_axial_Cine_combined"
-        EXTRA_OVERRIDES="max_epochs=200"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_${VARIANT_TAG}_dynamic_axial_Cine_combined"
+        EXTRA_OVERRIDES="max_epochs=200 ${VARIANT_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run, max_epochs=200)"
     else
         # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
-        # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_reference_dynamic_axial_Cine_combined"
-        EXTRA_OVERRIDES="max_epochs=200"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_${VARIANT_TAG}_dynamic_axial_Cine_combined"
+        EXTRA_OVERRIDES="max_epochs=200 ${VARIANT_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
-        echo "Fresh-from-base reference run: exp_name=${EXP_NAME}, max_epochs=200"
+        echo "Fresh-from-base diffusion S=20 run: exp_name=${EXP_NAME}, max_epochs=200"
     fi
     { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi

@@ -65,7 +65,7 @@ export WANDB_MODE=online
 
 # --- Build Hydra overrides ---
 # REQUEUE_STATE pins exp_name (and EXTRA_OVERRIDES) across requeues so checkpoint auto-detect
-# finds checkpoint_last.pt instead of a fresh rev_ts dir. (See train_mri_volume.sh for detail.)
+# finds checkpoint_last.pt instead of a fresh rev_ts dir. (See _archive/legacy_sbatch/train_mri_volume.sh for detail.)
 REQUEUE_STATE="/home/minsukc/vggt/slurm_logs/.requeue_${SLURM_JOB_ID}.env"
 
 if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
@@ -119,7 +119,7 @@ fi
 
 echo "Running: torchrun ... --config $CONFIG $OVERRIDES"
 
-# --- SLURM auto-requeue signal forwarding (see train_mri_volume.sh) ---
+# --- SLURM auto-requeue signal forwarding (see _archive/legacy_sbatch/train_mri_volume.sh) ---
 _forward_usr1() {
     echo "[requeue] batch shell caught SIGUSR1 — forwarding to torchrun workers (children of ${TORCHRUN_PID})"
     pkill -USR1 -P "$TORCHRUN_PID" 2>/dev/null

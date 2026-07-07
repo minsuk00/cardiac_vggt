@@ -1,0 +1,28 @@
+> **TL;DR & takeaway**
+> Parking lot for follow-up work — **none of these are in the current pipeline.** The headline
+> direction is *realistic real-time acquisition simulation* (bSSFP transient, single-shot
+> artifacts, through-plane motion) on top of the current scattered-sampling + in-plane-aug sim.
+> Everything below is a scoped idea with its blockers, not a committed plan. Moved out of
+> `CLAUDE.md` (2026-07-07) to keep the always-loaded file operational; link back from there.
+
+Notes for follow-up work. None of these are in the current pipeline.
+
+- **Realistic real-time acquisition simulation (headline direction).** Current "simulation" = scattered single-frame sampling + in-plane aug on clean gated cine. Real transfer needs the physics real-time acquisition imposes: bSSFP transient/contrast, single-shot undersampling artifacts, respiratory + through-plane motion. `SPINER/` + `lixuan_simulation/` (untracked) are starting points.
+
+  - **Respiratory motion simulation** — research + design scoped in `docs/01_respiratory_motion_simulation.md` (literature-validated; not implemented). Gist: per-slice respiratory phase sampled independently of cardiac phase (XCAT two-clocks); rigid SI translation ~10–15 mm along canonical Z + deform-then-reslice the cached `phases` bundle. See the doc for numbers, sources, the correct-vs-condition fork, and reference code (NeSVoR/SVRTK). **MRXCAT/XCAT was evaluated and dropped** (doc §6): MRXCAT only renders MR physics, the motion engine is XCAT's (closed binary; XCAT 3.0's public release is segmentation-only), so there's no portable sim code — we reimplement the simple rigid 6-DOF model ourselves on real cine (path A). The inspection did independently confirm our model + give reference amplitudes.
+
+- **Option B — continuous-phase query.** Add a `target_t_embedder` alongside `TIndexEmbedder` so the model decodes any `t_target ∈ [0,1)`, not just the 12 discrete phases (new embedder + `target_t` batch field + light `point_head`/`register_token` fine-tune).
+
+- **Inference information contract — blind input phase (design stance, `docs/04`).** Target the extreme: at inference the model knows only `z` per input slice; input cardiac `t` and respiratory `r` are assumed **unavailable** (one-frame-per-slice ⇒ no temporal stream ⇒ no self-gating; **no ECG, no respiratory device** assumed, for zero-auxiliary-hardware generality). *Input* phase is independent of *target* phase — `target_t`/`target_r` stay free (chosen queries, sim GT). Cardiac is content-inferable from a slice; respiratory is **not** (cropped SAX hides it) → **pin `target_r` to the reference (4D, correct-not-resolve)**, don't query it. Not yet implemented — current pipeline still conditions on input `t`. See `docs/04_inference_information_contract.md`.
+
+- **Free-breathing extension.** Add a second cyclic Fourier embedder for respiratory phase (~14K params). Blockers: motion-resolved 5D reference (or self-supervised loss), per-slice cardiac+respiratory tags, gated→real-time domain shift.
+
+- **Phase-recovery FALLBACK (if blind underperforms).** If content-inference of input phase isn't enough, recover and feed it: ECG-label cardiac `t` (decoupled clock — works at any sparsity; mild label noise for in-bore MHD), self-gate `t`/`r` from a temporal stream (k-space self-gating / image PCA / manifold), or add a respiratory navigator/bellows for true 5D. Implement the bridge as **input-phase dropout (+ noise)** so one model uses phase when present and content-infers when absent.
+
+- **Fully unsupervised — drop `gt_target_volume`.** Current loss still uses the per-phase NIfTI (itself a derived recon). True self-supervision: sample `V_canon` at input world coords, compare against the input slice intensities. Risk: degenerate `V_canon≈0` — needs a coverage/completeness or stronger smoothness term.
+
+- **UNet refiner on splat.** Small 3D UNet after the splat to inpaint low-coverage voxels + smooth seam artifacts. Drop-in; doubles as an ablation for splat-artifact vs. motion-prediction error.
+
+- **UNet ablation — replace the splat.** Regress `V_canon` directly from features (no splat/coverage division). Loses splat interpretability for more capacity; run head-to-head to test whether explicit splatting helps.
+
+- **Tagging data as in-plane motion validation.** `ChallengeData/Tagging` and `ChallengeData_AfterCompetition/Tagging` contain SAX tagging k-space for ~143/194 training subjects — same patients, same SAX slice geometry, same ECG-gated session as Cine. Tagging embeds a grid pattern in the tissue; tracking grid points across the 26 cardiac phases yields a dense 2D displacement field `(dx, dy)` per SAX slice — explicit GT for in-plane myocardial motion. Limitation: tagging is fundamentally 2D (grid is in-plane only), so it gives zero supervision on `dz` (through-plane), which is the hardest and most project-critical component. Pipeline: reconstruct tagging images from k-space (same `batch_reconstruct_cmrxrecon2024.py` approach), then run a grid-tracking method (e.g. HARP, SinMod, or optical flow) to extract `(dx,dy,t)` per slice. Use as a validation metric for the point head's in-plane `Δ` components on matched subjects.

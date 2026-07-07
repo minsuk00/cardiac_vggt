@@ -170,5 +170,9 @@ logs/
 .claude/
 SPINER/
 
+# macOS metadata
+.DS_Store
+._*
+
 
 
