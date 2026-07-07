@@ -220,3 +220,40 @@ def test_sample_resp_disp_train_uses_generator():
     # Advancing the same generator → a different draw (iid across steps).
     c, _ = sample_resp_disp(2, 6, cfg, DEVICE, train=True, generator=g1)
     assert not torch.equal(a, c)
+
+
+# ── 11. group_by_burst: one breath per z-plane, independent across planes ─────
+def test_group_by_burst_shares_one_breath_per_plane():
+    """All frames of a z-plane get ONE respiratory phase + displacement vector
+    (a short burst sits at ~one breathing position); planes differ."""
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, group_by_burst=True)
+    # 20 slots over planes {3,4,5,6}, planes repeated (multi-frame bursts).
+    gids = torch.tensor([[6, 3, 3, 3, 4, 4, 5, 5, 5, 3, 4, 5, 3, 4, 5, 3, 4, 5, 6, 6]])
+    seq = torch.tensor([[7]], dtype=torch.int64)
+    disp, r = sample_resp_disp(1, 20, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    plane_r = {}
+    for p in (3, 4, 5, 6):
+        idx = (gids[0] == p).nonzero().flatten()
+        assert torch.allclose(r[0, idx], r[0, idx[0]].expand_as(r[0, idx]), atol=1e-6)  # shared phase
+        assert torch.allclose(disp[0, idx], disp[0, idx[0]].expand_as(disp[0, idx]), atol=1e-6)  # shared vec
+        plane_r[p] = float(r[0, idx[0]])
+    assert len(set(plane_r.values())) > 1                        # planes are independent breaths
+
+
+def test_group_by_burst_off_ignores_group_ids():
+    """Default group_by_burst=False → group_ids has NO effect (bit-identical to None)."""
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, group_by_burst=False)
+    gids = torch.tensor([[3, 3, 4, 4, 5, 5]])
+    seq = torch.tensor([[7]], dtype=torch.int64)
+    with_ids, _ = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    no_ids, _ = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=None)
+    assert torch.equal(with_ids, no_ids)
+
+
+def test_group_by_burst_val_deterministic():
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, group_by_burst=True)
+    gids = torch.tensor([[3, 3, 4, 4, 5, 6]])
+    seq = torch.tensor([[7]], dtype=torch.int64)
+    a, ar = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    b, br = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    assert torch.equal(a, b) and torch.equal(ar, br)

@@ -160,5 +160,11 @@ data:
       cos2n: 3                  # Lujan sin^{2n} exhale-dwell knob
       ap_ratio: 0.35            # AP displacement = ap_ratio * SI
       ap_axis: "H"              # in-plane axis carrying AP ("H" or "W")
-      per_slot: true            # independent breath per input slice (scattered regime)
+      per_slot: true            # (per_slot mode only) breath DEPTH per slice vs per subject
+      group_by_burst: true      # REALISTIC: all frames of one z-plane share ONE breath (phase+
+                                # depth+tilt), independent across planes — a fast per-slice burst
+                                # sits at ~one respiratory position, different slices = different
+                                # breaths. false → legacy per-slot-iid (each frame its own breath;
+                                # unrealistic, lets the splat average breathing away). Needs a
+                                # retrain to benefit; eval picks it up immediately. docs/01.
       direction_jitter_deg: 30.0  # max random tilt of SI+AP off the D axis (0 → none)

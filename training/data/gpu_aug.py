@@ -319,9 +319,12 @@ def gpu_augment_batch(batch, transforms, device,
                 "respiratory val augmentation requires batch['seq_index'] for determinism"
             )
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
+        # z-plane per slot — the burst-grouping key for group_by_burst (one breath per plane).
+        # Ignored unless respiratory_cfg.group_by_burst is set (default → per-slot iid, unchanged).
+        group_ids = batch["slice_indices"].round().long().to(device)
         disp, resp_r = sample_resp_disp(
             Bsize, S, respiratory_cfg, device,
-            train=train, seq_index=seq_index, generator=resp_generator,
+            train=train, seq_index=seq_index, generator=resp_generator, group_ids=group_ids,
         )                                                       # (B,S,3) mm, (B,S) phase
         images = extract_slices_with_respiratory_vec(
             phases_cur, batch["timesteps"], batch["slice_indices"], disp,

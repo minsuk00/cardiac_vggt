@@ -78,7 +78,14 @@ class RespiratoryConfig:
     cos2n: int = 3                 # n in the Lujan sin^{2n} waveform (n=3 → sin^6, longer exhale dwell)
     ap_ratio: float = 0.35         # k: AP displacement = k * SI
     ap_axis: str = "H"             # in-plane axis carrying AP ("H" or "W")
-    per_slot: bool = True          # independent breath per input slice (scattered regime)
+    per_slot: bool = True          # (per_slot mode only) breath DEPTH per slice vs per subject
+    group_by_burst: bool = False   # realistic acquisition model: all frames of ONE z-plane share
+                                   # ONE respiratory state (phase + depth + tilt), independent
+                                   # across planes. A short per-slice burst sits at ~one breathing
+                                   # position (breath ~3-5s >> ~200ms burst), while different
+                                   # slices are acquired at different breaths. False → legacy
+                                   # per-slot-iid (each frame its own breath; unrealistic — lets
+                                   # the splat average breathing away). Grouping key = z-plane.
     direction_jitter_deg: float = 30.0  # max random tilt (deg) of the SI+AP vector off the D axis;
                                         # 0 → pure SI+AP (no randomization). Handles the SAX-stack
                                         # tilt (D is the LV long axis, ~20-45° off true SI).
@@ -102,12 +109,16 @@ class RespiratoryConfig:
             ap_ratio=float(g("ap_ratio", cls.ap_ratio)),
             ap_axis=str(g("ap_axis", cls.ap_axis)),
             per_slot=bool(g("per_slot", cls.per_slot)),
+            group_by_burst=bool(g("group_by_burst", cls.group_by_burst)),
             direction_jitter_deg=float(g("direction_jitter_deg", cls.direction_jitter_deg)),
             seed=g("seed", cls.seed),
         )
 
 
-def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None):
+N_CANON_PLANES = 12   # canonical grid depth (D); the burst-grouping key is the z-plane index
+
+
+def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None):
     """Sample per-slot SI and AP displacement (mm).
 
     Returns (d_si_mm, d_ap_mm, r), each `(B, S)` float32 on `device` (r is the
@@ -127,9 +138,18 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None):
     def rand(shape):
         return torch.rand(shape, device=device, generator=generator, dtype=torch.float32)
 
-    r = rand((B, S))                                  # respiratory phase
-    amp_shape = (B, S) if cfg.per_slot else (B, 1)
-    A = cfg.amplitude_mm + (rand(amp_shape) * 2.0 - 1.0) * cfg.amplitude_jitter
+    if cfg.group_by_burst and group_ids is not None:
+        # Realistic: one breath per z-plane burst (shared phase + depth), independent across
+        # planes. Draw per-plane then gather to slots so all frames of a plane match.
+        P = N_CANON_PLANES
+        gid = group_ids.clamp(0, P - 1).long()                        # (B,S) z-plane per slot
+        r = torch.gather(rand((B, P)), 1, gid)                        # (B,S) shared within plane
+        amp_grp = cfg.amplitude_mm + (rand((B, P)) * 2.0 - 1.0) * cfg.amplitude_jitter
+        A = torch.gather(amp_grp, 1, gid)
+    else:
+        r = rand((B, S))                                  # respiratory phase (per-slot iid)
+        amp_shape = (B, S) if cfg.per_slot else (B, 1)
+        A = cfg.amplitude_mm + (rand(amp_shape) * 2.0 - 1.0) * cfg.amplitude_jitter
     A = A.clamp_min(0.0)                              # depth can't be negative
     d_si = lujan_displacement(r, A, n=cfg.cos2n)      # (B,S), A broadcasts
     d_ap = cfg.ap_ratio * d_si
@@ -172,7 +192,7 @@ def _rotate_disp(v, theta, phi):
     return v * cos + kxv * sin + k * kdotv * (1.0 - cos)
 
 
-def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=None):
+def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None):
     """Sample per-slot canonical displacement vectors. Returns `(v, r)` where
     `v` is `(B, S, 3)` = (d_D, d_H, d_W) mm and `r` is `(B, S)` respiratory phase.
 
@@ -186,20 +206,28 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
     if generator is None and cfg.seed is not None:
         generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
 
-    d_si, d_ap, r = sample_displacements(B, S, cfg, device, generator=generator)  # (B,S) each
+    d_si, d_ap, r = sample_displacements(B, S, cfg, device, generator=generator,
+                                         group_ids=group_ids)                      # (B,S) each
     v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                   # (B,S,3)
 
     if cfg.direction_jitter_deg and cfg.direction_jitter_deg > 0:
         def rand(shape):
             return torch.rand(shape, device=device, generator=generator, dtype=torch.float32)
-        theta = rand((B, S)) * math.radians(float(cfg.direction_jitter_deg))
-        phi = rand((B, S)) * (2.0 * math.pi)
+        if cfg.group_by_burst and group_ids is not None:
+            # a slice's tilt is fixed within its burst → share the direction per plane too
+            P = N_CANON_PLANES
+            gid = group_ids.clamp(0, P - 1).long()
+            theta = torch.gather(rand((B, P)), 1, gid) * math.radians(float(cfg.direction_jitter_deg))
+            phi = torch.gather(rand((B, P)), 1, gid) * (2.0 * math.pi)
+        else:
+            theta = rand((B, S)) * math.radians(float(cfg.direction_jitter_deg))
+            phi = rand((B, S)) * (2.0 * math.pi)
         v = _rotate_disp(v, theta, phi)
     return v.to(torch.float32), r
 
 
 def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
-                     seq_index=None, generator=None):
+                     seq_index=None, generator=None, group_ids=None):
     """Determinism wrapper used by the trainer GPU path. Returns `(B, S, 3)` mm.
 
     Returns `(disp, r)`: `disp` is `(B, S, 3)` mm, `r` is `(B, S)` respiratory phase.
@@ -212,7 +240,8 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
       per-batch) because `DynamicBatchSampler` groups variable rows per batch.
     """
     if train:
-        return sample_displacement_vectors(B, S, cfg, device, generator=generator)
+        return sample_displacement_vectors(B, S, cfg, device, generator=generator,
+                                           group_ids=group_ids)
 
     if seq_index is None:
         raise ValueError(
@@ -222,7 +251,8 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
     v_rows, r_rows = [], []
     for b in range(B):
         g = torch.Generator(device=device).manual_seed(int(seq[b]))
-        v_b, r_b = sample_displacement_vectors(1, S, cfg, device, generator=g)
+        gid_b = None if group_ids is None else group_ids[b:b + 1]
+        v_b, r_b = sample_displacement_vectors(1, S, cfg, device, generator=g, group_ids=gid_b)
         v_rows.append(v_b[0]); r_rows.append(r_b[0])
     return torch.stack(v_rows, dim=0), torch.stack(r_rows, dim=0)  # (B,S,3), (B,S)
 
