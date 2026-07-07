@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# mirtk shim: forward every `mirtk <subcmd> ...` call from the fetal_cmr_4d bash
+# scripts into the SVRTK Singularity container, preserving the caller's working
+# directory (the scripts cd into subdirs and use relative paths) and binding the
+# recon tree read-write.
+#
+# The fetal_cmr_4d recon scripts call `mirtk` and nothing else external, so
+# putting this dir first on PATH makes them run unmodified against the container.
+#
+# Env overrides:
+#   FCMR_SIF   path to svrtk.sif
+#   FCMR_BIND  host path whose (resolved) subtree contains all recon I/O + the sif
+set -euo pipefail
+
+SIF="${FCMR_SIF:-/home/minsukc/vggt/scratch/fetal_cmr_4d/sif/svrtk.sif}"
+BIND="${FCMR_BIND:-/home/minsukc/vggt/scratch/fetal_cmr_4d}"
+
+# Resolve the REAL singularity binary. NB: /usr/local/bin/singularity on this
+# cluster is a stub that only prints "use module load" and exits 0, so we must
+# prefer the actual /opt install over whatever `command -v` finds on PATH.
+SING="${FCMR_SINGULARITY:-}"
+if [ -z "$SING" ]; then
+    for p in /opt/singularity/*/bin/singularity; do [ -x "$p" ] && SING="$p"; done
+fi
+if [ -z "$SING" ]; then SING="$(command -v singularity 2>/dev/null || true)"; fi
+if [ -z "$SING" ]; then echo "mirtk-shim: singularity not found" >&2; exit 127; fi
+
+# Resolve symlinks so the container sees real (GPFS) paths; scratch/ is a symlink.
+BIND_REAL="$(realpath "$BIND")"
+SIF_GPFS="$(realpath "$SIF")"
+PWD_REAL="$(realpath "$PWD")"
+
+# Stage the .sif onto node-local /tmp so the hundreds of short container starts
+# the fetal_cmr_4d bash scripts trigger don't each re-read 1.5 GB from networked
+# GPFS (GPFS is slow for repeated reads; /tmp is local NVMe). Mirrors the project's
+# monai-cache + run_nesvor.sh pattern. Copy once per node; reuse on later calls.
+SIF_LOCAL="/tmp/vggt-svrtk_${USER}/svrtk.sif"
+if [ ! -f "$SIF_LOCAL" ] || [ "$(stat -c%s "$SIF_LOCAL" 2>/dev/null || echo 0)" != "$(stat -c%s "$SIF_GPFS")" ]; then
+    mkdir -p "$(dirname "$SIF_LOCAL")"
+    cp -f "$SIF_GPFS" "$SIF_LOCAL.tmp.$$" && mv -f "$SIF_LOCAL.tmp.$$" "$SIF_LOCAL"
+fi
+SIF_REAL="$SIF_LOCAL"
+
+# --cleanenv is REQUIRED: Singularity auto-mounts $HOME, so this shim's own dir
+# leaks onto PATH inside the container. SVRTK's reconstructCardiac spawns child
+# `mirtk` processes; without a clean env they'd recurse back into this shim
+# (#!/usr/bin/env bash -> nested singularity) and fail. --cleanenv makes the
+# container use its own PATH so children resolve to the real /usr/local/bin/mirtk.
+exec "$SING" exec \
+    --cleanenv \
+    --bind "$BIND_REAL" \
+    --pwd "$PWD_REAL" \
+    "$SIF_REAL" \
+    mirtk "$@"
