@@ -132,6 +132,11 @@ def main():
     val_ds, rcfg = build_val_dataset()
     gott_ds = build_gott_dataset()
 
+    # All 5 val examples target ED (t=0, the ED-anchored frame; docs/17) so they are 5
+    # different subjects reconstructed at the SAME phase — comparable. Slot 0 (reference) is
+    # then the mid-ventricular plane at its ED frame. (OOD has no controlled target phase.)
+    val_ds.t_target_fixed = 0
+
     # (mode, label, build_fn) — 5 examples per dataset
     jobs = []
     for i in VAL_SEQS:
