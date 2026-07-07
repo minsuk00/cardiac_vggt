@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import logging
 from dataclasses import dataclass
 from math import ceil, floor
 
@@ -107,7 +108,8 @@ class MultitaskLoss(torch.nn.Module):
         if "world_points" in predictions and self.volume is not None and self.volume.get("weight", 0) > 0:
             vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **self.volume)
             vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]
-                        + vol_loss_dict.get("loss_diffusion", 0.0)) * self.volume["weight"]
+                        + vol_loss_dict.get("loss_diffusion", 0.0)
+                        + vol_loss_dict.get("loss_gather", 0.0)) * self.volume["weight"]
             # Deep-supervised refiner term (present only when enable_refiner=true; λ already
             # folded into loss_refiner). OFF ⇒ key absent ⇒ vol_loss unchanged (bitwise).
             if "loss_refiner" in vol_loss_dict:
@@ -318,7 +320,8 @@ def diffusion_loss_l2(field):
 
 
 def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256), tv_weight=0.1,
-                                  diffusion_weight=0.0, refiner_lambda=1.0, refiner_ssim_weight=0.0, **kwargs):
+                                  diffusion_weight=0.0, gather_weight=0.0,
+                                  refiner_lambda=1.0, refiner_ssim_weight=0.0, **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -386,10 +389,32 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     else:
         loss_diffusion = pos_pred.new_zeros(())
 
+    # Optional coverage-free GATHER-placement auxiliary (docs/37, docs/38). For each input pixel at
+    # its predicted world position p, SAMPLE V_gt at p ("pull") and match it to that pixel's own
+    # intensity I:  L = |sample_volume(V_gt, p) − I|. No coverage division ⇒ it restores the sharp
+    # through-plane placement gradient the splat's ÷coverage flattens into a plateau; the splat L1
+    # stays primary (keeps V_canon complete/coherent). No anatomical/motion mask — only the standard
+    # padded-pixel gate (intensity>1e-3), same as splat_predictions (docs/38). One grid_sample —
+    # cheaper than the splat. Uses the SAME input intensity as `splat_predictions`. padding_mode
+    # 'zeros' in sample_volume means predicting p outside the FOV samples 0 → mismatch → the aux
+    # discourages moving pixels out of bounds. gather_weight=0.0 ⇒ exactly 0.0 ⇒ no-op (bit-identical).
+    if gather_weight > 0:
+        with torch.cuda.amp.autocast(enabled=False):
+            gi = batch["images"].float().mean(dim=2)          # (B, S, H, W) input intensity
+            if gi.max() > 2.0:
+                gi = gi / 255.0
+            gi = gi.reshape(gi.shape[0], -1)                  # (B, S*H*W)
+            gs = sample_volume(V_gt.float(), pos_pred.float().reshape(gi.shape[0], -1, 3))  # (B, S*H*W)
+            gmask = (gi > 1e-3).float()                       # only real acquired (non-padded) pixels
+            loss_gather = ((gs - gi).abs() * gmask).sum() / gmask.sum().clamp(min=1.0) * gather_weight
+    else:
+        loss_gather = pos_pred.new_zeros(())
+
     out = {
         "loss_volume": loss_volume,
         "loss_pos_tv": loss_pos_tv,
         "loss_diffusion": loss_diffusion,
+        "loss_gather": loss_gather,
         "V_canon": V_canon,
         "V_gt": V_gt,
         "coverage": coverage,
@@ -502,6 +527,103 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                 out["metric_psnr_3d_motion"] = torch.stack(psnr_motion_list).mean()
                 out["metric_mae_3d_motion"] = torch.stack(mae_motion_list).mean()
                 out["metric_motion_frac"] = motion_mask.float().mean()
+
+        # ── VAL-ONLY ship-decision + breathing metrics (docs/37) ─────────────────
+        # These quantify targeted improvements that aggregate PSNR buries: an oracle-
+        # normalized recoverable-fraction (rescales out the un-fixable appearance wall),
+        # a heart/static PSNR split, a coverage-hole tripwire, and breathing through-
+        # plane recovery vs the EXACT simulated shift. Gated to val via requires_grad
+        # (train forward has grad ⇒ skipped ⇒ training cost + numerics bit-identical);
+        # each part try/except-wrapped ⇒ never raises into the loop. Extra splats run
+        # only in val. The cardiac-motion mask (compute_motion_mask) is the heart ROI —
+        # no segmentation needed. See docs/37 for the design + the stop-grad test.
+        # `pos_pred is not batch["scanner_coords"]` also skips the startup identity-baseline
+        # pass (which calls this with world_points = scanner_coords) so the extra splats run
+        # only in REAL val. To surface in wandb, the metric_* keys below must be listed in
+        # `logging.scalar_keys_to_log.val.keys_to_log` (mri_volume.yaml).
+        if (not pos_pred.requires_grad) and (pos_pred is not batch.get("scanner_coords")) \
+                and "phases" in batch and "scanner_coords" in batch:
+            # (1) recov_frac_heart + psnr_static + hole_frac_heart (vs GT, heart ROI)
+            try:
+                heart = compute_motion_mask(batch["phases"])            # (B,D,H,W) bool
+                # identity splat (Δ=0, real corrupted input content) — exact forward path
+                V_id, _ = splat_predictions({"world_points": batch["scanner_coords"]}, batch, grid_shape)
+                # oracle splat (Δ=0, TRUE target-phase content sampled at each pixel's home) —
+                # the recoverable ceiling; the model→oracle gap is the appearance wall (docs 19-21).
+                intensity = batch["images"].float().mean(dim=2)
+                if intensity.max() > 2.0:
+                    intensity = intensity / 255.0
+                scan_flat = batch["scanner_coords"].reshape(B, -1, 3)
+                w = (intensity.reshape(B, -1) > 1e-3).float()
+                V_or, _ = splat_to_volume(scan_flat, sample_volume(V_gt, scan_flat), grid_shape, weight=w)
+                recov, mse_id_l, mse_mo_l, mse_or_l, holes, static_psnr = [], [], [], [], [], []
+                for b in range(B):
+                    m = heart[b]
+                    if bool(m.any()):
+                        g = V_gt[b][m]
+                        mse_id = ((V_id[b][m] - g) ** 2).mean()
+                        mse_mo = ((V_canon[b][m] - g) ** 2).mean()
+                        mse_or = ((V_or[b][m] - g) ** 2).mean()
+                        mse_id_l.append(mse_id); mse_mo_l.append(mse_mo); mse_or_l.append(mse_or)
+                        holes.append((coverage[b][m] < 0.5).float().mean())
+                        span = mse_id - mse_or                          # recoverable span (identity → ceiling)
+                        if float(span) > 1e-6:                          # skip if oracle ≯ identity (recov undefined;
+                            recov.append(((mse_id - mse_mo) / span).clamp(-0.5, 1.5))  # signed clamp on a signed denom is wrong)
+                    st = (V_gt[b] > 1e-3) & (~heart[b])                 # content that does NOT beat (control)
+                    if bool(st.any()):
+                        mse_s = ((V_canon[b][st] - V_gt[b][st]) ** 2).mean().clamp(min=1e-10)
+                        static_psnr.append(10.0 * torch.log10(1.0 / mse_s))
+                if mse_id_l:
+                    out["metric_mse_heart_identity"] = torch.stack(mse_id_l).mean()
+                    out["metric_mse_heart_model"] = torch.stack(mse_mo_l).mean()
+                    out["metric_mse_heart_oracle"] = torch.stack(mse_or_l).mean()
+                    out["metric_hole_frac_heart"] = torch.stack(holes).mean()
+                if recov:
+                    out["metric_recov_frac_heart"] = torch.stack(recov).mean()
+                if static_psnr:
+                    out["metric_psnr_3d_static"] = torch.stack(static_psnr).mean()
+            except Exception as e:
+                logging.warning(f"docs/38 recov/static val metric failed (ignored): {e}")
+
+            # (2) breathing through-plane recovery vs the EXACT applied sim shift.
+            # predicted Δz per non-reference slot (mm) vs applied SI (resp_disp_mm[...,0]) →
+            # slope/corr/EPE + deep-breath-ignored. Brings tools/exp_4wok_analysis.py online.
+            # No-op when breathing is off (resp_disp_mm absent). Slot 0 = reference anchor, skipped.
+            # Per-subject then meter-averaged ⇒ EPE is the robust headline; slope is clamped so one
+            # low-applied-variance subject can't dominate; corr is SIGNED Pearson (differs from the
+            # offline abs-corr in exp_4wok_analysis.py — see docs/38).
+            if "resp_disp_mm" in batch:
+                try:
+                    through_mm = (V_canon.shape[1] - 1) / 2.0 * 12.0    # (D-1)/2*12 = 66 mm / norm z-unit
+                    dvf = pos_pred - batch["scanner_coords"]           # (B,S,H,W,3) normalized residual
+                    img_int = batch["images"].float().mean(dim=2)      # (B,S,H,W)
+                    disp = batch["resp_disp_mm"].float()               # (B,S,3) = (d_D,d_H,d_W) mm
+                    sl, co, epe, deep_ign = [], [], [], []
+                    for b in range(B):
+                        xs, ys = [], []
+                        for s in range(1, dvf.shape[1]):               # skip slot 0 (reference)
+                            msk = img_int[b, s] > 0.05
+                            if bool(msk.any()):
+                                xs.append(disp[b, s, 0])
+                                ys.append(dvf[b, s, :, :, 2][msk].mean() * through_mm)
+                        if len(xs) < 3:
+                            continue
+                        x = torch.stack(xs); y = torch.stack(ys)
+                        xd, yd = x - x.mean(), y - y.mean()
+                        epe.append((y - x).abs().mean())               # EPE penalizes gain AND scatter (robust)
+                        co.append((xd * yd).sum() / (xd.norm() * yd.norm()).clamp(min=1e-8))
+                        sl.append(((xd * yd).sum() / (xd * xd).sum().clamp(min=1e-8)).clamp(-3.0, 3.0))
+                        deep = x.abs() >= 12.0
+                        if bool(deep.any()):
+                            deep_ign.append((y[deep].abs() < 2.0).float().mean())
+                    if sl:
+                        out["metric_resp_slope_dz"] = torch.stack(sl).mean()
+                        out["metric_resp_corr_dz"] = torch.stack(co).mean()
+                        out["metric_resp_epe_dz_mm"] = torch.stack(epe).mean()
+                    if deep_ign:
+                        out["metric_resp_frac_deep_ignored"] = torch.stack(deep_ign).mean()
+                except Exception as e:
+                    logging.warning(f"docs/38 breathing val metric failed (ignored): {e}")
 
         # ── Refined-volume metrics (only when the refiner ran) ───────────────────
         # Mirror full/bbox/motion PSNR on V_refined so we can see, per phase, whether

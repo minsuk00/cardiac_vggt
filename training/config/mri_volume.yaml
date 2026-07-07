@@ -36,6 +36,7 @@ logging:
         - loss_volume
         - loss_pos_tv
         - loss_diffusion
+        - loss_gather
         # Full-volume metrics (averaged over all D·H·W = 786K voxels).
         # Matches what the L1 loss is optimizing.
         - metric_mae_3d_full
@@ -60,6 +61,7 @@ logging:
         - loss_volume
         - loss_pos_tv
         - loss_diffusion
+        - loss_gather
         - metric_mae_3d_full
         - metric_mse_3d_full
         - metric_psnr_3d_full
@@ -71,6 +73,19 @@ logging:
         - metric_mean_disp_norm
         - metric_coverage_frac
         - metric_coverage_mean
+        # GT-referenced ship-decision + breathing metrics (val-only; docs/38). These are
+        # produced by compute_volume_intensity_loss ONLY in val (requires_grad gate), so
+        # listing them here (not under train:) is what makes them appear in wandb.
+        - metric_recov_frac_heart
+        - metric_mse_heart_identity
+        - metric_mse_heart_model
+        - metric_mse_heart_oracle
+        - metric_hole_frac_heart
+        - metric_psnr_3d_static
+        - metric_resp_slope_dz
+        - metric_resp_corr_dz
+        - metric_resp_epe_dz_mm
+        - metric_resp_frac_deep_ignored
 
 checkpoint:
   save_freq: 50  # 3 numbered archives over 200 epochs (epochs 50/100/150) + checkpoint_last each epoch
@@ -102,6 +117,11 @@ loss:
     # L2 diffusion (Tikhonov) smoothness ‖∇u‖² on the DVF (VoxelMorph-style). 0.0 ⇒ no-op.
     # DVF is in normalized [-1,1] coords ⇒ gradients are tiny, so a nonzero weight is O(10–1000).
     diffusion_weight: 0.0
+    # Coverage-free gather-placement AUXILIARY (docs/37, docs/38): |sample_volume(V_gt, p) − input_I|,
+    # a "pull" term that restores the sharp through-plane placement gradient the splat ÷coverage
+    # flattens. Same [0,1] intensity scale as the primary L1 ⇒ weight is a direct ratio; start
+    # ~0.1–0.2, sweep toward ~0.5 (docs/38). 0.0 ⇒ no-op (bit-identical). Whole volume, no mask.
+    gather_weight: 0.0
     refiner_lambda: 1.0  # λ on the L1 part of L_post (only used when enable_refiner=true)
     refiner_ssim_weight: 0.0  # w on the 2D-SSIM part of L_post: λ·L1 + w·(1−SSIM_2d). 0 ⇒ L1-only
 
