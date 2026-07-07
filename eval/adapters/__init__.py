@@ -22,13 +22,14 @@ from eval.adapters.base import (
 )
 from eval.adapters.ocmr import OCMRAdapter
 from eval.adapters.goettingen import GoettingenAdapter
-from eval.adapters.miitt import MIITTAdapter
+from eval.adapters.miitt import MIITTAdapter, MIITTGatedAdapter
 
 __all__ = [
     "BaseRTFBAdapter",
     "OCMRAdapter",
     "GoettingenAdapter",
     "MIITTAdapter",
+    "MIITTGatedAdapter",
     "percentile_scale",
     "assign_canonical_z",
     "to_canonical_inplane",

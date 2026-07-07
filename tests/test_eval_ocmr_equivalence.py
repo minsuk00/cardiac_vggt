@@ -18,7 +18,7 @@ from eval.adapters.ocmr import OCMRAdapter
 import tests._legacy_ocmr as legacy
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-OCMR_RECON = os.path.join(_ROOT, "scratch", "data", "ocmr", "recon")
+OCMR_RECON = os.path.join(_ROOT, "scratch", "data", "ocmr", "recon", "rtfb")
 
 
 def _assert_batches_equal(b_old, S_old, p_old, b_new, S_new, p_new):
@@ -70,8 +70,9 @@ def test_build_batch_param_threading_is_identity():
 
 
 _real_subjects = (
-    [d for d in sorted(glob.glob(os.path.join(OCMR_RECON, "*")))
-     if os.path.exists(os.path.join(d, "sax_cine.nii.gz"))]
+    [os.path.dirname(f)  # recon/rtfb/<exam_id>/<subject>/sax_cine.nii.gz (grouped by patient/exam)
+     for f in sorted(glob.glob(os.path.join(OCMR_RECON, "*", "*", "sax_cine.nii.gz")))
+     if not os.path.relpath(f, OCMR_RECON).startswith("_")]  # skip _failed_* exam dirs
     if os.path.isdir(OCMR_RECON) else []
 )
 

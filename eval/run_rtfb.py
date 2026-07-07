@@ -31,18 +31,19 @@ import torch
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
-from eval.adapters import OCMRAdapter, GoettingenAdapter, MIITTAdapter
+from eval.adapters import OCMRAdapter, GoettingenAdapter, MIITTAdapter, MIITTGatedAdapter
 from eval.inference import load_rtfb_model_reference, reference_sweep
 from eval.render import save_cycle_gif, save_dvf_png, save_inputs_png, save_volume_png
 from eval.adapters.base import DEFAULT_CKPT_REFERENCE
 
 # Per-dataset: default recon root, subject discovery, adapter factory (subject -> adapter).
 DATASETS = {
-    "ocmr": dict(
-        root="scratch/data/ocmr/recon",
+    "ocmr": dict(   # recon/rtfb/<exam_id>/<subject>/sax_cine.nii.gz (grouped by patient/exam)
+        root="scratch/data/ocmr/recon/rtfb",
         discover=lambda root: sorted(
-            os.path.basename(d) for d in glob.glob(os.path.join(root, "*"))
-            if os.path.exists(os.path.join(d, "sax_cine.nii.gz"))),
+            os.path.relpath(os.path.dirname(f), root)
+            for f in glob.glob(os.path.join(root, "*", "*", "sax_cine.nii.gz"))
+            if not os.path.relpath(f, root).startswith("_")),  # skip _failed_* exam dirs
         adapter=lambda root, s: OCMRAdapter(os.path.join(root, s)),
     ),
     "goettingen": dict(
@@ -58,6 +59,13 @@ DATASETS = {
             os.path.basename(d) for d in glob.glob(os.path.join(root, "*"))
             if os.path.exists(os.path.join(d, "realtime", "sax", "4d_recon.nii.gz"))),
         adapter=lambda root, s: MIITTAdapter(os.path.join(root, s, "realtime", "sax", "4d_recon.nii.gz")),
+    ),
+    "miitt_gated": dict(   # ECG breath-hold arm (Standard cine, 30 phases) of the same subjects
+        root="scratch/data/MIITT/nifti",
+        discover=lambda root: sorted(
+            os.path.basename(d) for d in glob.glob(os.path.join(root, "*"))
+            if os.path.exists(os.path.join(d, "gated", "sax", "4d_recon.nii.gz"))),
+        adapter=lambda root, s: MIITTGatedAdapter(os.path.join(root, s, "gated", "sax", "4d_recon.nii.gz")),
     ),
 }
 

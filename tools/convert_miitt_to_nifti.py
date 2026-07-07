@@ -14,15 +14,14 @@ Output layout mirrors CMRxRecon so the gated scan is a drop-in for training/data
   MIITT/nifti/VolunteerN/gated/sax/4d_recon.nii.gz                       # (X,Y,Z,30)
   MIITT/nifti/VolunteerN/realtime/sax/4d_recon.nii.gz                    # (X,Y,Z,180) magnitude (ungated time series)
 
-================================  SPACING IS A PLACEHOLDER  ================================
-The .mat files carry NO spatial metadata. The spacings below are literature/CMRxRecon-based
-ESTIMATES, not the real protocol values. They are good enough to develop, visualize, and
-compute PSNR against, but DO NOT compute physical volumes (EF in mL), true distances, or
-cross-modal overlays off them.
-
-To finalize: get FOVx/FOVy and SpacingBetweenSlices (or SliceThickness+gap) per scan from
-the data authors, then edit SPACING below and re-run. Only the affine diagonal changes; the
-pixel data / axis order / file structure are unaffected.
+================================  SPACING (REAL, from J. Hamilton)  ========================
+Scan parameters confirmed by the data author (2026-07-04), so these are the true protocol
+values, not estimates:
+  Both arms:      bSSFP, 8 mm slice thickness + 2 mm gap  ->  dz = 10 mm center-to-center.
+  Real-time cine: golden-angle spiral, FOV 300x300 mm, 2.3x2.3 mm in-plane (300/128=2.34).
+  Standard cine:  Cartesian R2-GRAPPA, FOV 336x270 mm, 1.5x1.5 mm in-plane (336/224=270/180=1.5).
+Matrix cross-checks: RT 128x128 -> 2.34 mm; gated 224x180 -> 1.5 mm (FOV may vary slightly
+per dataset, e.g. ARVC gated is 224x222, but in-plane stays 1.5 mm isotropic).
   dx = FOVx / matrix_x ,  dy = FOVy / matrix_y ,  dz = slice_thickness + gap
 ==========================================================================================
 """
@@ -36,15 +35,13 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-# ── PLACEHOLDER spacing (mm) — swap with real FOV-derived values when available ──
-SPACING_IS_PLACEHOLDER = True
+# ── REAL spacing (mm), from J. Hamilton 2026-07-04 (see header). dz = 8 mm thickness + 2 mm gap.
+# NOTE: the inference adapter (eval/adapters/miitt.py) reads its own INPLANE_MM/SLICE_SPACING_MM
+# constants, not the affine — keep the two in sync.
+SPACING_IS_PLACEHOLDER = False
 SPACING = {
-    # (dx, dy, dz). gated ~CMRxRecon (1.46 mm); rt 2.1 mm is LV-size-calibrated (docs/23 follow-up:
-    # 2.6 mm gave ~20% oversized LV vs in-dist GT; 2.6 × 49/59 ≈ 2.1 mm). NOTE: changing this does
-    # NOT rewrite already-converted NIfTIs, and the inference adapter (eval/adapters/miitt.py) reads
-    # its own INPLANE_MM constant, not the affine — keep the two in sync.
-    "gated":    (1.5, 1.5, 8.0),
-    "realtime": (2.1, 2.1, 8.0),
+    "gated":    (1.5, 1.5, 10.0),
+    "realtime": (2.3, 2.3, 10.0),
 }
 
 
@@ -112,7 +109,7 @@ def main():
 
     out_dir = args.out or os.path.join(args.root, "nifti")
     vols = sorted(d for d in os.listdir(args.root)
-                  if d.lower().startswith("volunteer")
+                  if os.path.isdir(os.path.join(args.root, d))
                   and os.path.isfile(os.path.join(args.root, d, "imagesStandardCine.mat")))
 
     if SPACING_IS_PLACEHOLDER:
