@@ -147,24 +147,28 @@ loss:
 # at the end-expiration reference, so the model learns to CORRECT breathing (blind
 # to r). Unlike affine, it applies in BOTH train (iid per epoch, private RNG) AND
 # val (deterministic per seq_index) — so val measures the real corrupted->clean
-# task. `direction_jitter_deg` randomizes the SI direction (SAX stacks are tilted
-# ~20-45° off true SI); 0 → pure SI+AP. Off by default → bit-identical to today.
+# task. Tilt (`tilt_min_deg`..`tilt_max_deg`) randomizes the SI direction (SAX stacks
+# are tilted ~20-45° off true SI) with ONE direction per SUBJECT (fixed acquisition
+# geometry), and amplitude SCALE is per-subject (one lung capacity) — only breath
+# PHASE varies per z-plane. 0 tilt → pure SI+AP.
 data:
   augmentation:
     enable: false               # affine/photometric aug OFF (aggressive aug hurts in-dist; docs/05)
     tier: "conservative"
     respiratory:
       enable: true              # breathing sim ON for all reference runs (the proven "resp, z-only" recipe; docs/05). Inherited by mri_volume_diffusion/bspline.
-      amplitude_mm: 16.0        # mean SI breath depth (mm)
-      amplitude_jitter: 8.0     # +/- jitter → ~8-24mm (tidal → deep)
+      # SI breath-depth mean/jitter from Burger & Meintjes, "Elliptical Subject-Specific
+      # Model of Respiratory Motion for Cardiac MRI," Magn. Reson. Med. 70:722-731 (2013).
+      amplitude_mm: 18.8        # mean SI breath depth (mm)
+      amplitude_jitter: 7.35    # +/- jitter → ~11.45-26.15mm (tidal → deep)
       cos2n: 3                  # Lujan sin^{2n} exhale-dwell knob
       ap_ratio: 0.35            # AP displacement = ap_ratio * SI
       ap_axis: "H"              # in-plane axis carrying AP ("H" or "W")
-      per_slot: true            # (per_slot mode only) breath DEPTH per slice vs per subject
-      group_by_burst: true      # REALISTIC: all frames of one z-plane share ONE breath (phase+
-                                # depth+tilt), independent across planes — a fast per-slice burst
-                                # sits at ~one respiratory position, different slices = different
-                                # breaths. false → legacy per-slot-iid (each frame its own breath;
-                                # unrealistic, lets the splat average breathing away). Needs a
-                                # retrain to benefit; eval picks it up immediately. docs/01.
-      direction_jitter_deg: 30.0  # max random tilt of SI+AP off the D axis (0 → none)
+      per_slot: true            # LEGACY (non-burst path only): breath DEPTH per slice vs per subject
+      group_by_burst: true      # REALISTIC: all frames of one z-plane share ONE breath PHASE,
+                                # independent across planes — a fast per-slice burst sits at ~one
+                                # respiratory position, different slices = different breaths. false →
+                                # legacy per-slot-iid (lets the splat average breathing away). docs/01.
+      tilt_min_deg: 0.0         # tilt θ ~ U(tilt_min,tilt_max) deg, ONE direction per SUBJECT (not
+      tilt_max_deg: 45.0        # per plane); 0-45 keeps near-axial + fixes the old U(0,30) undershoot
+      amplitude_breath_jitter: 0.0  # per-subject amplitude scale; >0 adds fractional per-breath tidal jitter

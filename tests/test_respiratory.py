@@ -3,6 +3,8 @@
 Run on CPU — grid_sample works without CUDA.
 """
 
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -257,3 +259,47 @@ def test_group_by_burst_val_deterministic():
     a, ar = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
     b, br = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
     assert torch.equal(a, b) and torch.equal(ar, br)
+
+
+# ── 12. Per-subject tilt direction + amplitude scale (the 2026-07 realism fix) ────
+def test_tilt_is_per_subject_not_per_plane():
+    """Tilt (θ,φ) is drawn ONCE per subject → the per-slot UNIT direction is identical
+    across ALL slices (different z-planes included); only magnitude varies with phase."""
+    cfg = RespiratoryConfig(enable=True, tilt_min_deg=0.0, tilt_max_deg=45.0,
+                            group_by_burst=True, seed=3)
+    gids = torch.tensor([[6, 3, 3, 4, 4, 5, 5, 3, 4, 5]])
+    seq = torch.tensor([[7]], dtype=torch.int64)
+    v, _ = sample_resp_disp(1, 10, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    norms = v[0].norm(dim=-1, keepdim=True)
+    big = norms[:, 0] > 0.5                              # ignore near-zero (exhale) slots
+    units = v[0][big] / norms[big]
+    assert units.shape[0] >= 2
+    assert torch.allclose(units, units[:1].expand_as(units), atol=1e-3)   # ONE direction per subject
+    assert float(norms[big].max()) - float(norms[big].min()) > 1e-3       # magnitude varies per plane
+
+
+def test_tilt_min_floor_forces_off_axis_motion():
+    """tilt_min_deg>0 guarantees a nonzero off-D (in-plane) component for every subject:
+    with no AP, in-plane magnitude >= sin(tilt_min) * |d_si| wherever d_si>0."""
+    cfg = RespiratoryConfig(enable=True, tilt_min_deg=20.0, tilt_max_deg=45.0,
+                            ap_ratio=0.0, seed=1)                          # ap=0 → pre-tilt vector pure D
+    v, _ = sample_displacement_vectors(8, 4, cfg, DEVICE)
+    d_si, _, _ = sample_displacements(8, 4, cfg, DEVICE)                   # same seed → same magnitudes
+    inplane = (v[..., 1] ** 2 + v[..., 2] ** 2).sqrt()
+    mask = d_si.abs() > 1e-3
+    assert (inplane[mask] >= (math.sin(math.radians(20.0)) - 1e-3) * d_si.abs()[mask]).all()
+
+
+def test_burst_amplitude_scale_is_per_subject():
+    """group_by_burst: amplitude SCALE is one per subject — with amplitude_breath_jitter=0
+    the breath DEPTH ceiling (peak, r->0.5) is shared across planes; only phase r differs."""
+    cfg = RespiratoryConfig(enable=True, tilt_max_deg=0.0, amplitude_breath_jitter=0.0,
+                            group_by_burst=True, seed=8)                   # no tilt → v[...,0]=d_si
+    gids = torch.tensor([[3, 3, 4, 4, 5, 5]])
+    seq = torch.tensor([[2]], dtype=torch.int64)
+    v, r = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    d_si = v[0, :, 0]
+    A_recovered = d_si / torch.sin(torch.pi * r[0]).clamp_min(1e-3).pow(2 * cfg.cos2n)
+    ok = torch.sin(torch.pi * r[0]) > 0.2                                  # away from r=0/1 where recovery is unstable
+    assert ok.sum() >= 2
+    assert torch.allclose(A_recovered[ok], A_recovered[ok][:1].expand_as(A_recovered[ok]), atol=1e-2)

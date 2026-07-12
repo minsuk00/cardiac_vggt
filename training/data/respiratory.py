@@ -80,15 +80,26 @@ class RespiratoryConfig:
     ap_axis: str = "H"             # in-plane axis carrying AP ("H" or "W")
     per_slot: bool = True          # (per_slot mode only) breath DEPTH per slice vs per subject
     group_by_burst: bool = False   # realistic acquisition model: all frames of ONE z-plane share
-                                   # ONE respiratory state (phase + depth + tilt), independent
-                                   # across planes. A short per-slice burst sits at ~one breathing
-                                   # position (breath ~3-5s >> ~200ms burst), while different
-                                   # slices are acquired at different breaths. False → legacy
-                                   # per-slot-iid (each frame its own breath; unrealistic — lets
-                                   # the splat average breathing away). Grouping key = z-plane.
-    direction_jitter_deg: float = 30.0  # max random tilt (deg) of the SI+AP vector off the D axis;
-                                        # 0 → pure SI+AP (no randomization). Handles the SAX-stack
-                                        # tilt (D is the LV long axis, ~20-45° off true SI).
+                                   # ONE respiratory PHASE r, independent across planes. A short
+                                   # per-slice burst sits at ~one breathing position (breath ~3-5s >>
+                                   # ~200ms burst), while different slices are acquired at different
+                                   # breaths. (Amplitude SCALE and tilt DIRECTION are per-SUBJECT, not
+                                   # per-plane — see below; only phase r is grouped by plane here.)
+                                   # False → legacy per-slot-iid (each frame its own breath; unrealistic
+                                   # — lets the splat average breathing away). Grouping key = z-plane.
+    direction_jitter_deg: float = 30.0  # LEGACY fallback (used only when tilt_max_deg is None): max
+                                        # random tilt (deg) of the SI+AP vector off the D axis; 0 → no tilt.
+    # Tilt direction θ ~ U(tilt_min_deg, tilt_max_deg) (deg), drawn ONCE PER SUBJECT (broadcast to all
+    # its slices), NOT per z-plane: the SAX-stack obliquity (D = LV long axis, ~20-45° off true SI) is
+    # fixed acquisition geometry, so every slice of one scan shares one breathing direction. Keep
+    # tilt_min_deg=0 to retain the near-axial (low-tilt) regime. tilt_max_deg=None → legacy
+    # U(0, direction_jitter_deg). This fixes both the old per-plane azimuth incoherence AND the
+    # U(0,30°) tilt undershoot (physical obliquity is ~20-45°) in one change.
+    tilt_min_deg: float | None = None
+    tilt_max_deg: float | None = None
+    # Optional fractional per-breath tidal variation on the per-subject amplitude scale (group_by_burst
+    # mode): A = A_subject * (1 ± amplitude_breath_jitter), varied per z-plane. 0 → constant per subject.
+    amplitude_breath_jitter: float = 0.0
     seed: int | None = None        # int → deterministic sampling (val/report); None → global RNG
 
     @classmethod
@@ -111,6 +122,9 @@ class RespiratoryConfig:
             per_slot=bool(g("per_slot", cls.per_slot)),
             group_by_burst=bool(g("group_by_burst", cls.group_by_burst)),
             direction_jitter_deg=float(g("direction_jitter_deg", cls.direction_jitter_deg)),
+            tilt_min_deg=(lambda x: None if x is None else float(x))(g("tilt_min_deg", cls.tilt_min_deg)),
+            tilt_max_deg=(lambda x: None if x is None else float(x))(g("tilt_max_deg", cls.tilt_max_deg)),
+            amplitude_breath_jitter=float(g("amplitude_breath_jitter", cls.amplitude_breath_jitter)),
             seed=g("seed", cls.seed),
         )
 
@@ -139,13 +153,19 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, g
         return torch.rand(shape, device=device, generator=generator, dtype=torch.float32)
 
     if cfg.group_by_burst and group_ids is not None:
-        # Realistic: one breath per z-plane burst (shared phase + depth), independent across
-        # planes. Draw per-plane then gather to slots so all frames of a plane match.
+        # Realistic: one breath per z-plane burst. Respiratory PHASE r is shared within a plane and
+        # INDEPENDENT across planes (different slices = different breath MOMENTS). Draw per-plane, gather.
         P = N_CANON_PLANES
         gid = group_ids.clamp(0, P - 1).long()                        # (B,S) z-plane per slot
         r = torch.gather(rand((B, P)), 1, gid)                        # (B,S) shared within plane
-        amp_grp = cfg.amplitude_mm + (rand((B, P)) * 2.0 - 1.0) * cfg.amplitude_jitter
-        A = torch.gather(amp_grp, 1, gid)
+        # Amplitude SCALE is a per-SUBJECT property (one lung capacity): ONE baseline per subject, NOT
+        # per plane. Optional per-breath tidal jitter varies it per z-plane (shared within a plane).
+        A_subj = cfg.amplitude_mm + (rand((B, 1)) * 2.0 - 1.0) * cfg.amplitude_jitter   # (B,1) per subject
+        if cfg.amplitude_breath_jitter and cfg.amplitude_breath_jitter > 0:
+            tidal = 1.0 + (rand((B, P)) * 2.0 - 1.0) * cfg.amplitude_breath_jitter      # (B,P) per plane
+            A = torch.gather(A_subj * tidal, 1, gid)                                    # (B,S)
+        else:
+            A = A_subj.expand(B, S)
     else:
         r = rand((B, S))                                  # respiratory phase (per-slot iid)
         amp_shape = (B, S) if cfg.per_slot else (B, 1)
@@ -196,10 +216,10 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
     """Sample per-slot canonical displacement vectors. Returns `(v, r)` where
     `v` is `(B, S, 3)` = (d_D, d_H, d_W) mm and `r` is `(B, S)` respiratory phase.
 
-    Builds the SI+AP vector via `sample_displacements`, then (if
-    `cfg.direction_jitter_deg > 0`) tilts each slot's vector by a random
-    θ~U(0, jitter) about a random azimuth φ~U(0, 2π) — the randomized translation
-    direction. All draws share ONE generator so determinism (val/report) is exact.
+    Builds the SI+AP vector via `sample_displacements`, then (if the tilt range is
+    > 0) tilts the vector by θ~U(tilt_min, tilt_max) about azimuth φ~U(0, 2π), drawn
+    ONCE PER SUBJECT (broadcast to all its slices — one breathing direction per scan,
+    not per z-plane). All draws share ONE generator so determinism (val/report) is exact.
     """
     # Resolve the generator ONCE so SI/AP and θ/φ draw from the same stream
     # (otherwise a cfg.seed would only seed the SI/AP draw, breaking determinism).
@@ -210,18 +230,22 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
                                          group_ids=group_ids)                      # (B,S) each
     v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                   # (B,S,3)
 
-    if cfg.direction_jitter_deg and cfg.direction_jitter_deg > 0:
+    # Tilt range: prefer explicit tilt_min/max_deg; else fall back to legacy U(0, direction_jitter_deg).
+    if cfg.tilt_max_deg is not None:
+        tilt_lo_deg, tilt_hi_deg = float(cfg.tilt_min_deg or 0.0), float(cfg.tilt_max_deg)
+    else:
+        tilt_lo_deg, tilt_hi_deg = 0.0, float(cfg.direction_jitter_deg)
+    if tilt_hi_deg > 0:
         def rand(shape):
             return torch.rand(shape, device=device, generator=generator, dtype=torch.float32)
-        if cfg.group_by_burst and group_ids is not None:
-            # a slice's tilt is fixed within its burst → share the direction per plane too
-            P = N_CANON_PLANES
-            gid = group_ids.clamp(0, P - 1).long()
-            theta = torch.gather(rand((B, P)), 1, gid) * math.radians(float(cfg.direction_jitter_deg))
-            phi = torch.gather(rand((B, P)), 1, gid) * (2.0 * math.pi)
-        else:
-            theta = rand((B, S)) * math.radians(float(cfg.direction_jitter_deg))
-            phi = rand((B, S)) * (2.0 * math.pi)
+        # Tilt direction (θ,φ) = fixed acquisition geometry → ONE draw PER SUBJECT (B,1), broadcast to
+        # ALL its slices (NOT per z-plane), so a subject has one coherent breathing direction. This
+        # coherence holds ONLY because every slot's pre-rotation vector is a NON-NEGATIVE scalar × one
+        # fixed axis (d_ap ≡ ap_ratio·d_si, d_si ≥ 0); if ap_ratio is ever jittered per-slot it breaks.
+        # (group_ids no longer used here — it now groups only phase/amplitude in sample_displacements.)
+        lo, hi = math.radians(tilt_lo_deg), math.radians(tilt_hi_deg)
+        theta = (lo + rand((B, 1)) * (hi - lo)).expand(B, S)
+        phi = (rand((B, 1)) * (2.0 * math.pi)).expand(B, S)
         v = _rotate_disp(v, theta, phi)
     return v.to(torch.float32), r
 

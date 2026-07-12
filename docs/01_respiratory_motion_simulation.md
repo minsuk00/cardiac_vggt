@@ -38,6 +38,18 @@
 > **rigid 6-DOF transform** we reimplement on our own cine voxels. **Conclusion: path A (reimplement
 > on our data) is the only viable path; XCAT/MRXCAT is not used.** Detail in §6.
 
+> **Update (2026-07-11): amplitude retuned to 18.8 ± 7.35 mm from Burger & Meintjes 2013.**
+> The SI breath-depth mean/jitter in `mri_volume.yaml` was changed from 16 ± 8 mm to
+> **`amplitude_mm: 18.8`, `amplitude_jitter: 7.35`** (effective SI range **11.45–26.15 mm**),
+> sourced from Ian Burger & Ernesta M. Meintjes, "Elliptical Subject-Specific Model of Respiratory
+> Motion for Cardiac MRI," *Magn. Reson. Med.* **70**:722–731 (2013) — the elliptical/subject-
+> specific model already cited in §4.2/§9. Applies to **all future** `mri_volume` /
+> `mri_volume_diffusion` / `mri_volume_bspline` training and the evals that compose `mri_volume`
+> (`run_cmrxrecon`, `run_gated_ood`, `seg_metrics`); `run_rtfb` (real free-breathing data, no sim)
+> and existing checkpoints (trained at 16 ± 8) are unaffected. Floats are supported end-to-end
+> (`RespiratoryConfig.from_cfg` casts with `float(...)`). Needs a retrain to take effect; a clean
+> before/after comparison requires training at the new amplitude, not just re-running eval.
+
 **Date:** 2026-06-07 (sim core 2026-06-11; **wired into training 2026-06-11**)
 **Status:** Design + simulation core + **training wiring complete** (train iid + deterministic val,
 randomized SI direction). See §7 "As-built" for the wiring (no longer deferred).
