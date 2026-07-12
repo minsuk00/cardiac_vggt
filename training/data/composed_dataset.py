@@ -173,6 +173,8 @@ class ComposedDataset(Dataset, ABC):
             sample["anatomy_bbox"] = torch.from_numpy(batch["anatomy_bbox"].astype(np.int64))
         if "content_mask" in batch:
             sample["content_mask"] = torch.from_numpy(batch["content_mask"].astype(np.uint8))
+        if "heart_roi_canonical" in batch:
+            sample["heart_roi_canonical"] = torch.from_numpy(batch["heart_roi_canonical"].astype(np.uint8))
         if "phases" in batch:
             # Full (T, D, H, W) canonical bundle in float16. Used by GPU aug
             # (Phase 4); inert under aug-off. Kept as float16 to keep batch

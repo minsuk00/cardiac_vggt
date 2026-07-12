@@ -25,10 +25,17 @@ use_z_pose_embedding: true           # keep per-slice depth
 use_t_pose_embedding: false          # input cardiac phase is obsolete (docs/05/09) and blind-input contract (docs/04)
 use_target_t_pose_embedding: false   # the broken content-free index — replaced by the reference slice
 
+# ── EF-aware validation (overrides parent default off) ───────────────────────────────────────
+ef_val_sweep: true                   # val = targeted 30×{ED,ES} sweep (honest per-phase + EF volumes)
+# ef_eval_enable inherits parent default (true) — set false to keep the sweep but skip nnU-Net EF.
+
 logging:
   log_visual_frequency:
     train: 1000  # once per epoch (matches limit_train_batches)
     val: 200     # once per val epoch
+  # Cardiac filmstrip/GIF + ED/ES panels every 5 val epochs (was 1). At 1 the filmstrip does
+  # 12 subj-0 model forwards per epoch (~4 h over 200 epochs); 5 matches the EF cadence.
+  filmstrip_every_n_val_epochs: 5
   scalar_keys_to_log:
     train:
       keys_to_log:
@@ -82,6 +89,11 @@ logging:
         - metric_mse_heart_oracle
         - metric_hole_frac_heart
         - metric_psnr_3d_static
+        # Anatomy whole-heart-ROI PSNR (nnU-Net seg union+dilation; val-only). Shared
+        # ROI with the SVR baselines; complements the intensity-derived motion PSNR.
+        - metric_psnr_3d_heartseg
+        - metric_mae_3d_heartseg
+        - metric_heartseg_frac
         - metric_resp_slope_dz
         - metric_resp_corr_dz
         - metric_resp_epe_dz_mm

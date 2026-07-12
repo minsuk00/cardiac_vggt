@@ -113,6 +113,8 @@ class Trainer:
         self.logging_conf = logging
         self.checkpoint_conf = checkpoint
         self.optim_conf = optim
+        # Fully-resolved config snapshot (from launch.py) → logged as wandb run.config.
+        self._wandb_config = kwargs.get("_wandb_config", None)
 
         # Store hyperparameters
         self.accum_steps = accum_steps
@@ -192,7 +194,7 @@ class Trainer:
         # `_motion` = only the voxels that move across the cardiac cycle (the dynamic
         # heart, ~3-5% of the cube). The honest signal: static tissue is excluded, so
         # this PSNR vs its identity baseline tells you whether the model actually
-        # corrects motion where it matters. Logged under the `val_motion/` panel.
+        # corrects motion where it matters. Logged under the `val/psnr/motion/` panel.
         self._per_phase_val_psnr_motion = defaultdict(list)
         # Identity baseline per phase + aggregate mean, populated by _compute_identity_baseline
         # and baked into val_psnr metric names so each panel shows n and baseline in its title.
@@ -334,7 +336,11 @@ class Trainer:
         self.tb_writer = instantiate(self.logging_conf.tensorboard_writer, _recursive_=False)
         self.wandb_writer = None
         if hasattr(self.logging_conf, "wandb_writer") and self.logging_conf.wandb_writer is not None:
-            self.wandb_writer = instantiate(self.logging_conf.wandb_writer, _recursive_=False)
+            self.wandb_writer = instantiate(
+                self.logging_conf.wandb_writer,
+                wandb_config=self._wandb_config,
+                _recursive_=False,
+            )
 
         self.model = instantiate(self.model_conf, _recursive_=False)
         self.loss = instantiate(self.loss_conf, _recursive_=False)
@@ -452,6 +458,23 @@ class Trainer:
         if self.wandb_writer:
             self.wandb_writer.log(name, value, step)
 
+    @staticmethod
+    def _scalar_name(phase: str, key: str) -> str:
+        """Map a raw loss/metric dict-key to its subtree'd wandb name.
+        Groups under {phase}/: loss/, psnr/ (all PSNR variants), resp/ (breathing),
+        metric/ (everything else). full/bbox PSNR get a _mean suffix so the flat
+        whole-val scalar doesn't collide with the per-phase val/psnr/full/ group."""
+        if key.startswith("loss_"):
+            return f"{phase}/loss/{key[len('loss_'):]}"
+        if "psnr" in key:
+            name = key.replace("metric_psnr_3d_", "")
+            if name in ("full", "bbox"):
+                name += "_mean"
+            return f"{phase}/psnr/{name}"
+        if "resp" in key:
+            return f"{phase}/resp/{key.replace('metric_resp_', '').replace('metric_', '')}"
+        return f"{phase}/metric/{key.replace('metric_', '')}"
+
     def _log_visuals(self, name: str, data: Any, step: int, fps: int = 4, caption: Optional[str] = None):
         """Logs visual data to both TensorBoard and WandB."""
         if self.tb_writer:
@@ -461,7 +484,7 @@ class Trainer:
 
     def _log_resp_disp_scalar(self, batch, step: int, prefix: str):
         """Log the per-slot respiratory displacement magnitude (mm) as scalars under
-        `{prefix}/resp_disp_mm_{mean,max}`. No-op when breathing is off (key absent)
+        `{prefix}/resp/disp_mm_{mean,max}`. No-op when breathing is off (key absent)
         or off rank 0. Read-only diagnostic — never affects training."""
         if self.rank != 0 or not self.wandb_writer:
             return
@@ -470,8 +493,8 @@ class Trainer:
             return
         try:
             mag = disp.float().norm(dim=-1)  # (B, S) per-slot |d| in mm
-            self._log_scalar(f"{prefix}/resp_disp_mm_mean", float(mag.mean().item()), step)
-            self._log_scalar(f"{prefix}/resp_disp_mm_max", float(mag.max().item()), step)
+            self._log_scalar(f"{prefix}/resp/disp_mm_mean", float(mag.mean().item()), step)
+            self._log_scalar(f"{prefix}/resp/disp_mm_max", float(mag.max().item()), step)
         except Exception as e:
             logging.warning(f"resp_disp scalar log failed (ignored): {e}")
 
@@ -514,6 +537,8 @@ class Trainer:
             N = self.limit_val_batches if self.limit_val_batches is not None else n_subj
             if self.t_target_fixed is not None and 0 < n_subj < N:
                 N = n_subj   # mirror val's fixed-phase auto-cap (one deterministic pass)
+            if getattr(mri_ds, "val_targets", None) is not None:
+                N = len(mri_ds.val_targets)   # mirror val's EF-sweep length (30×{ED,ES})
             N = max(int(N), 1)
             for i in range(N):
                 data = mri_ds.get_data(seq_index=i, img_per_seq=num_slices)
@@ -605,12 +630,12 @@ class Trainer:
             logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
 
     def _log_motion_mask_example(self, log_step: int):
-        """Render the motion mask for 3 val subjects in one panel under `val_motion/`.
+        """Render the motion mask for 3 val subjects in one panel under `media_others/`.
 
         Each row is one subject (val indices 0, 7, 15); columns show, at a mid-bbox
         z-plane: V_gt(ED) | motion magnitude (max-min over phases) | mask overlay on V_gt.
         Data-derived only (no model forward) and static across training, so this is logged
-        ONCE at startup to document which voxels the `val_motion` PSNR is computed over.
+        ONCE at startup to document which voxels the `val/psnr/motion` PSNR is computed over.
         vmin/vmax are per-subject so small-FOV rows aren't washed out. Wrapped, never raises.
         """
         if not self.wandb_writer:
@@ -666,7 +691,7 @@ class Trainer:
                     a.set_xticks([]); a.set_yticks([])
             fig.suptitle("Motion mask (val subjects, mid-bbox z)", fontsize=10)
             fig.tight_layout(rect=[0, 0, 1, 0.97])
-            self.wandb_writer.log("val_motion/mask_example", wandb.Image(fig), log_step)
+            self.wandb_writer.log("media_others/val_motion_mask_example", wandb.Image(fig), log_step)
             plt.close(fig)
         except Exception as e:
             logging.warning(f"motion mask example log failed (ignored): {e}")
@@ -777,11 +802,16 @@ class Trainer:
                     )
                 V_canon = out["V_canon"][0].float().cpu().numpy()
                 V_gt = out["V_gt"][0].float().cpu().numpy()
-                mid_d = V_canon.shape[0] // 2
-                canon_frames.append(V_canon[mid_d])
-                gt_frames.append(V_gt[mid_d])
+                # Render 5 planes (mid-2 .. mid+2, clamped) stacked vertically into (5H, W) so
+                # the strip/gif shows off-reference planes, not just the mid/reference plane.
+                D = V_canon.shape[0]
+                mid_d = D // 2
+                window = [min(max(mid_d + off, 0), D - 1) for off in (-2, -1, 0, 1, 2)]
+                canon_frames.append(np.concatenate([V_canon[c] for c in window], axis=0))
+                gt_frames.append(np.concatenate([V_gt[c] for c in window], axis=0))
                 if "V_refined" in preds:
-                    refined_frames.append(preds["V_refined"][0].float().cpu().numpy()[mid_d])
+                    Vr = preds["V_refined"][0].float().cpu().numpy()
+                    refined_frames.append(np.concatenate([Vr[c] for c in window], axis=0))
         except Exception as e:
             logging.warning(f"cardiac filmstrip render failed (ignored): {e}")
             return
@@ -798,85 +828,88 @@ class Trainer:
         else:
             mode_note = ""
 
-        try:
-            fig = plt.figure(figsize=(1.4 * T_total + 0.5, 3.0), dpi=90)
-            gs = _gs.GridSpec(2, T_total + 1, width_ratios=[1.0] * T_total + [0.04], wspace=0.05, hspace=0.18)
-            for t in range(T_total):
-                ax = fig.add_subplot(gs[0, t])
-                ax.imshow(gt_frames[t], cmap="gray", vmin=0, vmax=v_vmax)
-                ax.set_xticks([]); ax.set_yticks([])
-                ax.set_title(f"t={t}", fontsize=8)
-                if t == 0:
-                    ax.set_ylabel("V_gt", fontsize=9)
-                ax2 = fig.add_subplot(gs[1, t])
-                im = ax2.imshow(canon_frames[t], cmap="gray", vmin=0, vmax=v_vmax)
-                ax2.set_xticks([]); ax2.set_yticks([])
-                if t == 0:
-                    ax2.set_ylabel("V_canon", fontsize=9)
-            cax = fig.add_subplot(gs[:, T_total]); plt.colorbar(im, cax=cax)
-            fig.suptitle(f"Cardiac cycle (val subj 0, mid-z) — step={log_step}", fontsize=9)
-            self.wandb_writer.log("Val_Visuals_cardiac_cycle",
-                                  wandb.Image(fig, caption=f"step={log_step}{mode_note}"), log_step)
-            plt.close(fig)
-        except Exception as e:
-            logging.warning(f"cardiac filmstrip log failed (ignored): {e}")
+        # NOTE: the static 2×T_total cardiac-cycle still image is intentionally NOT logged —
+        # the animated GIF below carries the same information more compactly. (Disabled per
+        # request; re-enable this block if you want the static filmstrip back.)
+        # fig = None
+        # try:
+        #     fig = plt.figure(figsize=(1.4 * T_total + 0.5, 6.0), dpi=90)  # taller: cells are 5 stacked planes
+        #     gs = _gs.GridSpec(2, T_total + 1, width_ratios=[1.0] * T_total + [0.04], wspace=0.05, hspace=0.18)
+        #     for t in range(T_total):
+        #         ax = fig.add_subplot(gs[0, t])
+        #         ax.imshow(gt_frames[t], cmap="gray", vmin=0, vmax=v_vmax)
+        #         ax.set_xticks([]); ax.set_yticks([])
+        #         ax.set_title(f"t={t}", fontsize=8)
+        #         if t == 0:
+        #             ax.set_ylabel("V_gt", fontsize=9)
+        #         ax2 = fig.add_subplot(gs[1, t])
+        #         im = ax2.imshow(canon_frames[t], cmap="gray", vmin=0, vmax=v_vmax)
+        #         ax2.set_xticks([]); ax2.set_yticks([])
+        #         if t == 0:
+        #             ax2.set_ylabel("V_canon", fontsize=9)
+        #     cax = fig.add_subplot(gs[:, T_total]); plt.colorbar(im, cax=cax)
+        #     fig.suptitle(f"Cardiac cycle (val subj 0, mid-z ±2, 5 planes) — step={log_step}", fontsize=9)
+        #     self.wandb_writer.log("media_others/Val_Visuals_cardiac_cycle",
+        #                           wandb.Image(fig, caption=f"step={log_step}{mode_note}"), log_step)
+        # except Exception as e:
+        #     logging.warning(f"cardiac filmstrip log failed (ignored): {e}")
+        # finally:
+        #     if fig is not None:
+        #         plt.close(fig)                                        # never leak a figure on the error path
 
-        # Animated GIF version: same content as the still strip, but cycled over t so the
-        # heart actually moves. Each frame is V_gt | V_canon side-by-side (horizontal) so the
-        # panel fits in normal aspect — vertical stacking made wandb draw the player too tall.
-        # wandb.Video → moviepy requires 3-channel RGB, so replicate the grayscale across RGB.
+        # Animated GIF: 2 rows × 5 cols per frame — top row = V_gt's 5 planes (mid-2..mid+2)
+        # laid out horizontally, bottom row = the model's same 5 planes. Cycled over t so the
+        # heart beats. (Each stored frame is (5h, W) = 5 planes stacked vertically; we reshape
+        # back to the 5 planes and re-tile as 2×5.) wandb.Video → moviepy needs 3-channel RGB.
+        def _tile_2x5(gt5, model5, vmax):
+            n = 5; h = gt5.shape[0] // n; W = gt5.shape[1]
+            def _row(stack5):                                   # (5h, W) -> (h, 5W)
+                planes = stack5.reshape(n, h, W)
+                return np.concatenate([planes[i] for i in range(n)], axis=1)
+            grid = np.concatenate([_row(gt5), _row(model5)], axis=0)   # (2h, 5W)
+            g = np.clip(grid / vmax * 255.0, 0, 255).astype(np.uint8)
+            return np.stack([g, g, g], axis=0)                  # (3, 2h, 5W)
+
         try:
-            H, W = gt_frames[0].shape
-            T = len(gt_frames)
-            frames = np.zeros((T, 3, H, 2 * W), dtype=np.uint8)
-            for t in range(T):
-                side_by_side = np.concatenate([gt_frames[t], canon_frames[t]], axis=1)
-                gray = np.clip(side_by_side / v_vmax * 255.0, 0, 255).astype(np.uint8)
-                frames[t, 0] = gray
-                frames[t, 1] = gray
-                frames[t, 2] = gray
+            frames = np.stack([_tile_2x5(gt_frames[t], canon_frames[t], v_vmax)
+                               for t in range(len(gt_frames))], axis=0)   # (T, 3, 2h, 5W)
             self.wandb_writer.log(
-                "Val_Visuals_cardiac_cycle_gif",
-                wandb.Video(frames, fps=4, format="gif", caption=f"step={log_step} (V_gt left / V_canon right){mode_note}"),
+                "media_val_ED_ES/Val_Visuals_cardiac_cycle_gif",
+                wandb.Video(frames, fps=4, format="gif",
+                            caption=f"step={log_step} — rows: V_gt (top) / V_canon (bottom); "
+                                    f"cols: z = mid-2 .. mid+2 (planes 4-8){mode_note}"),
                 log_step,
             )
         except Exception as e:
             logging.warning(f"cardiac cycle gif log failed (ignored): {e}")
 
-        # Refiner gif — additive, only when the refiner ran. V_gt | V_refined side-by-side.
+        # Refiner gif — additive, only when the refiner ran. Same 2×5 (V_gt top / V_refined bottom).
         if len(refined_frames) == len(gt_frames) and refined_frames:
             try:
                 rmax = float(max(max(f.max() for f in refined_frames),
                                  max(f.max() for f in gt_frames), 1e-3))
-                H, W = gt_frames[0].shape
-                T = len(gt_frames)
-                frames = np.zeros((T, 3, H, 2 * W), dtype=np.uint8)
-                for t in range(T):
-                    side = np.concatenate([gt_frames[t], refined_frames[t]], axis=1)
-                    gray = np.clip(side / rmax * 255.0, 0, 255).astype(np.uint8)
-                    frames[t, 0] = frames[t, 1] = frames[t, 2] = gray
+                frames = np.stack([_tile_2x5(gt_frames[t], refined_frames[t], rmax)
+                                   for t in range(len(gt_frames))], axis=0)
                 self.wandb_writer.log(
-                    "refiner_viz/cardiac_cycle_gif",
+                    "media_others/refiner_cardiac_cycle_gif",
                     wandb.Video(frames, fps=4, format="gif",
-                                caption=f"step={log_step} (V_gt left / V_refined right){mode_note}"),
+                                caption=f"step={log_step} — rows: V_gt (top) / V_refined (bottom); "
+                                        f"cols: z = mid-2 .. mid+2{mode_note}"),
                     log_step,
                 )
             except Exception as e:
                 logging.warning(f"refiner cardiac gif log failed (ignored): {e}")
 
     def _save_val_volumes(self, batch: Mapping, loss_dict: Mapping) -> None:
-        """Dump predicted + GT volumes to ${log_dir}/val_volumes/, one pair per val subject.
+        """Dump predicted + GT volumes to ${log_dir}/val_volumes/, one pair per (subject, phase).
 
-        The val loop revisits each of the N val subjects multiple times (at
-        different t_target phases) over limit_val_batches iterations, so we
-        de-dup by subject and save each one only the FIRST time it is seen this
-        epoch. Because val is deterministic (shuffle=False, t_target = seq_index
-        % T), the first-seen order and phase are identical every epoch, so the
-        same filenames are overwritten in place: exactly N subjects × 2 files
-        (~len(val subjects) × 2 ≈ a couple hundred MB), NOT limit_val_batches × 2.
-        Affine is identity — V_canon lives in the dimensionless canonical [-1, 1]
-        grid, not the source NIfTI's physical frame, so a physical affine would
-        be misleading.
+        The val loop revisits each subject at a few t_target phases over the epoch, so we
+        de-dup by (subject, phase) and save each distinct pair only the FIRST time it is seen
+        this epoch. Because val is deterministic (shuffle=False), the first-seen order and phases
+        are identical every epoch, so the same filenames are overwritten in place (a couple hundred
+        MB, NOT limit_val_batches × 2). Under the EF sweep this yields ED + ES per subject.
+        Affine is identity — V_canon lives in the dimensionless canonical [-1, 1] grid, not the
+        source NIfTI's physical frame, so a physical affine would be misleading.
         """
         if not getattr(self.logging_conf, "save_val_volumes", False):
             return
@@ -895,22 +928,92 @@ class Trainer:
             seq_names = batch.get("seq_name", [])
             B = V_canon.shape[0]
             affine = np.eye(4, dtype=np.float32)
-            saved = self._val_volumes_saved  # per-epoch set of subjects already dumped
+            saved = self._val_volumes_saved  # per-epoch set of already-dumped keys
+            # Additivity: only the EF sweep dedups by (subject, phase) so both ED+ES are kept;
+            # every other config keeps the original subject-only dedup (byte-identical behavior).
+            _mri_ds = self._get_mri_dataset()
+            sweeping = _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
 
             for b in range(B):
                 raw_seq = seq_names[b] if b < len(seq_names) else f"unknown{b}"
                 # seq_name is "mri_{mri_mode}_{rel_path}"; strip the first two parts to keep filenames short.
                 subject = raw_seq.split("_", 2)[-1] if raw_seq.startswith("mri_") else raw_seq
-                if subject in saved:
-                    continue  # already dumped this subject this epoch
                 t_val = int(t_targets[b].flatten()[0].item()) if t_targets is not None else -1
-                subj_idx = len(saved)  # 0..N-1 in deterministic first-seen order
-                saved.add(subject)
+                # Sweep: dedup by (subject, phase) so ED+ES are both kept. Non-sweep: dedup by
+                # subject (original behavior — one pair per subject). Overwritten in place each epoch.
+                key = (subject, t_val) if sweeping else subject
+                if key in saved:
+                    continue
+                subj_idx = len(saved)  # deterministic first-seen order
+                saved.add(key)
                 stem = f"subj{subj_idx:02d}_t{t_val:02d}_{subject}"
                 nib.save(nib.Nifti1Image(V_canon[b], affine), os.path.join(out_dir, f"{stem}_pred.nii.gz"))
                 nib.save(nib.Nifti1Image(V_gt[b], affine), os.path.join(out_dir, f"{stem}_gt.nii.gz"))
         except Exception as e:
             logging.warning(f"val-volume save failed (ignored): {e}")
+
+    def _save_ef_volume(self, batch: Mapping, loss_dict: Mapping) -> None:
+        """On EF-epochs, dump each reconstructed val volume to ef_tmp/pred/ in nnU-Net input
+        format (X,Y,Z / 1.4,1.4,12 / _0000). The EF-sweep visits each subject at ED and ES, so
+        both phases land here (no dedup). Filenames use the clean subject id (matches the CSV)."""
+        if "V_canon" not in loss_dict:
+            return
+        try:
+            import ef_eval
+            mri_ds = self._get_mri_dataset()
+            vt = getattr(mri_ds, "val_targets", None)
+            if vt is None:
+                return
+            V_canon = loss_dict["V_canon"].detach().float().cpu().numpy()  # (B, D, H, W)
+            seqs = batch.get("seq_index")
+            for b in range(V_canon.shape[0]):
+                si = int(seqs[b].flatten()[0].item())
+                subj_idx, t = vt[si % len(vt)]
+                subject = os.path.basename(os.path.dirname(mri_ds.subjects[subj_idx]))
+                ef_eval.save_pred_volume(V_canon[b], self._ef_pred_dir, subject, int(t))
+        except Exception as e:
+            logging.warning(f"[ef] save pred volume failed (ignored): {e}")
+
+    def _compute_and_log_ef(self, step: int) -> None:
+        """End of an EF-epoch (rank 0): one batched nnU-Net Task114 seg over the saved ED/ES pred
+        volumes, then predicted-vs-GT EF slope/Spearman/MAE logged to wandb. Try/except-wrapped so
+        a seg/subprocess failure never touches training."""
+        try:
+            import glob
+            import shutil
+            import ef_eval
+            mri_ds = self._get_mri_dataset()
+            vt = getattr(mri_ds, "val_targets", None)
+            csv_path = getattr(mri_ds, "cardiac_phase_csv", None)
+            if vt is None or csv_path is None:
+                return
+            n_vols = len(glob.glob(os.path.join(self._ef_pred_dir, "*_0000.nii.gz")))
+            if n_vols == 0:
+                logging.warning("[ef] no pred volumes written; skipping EF")
+                return
+            seg_dir = os.path.join(self.logging_conf.log_dir, "ef_tmp", "seg_pred")
+            shutil.rmtree(seg_dir, ignore_errors=True)
+            torch.cuda.empty_cache()  # release cached GPU mem so nnU-Net coexists with the model
+            ef_eval.run_nnunet(self._ef_pred_dir, seg_dir)
+            # (subject_id, ed, es) per val subject. vt = [all ED] + [all ES], so vt[i] and vt[i+N]
+            # are the SAME subject's ED and ES (N = half the sweep length — self-consistent with vt).
+            N = len(vt) // 2
+            subjects_ed_es = [
+                (os.path.basename(os.path.dirname(mri_ds.subjects[vt[i][0]])), vt[i][1], vt[i + N][1])
+                for i in range(N)
+            ]
+            m = ef_eval.compute_ef_metrics(seg_dir, subjects_ed_es, csv_path)
+            if m is None:
+                logging.warning("[ef] too few valid subjects for EF correlation; skipping")
+                return
+            for k in ("slope", "spearman", "mae_pct"):
+                self._log_scalar(f"val/ef/{k}", m[k], step)
+            self._log_scalar("val/ef/n", m["n"], step)
+            logging.info(f"[ef] epoch {self.epoch}: slope={m['slope']:.3f} "
+                         f"spearman={m['spearman']:.3f} mae={m['mae_pct']:.2f}% "
+                         f"n={m['n']} (skipped {m['n_skipped']})")
+        except Exception as e:
+            logging.warning(f"[ef] compute/log EF failed (ignored): {e}")
 
     def _log_augmentation_to_wandb(self, orig_images, aug_images, step: int) -> None:
         """Log a before/after panel of GPU augmentation for one training subject.
@@ -949,8 +1052,9 @@ class Trainer:
                                f"+ noise/gamma/bias; each fires per-subject at its tier prob)")
             if self.respiratory_cfg.enable:
                 rc = self.respiratory_cfg
-                applied.append(f"breathing (ALWAYS-on, per-slot iid: A={rc.amplitude_mm:.0f}+/-{rc.amplitude_jitter:.0f}mm, "
-                               f"n={rc.cos2n}, tilt<={rc.direction_jitter_deg:.0f}deg)")
+                tilt_hi = rc.tilt_max_deg if rc.tilt_max_deg is not None else rc.direction_jitter_deg
+                applied.append(f"breathing (ALWAYS-on: A={rc.amplitude_mm:.0f}+/-{rc.amplitude_jitter:.0f}mm/subj, "
+                               f"n={rc.cos2n}, tilt<={tilt_hi:.0f}deg/subj)")
             caption = (f"GPU aug = {' + '.join(applied) if applied else 'none'} | top=original, "
                        f"bottom=ACTUAL draw applied (the realized affine subset is visible there); step={step}")
             fig = plt.figure(figsize=(1.6 * S + 0.4, 3.6), dpi=90)
@@ -967,7 +1071,7 @@ class Trainer:
                 ax1.set_xticks([]); ax1.set_yticks([])
                 if s == 0:
                     ax1.set_ylabel("augmented", fontsize=8)
-            self.wandb_writer.log("Train_Visuals_Augmentation", wandb.Image(fig, caption=caption), step)
+            self.wandb_writer.log("media_others/Train_Visuals_Augmentation", wandb.Image(fig, caption=caption), step)
             plt.close(fig)
         except Exception as e:
             logging.warning(f"augmentation visual log failed (ignored): {e}")
@@ -1049,7 +1153,7 @@ class Trainer:
             _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon")
             _vol_row(3, diff,    "RdBu_r", -ERR,  ERR,    f"V_canon-V_gt\n(±{ERR})")
 
-            self.wandb_writer.log(f"{name}_Volume", wandb.Image(fig, caption=caption), step)
+            self.wandb_writer.log(f"media_others/{name}_Volume", wandb.Image(fig, caption=caption), step)
             plt.close(fig)
 
         # ── DVF figure (per-slot Δx/Δy/Δz) ─────────────────────────────────
@@ -1107,11 +1211,108 @@ class Trainer:
                         ax.set_ylabel(lbl, fontsize=8)
                 plt.colorbar(last_im, cax=fig.add_subplot(gs[r, S]))
 
-            self.wandb_writer.log(f"{name}_DVF", wandb.Image(fig, caption=caption), step)
+            self.wandb_writer.log(f"media_others/{name}_DVF", wandb.Image(fig, caption=caption), step)
             plt.close(fig)
 
+    # Subjects shown in the ED-vs-ES panel (the EF sweep reconstructs each at its ED and ES).
+    _ED_ES_SUBJECTS = (0, 7, 14, 21)
+
+    def _stash_ed_es(self, batch: Mapping, loss_dict: Mapping) -> None:
+        """During val, capture per-z ED and ES reconstructions for the chosen subjects, keyed by
+        (subject → role). Rendered together at end of epoch by _log_ed_es_panels. Sweep-only."""
+        if "V_canon" not in loss_dict or "V_gt" not in loss_dict:
+            return
+        try:
+            mri_ds = self._get_mri_dataset()
+            vt = getattr(mri_ds, "val_targets", None)
+            i = int(self._val_iter)
+            if vt is None or i >= len(vt):
+                return
+            subj_idx = vt[i][0]
+            if subj_idx not in self._ED_ES_SUBJECTS:
+                return
+            role = "ED" if i < len(vt) // 2 else "ES"           # blocked layout: all ED then all ES
+            imgs = batch["images"][0].detach().float().cpu()    # (S, 3, H, W)
+            if imgs.min() < 0:
+                imgs = (imgs + 1.0) / 2.0
+            imgs = imgs.clamp(0, 1).mean(dim=1).numpy()         # (S, H, W) gray
+            self._ed_es_stash.setdefault(subj_idx, {})[role] = {
+                "images": imgs,
+                "V_gt": loss_dict["V_gt"][0].detach().float().cpu().numpy(),      # (D, H, W)
+                "V_canon": loss_dict["V_canon"][0].detach().float().cpu().numpy(),
+                "t": int(batch["t_target"][0].flatten()[0].item()) if "t_target" in batch else -1,
+                "timesteps": batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None,
+                "slices": batch["slice_indices"][0].cpu().numpy() if "slice_indices" in batch else None,
+            }
+        except Exception as e:
+            logging.warning(f"[ed/es] stash failed (ignored): {e}")
+
+    def _log_ed_es_panels(self, step: int) -> None:
+        """Render one 6-row ED-vs-ES figure per chosen subject that has both phases stashed:
+        rows = input(ED) / V_gt(ED) / V_canon(ED) / input(ES) / V_gt(ES) / V_canon(ES);
+        columns = the S input slices (input rows) or the D z-planes (volume rows). Per-z (NOT the
+        mid plane, which is the reference slot — the model does nothing there). Contraction reads as
+        the ED cavities shrinking to the ES cavities across planes."""
+        if not self.wandb_writer:
+            return
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+            from matplotlib import gridspec as _gs
+        except ImportError:
+            return
+        for subj_idx in self._ED_ES_SUBJECTS:
+            rec = self._ed_es_stash.get(subj_idx)
+            if not rec or "ED" not in rec or "ES" not in rec:
+                continue
+            fig = None
+            try:
+                ed, es = rec["ED"], rec["ES"]
+                D = ed["V_gt"].shape[0]
+                S = ed["images"].shape[0]
+                n_cols = max(S, D)
+                vmax = float(max(ed["V_gt"].max(), ed["V_canon"].max(),
+                                 es["V_gt"].max(), es["V_canon"].max(), 1e-3))
+                # (row-label, kind, data, phase-record) — kind "in"=S input slices, "vol"=D z-planes.
+                rows = [
+                    ("input ED", "in", ed["images"], ed),
+                    ("V_gt ED", "vol", ed["V_gt"], ed),
+                    ("V_canon ED", "vol", ed["V_canon"], ed),
+                    ("input ES", "in", es["images"], es),
+                    ("V_gt ES", "vol", es["V_gt"], es),
+                    ("V_canon ES", "vol", es["V_canon"], es),
+                ]
+                fig = plt.figure(figsize=(1.1 * n_cols + 1.4, 1.5 * len(rows) + 0.8), dpi=90)
+                gs = _gs.GridSpec(len(rows), n_cols, wspace=0.04, hspace=0.22)
+                fig.suptitle(f"ED vs ES — val subj {subj_idx} (ED t={ed['t']}, ES t={es['t']}) — step={step}",
+                             fontsize=9)
+                for r, (label, kind, data, prec) in enumerate(rows):
+                    ncol = S if kind == "in" else D
+                    ts, zs = prec.get("timesteps"), prec.get("slices")
+                    for c in range(ncol):
+                        ax = fig.add_subplot(gs[r, c])
+                        ax.imshow(data[c], cmap="gray", vmin=0, vmax=(1.0 if kind == "in" else vmax))
+                        ax.set_xticks([]); ax.set_yticks([])
+                        if c == 0:
+                            ax.set_ylabel(label, fontsize=8)          # row label on the leftmost cell
+                        # titles: (t,z) on BOTH input rows (ED at r0, ES at r3 — different samples,
+                        # so both need their own coords), z on the two V_gt rows (r1, r4).
+                        if kind == "in" and ts is not None and zs is not None:
+                            ax.set_title(f"t{int(ts[c])} z{int(zs[c])}", fontsize=6)
+                        elif kind == "vol" and r in (1, 4):
+                            ax.set_title(f"z{c}", fontsize=6)
+                    for c in range(ncol, n_cols):
+                        fig.add_subplot(gs[r, c]).axis("off")
+                self.wandb_writer.log(f"media_val_ED_ES/Val_Visuals_subj{subj_idx}_ED_ES",
+                                      wandb.Image(fig, caption=f"per-z (mid plane = reference slot)"), step)
+            except Exception as e:
+                logging.warning(f"[ed/es] panel subj {subj_idx} failed (ignored): {e}")
+            finally:
+                if fig is not None:
+                    plt.close(fig)                                    # never leak a figure on the error path
+
     def _log_refiner_viz_to_wandb(self, batch: dict, name: str, step: int, caption: str):
-        """Log one figure `refiner_viz/{name}_Volume` (4 rows × D cols): V_gt, V_canon (raw
+        """Log one figure `media_others/refiner_{name}_Volume` (4 rows × D cols): V_gt, V_canon (raw
         splat), V_refined (refiner output), and the refined signed-diff (V_refined - V_gt) per z.
         Purely additive: returns immediately unless the refiner ran (`V_refined` present), so it
         NEVER fires — and never touches the existing panels — when the refiner is off.
@@ -1155,7 +1356,7 @@ class Trainer:
         _row(2, V_refined, "gray",   0,    v_vmax, "V_refined")
         _row(3, diff,      "RdBu_r", -ERR, ERR,    f"V_refined-V_gt\n(±{ERR})")
 
-        self.wandb_writer.log(f"refiner_viz/{name}_Volume", wandb.Image(fig, caption=caption), step)
+        self.wandb_writer.log(f"media_others/refiner_{name}_Volume", wandb.Image(fig, caption=caption), step)
         plt.close(fig)
 
     def run(self):
@@ -1271,6 +1472,49 @@ class Trainer:
                 )
                 limit_val_batches = n_val_subj
 
+        # EF sweep: cap to the explicit (subject, phase) list length so each pair is hit once.
+        _mri_ds = self._get_mri_dataset()
+        if _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None:
+            limit_val_batches = len(_mri_ds.val_targets)
+
+        # Predicted-EF metric: is this an EF-epoch? (opt-in, val-only, rank 0, cadence-gated,
+        # requires the ED/ES sweep). If so, reset the pred dir; volumes are dumped per batch below.
+        # SINGLE-GPU ONLY: the sweep is rank-0-collected but the val DistributedSampler shards
+        # seq_index across ranks, so under DDP rank 0 sees an incomplete/duplicated subset and
+        # subjects lose their ED↔ES pairing → EF would be wrong or empty. Gate on world_size==1.
+        _world_size = dist.get_world_size() if (dist.is_available() and dist.is_initialized()) else 1
+        self._ef_this_epoch = bool(
+            self.rank == 0
+            and _world_size == 1
+            and getattr(self.logging_conf, "ef_eval_enable", False)
+            and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
+            and self.epoch % max(1, getattr(self.logging_conf, "ef_eval_every_n_val_epochs", 5)) == 0
+        )
+        if (self.rank == 0 and _world_size > 1 and getattr(self.logging_conf, "ef_eval_enable", False)
+                and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
+                and not getattr(self, "_ef_ddp_warned", False)):
+            logging.warning("[ef] predicted-EF metric is single-GPU only (val is DistributedSampler-"
+                            f"sharded across {_world_size} ranks); skipping EF. Run val on 1 GPU for EF.")
+            self._ef_ddp_warned = True
+        if self._ef_this_epoch:
+            import shutil
+            self._ef_pred_dir = os.path.join(self.logging_conf.log_dir, "ef_tmp", "pred")
+            shutil.rmtree(self._ef_pred_dir, ignore_errors=True)
+            safe_makedirs(self._ef_pred_dir)
+
+        # ED-vs-ES panel: on visual epochs, stash ED+ES reconstructions for the chosen subjects
+        # (needs the sweep so each subject is hit at both phases). Rendered at end of epoch.
+        # SINGLE-GPU ONLY (same reason as EF): _stash_ed_es maps via the local data_iter, but the
+        # val DistributedSampler shards seq_index across ranks, so under DDP the panels would
+        # mislabel subjects/phases. Gate on world_size==1 (reuses _world_size from the EF block).
+        self._viz_ed_es = bool(
+            self.rank == 0 and _world_size == 1 and getattr(self.logging_conf, "log_visuals", True)
+            and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
+            and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
+        )
+        if self._viz_ed_es:
+            self._ed_es_stash = {}
+
         for data_iter, batch in enumerate(val_loader):
             if data_iter >= limit_val_batches:
                 break
@@ -1308,6 +1552,10 @@ class Trainer:
 
             if self.rank == 0:
                 self._save_val_volumes(batch, val_loss_dict)
+                if getattr(self, "_ef_this_epoch", False):
+                    self._save_ef_volume(batch, val_loss_dict)
+                if getattr(self, "_viz_ed_es", False):
+                    self._stash_ed_es(batch, val_loss_dict)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -1334,7 +1582,7 @@ class Trainer:
             prefix = f"Loss/{phase}_"
             for name, meter in loss_meters.items():
                 raw_name = name[len(prefix):] if name.startswith(prefix) else name
-                self._log_scalar(f"Val_Loss/{raw_name}", meter.avg, current_train_step)
+                self._log_scalar(self._scalar_name("val", raw_name), meter.avg, current_train_step)
 
             # ── Per-phase val PSNR (only when t_target is varying) ──
             # Metric name bakes in n and the identity baseline:
@@ -1343,23 +1591,23 @@ class Trainer:
             # so each phase keeps one stable panel. If val ever loses determinism, n drifts
             # and new panels appear — that drift is the smoke alarm.
             # Multi-phase mode logs TWO parallel namespaces:
-            #   val_psnr_full/t{k}_n{n}_base{b:.1f}   averages over the whole cube
-            #   val_psnr_bbox/t{k}_n{n}_base{b:.1f}   averages over the subject's geometric content region only
+            #   val/psnr/full/t{k}_n{n}_base{b:.1f}   averages over the whole cube
+            #   val/psnr/bbox/t{k}_n{n}_base{b:.1f}   averages over the subject's geometric content region only
             # Both go to wandb so you can sanity-check that they track each other; large divergence
             # means something's off (e.g., model hallucinating outside the FOV).
             for namespace, accum, baseline_per_phase, baseline_mean in [
-                ("val_psnr_full", self._per_phase_val_psnr_full,
+                ("val/psnr/full", self._per_phase_val_psnr_full,
                  self._identity_baseline_full_per_phase, self._identity_baseline_full_mean),
-                ("val_psnr_bbox", self._per_phase_val_psnr_bbox,
+                ("val/psnr/bbox", self._per_phase_val_psnr_bbox,
                  self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
-                ("val_motion", self._per_phase_val_psnr_motion,
+                ("val/psnr/motion", self._per_phase_val_psnr_motion,
                  self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
                 # Refiner panels — additive; empty (skipped) unless the refiner ran. Same
-                # identity baselines as their V_canon counterparts so val_psnr_bbox vs
-                # val_psnr_bbox_refined are directly comparable.
-                ("val_psnr_bbox_refined", self._per_phase_val_psnr_bbox_refined,
+                # identity baselines as their V_canon counterparts so val/psnr/bbox vs
+                # val/psnr/bbox_refined are directly comparable.
+                ("val/psnr/bbox_refined", self._per_phase_val_psnr_bbox_refined,
                  self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
-                ("val_motion_refined", self._per_phase_val_psnr_motion_refined,
+                ("val/psnr/motion_refined", self._per_phase_val_psnr_motion_refined,
                  self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
             ]:
                 if len(accum) == 0:
@@ -1368,7 +1616,7 @@ class Trainer:
                 # standard Loss/val_metric_* meters, so per-phase full/bbox would be redundant
                 # (that's why fixed-phase originally skipped this loop entirely). Motion is the
                 # one metric the standard meters don't cover, so it must still be logged.
-                if self.t_target_fixed is not None and not namespace.startswith("val_motion"):
+                if self.t_target_fixed is not None and not namespace.startswith("val/psnr/motion"):
                     continue
                 try:
                     all_psnrs = []
@@ -1413,6 +1661,14 @@ class Trainer:
             filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
             if self.epoch % filmstrip_every_n == 0:
                 self._log_cardiac_cycle_filmstrip(current_train_step)
+
+            # ED-vs-ES per-subject panels (per-z; from the sweep's ED+ES reconstructions)
+            if getattr(self, "_viz_ed_es", False):
+                self._log_ed_es_panels(current_train_step)
+
+            # Predicted-EF metric (nnU-Net seg of the ED/ES pred volumes → slope/Spearman).
+            if getattr(self, "_ef_this_epoch", False):
+                self._compute_and_log_ef(current_train_step)
 
             logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
 
@@ -1525,13 +1781,20 @@ class Trainer:
                         for option in optim.schedulers[j]:
                             optim_prefix = f"{i}_" if len(self.optims) > 1 else ("" + f"{j}_" if len(optim.optimizer.param_groups) > 1 else "")
                             self._log_scalar(
-                                f"Train_Optim/{optim_prefix}{option}",
+                                f"train/optim/{optim_prefix}{option}",
                                 param_group[option],
                                 self.steps[phase],
                             )
                 self._log_scalar(
-                    "Train_Optim/where",
+                    "train/optim/where",
                     self.where,
+                    self.steps[phase],
+                )
+                # Fractional epoch (floor = integer epoch) so cross-run curves can be
+                # aligned on training progress, not just the global optimizer step.
+                self._log_scalar(
+                    "train/optim/epoch",
+                    exact_epoch,
                     self.steps[phase],
                 )
 
@@ -1547,8 +1810,8 @@ class Trainer:
                     if meter_key in loss_meters:
                         loss_meters[meter_key].update(grad_norm)
                     if self.steps[phase] % self.logging_conf.log_freq == 0:
-                        # Logged under Train_Optim/ alongside lr + where (gradient norms are optimizer diagnostics).
-                        self._log_scalar(f"Train_Optim/grad_{key}", grad_norm, self.steps[phase])
+                        # Logged under train/optim/ alongside lr + where (gradient norms are optimizer diagnostics).
+                        self._log_scalar(f"train/optim/grad_{key}", grad_norm, self.steps[phase])
 
             # Optimizer step
             for optim in self.optims:
@@ -1610,7 +1873,7 @@ class Trainer:
                         f"cumulative_nan_batches={self._nan_batch_count}); skipping backward."
                     )
                     self._log_scalar(
-                        "Train_Optim/nan_batches_cumulative",
+                        "train/optim/nan_batches_cumulative",
                         float(self._nan_batch_count),
                         self.steps[phase],
                     )
@@ -1719,13 +1982,13 @@ class Trainer:
 
                 # Only log batch-level scalars for training to avoid step collision and noise
                 if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
-                    self._log_scalar(f"Train_Loss/{key}", value, step)
+                    self._log_scalar(self._scalar_name("train", key), value, step)
 
         # ── Val-only diagnostic: per-phase PSNR accumulation (gated, never touches train) ──
         # Compute per-sample PSNR from V_canon/V_gt and bucket by the batch's t_target.
         # Runs in BOTH phase modes: multi-phase buckets across all 12 t_targets; single-phase
         # (t_target_fixed) buckets everything under its one fixed phase. The logging side then
-        # selects which panels to emit — single-phase logs only val_motion (see the gate below).
+        # selects which panels to emit — single-phase logs only val/psnr/motion (see the gate below).
         # All conditions must hold; if anything raises, we log a warning and continue —
         # diagnostics must NEVER crash training.
         if (phase == "val"
@@ -1792,7 +2055,7 @@ class Trainer:
                         "metric_psnr_3d_bbox_refined", "metric_psnr_3d_motion_refined"):
                 if key in data:
                     val = data[key].item() if torch.is_tensor(data[key]) else data[key]
-                    self._log_scalar(f"Train_Loss/{key}", val, step)
+                    self._log_scalar(self._scalar_name("train", key), val, step)
 
         # Log Frame and Slice selection for the first few slots (if available).
         # NOTE: with the decoupled-target design, slot 0 is NO LONGER the t_target slice —
@@ -1807,18 +2070,18 @@ class Trainer:
                 S = ts.shape[1] if hasattr(ts, "shape") else len(ts[0])
 
                 # Slot 0
-                self._log_scalar("train_slice_selection/slot1_frame", ts[0, 0].item(), step)
-                self._log_scalar("train_slice_selection/slot1_slice", sls[0, 0].item(), step)
+                self._log_scalar("train/slice_selection/slot1_frame", ts[0, 0].item(), step)
+                self._log_scalar("train/slice_selection/slot1_slice", sls[0, 0].item(), step)
 
                 # Slot 1
                 if S > 1:
-                    self._log_scalar("train_slice_selection/slot2_frame", ts[0, 1].item(), step)
-                    self._log_scalar("train_slice_selection/slot2_slice", sls[0, 1].item(), step)
+                    self._log_scalar("train/slice_selection/slot2_frame", ts[0, 1].item(), step)
+                    self._log_scalar("train/slice_selection/slot2_slice", sls[0, 1].item(), step)
 
                 # Slot 2
                 if S > 2:
-                    self._log_scalar("train_slice_selection/slot3_frame", ts[0, 2].item(), step)
-                    self._log_scalar("train_slice_selection/slot3_slice", sls[0, 2].item(), step)
+                    self._log_scalar("train/slice_selection/slot3_frame", ts[0, 2].item(), step)
+                    self._log_scalar("train/slice_selection/slot3_slice", sls[0, 2].item(), step)
 
                 # Natural-anchor rate: mean number of input slots whose phase == t_target.
                 # With decoupled sampling this is no longer guaranteed ≥1 — tracking it
@@ -1828,7 +2091,7 @@ class Trainer:
                     try:
                         tt = data["t_target"]  # (B, 1)
                         n_anchor = (ts == tt).float().sum(dim=1).mean().item()
-                        self._log_scalar("train/n_slots_at_target", n_anchor, step)
+                        self._log_scalar("train/slice_selection/n_slots_at_target", n_anchor, step)
                     except Exception as e:
                         logging.warning(f"n_slots_at_target log failed (ignored): {e}")
 
@@ -1853,7 +2116,9 @@ class Trainer:
         #          val subjects peaks at t=7-8). Adjust if the dataset's phase binning
         #          convention shifts. Filmstrip (every N val epochs) covers the full cycle
         #          for subject 0 so this snapshot choice isn't load-bearing.
-        VAL_VISUAL_SUBJECT_INDICES = (0, 7)
+        #          Kept in sync with the ED/ES panel subjects so the same subjects get both
+        #          the Volume/DVF snapshot and the per-z ED/ES panel.
+        VAL_VISUAL_SUBJECT_INDICES = self._ED_ES_SUBJECTS
         if phase == "train":
             should_log = freq > 0 and (step % freq == 0)
         else:
@@ -1918,7 +2183,7 @@ class Trainer:
                 logging.warning(f"volume/DVF visual log failed (ignored): {e}")
 
             # Refiner panel — additive, only when the refiner ran (key present). Logs to a
-            # SEPARATE namespace (refiner_viz/...), never touches the existing panels.
+            # SEPARATE namespace (media_others/refiner_*), never touches the existing panels.
             try:
                 self._log_refiner_viz_to_wandb(batch, name, log_step, caption)
             except Exception as e:

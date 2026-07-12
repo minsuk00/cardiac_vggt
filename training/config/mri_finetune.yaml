@@ -49,6 +49,13 @@ t_target_fixed: null
 # of all T. null → all phases. Train picks uniformly from the list; val cycles it
 # deterministically. Mutually exclusive with t_target_fixed (single-phase wins).
 t_target_phases: null
+# EF-aware validation. `ef_val_sweep` replaces the coupled val sampler with a targeted
+# 30×{ED, ES} sweep (each subject reconstructed at its GT ED + ES phase from cardiac_phase.csv),
+# so per-phase panels are honest AND we get the ED/ES volumes EF needs. `ef_eval_enable` (ON by
+# default, but optional) additionally runs nnU-Net Task114 on those pred volumes every
+# `ef_eval_every_n_val_epochs` and logs predicted-vs-GT EF slope/Spearman. Setting ef_eval_enable
+# false keeps the cheap sweep but skips the heavy segmentation. Both no-op unless ef_val_sweep is on.
+ef_val_sweep: false
 # ---------------------
 
 dataset_name: "${basename:${data_root}}"
@@ -71,6 +78,11 @@ logging:
   # Logged every N val epochs (~72s: 12 model forwards on A40). Set to 1 to watch the
   # full-cycle V_gt vs V_canon reconstruction every epoch.
   filmstrip_every_n_val_epochs: 1
+  # Predicted-EF metric (val-only; requires ef_val_sweep). ef_eval_enable ON by default but
+  # OPTIONAL — false keeps the ED/ES sweep but skips the heavy nnU-Net segmentation. When on,
+  # nnU-Net Task114 segs the ED/ES pred volumes every N val epochs → val_ef/{slope,spearman,mae_pct}.
+  ef_eval_enable: true
+  ef_eval_every_n_val_epochs: 5
   # Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val epoch.
   # Overwrites in place (constant ~360 MB disk). Identity affine (canonical voxel space).
   save_val_volumes: true
@@ -223,6 +235,7 @@ data:
           reference_slot: ${reference_slot}
           continuous_z: ${continuous_z}
           z_jitter: ${z_jitter}
+          ef_val_sweep: ${ef_val_sweep}
 
 # Enable Point Head, disable others
 model:

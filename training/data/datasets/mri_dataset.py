@@ -100,6 +100,8 @@ class MRIDataset(BaseDataset):
         continuous_z=False,
         z_jitter=0.5,
         cache_dir=None,
+        ef_val_sweep=False,
+        cardiac_phase_csv=None,
     ):
         """
         Args mirrors the legacy MRIDataset for Hydra-config compatibility.
@@ -158,6 +160,20 @@ class MRIDataset(BaseDataset):
         logging.info(f"MRIDataset [{split}]: {len(self.subjects)} subjects from {self.split_file}")
         self.len_train = 1000
 
+        # ── EF val sweep (opt-in, val-only): reconstruct each subject at its GT ED and ES ──
+        # instead of the coupled seq_index%T phase. Builds an explicit (subj_idx, t_target) list
+        # of length 2*N (all ED first, then all ES) from cardiac_phase.csv, so seq_index deterministically
+        # enumerates a 30x{ED,ES} sweep. Needed for the predicted-EF metric (docs: EF-aware val).
+        self.val_targets = None
+        self.cardiac_phase_csv = None
+        if ef_val_sweep and self.split.lower() == "val" and self.subjects:
+            csv_path = cardiac_phase_csv or os.path.normpath(
+                os.path.join(self.data_root, "..", "..", "whs", "cardiac_phase.csv"))
+            self.val_targets = self._build_val_targets(csv_path)
+            self.cardiac_phase_csv = csv_path
+            logging.info(f"MRIDataset [val]: ef_val_sweep ON — {len(self.val_targets)} "
+                         f"(subject, t_target) pairs from {csv_path}")
+
         # ── monai PersistentDataset cache ─────────────────────────────────
         if PersistentDataset is None:
             raise RuntimeError(
@@ -205,12 +221,43 @@ class MRIDataset(BaseDataset):
                         logging.warning(f"MRIDataset: subject path not found, skipping: {path}")
         return subjects
 
+    def _build_val_targets(self, csv_path):
+        """Explicit (subj_idx, t_target) sweep: each subject at its GT ED, then each at its GT ES.
+        Keyed by subject id (basename of the subject's parent dir) against the CSV `subject` column."""
+        import csv as _csv
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(f"ef_val_sweep needs cardiac_phase.csv; not found: {csv_path}")
+        ed_es = {}
+        with open(csv_path) as f:
+            for row in _csv.DictReader(f):
+                ed_es[row["subject"]] = (int(row["ED"]), int(row["ES"]))
+        ed_list, es_list, missing = [], [], []
+        for i, path in enumerate(self.subjects):
+            sid = os.path.basename(os.path.dirname(path))  # ".../<ID>/sax" -> "<ID>"
+            if sid not in ed_es:
+                missing.append(sid); continue
+            ed, es = ed_es[sid]
+            # Fail loud if a subject's ED/ES falls outside the canonical phase count — else
+            # get_data's `% T_total` would silently reconstruct the WRONG phase. All CMRx val
+            # subjects have T=12 (ED/ES < 12); this guards a future split that adds T!=12 data.
+            if not (0 <= ed < NUM_PHASES and 0 <= es < NUM_PHASES):
+                raise ValueError(f"ef_val_sweep: {sid} has ED={ed}/ES={es} outside [0,{NUM_PHASES}); "
+                                 "incompatible with the canonical 12-phase grid.")
+            ed_list.append((i, ed)); es_list.append((i, es))
+        if missing:
+            raise KeyError(f"ef_val_sweep: {len(missing)} val subjects missing from {csv_path}: {missing}")
+        return ed_list + es_list   # all ED, then all ES  ->  seq_index < N => ED, else ES
+
     def __len__(self):
         return self.len_train
 
     # ── Main get_data ────────────────────────────────────────────────────
     def get_data(self, seq_index=0, img_per_seq=None, **kwargs):
-        subj_idx = seq_index % len(self.subjects)
+        forced_t = None
+        if self.val_targets is not None:
+            subj_idx, forced_t = self.val_targets[seq_index % len(self.val_targets)]
+        else:
+            subj_idx = seq_index % len(self.subjects)
         sub_dir = self.subjects[subj_idx]
 
         # Val/test determinism: the val branch below makes NO random calls (the
@@ -243,8 +290,10 @@ class MRIDataset(BaseDataset):
         bbox_z_size = max(1, bbox_z1 - bbox_z0)  # at least 1 for fallback
 
         # ── Pick t_target ─────────────────────────────────────────────────
-        # Priority: single fixed phase > restricted phase pool > all T phases.
-        if self.t_target_fixed is not None:
+        # Priority: EF-sweep forced phase > single fixed phase > restricted phase pool > all T phases.
+        if forced_t is not None:
+            t_target = int(forced_t) % T_total
+        elif self.t_target_fixed is not None:
             t_target = int(self.t_target_fixed) % T_total
         elif self.t_target_phases is not None:
             pool = [int(t) % T_total for t in self.t_target_phases]
@@ -447,6 +496,19 @@ class MRIDataset(BaseDataset):
         phases_full = phases_splat.cpu().numpy()  # (T, D, H, W) float16
         content_mask_np = mask_splat.cpu().numpy().astype(np.uint8)  # (D, H, W)
 
+        # Anatomy whole-heart ROI (nnU-Net seg, union-over-phases + dilation) resampled
+        # onto the same canonical grid as the phases — a val-only metric mask that is
+        # shared with the SVR baselines (vs the intensity-derived motion mask). Same axis
+        # convention as content_mask: on-disk (X, Y, Z) → splat order (D, H, W). Loaded
+        # from disk each call (~7 KB gz, ~6 ms); absent for synthetic-test / non-CMRx
+        # subjects → the key is simply omitted and the metric skips those samples.
+        heart_roi_path = os.path.join(sub_dir, "heart_roi_canonical.nii.gz")
+        heart_roi_np = None
+        if os.path.exists(heart_roi_path):
+            roi_xyz = np.asarray(nib.load(heart_roi_path).dataobj)          # (X, Y, Z)
+            heart_roi_np = np.ascontiguousarray(
+                np.transpose(roi_xyz, (2, 1, 0)) > 0).astype(np.uint8)      # (D, H, W)
+
         rel_path = os.path.relpath(sub_dir, self.data_root)
         seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
 
@@ -476,6 +538,7 @@ class MRIDataset(BaseDataset):
             "t_target": np.array([t_target], dtype=np.int64),
             "anatomy_bbox": anatomy_bbox,
             "content_mask": content_mask_np,
+            **({"heart_roi_canonical": heart_roi_np} if heart_roi_np is not None else {}),
             "phases": phases_full,
             # Stable per-sample id → deterministic val respiratory seeding (mirrors
             # the val `random.Random(seq_index)` z/t determinism). See gpu_aug.py.

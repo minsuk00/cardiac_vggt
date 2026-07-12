@@ -528,6 +528,32 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                 out["metric_mae_3d_motion"] = torch.stack(mae_motion_list).mean()
                 out["metric_motion_frac"] = motion_mask.float().mean()
 
+        # ── Anatomy heart-ROI PSNR (val-only) ────────────────────────────────────
+        # Same masked PSNR as the motion metric above, but the ROI is the nnU-Net
+        # whole-heart segmentation (union over the 12 phases, dilated) resampled onto
+        # the canonical grid — one anatomy-defined region per subject, shared with the
+        # SVR baselines. Complements motion PSNR (which restricts to *moving* voxels);
+        # this covers the whole heart incl. the static blood-pool interior. Gated to
+        # val (requires_grad) + skips the startup identity pass, so training numerics
+        # are bit-identical. Surfaces in wandb via keys_to_log in mri_volume.yaml.
+        if (not pos_pred.requires_grad) and (pos_pred is not batch.get("scanner_coords")) \
+                and "heart_roi_canonical" in batch:
+            seg_roi = batch["heart_roi_canonical"].bool()   # (B, D, H, W)
+            psnr_seg_list, mae_seg_list = [], []
+            for b in range(B):
+                m = seg_roi[b]
+                if not bool(m.any()):
+                    continue
+                Vc = V_canon[b][m]
+                Vg = V_gt[b][m]
+                mse_s = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
+                psnr_seg_list.append(10.0 * torch.log10(1.0 / mse_s))
+                mae_seg_list.append((Vc - Vg).abs().mean())
+            if psnr_seg_list:
+                out["metric_psnr_3d_heartseg"] = torch.stack(psnr_seg_list).mean()
+                out["metric_mae_3d_heartseg"] = torch.stack(mae_seg_list).mean()
+                out["metric_heartseg_frac"] = seg_roi.float().mean()
+
         # ── VAL-ONLY ship-decision + breathing metrics (docs/37) ─────────────────
         # These quantify targeted improvements that aggregate PSNR buries: an oracle-
         # normalized recoverable-fraction (rescales out the un-fixable appearance wall),

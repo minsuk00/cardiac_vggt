@@ -47,6 +47,21 @@ class WandbLogger:
                 if isinstance(tags, str):
                     tags = [tags]
                 kwargs["tags"] = [str(t) for t in tags]
+            # Hydra's instantiate re-wraps a passed-in plain dict as a DictConfig, which
+            # wandb's config sanitizer chokes on (asdict→defaultdict TypeError). Convert
+            # any OmegaConf config back to a plain container before handing it to wandb.
+            if wandb_config is not None:
+                from omegaconf import OmegaConf
+
+                if OmegaConf.is_config(wandb_config):
+                    # resolve=True can raise (e.g. an interpolation pointing at a MISSING value);
+                    # config logging must never crash training startup, so fall back to the
+                    # unresolved container. No current config triggers this — insurance only.
+                    try:
+                        wandb_config = OmegaConf.to_container(wandb_config, resolve=True)
+                    except Exception as e:
+                        logging.warning(f"wandb config resolve failed, logging unresolved (ignored): {e}")
+                        wandb_config = OmegaConf.to_container(wandb_config, resolve=False)
             run = wandb.init(project=project, name=name, config=wandb_config, dir=dir, **kwargs)
             if run is not None:
                 logging.info(f"WandB Run URL: {run.get_url()}")

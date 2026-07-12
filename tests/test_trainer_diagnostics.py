@@ -175,7 +175,7 @@ def test_filmstrip_restores_dataset_state():
 
 
 def test_motion_mask_example_logs_under_val_motion():
-    """`_log_motion_mask_example` renders an image and logs it under `val_motion/mask_example`;
+    """`_log_motion_mask_example` renders an image and logs it under `media_others/val_motion_mask_example`;
     and returns silently when there's no wandb writer."""
     import matplotlib
     matplotlib.use("Agg")
@@ -188,7 +188,7 @@ def test_motion_mask_example_logs_under_val_motion():
     stub._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub)
     stub._log_motion_mask_example(0)  # must not raise
 
-    # With wandb + a mock dataset → logs exactly the val_motion/mask_example key.
+    # With wandb + a mock dataset → logs exactly the media_others/val_motion_mask_example key.
     class MockDS:
         num_slices = 12
         subjects = list(range(16))  # ≥16 so subj indices 0/7/15 all render
@@ -205,7 +205,7 @@ def test_motion_mask_example_logs_under_val_motion():
     stub2._get_mri_dataset = lambda: MockDS()
     stub2._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub2)
     stub2._log_motion_mask_example(99)
-    assert ("val_motion/mask_example", 99) in logged, f"image not logged: {logged}"
+    assert ("media_others/val_motion_mask_example", 99) in logged, f"image not logged: {logged}"
 
 
 def test_filmstrip_skipped_without_wandb():
@@ -285,7 +285,7 @@ def test_nan_loss_counter_increments_and_logs():
     for _ in range(3):
         stub._nan_batch_count += 1
         stub._log_scalar(
-            "Train_Optim/nan_batches_cumulative",
+            "train/optim/nan_batches_cumulative",
             float(stub._nan_batch_count),
             stub.steps["train"],
         )
@@ -293,5 +293,5 @@ def test_nan_loss_counter_increments_and_logs():
     assert stub._nan_batch_count == 3
     keys = [k for k, _, _ in stub._logged]
     vals = [v for _, v, _ in stub._logged]
-    assert keys == ["Train_Optim/nan_batches_cumulative"] * 3
+    assert keys == ["train/optim/nan_batches_cumulative"] * 3
     assert vals == [1.0, 2.0, 3.0], f"counter must be monotonic, got {vals}"

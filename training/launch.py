@@ -64,7 +64,15 @@ def main():
     with initialize(version_base=None, config_path="config"):
         cfg = compose(config_name=args.config, overrides=hydra_overrides)
 
-    trainer = Trainer(**cfg)
+    # Snapshot the fully-resolved config so it can be logged to wandb (run.config),
+    # making runs self-describing for automated cross-run analysis. Best-effort: if
+    # anything is unresolvable we fall back to the unresolved container rather than crash.
+    try:
+        resolved_cfg = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False)
+    except Exception:
+        resolved_cfg = OmegaConf.to_container(cfg, resolve=False)
+
+    trainer = Trainer(_wandb_config=resolved_cfg, **cfg)
     trainer.run()
 
 
