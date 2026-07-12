@@ -53,10 +53,11 @@ def test_build_returns_compose_when_enabled():
     assert t is not None
 
 def test_build_moderate_tier_builds():
-    """Moderate tier is now implemented (in-plane only, stronger ranges/probs)."""
+    """Moderate tier: in-plane only, ±180° rotation. Flip + Gaussian noise are DISABLED
+    (chirality / wrong-artifact), so 3 active transforms: affine, contrast, bias-field."""
     t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "moderate"}))
     assert t is not None
-    assert len(t.transforms) == 5
+    assert len(t.transforms) == 3
 
 def test_build_unknown_tier_raises():
     with pytest.raises(ValueError):

@@ -81,82 +81,90 @@ def build_gpu_transforms(aug_cfg=None):
     mode_dict = {"phases": "bilinear", "content_mask": "nearest"}
 
     if tier == "conservative":
-        # Conservative tier: in-plane H-flip, ±5° in-plane rotation, small
-        # translate/scale, light photometric. NO through-plane rotation
-        # (slices are physically anisotropic 12 mm Z vs 1.4 mm X/Y), NO elastic
-        # (defer to moderate tier once conservative is stable).
+        # Conservative tier — IN-DISTRIBUTION-PRIORITY (mild). Broadens the natural orientation
+        # spread (rotate ±45°) WITHOUT chasing OOD tails, gentle photometric, modest fire-probs.
+        # NO through-plane rotation (slices are physically anisotropic 12 mm Z vs 1.4 mm X/Y),
+        # NO elastic. Flip + Gaussian noise are commented out for ALL tiers (rationale inline below).
         # batchaug is POSITIONAL, not semantic: each tuple slot i maps to tensor
         # spatial dim i+2 (our dims are D=0, H=1, W=2 after the channel). BUT
         # `rotate_range` is special — its slots are PLANES of rotation, not axes:
         #   slot 0 → rotation in the H-W plane (about D)  = IN-PLANE  ← what we want
         #   slot 1 → rotation in the D-W plane            = through-plane
         #   slot 2 → rotation in the D-H plane            = through-plane
-        # So the in-plane ±5° goes in rotate_range slot 0, NOT slot 2.
+        # So in-plane rotation goes in rotate_range slot 0, NOT slot 2.
         # (translate_range / scale_range ARE per-axis (D, H, W): slot 0 = D, so
         #  freezing slot 0 there correctly disables through-plane shift/scale.)
-        # RandFlipd spatial_axis=[2] flips dim W (in-plane left-right).
         transforms = [
-            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd DISABLED (all tiers): a W-axis mirror creates situs-inversus chirality
+            # (RV on the wrong side), degrading the LPS-trained RV-location prior; and once
+            # rotation covers the full circle (moderate/aggressive) flip adds only anatomically
+            # impossible mirror hearts. See CLAUDE.md LPS note.
+            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
                 prob=0.5,
-                rotate_range=(float(np.deg2rad(5)), 0.0, 0.0),   # in-plane (H-W) only
-                translate_range=(0.0, 4.0, 4.0),                 # H, W only (D frozen)
-                scale_range=(0.0, 0.05, 0.05),                   # H, W only (D frozen)
+                rotate_range=(float(np.deg2rad(45)), 0.0, 0.0),  # in-plane (H-W); mild — broaden natural spread, don't chase OOD tails
+                translate_range=(0.0, 6.0, 6.0),                 # H, W only (D frozen)
+                scale_range=(0.0, 0.05, 0.05),                   # H, W only; small → anisotropy (independent H/W) stays negligible
                 padding_mode="zeros",
             ),
             # Photometric — apply ONLY to `phases`, not the mask.
-            _B.RandGaussianNoised(keys=["phases"], prob=0.3, std=(0.0, 0.02)),
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.3, gamma=(0.8, 1.25)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.3, degree=3, coeff_range=(-0.2, 0.2)),
+            _B.RandAdjustContrastd(keys=["phases"], prob=0.4, gamma=(0.8, 1.3)),
+            _B.RandBiasFieldd(keys=["phases"], prob=0.4, degree=3, coeff_range=(-0.10, 0.10)),  # symmetric → zero-mean shading (both brighten & darken)
+            # RandGaussianNoised DISABLED (all tiers): models i.i.d. noise, but real OOD/real-time
+            # degradation is structured (aliasing/motion-blur); it mostly corrupts clean signal.
+            # _B.RandGaussianNoised(keys=["phases"], prob=0.3, std=(0.0, 0.02)),
         ]
         return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
 
     if tier == "moderate":
-        # Moderate tier: same IN-PLANE-ONLY discipline as conservative (NO
-        # through-plane rotation, NO elastic — Z is 12 mm anisotropic), but with
-        # stronger ranges and higher fire-probabilities so the effect is clearly
-        # visible and provides real regularization rather than near-identity draws.
-        # Same positional/plane semantics as the conservative block above:
-        #   rotate_range slot 0 = in-plane (H-W); translate/scale slots are (D,H,W)
-        #   with D frozen; RandFlipd spatial_axis=[2] = in-plane left-right (W).
+        # Moderate tier — RECOMMENDED OOD-AWARE DEFAULT (synthesized from a 2-stance debate).
+        # IN-PLANE ONLY. Headline = FULL-CIRCLE (±180°) rotation to cover the measured MIITT
+        # orientation gap (MIITT clusters ~180° off CMRx's mode), at moderate prob (0.6) so
+        # natural orientation is still anchored (~40% of samples). Gamma = the key contrast
+        # lever; bias-field models coil shading; scale kept small (near-isotropic); flip +
+        # Gaussian noise OFF (see conservative note). Plane semantics as in conservative:
+        # rotate slot 0 = in-plane (H-W); translate/scale slots (D,H,W) with D frozen.
         transforms = [
-            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd DISABLED — see conservative note (chirality / redundant with full rotation).
+            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
-                prob=0.9,
-                rotate_range=(float(np.deg2rad(12)), 0.0, 0.0),  # in-plane (H-W) only
-                translate_range=(0.0, 8.0, 8.0),                 # H, W only (D frozen)
-                scale_range=(0.0, 0.10, 0.10),                   # H, W only (D frozen)
+                prob=0.6,
+                rotate_range=(float(np.deg2rad(180)), 0.0, 0.0),  # FULL-CIRCLE: ±180° uniform IS the whole circle (angles mod 360°); 360° would just duplicate orientations
+                translate_range=(0.0, 16.0, 16.0),               # H, W only (D frozen)
+                scale_range=(0.0, 0.05, 0.05),                   # H, W only; small → near-isotropic (avoids ellipse distortion)
                 padding_mode="zeros",
             ),
-            # Photometric — apply ONLY to `phases`, not the mask.
-            _B.RandGaussianNoised(keys=["phases"], prob=0.5, std=(0.0, 0.03)),
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.5, gamma=(0.7, 1.4)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.5, degree=3, coeff_range=(-0.3, 0.3)),
+            # Photometric — apply ONLY to `phases`, not the mask. Gamma = the key OOD contrast lever.
+            _B.RandAdjustContrastd(keys=["phases"], prob=0.6, gamma=(0.7, 1.5)),
+            _B.RandBiasFieldd(keys=["phases"], prob=0.5, degree=3, coeff_range=(-0.5, 0.5)),  # symmetric → zero-mean shading (brighten & darken); clamp handles residual overshoot
+            # RandGaussianNoised DISABLED — see conservative note.
+            # _B.RandGaussianNoised(keys=["phases"], prob=0.5, std=(0.0, 0.03)),
         ]
         return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
 
     if tier == "aggressive":
-        # Aggressive tier: still IN-PLANE ONLY (no through-plane rotation, no
-        # elastic — Z is 12 mm anisotropic), but large, clearly-visible ranges and
-        # high fire-probabilities for strong regularization. Same plane/axis
-        # semantics as the blocks above (rotate slot 0 = in-plane H-W;
-        # translate/scale slots = (D,H,W) with D frozen; flip W = in-plane L-R).
+        # Aggressive tier — MAX OOD coverage. IN-PLANE ONLY. Full-circle rotation like moderate
+        # but at higher prob + wider gamma/bias-field and larger translate; scale still capped
+        # (±8%) to bound ellipse distortion; flip + Gaussian noise OFF. Same plane semantics
+        # (rotate slot 0 = in-plane H-W; translate/scale (D,H,W) with D frozen).
         transforms = [
-            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd DISABLED — see conservative note (chirality / redundant with full rotation).
+            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
-                prob=0.95,
-                rotate_range=(float(np.deg2rad(25)), 0.0, 0.0),  # in-plane (H-W) only
-                translate_range=(0.0, 16.0, 16.0),               # H, W only (D frozen)
-                scale_range=(0.0, 0.20, 0.20),                   # H, W only (D frozen)
+                prob=0.9,
+                rotate_range=(float(np.deg2rad(180)), 0.0, 0.0),  # FULL-CIRCLE in-plane rotation (±180° = whole circle)
+                translate_range=(0.0, 20.0, 20.0),               # H, W only (D frozen)
+                scale_range=(0.0, 0.08, 0.08),                   # H, W only; capped ±8% to bound anisotropic ellipse distortion
                 padding_mode="zeros",
             ),
             # Photometric — apply ONLY to `phases`, not the mask.
-            _B.RandGaussianNoised(keys=["phases"], prob=0.6, std=(0.0, 0.05)),
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.6, gamma=(0.6, 1.7)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.6, degree=3, coeff_range=(-0.5, 0.5)),
+            _B.RandAdjustContrastd(keys=["phases"], prob=0.75, gamma=(0.6, 1.7)),
+            _B.RandBiasFieldd(keys=["phases"], prob=0.7, degree=3, coeff_range=(-0.6, 0.6)),  # symmetric → zero-mean shading
+            # RandGaussianNoised DISABLED — see conservative note.
+            # _B.RandGaussianNoised(keys=["phases"], prob=0.6, std=(0.0, 0.05)),
         ]
         return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
 
@@ -289,7 +297,13 @@ def gpu_augment_batch(batch, transforms, device,
             # Aug must never crash training; log and fall through with identity affine.
             logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
         else:
-            phases_aug = aug_dict["phases"]                    # (B, T, D, H, W) float32
+            # Photometric ops (esp. the multiplicative bias field) can push intensities
+            # above the [0,1] normalization range. The input-slice extractors clamp to
+            # [0,1], but gt_target_volume is derived here — so clamp the SHARED source ONCE
+            # to keep gt and the re-extracted inputs mutually consistent. Otherwise V_gt can
+            # exceed 1 while the splat's clamped inputs cap V_canon at ~1, leaving an
+            # unlearnable L1 residual (the point head predicts position, not intensity).
+            phases_aug = aug_dict["phases"].clamp(0.0, 1.0)    # (B, T, D, H, W) float32
             mask_aug = aug_dict["content_mask"].squeeze(1)      # (B, D, H, W) float (0/1)
             mask_aug_u8 = (mask_aug > 0.5).to(torch.uint8)
 
