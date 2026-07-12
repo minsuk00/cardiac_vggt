@@ -18,9 +18,9 @@ which gets a longer consecutive burst (`--frames-for-reference`) to drive the be
 animation.
 
 Usage:
-  micromamba run -n svr python eval/run_rtfb.py --dataset ocmr      [--subjects us_0084_1_5T ...]
-  micromamba run -n svr python eval/run_rtfb.py --dataset goettingen --refiner [--ckpt PATH]
-  micromamba run -n svr python eval/run_rtfb.py --dataset miitt
+  micromamba run -n svr python inference/run_rtfb.py --dataset ocmr      [--subjects us_0084_1_5T ...]
+  micromamba run -n svr python inference/run_rtfb.py --dataset goettingen --refiner [--ckpt PATH]
+  micromamba run -n svr python inference/run_rtfb.py --dataset miitt
 """
 import argparse
 import glob
@@ -31,10 +31,10 @@ import torch
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
-from eval.adapters import OCMRAdapter, GoettingenAdapter, MIITTAdapter, MIITTGatedAdapter
-from eval.inference import load_rtfb_model_reference, reference_sweep
-from eval.render import save_cycle_gif, save_dvf_png, save_inputs_png, save_volume_png
-from eval.adapters.base import DEFAULT_CKPT_REFERENCE
+from inference.adapters import OCMRAdapter, GoettingenAdapter, MIITTAdapter, MIITTGatedAdapter
+from inference.inference import load_rtfb_model_reference, reference_sweep
+from inference.render import save_cycle_gif, save_dvf_png, save_inputs_png, save_volume_png
+from inference.adapters.base import DEFAULT_CKPT_REFERENCE
 
 # Per-dataset: default recon root, subject discovery, adapter factory (subject -> adapter).
 DATASETS = {
@@ -77,6 +77,9 @@ def main():
     ap.add_argument("--frames-per-slice", type=int, default=5, help="first N consecutive real frames per non-reference z-plane")
     ap.add_argument("--frames-for-reference", type=int, default=30, help="first N consecutive real frames at the mid-z reference plane, swept as the query")
     ap.add_argument("--refiner", action="store_true", help="model has a coverage refiner head")
+    ap.add_argument("--continuous-z", action="store_true",
+                    help="feed fractional canonical z (no 12 mm snap; keeps all slices) — "
+                         "use for continuous-z-trained models and any ≠12 mm OOD stack")
     ap.add_argument("--root", default=None, help="override the dataset recon root")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all discovered")
     ap.add_argument("--out", default=None, help="default: result/<dataset>_eval")
@@ -103,7 +106,8 @@ def main():
         adapter = spec["adapter"](root, name)
         odir = os.path.join(out, name); os.makedirs(odir, exist_ok=True)
         batch, S, picks, ref_ctx = adapter.build_batch_multiframe(
-            device, frames_per_slice=args.frames_per_slice, frames_for_reference=args.frames_for_reference)
+            device, frames_per_slice=args.frames_per_slice, frames_for_reference=args.frames_for_reference,
+            continuous_z=args.continuous_z)
         coords0 = batch["scanner_coords"][0].cpu().numpy()        # (S,518,518,3)
         vols, wp_by_t, _ = reference_sweep(model, batch, ref_ctx, return_world_points=True, device=device)
         save_cycle_gif(vols, os.path.join(odir, "cycle.gif"))

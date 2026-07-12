@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Segmentation-based metrics for the in-distribution CMRxRecon eval: ejection fraction (EF)
 and Dice, from M&Ms nnU-Net (Task114) segmentations of the per-phase volumes dumped by
-`eval/run_cmrxrecon.py --dump-volumes` and segmented by `eval/seg_cmrxrecon.sh`.
+`inference/run_cmrxrecon.py --dump-volumes` and segmented by `inference/seg_cmrxrecon.sh`.
 
 WHY EF here: the reference-slot design (docs/24 → docs/25) exists specifically to fix the
 FLAT-EF failure — the old target_t model regressed every patient's EF to the cohort mean
@@ -22,7 +22,7 @@ Case naming (from run_cmrxrecon dumps, nnU-Net strips the `_0000`):
 Pure numpy/nibabel/scipy/matplotlib — no torch, no nnU-Net import (runs in svr or nnunet).
 
 Usage:
-  python eval/seg_metrics_cmrxrecon.py --seg_dir <seg_out_dir> [--out_json ...] [--out_png ...]
+  python inference/seg_metrics_cmrxrecon.py --seg_dir <seg_out_dir> [--out_json ...] [--out_png ...]
 """
 import argparse
 import glob

@@ -7,7 +7,7 @@ import os
 import numpy as np
 from PIL import Image
 
-from eval.adapters.base import MM_PER_NORM
+from inference.adapters.base import MM_PER_NORM
 
 
 def save_dvf_png(world_points, coords, picks, path, t=0):

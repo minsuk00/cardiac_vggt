@@ -1,6 +1,6 @@
-"""OCMR bit-identical guard for the eval/ adapter refactor.
+"""OCMR bit-identical guard for the inference/ adapter refactor.
 
-Asserts the new `eval/` path produces byte-identical batches to the FROZEN original OCMR
+Asserts the new `inference/` path produces byte-identical batches to the FROZEN original OCMR
 code (tests/_legacy_ocmr.py). The data-free test always runs; the real-subject test runs
 only when reconstructed OCMR data is present on disk.
 
@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 import torch
 
-from eval.adapters.base import BaseRTFBAdapter, percentile_scale, assign_canonical_z
-from eval.adapters.ocmr import OCMRAdapter
+from inference.adapters.base import BaseRTFBAdapter, percentile_scale, assign_canonical_z
+from inference.adapters.ocmr import OCMRAdapter
 import tests._legacy_ocmr as legacy
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -75,6 +75,47 @@ _real_subjects = (
      if not os.path.relpath(f, OCMR_RECON).startswith("_")]  # skip _failed_* exam dirs
     if os.path.isdir(OCMR_RECON) else []
 )
+
+
+def test_continuous_z_keeps_all_slices_at_fractional_depth():
+    """continuous_z=True keeps every in-range slice at its own fractional z (no snap, no
+    collision dedup); default (snap) collapses a finer-than-12mm stack and loses slices."""
+    from inference.adapters.base import D_CANON, CANON_Z_SPACING_MM
+    Z = 8
+    positions = np.stack([np.zeros(Z), np.zeros(Z), np.arange(Z) * 10.0], axis=1)  # 10mm pitch
+
+    snap = assign_canonical_z(positions, continuous_z=False)
+    cont = assign_canonical_z(positions, continuous_z=True)
+
+    # 10mm-into-12mm ⇒ collisions ⇒ snap drops slices; continuous keeps them all.
+    assert len(cont) == Z                      # every slice survives
+    assert len(snap) < Z                       # at least one collision dropped
+    # snapped z are ints; continuous z are floats, at least one strictly non-integer.
+    assert all(isinstance(z, (int, np.integer)) for z, _ in snap)
+    assert all(isinstance(z, float) for z, _ in cont)
+    assert any(abs(z - round(z)) > 1e-6 for z, _ in cont)
+    # continuous z matches the exact geometric formula d/12 + (D-1)/2, centered.
+    d = np.arange(Z) * 10.0; d = d - d.mean()
+    expect = d / CANON_Z_SPACING_MM + (D_CANON - 1) / 2.0
+    got = {s: z for z, s in cont}
+    for s in range(Z):
+        assert abs(got[s] - expect[s]) < 1e-9
+
+
+def test_continuous_z_batch_feeds_fractional_z_indices():
+    """The batch built with continuous_z=True carries the fractional z into z_indices/scanner_coords
+    (float-safe downstream), with one slot per surviving slice."""
+    from inference.adapters.base import D_CANON
+    F_, Z, H, W = 9, 8, 60, 64
+    cine = np.random.default_rng(1).random((F_, Z, H, W)).astype(np.float32)
+    positions = np.stack([np.zeros(Z), np.zeros(Z), np.arange(Z) * 10.0], axis=1)
+    b, S, picks = _FakeAdapter(cine, [1.8, 1.7], positions).build_batch(
+        np.random.default_rng(0), "cpu", continuous_z=True)
+    assert S == Z                                              # all slices kept
+    z_vals = b["z_indices"][0, :, 0].numpy()
+    # z_val = z_canon/(D-1)*2 - 1 ⇒ recover z_canon and check it's fractional for some slot.
+    z_canon = (z_vals + 1.0) / 2.0 * (D_CANON - 1)
+    assert np.any(np.abs(z_canon - np.round(z_canon)) > 1e-4)  # genuinely off-grid depths reach the model
 
 
 @pytest.mark.skipif(not _real_subjects, reason="real OCMR recon data absent")

@@ -44,18 +44,32 @@ def percentile_scale(cine):
     return float(vmin), float(max(vmax, vmin + 1e-6))
 
 
-def assign_canonical_z(positions):
-    """Map each physical slice to a canonical z-index using the TRUE slice spacing
+def assign_canonical_z(positions, continuous_z=False):
+    """Map each physical slice to a canonical z index using the TRUE slice spacing
     (center-to-center along the stack axis, ~10 mm for OCMR), not the 8 mm thickness.
     Canonical planes are CANON_Z_SPACING_MM (12 mm) apart — the CMRx true pitch.
-    Returns list of (z_canon_idx, slice_idx) for slices landing in [0, D-1];
-    on collision keeps the slice closest to that plane center. No through-plane interp."""
+    Returns a list of (z_canon, slice_idx) for slices landing in [0, D-1].
+
+    continuous_z=False (default, backward-compatible): SNAP each slice to the nearest
+    integer plane (round-half-up); on collision keep the slice closest to plane center
+    (finer-than-12 mm stacks lose their extra slices). Correct for genuinely-12 mm data
+    (CMRxRecon), but for ≠12 mm OOD stacks it injects up to 6 mm of assigned-depth error
+    and drops colliding slices.
+
+    continuous_z=True: keep each in-range slice at its OWN fractional z (no snap, no
+    collision dedup) so off-grid slices reach the model at their true depth — required to
+    evaluate a continuous-z-trained model. z_canon is then a float; downstream
+    z_val = z_canon/(D-1)*2-1 is float-safe, and the real acquired slice content is fed
+    unchanged (no through-plane interp — unlike training, which synthesizes off-grid slices)."""
     pos = np.asarray(positions, dtype=np.float64)       # (nS, 3) scanner mm
     axis = pos[-1] - pos[0]
     axis = axis / (np.linalg.norm(axis) + 1e-9)
     d = (pos - pos[0]) @ axis                            # signed depth along stack (mm)
     d = d - d.mean()                                     # center the stack
     cont = d / CANON_Z_SPACING_MM + (D_CANON - 1) / 2.0  # continuous canonical index
+    if continuous_z:
+        # every in-range slice keeps its fractional index; drop only genuinely out-of-FOV.
+        return sorted((float(c), s) for s, c in enumerate(cont) if 0.0 <= c <= D_CANON - 1)
     idx = np.floor(cont + 0.5).astype(int)  # round-half-up: deterministic (np.round uses banker's
     #                                         rounding → even/odd-dependent collisions on exact .5)
     best = {}                                            # z_canon -> (slice, |residual|)
@@ -214,19 +228,65 @@ class BaseRTFBAdapter:
         raise NotImplementedError
 
     # ── concrete pipeline ────────────────────────────────────────────────
-    def build_batch(self, rng, device):
-        """Sample one random frame per in-FOV canonical z plane -> (batch, S, picks)."""
+    def build_batch(self, rng, device, continuous_z=False):
+        """Sample one random frame per in-FOV canonical z plane -> (batch, S, picks).
+        continuous_z: pass fractional canonical z (no 12 mm snap) — see assign_canonical_z."""
         cine = self.load()
         scale = percentile_scale(cine)
-        z_map = assign_canonical_z(self.slice_positions_mm())
+        z_map = assign_canonical_z(self.slice_positions_mm(), continuous_z=continuous_z)
         return _build_batch_core(cine, self.inplane_mm(), scale, z_map, rng, device)
 
-    def build_batch_multiframe(self, device, frames_per_slice=5, frames_for_reference=30):
+    def build_batch_multiframe(self, device, frames_per_slice=5, frames_for_reference=30,
+                               continuous_z=False):
         """Deterministic multi-frame + reference-slot sampling for INFERENCE (docs/25, docs/28)
         -> (batch, S, picks, ref_ctx). `ref_ctx` carries the reference plane's real frame stack
-        for `reference_sweep`. No randomness — that's a training-only augmentation."""
+        for `reference_sweep`. No randomness — that's a training-only augmentation.
+        continuous_z: pass fractional canonical z (no 12 mm snap) — see assign_canonical_z."""
         cine = self.load()
         scale = percentile_scale(cine)
-        z_map = assign_canonical_z(self.slice_positions_mm())
+        z_map = assign_canonical_z(self.slice_positions_mm(), continuous_z=continuous_z)
         return _build_batch_multiframe_core(cine, self.inplane_mm(), scale, z_map, device,
                                             frames_per_slice, frames_for_reference)
+
+    def build_canonical_bundle(self, continuous_z=False):
+        """GATED (breath-held) multi-phase cine -> dense canonical `(T, D=12, 256, 256)` phase
+        bundle + geometric `anatomy_bbox` (z0,z1,y0,y1,x0,x1) — the OOD twin of
+        `MRIDataset.get_data`'s canonical output that the in-distribution breathing-val protocol
+        (`inference/run_cmrxrecon.py`) consumes. Every acquired slice is intensity-normalized against
+        one whole-cine percentile scale, in-plane-resampled to 256@1.4 mm, and placed at its
+        canonical z-plane; unfilled planes stay zero. The bbox is GEOMETRIC — the native FOV
+        rectangle propagated through the same resample (memory: geometric-not-intensity), NOT an
+        intensity threshold on the (dark-blood-pool-containing) content.
+
+        `continuous_z=False` (default): SNAP each slice to its nearest integer plane + drop
+        collisions (see assign_canonical_z) — correct for ~12 mm-pitch stacks.
+        `continuous_z=True`: keep EVERY in-range slice (no snap-dedup drop) and place it at its
+        NEAREST integer plane in the dense grid — avoids silently discarding ~half the slices of
+        fine-pitch (e.g. 5 mm) stacks. NB: the GT grid is still 12 integer planes, so slices that
+        round to the same plane still collide (last writer wins); true fractional-z INPUT feeding
+        for continuous-z-trained models is `build_batch_multiframe(continuous_z=True)`.
+        -> (bundle np float32, bbox np int64 (6,))."""
+        cine = self.load()                                   # (T, Z, H, W)
+        T, _, H, W = cine.shape
+        vmin, vmax = percentile_scale(cine)
+        inpl = self.inplane_mm()
+        z_map = assign_canonical_z(self.slice_positions_mm(), continuous_z=continuous_z)
+        bundle = np.zeros((T, D_CANON, 256, 256), np.float32)
+        fov = np.zeros((D_CANON, 256, 256), np.float32)      # geometric content (FOV) mask
+        ones = np.ones((H, W), np.float32)
+        for z_canon, slice_idx in z_map:
+            # round-half (not truncate) so fractional continuous-z indices land on the nearest
+            # plane; a no-op for the already-integer snap-mode values. Clamp is defensive.
+            zc = min(max(int(np.floor(float(z_canon) + 0.5)), 0), D_CANON - 1)
+            fov[zc] = np.maximum(fov[zc], to_canonical_inplane(ones, inpl).numpy())
+            for t in range(T):
+                norm = np.clip((cine[t, slice_idx] - vmin) / (vmax - vmin), 0.0, 1.0)
+                bundle[t, zc] = to_canonical_inplane(norm, inpl).numpy()
+        occ = fov > 0.5
+        if not occ.any():                                    # degenerate: no in-FOV plane landed
+            return bundle, np.array([0, D_CANON, 0, 256, 0, 256], np.int64)
+        zz = np.where(occ.any(axis=(1, 2)))[0]
+        yy = np.where(occ.any(axis=(0, 2)))[0]
+        xx = np.where(occ.any(axis=(0, 1)))[0]
+        bbox = np.array([zz[0], zz[-1] + 1, yy[0], yy[-1] + 1, xx[0], xx[-1] + 1], np.int64)
+        return bundle, bbox

@@ -1,5 +1,8 @@
 _XCAT
 scratch
+/data
+/eval
+/baselines/svr
 setup.md
 .vscode/
 _archive/
@@ -176,3 +179,6 @@ SPINER/
 
 
 
+
+# agent handoff scratch
+_agent/

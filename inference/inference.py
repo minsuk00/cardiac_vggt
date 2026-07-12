@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from vggt.models.vggt import VGGT
 from vggt.utils.splat import splat_predictions
-from eval.adapters.base import (
+from inference.adapters.base import (
     GRID_SHAPE, DEFAULT_CKPT, DEFAULT_CKPT_REFERENCE, INPUT_IMG_SIZE, to_canonical_inplane,
 )
 

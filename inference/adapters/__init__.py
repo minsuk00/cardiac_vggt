@@ -5,7 +5,7 @@ Every adapter is a `BaseRTFBAdapter` subclass implementing 3 seams
 (percentile norm + in-plane resample + scattered-frame sampling + 518 upsample +
 scanner_coords) lives in `base.py` and is identical across datasets.
 """
-from eval.adapters.base import (
+from inference.adapters.base import (
     BaseRTFBAdapter,
     percentile_scale,
     assign_canonical_z,
@@ -20,9 +20,10 @@ from eval.adapters.base import (
     MM_PER_NORM,
     DEFAULT_CKPT,
 )
-from eval.adapters.ocmr import OCMRAdapter
-from eval.adapters.goettingen import GoettingenAdapter
-from eval.adapters.miitt import MIITTAdapter, MIITTGatedAdapter
+from inference.adapters.ocmr import OCMRAdapter
+from inference.adapters.goettingen import GoettingenAdapter
+from inference.adapters.miitt import MIITTAdapter, MIITTGatedAdapter
+from inference.adapters.acdc import ACDCGatedAdapter
 
 __all__ = [
     "BaseRTFBAdapter",
@@ -30,6 +31,7 @@ __all__ = [
     "GoettingenAdapter",
     "MIITTAdapter",
     "MIITTGatedAdapter",
+    "ACDCGatedAdapter",
     "percentile_scale",
     "assign_canonical_z",
     "to_canonical_inplane",

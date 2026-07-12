@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""In-distribution CMRxRecon val inference — the standalone counterpart to eval/run_rtfb.py.
+"""In-distribution CMRxRecon val inference — the standalone counterpart to inference/run_rtfb.py.
 
 Loads the reference-slot z-only model (docs/25) and builds one real CMRxRecon val subject's
-DEPLOYMENT-REALISTIC multi-frame batch (docs/28), mirroring eval/run_rtfb.py exactly but
+DEPLOYMENT-REALISTIC multi-frame batch (docs/28), mirroring inference/run_rtfb.py exactly but
 sourced from the canonical cache. Training samples companions randomly because it is capped by
 the S-slot GPU budget (`MRIDataset.get_data`); inference is NOT budget-limited, so — as in
 run_rtfb — we deterministically feed what a genuinely short real-time acquisition would record:
@@ -14,7 +14,7 @@ docs/05) on the input slices — target/GT stay at the unshifted reference eithe
 the clean-vs-breathing-corrupted comparison.
 
 Usage:
-  micromamba run -n svr python eval/run_cmrxrecon.py --subjects 0 7 --ckpt PATH
+  micromamba run -n svr python inference/run_cmrxrecon.py --subjects 0 7 --ckpt PATH
 """
 import argparse
 import json
@@ -29,8 +29,8 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.inference import load_rtfb_model_reference
-from eval.adapters.base import DEFAULT_CKPT_REFERENCE, INPUT_IMG_SIZE, MM_PER_NORM
+from inference.inference import load_rtfb_model_reference
+from inference.adapters.base import DEFAULT_CKPT_REFERENCE, INPUT_IMG_SIZE, MM_PER_NORM
 
 CANON_SPACING = (1.4, 1.4, 12.0)  # x,y,z mm — true CMRx pitch (preprocess.TARGET_SPACING; docs/27)
 
@@ -59,7 +59,7 @@ def build_mri_dataset():
 
 def _build_multiframe_batch(phases_bundle, bbox, frames_per_slice, seq_index, device):
     """Deployment-realistic multi-frame + reference-slot batch built straight from the canonical
-    cache (docs/28), the in-distribution twin of eval.adapters.base._build_batch_multiframe_core.
+    cache (docs/28), the in-distribution twin of inference.adapters.base._build_batch_multiframe_core.
     No random sampling — that's a TRAINING-only augmentation forced by the S-slot GPU budget; at
     inference we deterministically use what a short real-time acquisition would record.
 
@@ -134,12 +134,15 @@ ED_PHASE = 0   # CMRxRecon is ED-anchored (docs/17): phase 0 = end-diastole
 
 
 @torch.no_grad()
-def reconstruct_cycle(model, mri_ds, rcfg, seq_index, breathing, device, frames_per_slice=5):
-    """Sweep the reference slot (slot 0) over the subject's real T GT phases (docs/25) using the
-    deployment-realistic multi-frame batch, with/without the simulated respiratory corruption on
-    the INPUT slices — target/GT stay at the unshifted reference either way (the model is meant
-    to correct breathing, not see it in the GT). Companions (slots 1..S-1) are built once and
-    reused across all phases.
+def reconstruct_from_bundle(model, phases_bundle, bbox, rcfg, seq_index, breathing, device,
+                            grid_shape, frames_per_slice=5):
+    """Core of `reconstruct_cycle`, parameterized by an already-built canonical phase bundle +
+    geometric bbox (so an OOD gated adapter can drive the SAME protocol as CMRxRecon — see
+    inference/run_gated_ood.py). Sweep the reference slot (slot 0) over the bundle's T phases (docs/25)
+    using the deployment-realistic multi-frame batch, with/without the simulated respiratory
+    corruption on the INPUT slices — target/GT stay at the unshifted reference either way (the
+    model is meant to correct breathing, not see it in the GT). Companions (slots 1..S-1) are
+    built once and reused across all phases.
 
     Metrics come from the SAME `compute_volume_intensity_loss` the trainer uses, so full/bbox/
     motion PSNR + SSIM are defined identically to training (motion = voxels with
@@ -148,18 +151,14 @@ def reconstruct_cycle(model, mri_ds, rcfg, seq_index, breathing, device, frames_
     the ED-phase forward internals (input images, predicted Δ, per-slot z/phase, applied
     breathing displacement) for the ED input / DVF panels. Reference slot = 0 (the swept query).
 
+    phases_bundle: (T,D,H,W) torch on `device`. grid_shape: (D,H,W) splat grid.
     -> dict(metrics={full,bbox,motion,ssim:[per-phase]}, pred_vols (T,D,H,W), gt_vols (T,D,H,W),
             bbox, z_mid, ed_pack).
     """
     from data.gpu_aug import gpu_augment_batch
     from loss import compute_volume_intensity_loss
-    grid_shape = tuple(mri_ds.gt_grid_shape)   # (D,H,W) for the splat
-    # get_data is used ONLY to fetch the canonical phase bundle + geometric bbox (its own slot
-    # sampling is discarded — inference builds its own deterministic multi-frame slots below).
-    data = mri_ds.get_data(seq_index=seq_index, img_per_seq=mri_ds.num_slices)
-    phases_bundle = torch.from_numpy(np.asarray(data["phases"]).astype(np.float32)).to(device)  # (T,D,H,W)
     T = phases_bundle.shape[0]   # number of cardiac phases (the sweep length)
-    bbox = np.asarray(data["anatomy_bbox"]).astype(np.int64)
+    bbox = np.asarray(bbox).astype(np.int64)
     batch, z_mid = _build_multiframe_batch(phases_bundle, bbox, frames_per_slice, seq_index, device)
     hw = batch["images"].shape[-1]
 
@@ -195,6 +194,19 @@ def reconstruct_cycle(model, mri_ds, rcfg, seq_index, breathing, device, frames_
             )
     return dict(metrics=metrics, pred_vols=np.stack(pred_vols), gt_vols=np.stack(gt_vols),
                 bbox=bbox, z_mid=z_mid, ed_pack=ed_pack)
+
+
+def reconstruct_cycle(model, mri_ds, rcfg, seq_index, breathing, device, frames_per_slice=5):
+    """In-distribution CMRxRecon wrapper around `reconstruct_from_bundle`: fetch the canonical
+    phase bundle + geometric bbox from the val dataset (`MRIDataset.get_data` — its own slot
+    sampling is discarded, inference builds deterministic multi-frame slots), then run the shared
+    core. Bit-identical to the pre-refactor path."""
+    grid_shape = tuple(mri_ds.gt_grid_shape)   # (D,H,W) for the splat
+    data = mri_ds.get_data(seq_index=seq_index, img_per_seq=mri_ds.num_slices)
+    phases_bundle = torch.from_numpy(np.asarray(data["phases"]).astype(np.float32)).to(device)  # (T,D,H,W)
+    bbox = np.asarray(data["anatomy_bbox"]).astype(np.int64)
+    return reconstruct_from_bundle(model, phases_bundle, bbox, rcfg, seq_index, breathing, device,
+                                   grid_shape, frames_per_slice=frames_per_slice)
 
 
 # ── Visualization helpers ────────────────────────────────────────────────────
@@ -381,7 +393,7 @@ def main():
     ap.add_argument("--out", default="result/cmrxrecon_eval")
     ap.add_argument("--dump-volumes", default=None,
                     help="dir to write per-phase pred/GT NIfTIs for the seg-metric stage "
-                         "(EF/Dice via eval/seg_metrics_cmrxrecon.py). GT is written once per subject.")
+                         "(EF/Dice via inference/seg_metrics_cmrxrecon.py). GT is written once per subject.")
     ap.add_argument("--metrics-json", default=None,
                     help="path to write the per-subject/per-mode PSNR+SSIM summary (default: <out>/metrics.json)")
     args = ap.parse_args()

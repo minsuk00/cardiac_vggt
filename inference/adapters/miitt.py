@@ -9,7 +9,7 @@ Spacing is REAL (from J. Hamilton, 2026-07-04): real-time FOV 300x300 mm / 128 m
 import numpy as np
 import nibabel as nib
 
-from eval.adapters.base import BaseRTFBAdapter
+from inference.adapters.base import BaseRTFBAdapter
 
 INPLANE_MM = (2.3, 2.3)          # real: FOV 300 mm / 128 matrix
 SLICE_SPACING_MM = 10.0          # real: 8 mm thickness + 2 mm gap

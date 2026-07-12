@@ -10,7 +10,7 @@ import os
 import numpy as np
 import SimpleITK as sitk
 
-from eval.adapters.base import BaseRTFBAdapter
+from inference.adapters.base import BaseRTFBAdapter
 
 
 class OCMRAdapter(BaseRTFBAdapter):

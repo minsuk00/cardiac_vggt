@@ -103,6 +103,8 @@ Native cine shapes vary: W=256 fixed, H∈{162,204,246}, Z∈{6..14}, T=12. Spac
 
 **Axis-order gotcha:** monai/nibabel store volumes `(X, Y, Z)`; the splat consumes `(D, H, W) = (Z, Y, X)`. The single conversion site is the `permute(0, 3, 2, 1)` in `MRIDataset.get_data` right after the cache lookup — everything downstream is splat-order. Easy to break silently; tests in `test_canonical_invariants.py` guard it.
 
+**Orientation = LPS everywhere.** Training forces `Orientationd(axcodes="LPS")` (`training/data/preprocess.py`), so the model only ever sees LPS-oriented hearts. **ALL data must be LPS — training, in-distribution val, AND every OOD inference/visualization adapter.** MIITT & OCMR gated NIfTIs are LPS-native; **ACDC is mixed (114 LPS / 36 LAS)**, so `ACDCGatedAdapter` (`inference/adapters/acdc.py`) reorients to LPS on load (nibabel `ornt_transform`/`apply_orientation`). When adding a new dataset/adapter, **check axcodes and reorient to LPS** — a mis-oriented (e.g. AP-flipped) heart still looks like a heart and silently degrades the model's LPS-trained anatomical priors (RV location, through-plane motion, EF) with NO crash. This burned us on ACDC (see the prove-it review); pairs with the "verify geometry from data, not headers" lesson.
+
 `mri_mode: "axial"` means **native SAX z-slicing** — not anatomical axial. The slices are short-axis views.
 
 ## Augmentation
@@ -144,7 +146,7 @@ Tools:
 - `tools/test_sequential_sampling.py` — diagonal `(t=k+offset, z=k)` for one subject; PNGs to `result/`.
 - `baselines/eval_all_baselines.py`, `baselines/eval_within_body_mask.py` — PSNR sweeps over the val set (identity-Δ floor, etc.).
 
-**Evaluation & SVR baselines** (external datasets / occasional runs — not the training loop): the eval harness lives in `eval/` (`run_cmrxrecon.py` in-distribution EF/Dice, `run_rtfb.py` real-time free-breathing inference, `adapters/`, `seg_metrics_cmrxrecon.py`); classical SVR baselines (NiftyMIC / NeSVoR / fetal_cmr_4d) live in `baselines/`. Rationale, protocol, results: `docs/24` + `docs/29–35` (index in `docs/README.md`).
+**Evaluation & SVR baselines** (external datasets / occasional runs — not the training loop): the inference/eval harness lives in `inference/` (`run_cmrxrecon.py` in-distribution EF/Dice, `run_rtfb.py` real-time free-breathing inference, `adapters/`, `seg_metrics_cmrxrecon.py`); classical SVR baselines (NiftyMIC / NeSVoR / fetal_cmr_4d) live in `baselines/`. Rationale, protocol, results: `docs/24` + `docs/29–35` (index in `docs/README.md`).
 
 ## Logging (wandb, project `vggt-mri`)
 

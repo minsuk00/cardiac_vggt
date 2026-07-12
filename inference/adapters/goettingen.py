@@ -13,7 +13,7 @@ stack at the 6 mm native slice spacing.
 import numpy as np
 import nibabel as nib
 
-from eval.adapters.base import BaseRTFBAdapter
+from inference.adapters.base import BaseRTFBAdapter
 
 INPLANE_MM = (1.6, 1.6)
 SLICE_SPACING_MM = 6.0
