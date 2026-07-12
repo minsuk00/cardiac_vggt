@@ -14,10 +14,10 @@ import nibabel as nib
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
-from eval.adapters.base import percentile_scale, assign_canonical_z, to_canonical_inplane
-from eval.adapters.ocmr import OCMRAdapter
-from eval.adapters.goettingen import GoettingenAdapter
-from eval.adapters.miitt import MIITTAdapter
+from inference.adapters.base import percentile_scale, assign_canonical_z, to_canonical_inplane
+from inference.adapters.ocmr import OCMRAdapter
+from inference.adapters.goettingen import GoettingenAdapter
+from inference.adapters.miitt import MIITTAdapter
 from tools.render_reference_ed_targeted import (
     OCMR_SUBJECTS, GOTT_SUBJECTS, MIITT_SUBJECTS, OCMR_RECON, GOTT_RECON, MIITT_RECON,
     mid_ventricular_entry,

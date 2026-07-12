@@ -1,13 +1,13 @@
 #!/usr/bin/env python
-"""BACK-COMPAT SHIM — the OCMR RTFB inference logic now lives in the `eval/` package.
+"""BACK-COMPAT SHIM — the OCMR RTFB inference logic now lives in the `inference/` package.
 
 This module was the original direct OCMR adapter + inference + render + CLI. Its logic moved
-to `eval/adapters/` (data→batch), `eval/inference.py` (batch→volume), and `eval/render.py`
-(figures); the unified runner is `eval/run_rtfb.py`. This shim re-exports the names that
+to `inference/adapters/` (data→batch), `inference/inference.py` (batch→volume), and `inference/render.py`
+(figures); the unified runner is `inference/run_rtfb.py`. This shim re-exports the names that
 existing `tools/` diagnostic scripts import, so they keep working unchanged. The OCMR batch
 is byte-identical to the original (guarded by tests/test_eval_ocmr_equivalence.py).
 
-Prefer `python eval/run_rtfb.py --dataset ocmr ...` for new work.
+Prefer `python inference/run_rtfb.py --dataset ocmr ...` for new work.
 """
 import argparse
 import glob
@@ -21,14 +21,14 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
 
 # ── re-exported pipeline pieces (the names consumers import) ───────────────
-from eval.adapters.base import (  # noqa: F401
+from inference.adapters.base import (  # noqa: F401
     percentile_scale, assign_canonical_z, to_canonical_inplane, _build_batch_core,
     INPUT_IMG_SIZE, TARGET_INPLANE_MM, GRID_SHAPE, D_CANON, CANON_Z_SPACING_MM,
     PCT_LO, PCT_HI, MM_PER_NORM, DEFAULT_CKPT,
 )
-from eval.adapters.ocmr import OCMRAdapter
-from eval.inference import load_rtfb_model, forward, phase_sweep  # noqa: F401
-from eval.render import (  # noqa: F401
+from inference.adapters.ocmr import OCMRAdapter
+from inference.inference import load_rtfb_model, forward, phase_sweep  # noqa: F401
+from inference.render import (  # noqa: F401
     save_dvf_png, save_cycle_gif, save_inputs_png, save_volume_png,
 )
 
@@ -57,7 +57,7 @@ def reconstruct_cycle(model, batch, S, device):
 
 # ── CLI (delegates to the shared adapter + inference + render) ─────────────
 def main():
-    ap = argparse.ArgumentParser(description="OCMR RTFB qualitative inference (shim for eval/run_rtfb.py).")
+    ap = argparse.ArgumentParser(description="OCMR RTFB qualitative inference (shim for inference/run_rtfb.py).")
     ap.add_argument("--ckpt", default=DEFAULT_CKPT)
     ap.add_argument("--recon_dir", default="scratch/data/ocmr/recon")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all in recon_dir")

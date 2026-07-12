@@ -13,7 +13,7 @@ import nibabel as nib
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, _ROOT)
-from eval.adapters.base import percentile_scale, to_canonical_inplane
+from inference.adapters.base import percentile_scale, to_canonical_inplane
 
 
 def main():

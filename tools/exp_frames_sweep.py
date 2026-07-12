@@ -17,7 +17,7 @@ Two opposing effects are under test:
       -> temporal blur of the moving myocardium.
 So the read is: coverage/bbox should rise with frames, but motion PSNR may plateau/fall.
 
-Loads the 8.8 GB model ONCE and reuses eval.run_cmrxrecon.reconstruct_cycle across all configs
+Loads the 8.8 GB model ONCE and reuses inference.run_cmrxrecon.reconstruct_cycle across all configs
 (running the CLI per frame-count would reload the model each time).
 
   micromamba run -n svr python tools/exp_frames_sweep.py --subjects 0 3 7 --frames 1 2 3 5 8 12
@@ -35,8 +35,8 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.inference import load_rtfb_model_reference
-from eval.run_cmrxrecon import reconstruct_cycle, build_mri_dataset, ED_PHASE
+from inference.inference import load_rtfb_model_reference
+from inference.run_cmrxrecon import reconstruct_cycle, build_mri_dataset, ED_PHASE
 
 SNAPSHOT = "/tmp/vggt_4wokxzov_snapshot.pt"
 

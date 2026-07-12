@@ -22,7 +22,7 @@ from PIL import Image
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT); sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.adapters.miitt import MIITTAdapter
+from inference.adapters.miitt import MIITTAdapter
 from vggt.models.vggt import VGGT
 from vggt.models.aggregator import ZIndexEmbedder, TIndexEmbedder
 

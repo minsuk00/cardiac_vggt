@@ -5,8 +5,8 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-PA = "scratch/phase_analysis"
-OUT = "scratch/phase_analysis/figs"; os.makedirs(OUT, exist_ok=True)
+PA = "scratch/analysis/phase_analysis"
+OUT = "scratch/analysis/phase_analysis/figs"; os.makedirs(OUT, exist_ok=True)
 VOX = 1.4 * 1.4 * 8.0 / 1000.0; T = 12; LV = 1
 
 

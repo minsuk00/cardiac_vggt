@@ -16,8 +16,8 @@ import nibabel as nib
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, _ROOT)
-from eval.adapters.base import percentile_scale, to_canonical_inplane
-from eval.adapters.miitt import MIITTAdapter, INPLANE_MM
+from inference.adapters.base import percentile_scale, to_canonical_inplane
+from inference.adapters.miitt import MIITTAdapter, INPLANE_MM
 
 MIITT_RECON = os.path.join(_ROOT, "scratch/data/MIITT/nifti")
 OUTROOT = os.path.join(_ROOT, "scratch/fetal_cmr_4d/recon")

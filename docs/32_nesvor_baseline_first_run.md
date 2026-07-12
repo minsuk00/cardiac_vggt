@@ -175,7 +175,7 @@ for subject selection, so it's reproducible and matches what the trainer's own v
 path would draw), then `reslice_volume_vec(V, disp[0, z])` reslices the WHOLE clean
 volume by that plane's displacement and keeps only that plane's own resliced
 content. `RespiratoryConfig` is loaded from the **live** `mri_volume.yaml` (Hydra
-`compose()`, mirroring `eval/run_cmrxrecon.py`'s pattern) rather than hand-copied
+`compose()`, mirroring `inference/run_cmrxrecon.py`'s pattern) rather than hand-copied
 defaults — confirmed `enable=True amplitude_mm=16.0 ap_ratio=0.35
 direction_jitter_deg=30.0` (matches CLAUDE.md's stated trainer defaults). GT stays
 the original clean stack; `content_mask` is reused unshifted for both variants
@@ -240,7 +240,7 @@ handles the *interpolation regime* better, not that it escapes the limit.
   question about which checkpoint/sampling regime is the right match: the
   reference-conditioning checkpoint (`217721337`) used for the clean-stack VGGT
   number is pre-multi-frame (`num_slices=12`); the "deployment-realistic"
-  multi-frame batch (`eval/run_cmrxrecon.py`'s `_build_multiframe_batch` — full
+  multi-frame batch (`inference/run_cmrxrecon.py`'s `_build_multiframe_batch` — full
   cardiac cine at the mid-ventricular reference plane + 5-frame bursts at every
   other in-bbox plane, ~58 slots total) is a different, more realistic acquisition
   contract, but its own default checkpoint (`217720691`, diffusion variant) is

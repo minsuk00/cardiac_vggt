@@ -46,7 +46,7 @@ N_CANON_Z = 12  # canonical grid depth D -- one "slot" per real z-plane
 
 def _build_respiratory_config():
     """Load RespiratoryConfig from the LIVE mri_volume.yaml (not hand-copied defaults) --
-    mirrors eval/run_cmrxrecon.py's build_mri_dataset(), robust to config drift."""
+    mirrors inference/run_cmrxrecon.py's build_mri_dataset(), robust to config drift."""
     os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
     os.environ.setdefault("MASTER_PORT", "29566")
     if not torch.distributed.is_initialized():

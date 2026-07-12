@@ -35,12 +35,12 @@ from tools.five_row_compare import (
     OCMR_SUBJECTS, GOTT_SUBJECTS, MIITT_SUBJECTS, GOTT_RECON, MIITT_RECON,
     build_val_dataset,
 )
-from eval.adapters.base import (
+from inference.adapters.base import (
     percentile_scale, assign_canonical_z, to_canonical_inplane, GRID_SHAPE,
 )
-from eval.adapters.ocmr import OCMRAdapter
-from eval.adapters.goettingen import GoettingenAdapter
-from eval.adapters.miitt import MIITTAdapter
+from inference.adapters.ocmr import OCMRAdapter
+from inference.adapters.goettingen import GoettingenAdapter
+from inference.adapters.miitt import MIITTAdapter
 from vggt.models.vggt import VGGT
 
 DEV = torch.device("cuda")

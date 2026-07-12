@@ -2,16 +2,16 @@
 """EF stage of the frames-per-slice experiment: does feeding more frames per slice recover
 contraction AMPLITUDE (ejection fraction), the depth-motion a single frame can't resolve
 (docs/24-25)? Dumps per-phase pred/GT volumes at each frames_per_slice into SEPARATE dirs so the
-committed seg pipeline (eval/seg_cmrxrecon.sh + eval/seg_metrics_cmrxrecon.py) can be run per
+committed seg pipeline (inference/seg_cmrxrecon.sh + inference/seg_metrics_cmrxrecon.py) can be run per
 frame-count and the resulting EF scatters compared.
 
-Loads the 8.8 GB model ONCE and reuses eval.run_cmrxrecon.reconstruct_cycle + save_nnunet_nii.
+Loads the 8.8 GB model ONCE and reuses inference.run_cmrxrecon.reconstruct_cycle + save_nnunet_nii.
 GT is mode-independent -> dumped once per subject per frame-count.
 
   micromamba run -n svr python tools/exp_frames_ef.py --subjects $(seq 0 14) --frames 1 5 --modes clean
 Then per frame-count:
-  bash eval/seg_cmrxrecon.sh result/frames_ef/fps01/vols result/frames_ef/fps01/seg
-  micromamba run -n svr python eval/seg_metrics_cmrxrecon.py \
+  bash inference/seg_cmrxrecon.sh result/frames_ef/fps01/vols result/frames_ef/fps01/seg
+  micromamba run -n svr python inference/seg_metrics_cmrxrecon.py \
       --seg_dir result/frames_ef/fps01/seg --vol_dir result/frames_ef/fps01/vols \
       --out_json result/frames_ef/fps01/ef.json --out_png result/frames_ef/fps01/scatter.png
 """
@@ -27,8 +27,8 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.inference import load_rtfb_model_reference
-from eval.run_cmrxrecon import (reconstruct_cycle, build_mri_dataset, save_nnunet_nii,
+from inference.inference import load_rtfb_model_reference
+from inference.run_cmrxrecon import (reconstruct_cycle, build_mri_dataset, save_nnunet_nii,
                                 save_multislice_gif, save_ed_montage)
 
 SNAPSHOT = "/tmp/vggt_4wokxzov_snapshot.pt"

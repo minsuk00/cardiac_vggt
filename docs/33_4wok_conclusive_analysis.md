@@ -43,7 +43,7 @@ absolute numbers mildly OOD; relative contrasts robust). resp OFF isolates cardi
 = breathing. DVF = `world_points − scanner_coords` in mm. EF: `measure_model_contraction.py` dumps V_canon per
 target_t → nnU-Net Task114 (2d, `-tr nnUNetTrainerV2_MMS`) → `analyze_model_contraction.py`.
 Scripts: `tools/exp_4wok_analysis.py`, `exp_4wok_p95.py`, `render_4wok_qualitative.py`, `build_4wok_report.py`.
-Data: `result/analysis_4wok/{summary,comparison_3way,p95_dvf,ef_honest}.json`, `scratch/phase_analysis/4wok_vols/ef_4wok.json`.
+Data: `result/analysis_4wok/{summary,comparison_3way,p95_dvf,ef_honest}.json`, `scratch/analysis/phase_analysis/4wok_vols/ef_4wok.json`.
 
 ## 2. Per-axis findings (measured)
 | Axis | Number (4wok) | Verdict |

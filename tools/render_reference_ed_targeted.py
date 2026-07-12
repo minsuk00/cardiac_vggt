@@ -23,13 +23,13 @@ import matplotlib.gridspec as gridspec
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT); sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.adapters.base import (
+from inference.adapters.base import (
     percentile_scale, assign_canonical_z, to_canonical_inplane,
     INPUT_IMG_SIZE, D_CANON, GRID_SHAPE,
 )
-from eval.adapters.ocmr import OCMRAdapter
-from eval.adapters.goettingen import GoettingenAdapter
-from eval.adapters.miitt import MIITTAdapter
+from inference.adapters.ocmr import OCMRAdapter
+from inference.adapters.goettingen import GoettingenAdapter
+from inference.adapters.miitt import MIITTAdapter
 from vggt.models.vggt import VGGT
 from vggt.utils.splat import splat_predictions
 

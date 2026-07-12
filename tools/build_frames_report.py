@@ -4,7 +4,7 @@ every plot + cycle GIF + montage is base64-embedded, so the .html is one portabl
 
 Inputs:
   result/frames_sweep/results.json         (tools/exp_frames_sweep.py — intensity/coverage sweep)
-  result/frames_ef/fps{01,05}/ef.json      (eval/seg_metrics_cmrxrecon.py — EF/Dice per fps)
+  result/frames_ef/fps{01,05}/ef.json      (inference/seg_metrics_cmrxrecon.py — EF/Dice per fps)
   result/frames_ef/fps{01,05}/scatter.png  (EF scatter per fps)
   result/frames_ef/fps{01,05}/examples.png (ED-vs-ES demo per fps)
   result/frames_ef/fps{01,05}/viz/*.gif|*ED.png  (qualitative cycle/montage per fps)
@@ -277,7 +277,7 @@ reconstructed volumes with the M&amp;Ms nnU-Net (Task114) and compute EF = (max�
 curve, per frame-count, on clean input. Slope→1 means the model tracks each patient's true EF;
 slope→0 is the old flat-EF collapse.</p>
 {ef_tbl()}
-{ef_figs or "<p>(EF stage not yet available — run tools/exp_frames_ef.py + eval/seg_cmrxrecon.sh + eval/seg_metrics_cmrxrecon.py)</p>"}
+{ef_figs or "<p>(EF stage not yet available — run tools/exp_frames_ef.py + inference/seg_cmrxrecon.sh + inference/seg_metrics_cmrxrecon.py)</p>"}
 
 <h2>7 · Conclusion</h2>
 <ul>

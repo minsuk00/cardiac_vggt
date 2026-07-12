@@ -5,8 +5,8 @@
 set -e
 cd /home/minsukc/vggt
 CK=scratch/logs/217720691_mri_volume_diffusion_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt
-VOLS=scratch/phase_analysis/4wok_vols
-SEG=scratch/phase_analysis/4wok_segs
+VOLS=scratch/analysis/phase_analysis/4wok_vols
+SEG=scratch/analysis/phase_analysis/4wok_segs
 mkdir -p "$VOLS" "$SEG"
 
 echo "[1/3] dump volumes (svr)"

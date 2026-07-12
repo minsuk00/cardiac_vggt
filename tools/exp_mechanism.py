@@ -25,9 +25,9 @@ import torch.nn.functional as F
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT); sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.inference import load_rtfb_model_reference
-from eval.run_cmrxrecon import build_mri_dataset
-from eval.adapters.base import INPUT_IMG_SIZE
+from inference.inference import load_rtfb_model_reference
+from inference.run_cmrxrecon import build_mri_dataset
+from inference.adapters.base import INPUT_IMG_SIZE
 
 SNAPSHOT = "/tmp/vggt_4wokxzov_snapshot.pt"
 

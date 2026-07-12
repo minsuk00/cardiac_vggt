@@ -69,7 +69,7 @@ coverage; it can't cleanly separate 10 vs 12, so we adopt **12 from the protocol
   - Voxel data byte-untouched (via `set_sform`/`set_qform`; verified md5-identical). These
     are *our* recons (regenerable from k-space), not pristine source. `--revert` sets Z→8.
 - **Code (constants only):** `preprocess.TARGET_SPACING` Z 8→12, `HALF_EXTENT` 48→72;
-  `eval/adapters/base.CANON_Z_SPACING_MM` 8→12 + `MM_PER_NORM` Z 44→66 (single source of
+  `inference/adapters/base.CANON_Z_SPACING_MM` 8→12 + `MM_PER_NORM` Z 44→66 (single source of
   truth — covers `tools/eval_ocmr_inference.py` and `diagnose_ood_clean_paradox.py` via
   re-export); `respiratory.SPACING_MM` Z→12; diagnostic mm labels (`trainer.py`,
   `dump_predicted_dvf.py`, `render_respiratory_examples.py`) and the nnU-Net eval header

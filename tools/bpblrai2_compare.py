@@ -30,7 +30,7 @@ from vggt.models.vggt import VGGT
 from vggt.utils.splat import splat_predictions
 from tools.eval_ocmr_inference import load_cine, percentile_scale, assign_canonical_z, build_batch
 from tools.diagnose_ood_clean_paradox import build_val_dataset
-from eval.adapters.goettingen import GoettingenAdapter
+from inference.adapters.goettingen import GoettingenAdapter
 
 OLD_CKPT = "/home/minsukc/vggt/scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt"
 SSIM_CKPT = "/home/minsukc/vggt/scratch/logs/218246076_mri_refiner_frozen_ssim/ckpts/checkpoint_last.pt"

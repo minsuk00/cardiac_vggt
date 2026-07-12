@@ -4,11 +4,11 @@ For each ACDC patient: build ONE scattered input batch (legacy contract — one 
 in-FOV z plane, NO reference slot, since this is a target_t model), sweep the query target_t=0..11,
 take the refiner's V_refined at each phase, save as nnU-Net Task114 inputs. A later seg + analyze
 turns these into LV-volume curves -> predicted EF, plotted against the already-computed GT EF
-(scratch/phase_analysis/acdc_analysis.json, same nnU-Net method).
+(scratch/analysis/phase_analysis/acdc_analysis.json, same nnU-Net method).
 
 Runtime-only num_freqs=6 override (matches this legacy ckpt); aggregator.py is NOT modified.
 
-Run: micromamba run -n svr python tools/measure_acdc_ssim_ef.py --out_dir scratch/phase_analysis_acdc_ssim/pred_vols
+Run: micromamba run -n svr python tools/measure_acdc_ssim_ef.py --out_dir scratch/analysis/phase_analysis_acdc_ssim/pred_vols
 """
 import os, sys, glob, argparse
 import numpy as np
@@ -18,7 +18,7 @@ import nibabel as nib
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, _ROOT); sys.path.insert(0, os.path.join(_ROOT, "training"))
 
-from eval.adapters.base import percentile_scale, assign_canonical_z, _build_batch_core, GRID_SHAPE
+from inference.adapters.base import percentile_scale, assign_canonical_z, _build_batch_core, GRID_SHAPE
 from tools.render_reference_ed_targeted import ACDCAdapter, ACDC_ROOT
 from vggt.models.vggt import VGGT
 from vggt.models.aggregator import ZIndexEmbedder, TIndexEmbedder

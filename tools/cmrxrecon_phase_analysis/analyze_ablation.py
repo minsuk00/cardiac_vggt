@@ -4,7 +4,7 @@ import json, os, glob, re
 import numpy as np, nibabel as nib
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 
-PA = "scratch/phase_analysis"; VOX = 1.4 * 1.4 * 8.0 / 1000.0; T = 12; LV = 1
+PA = "scratch/analysis/phase_analysis"; VOX = 1.4 * 1.4 * 8.0 / 1000.0; T = 12; LV = 1
 FORCE = [1, 6, 12]
 
 

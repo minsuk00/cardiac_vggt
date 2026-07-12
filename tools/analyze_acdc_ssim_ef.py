@@ -1,6 +1,6 @@
 """Analyze + plot ACDC EF for the SSIM refiner (target_t) model: predicted EF (nnU-Net on
 V_refined, swept over target_t) vs GT EF (nnU-Net on the real ACDC phases, from
-scratch/phase_analysis/acdc_analysis.json). Same correlation plot as the 30-val FIG 1.
+scratch/analysis/phase_analysis/acdc_analysis.json). Same correlation plot as the 30-val FIG 1.
 
 Run: micromamba run -n svr python tools/analyze_acdc_ssim_ef.py
 """
@@ -13,10 +13,10 @@ import matplotlib.pyplot as plt
 from scipy.stats import pearsonr, spearmanr
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-SEG = os.path.join(_ROOT, "scratch/phase_analysis_acdc_ssim/pred_segs")
-GT_JSON = os.path.join(_ROOT, "scratch/phase_analysis/acdc_analysis.json")
+SEG = os.path.join(_ROOT, "scratch/analysis/phase_analysis_acdc_ssim/pred_segs")
+GT_JSON = os.path.join(_ROOT, "scratch/analysis/phase_analysis/acdc_analysis.json")
 OUT_PNG = os.path.join(_ROOT, "result", "acdc_ssim_ef_correlation.png")
-OUT_JSON = os.path.join(_ROOT, "scratch/phase_analysis_acdc_ssim/acdc_ssim_ef.json")
+OUT_JSON = os.path.join(_ROOT, "scratch/analysis/phase_analysis_acdc_ssim/acdc_ssim_ef.json")
 VOX_ML = 1.4 * 1.4 * 12.0 / 1000.0
 T = 12
 LV = 1

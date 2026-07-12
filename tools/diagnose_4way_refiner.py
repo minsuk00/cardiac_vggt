@@ -26,7 +26,7 @@ from tools.eval_ocmr_inference import (
     load_cine, percentile_scale, assign_canonical_z, build_batch,
 )
 from tools.diagnose_ood_clean_paradox import build_val_dataset
-from eval.adapters.goettingen import GoettingenAdapter
+from inference.adapters.goettingen import GoettingenAdapter
 
 CKPT = "/home/minsukc/vggt/scratch/logs/218349151_mri_refiner_joint/ckpts/checkpoint_last.pt"
 OUT = os.path.join(_ROOT, "result", "4way_refiner")

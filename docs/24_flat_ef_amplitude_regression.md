@@ -31,7 +31,7 @@
 > PSNR (that's a separate, information-limited channel — [[22_reference_slice_amplitude_vs_motion_psnr]]).
 >
 > **Report:** https://github.com/minsuk00/research-reports/blob/main/2026-06-22_1421_vggt-ef-amplitude-regression.html
-> · local data `scratch/phase_analysis/` (`model_contraction.json`, `ablation_slopes.json`, `report.md`, `figs/`).
+> · local data `scratch/analysis/phase_analysis/` (`model_contraction.json`, `ablation_slopes.json`, `report.md`, `figs/`).
 
 **Date:** 2026-06-22
 **Status:** Cause chain **PROVEN** (oracle control + direct real-model intervention + leak-verified toy). The
@@ -76,7 +76,7 @@ validated; see [[15_mnms_nnunet_segmentation_eval]]); EF from the LV blood-pool 
 **Read:** flat EF (slope ≈ 0 → reconstructed EF is *uncorrelated* with the patient's real contraction; it varies
 20–62 % but the variation has nothing to do with the patient), correct timing (ES phase ±1 frame, 93 %), correct
 curve *shape* (the LV curve bottoms out at the right phase) but wrong *depth* (too shallow → under-contracts).
-Figures: `scratch/phase_analysis/figs/{ef_scatter,lv_curves}.png`.
+Figures: `scratch/analysis/phase_analysis/figs/{ef_scatter,lv_curves}.png`.
 
 ## 3. Cause isolation
 

@@ -31,8 +31,8 @@ def main():
         import numpy as np
         r = d["rows"]; pe = np.array([x["pred_ef"] for x in r]); ge = np.array([x["gt_ef"] for x in r])
         return {"slope": round(float(np.polyfit(ge, pe, 1)[0]), 3), "corr": round(float(np.corrcoef(ge, pe)[0, 1]), 3)}
-    ref_ef = head_ef("scratch/phase_analysis/ref_vols/ef_ref.json")
-    bsp_ef = head_ef("scratch/phase_analysis/bsp_vols/ef_bsp.json")
+    ref_ef = head_ef("scratch/analysis/phase_analysis/ref_vols/ef_ref.json")
+    bsp_ef = head_ef("scratch/analysis/phase_analysis/bsp_vols/ef_bsp.json")
 
     css = """
     :root{--bg:#fff;--fg:#1a1a2e;--mut:#5a5a72;--card:#f6f7fb;--bd:#e2e4ee;--acc:#3a6ea5;--good:#1a7f4b;--bad:#b0341d;--warn:#9a6a00}
@@ -172,7 +172,7 @@ def main():
 <li>The "does the smoothness penalty help EF" question is now <b>settled: no</b> — the L1-TV model recovers EF equally at its final checkpoint (slope 0.79), so the reference-slot design, not the penalty, drives it.</li>
 </ul>
 
-<p class="mut" style="margin-top:40px">Data: <code>result/analysis_4wok/</code>, <code>scratch/phase_analysis/{{4wok,ref,bsp}}_vols/ef_*.json</code>. Scripts: <code>tools/exp_4wok_analysis.py</code>, <code>exp_4wok_p95.py</code>, <code>render_4wok_qualitative.py</code>, <code>build_4wok_report.py</code>. Companion doc: <code>docs/33</code>. Two four-agent debates informed §8–10.</p>
+<p class="mut" style="margin-top:40px">Data: <code>result/analysis_4wok/</code>, <code>scratch/analysis/phase_analysis/{{4wok,ref,bsp}}_vols/ef_*.json</code>. Scripts: <code>tools/exp_4wok_analysis.py</code>, <code>exp_4wok_p95.py</code>, <code>render_4wok_qualitative.py</code>, <code>build_4wok_report.py</code>. Companion doc: <code>docs/33</code>. Two four-agent debates informed §8–10.</p>
 </div>"""
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     open(OUT, "w").write(html)

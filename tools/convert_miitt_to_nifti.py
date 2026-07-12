@@ -36,7 +36,7 @@ import numpy as np
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # ── REAL spacing (mm), from J. Hamilton 2026-07-04 (see header). dz = 8 mm thickness + 2 mm gap.
-# NOTE: the inference adapter (eval/adapters/miitt.py) reads its own INPLANE_MM/SLICE_SPACING_MM
+# NOTE: the inference adapter (inference/adapters/miitt.py) reads its own INPLANE_MM/SLICE_SPACING_MM
 # constants, not the affine — keep the two in sync.
 SPACING_IS_PLACEHOLDER = False
 SPACING = {
