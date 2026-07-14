@@ -33,9 +33,9 @@ logging:
   log_visual_frequency:
     train: 1000  # once per epoch (matches limit_train_batches)
     val: 200     # once per val epoch
-  # Cardiac filmstrip/GIF + ED/ES panels every 5 val epochs (was 1). At 1 the filmstrip does
-  # 12 subj-0 model forwards per epoch (~4 h over 200 epochs); 5 matches the EF cadence.
-  filmstrip_every_n_val_epochs: 5
+  # Cardiac filmstrip/GIF + ED/ES panels every 3 val epochs (was 1, then 5). At 1 the filmstrip does
+  # 12 subj-0 model forwards per epoch (~4 h over 200 epochs); 3 gives finer cadence for shorter (~90 ep) runs.
+  filmstrip_every_n_val_epochs: 3
   scalar_keys_to_log:
     train:
       keys_to_log:
