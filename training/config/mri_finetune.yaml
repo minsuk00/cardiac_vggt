@@ -31,6 +31,10 @@ reference_slot: false
 # integer planes (numerically identical to the discrete-grid pipeline).
 continuous_z: false
 z_jitter: 0.5
+# One-frame-per-slice (sparse-acquisition extreme): when true, S is forced per subject to the
+# in-FOV plane count so every in-bbox z plane appears EXACTLY once (no multi-frame extras).
+# Overrides the fixed img_nums/num_slices budget. Default false ⇒ fixed-S multi-frame sampler.
+one_frame_per_slice: false
 # Optional 3D UNet refiner on the splat (default OFF ⇒ bit-identical to today).
 enable_refiner: false
 refiner_use_coverage: true   # feed coverage as a 2nd input channel (only used when enabled)
@@ -182,6 +186,7 @@ data:
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
           continuous_z: ${continuous_z}
+          one_frame_per_slice: ${one_frame_per_slice}
           z_jitter: ${z_jitter}
   val:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
@@ -234,6 +239,7 @@ data:
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
           continuous_z: ${continuous_z}
+          one_frame_per_slice: ${one_frame_per_slice}
           z_jitter: ${z_jitter}
           ef_val_sweep: ${ef_val_sweep}
 

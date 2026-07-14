@@ -193,6 +193,41 @@ def test_multiframe_full_coverage_train(train_ds):
         assert len(zs) > len(set(zs)), f"extras must repeat planes, got {zs}"
 
 
+# ── 6c. One-frame-per-slice: S = in-FOV plane count, each plane EXACTLY once ───
+
+def test_one_frame_per_slice_exact_coverage(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """one_frame_per_slice overrides the requested budget: S == in-bbox plane count and every
+    in-bbox plane appears EXACTLY once (no multi-frame extras/repeats). Deterministic in val."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=20,
+                    one_frame_per_slice=True, cache_dir=monai_cache_dir)
+    s = ds.get_data(0, img_per_seq=20)  # ask for 20 — flag must override down to plane count
+    z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
+    bbox_z_size = z1 - z0
+    zs = [int(z) for z in s["slice_indices"]]
+    assert bbox_z_size < 20, "fixture should have a sub-20 z extent to exercise the override"
+    assert len(zs) == bbox_z_size, f"S must equal in-bbox plane count {bbox_z_size}, got {len(zs)}"
+    assert sorted(zs) == list(range(z0, z1)), f"each in-bbox plane exactly once, got {sorted(zs)}"
+    assert len(zs) == len(set(zs)), f"no repeated planes allowed, got {zs}"
+
+
+def test_one_frame_per_slice_with_reference_slot(synthetic_root, split_file, common_conf, monai_cache_dir):
+    """With reference_slot, one-frame-per-slice keeps slot 0 = the target-phase z_mid frame and
+    still covers every in-bbox plane exactly once (z_mid's single frame IS the reference)."""
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
+                    mode="dynamic", mri_mode="axial", num_slices=20,
+                    reference_slot=True, one_frame_per_slice=True, cache_dir=monai_cache_dir)
+    s = ds.get_data(0, img_per_seq=20)
+    z0, z1 = int(s["anatomy_bbox"][0]), int(s["anatomy_bbox"][1])
+    zs = [int(z) for z in s["slice_indices"]]
+    z_mid = (z0 + z1) // 2
+    assert zs[0] == z_mid, f"slot 0 must be the reference plane z_mid={z_mid}, got {zs[0]}"
+    assert sorted(zs) == list(range(z0, z1)), f"each in-bbox plane exactly once, got {sorted(zs)}"
+    assert len(zs) == len(set(zs)), f"no repeated planes allowed, got {zs}"
+
+
 def test_multiframe_extras_spread_across_planes(synthetic_root, split_file, common_conf, monai_cache_dir):
     """Extra frames are drawn UNIFORMLY at random over the in-bbox planes: aggregated over many
     val draws, every in-bbox plane is represented (no plane starved). Robust (not per-sample)."""

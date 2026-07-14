@@ -98,6 +98,7 @@ class MRIDataset(BaseDataset):
         t_target_phases=None,
         reference_slot=False,
         continuous_z=False,
+        one_frame_per_slice=False,
         z_jitter=0.5,
         cache_dir=None,
         ef_val_sweep=False,
@@ -135,6 +136,14 @@ class MRIDataset(BaseDataset):
         # Slot 0 (reference, when reference_slot) stays on its integer plane. Default False →
         # integer planes (numerically identical to the discrete-grid pipeline).
         self.continuous_z = bool(continuous_z)
+        # One-frame-per-slice (the sparse-acquisition extreme): when True, S is forced per subject
+        # to the subject's in-FOV plane count so every in-bbox z plane appears EXACTLY once (no
+        # multi-frame extras, n_extra=0). Overrides the incoming img_per_seq / num_slices budget;
+        # safe because each batch is a single subject (batch_size=1), so the per-slot count can
+        # vary across iterations without any cross-subject padding. Default False → the fixed-S
+        # multi-frame sampler (bit-identical to before). Composes with reference_slot (slot 0 =
+        # target-phase z_mid = that plane's one frame) and continuous_z (per-plane off-grid jitter).
+        self.one_frame_per_slice = bool(one_frame_per_slice)
         self.z_jitter = float(z_jitter)
         if self.t_target_phases is not None and len(self.t_target_phases) == 0:
             raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
@@ -343,6 +352,11 @@ class MRIDataset(BaseDataset):
         else:
             z_sequence = []
             coverage = list(in_bbox_z)                          # cover all planes once
+
+        if self.one_frame_per_slice:
+            # Force S to the in-FOV plane count → every plane covered exactly once, n_extra=0
+            # (the sparse one-frame-per-slice extreme). Ignores the incoming budget S.
+            S = len(z_sequence) + len(coverage)
 
         room = S - len(z_sequence)
         if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < bbox_z_size)
