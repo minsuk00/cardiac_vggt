@@ -1076,11 +1076,12 @@ class Trainer:
         except Exception as e:
             logging.warning(f"augmentation visual log failed (ignored): {e}")
 
-    def _log_volume_and_dvf_to_wandb(self, batch: dict, name: str, step: int, caption: str):
+    def _log_volume_and_dvf_to_wandb(self, batch: dict, name: str, step: int, caption: str,
+                                     group: str = "media_others"):
         """Log two figures per visual step (matching tools/test_sequential_sampling.py style):
           {name}_Volume : 4 rows × max(S,D) cols — input slices, V_gt, V_canon, signed diff (per z).
           {name}_DVF    : 4 rows × S cols       — input intensity + Δx/Δy/Δz per slot.
-        Both use dpi=90 (≈0.6 MB each PNG).
+        Both use dpi=90 (≈0.6 MB each PNG). Logged under `{group}/`.
         """
         if not self.wandb_writer:
             return
@@ -1153,7 +1154,7 @@ class Trainer:
             _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon")
             _vol_row(3, diff,    "RdBu_r", -ERR,  ERR,    f"V_canon-V_gt\n(±{ERR})")
 
-            self.wandb_writer.log(f"media_others/{name}_Volume", wandb.Image(fig, caption=caption), step)
+            self.wandb_writer.log(f"{group}/{name}_Volume", wandb.Image(fig, caption=caption), step)
             plt.close(fig)
 
         # ── DVF figure (per-slot Δx/Δy/Δz) ─────────────────────────────────
@@ -1211,7 +1212,7 @@ class Trainer:
                         ax.set_ylabel(lbl, fontsize=8)
                 plt.colorbar(last_im, cax=fig.add_subplot(gs[r, S]))
 
-            self.wandb_writer.log(f"media_others/{name}_DVF", wandb.Image(fig, caption=caption), step)
+            self.wandb_writer.log(f"{group}/{name}_DVF", wandb.Image(fig, caption=caption), step)
             plt.close(fig)
 
     # Subjects shown in the ED-vs-ES panel (the EF sweep reconstructs each at its ED and ES).
@@ -1311,8 +1312,9 @@ class Trainer:
                 if fig is not None:
                     plt.close(fig)                                    # never leak a figure on the error path
 
-    def _log_refiner_viz_to_wandb(self, batch: dict, name: str, step: int, caption: str):
-        """Log one figure `media_others/refiner_{name}_Volume` (4 rows × D cols): V_gt, V_canon (raw
+    def _log_refiner_viz_to_wandb(self, batch: dict, name: str, step: int, caption: str,
+                                  group: str = "media_others"):
+        """Log one figure `{group}/refiner_{name}_Volume` (4 rows × D cols): V_gt, V_canon (raw
         splat), V_refined (refiner output), and the refined signed-diff (V_refined - V_gt) per z.
         Purely additive: returns immediately unless the refiner ran (`V_refined` present), so it
         NEVER fires — and never touches the existing panels — when the refiner is off.
@@ -1356,8 +1358,99 @@ class Trainer:
         _row(2, V_refined, "gray",   0,    v_vmax, "V_refined")
         _row(3, diff,      "RdBu_r", -ERR, ERR,    f"V_refined-V_gt\n(±{ERR})")
 
-        self.wandb_writer.log(f"media_others/refiner_{name}_Volume", wandb.Image(fig, caption=caption), step)
+        self.wandb_writer.log(f"{group}/refiner_{name}_Volume", wandb.Image(fig, caption=caption), step)
         plt.close(fig)
+
+    def _log_lookup_to_wandb(self, batch: dict, name: str, step: int, caption: str,
+                             group: str = "media_others"):
+        """Round-trip / analysis-by-synthesis panel (val-only, GT-referenced).
+
+        For a few input slices spread across depth, sample the reconstruction (V_canon) AND the GT
+        volume (V_gt) back at the model's predicted per-pixel coords `p = pred_world_points`, and show
+        them beside the raw input slice + the |V_canon−V_gt|@p error map. Reveals WHERE detail is lost
+        (renderer softening vs reconstruction error). Rows are chosen by z-depth (not slot index) so
+        frames-per-slice>1 doesn't collapse/duplicate depths.
+
+        Column relation: col1 (input I) ≈ col2 (V_canon@pred) BY CONSTRUCTION — sampling the recon
+        back where each input pixel was splatted recovers that pixel's intensity, so their gap is the
+        renderer's coverage-averaging blur. col2 (V_canon@pred) ≈ col3 (V_gt@pred) BY TRAINING — the
+        L1 loss drives V_canon→V_gt, so their gap (the |·| error map, col4) is the reconstruction
+        error. The reference row (slot 0, Δ≈0, t_slot=t_target) is the phase-matched control where
+        col1=col3 directly; non-reference rows sample V_gt at the WARPED coords (pred=scanner+Δ), so
+        the observed→target phase geometry is absorbed by Δ and col1≈col3 holds where the warp is right.
+        """
+        if not self.wandb_writer:
+            return
+        needed = ("V_canon", "V_gt", "pred_world_points", "images", "slice_indices")
+        if any(k not in batch for k in needed):
+            return
+        try:
+            import wandb
+            import matplotlib.pyplot as plt
+            from matplotlib import gridspec as _gs
+            import numpy as np
+            from vggt.utils.splat import sample_volume
+        except ImportError:
+            return
+
+        V_canon = batch["V_canon"][0].detach().float()                    # (D, H, W)
+        V_gt = batch["V_gt"][0].detach().float()
+        wp = batch["pred_world_points"][0].detach().float()               # (S, Hs, Ws, 3)
+        imgs = batch["images"][0].detach().float().cpu()                  # (S, 3, Hs, Ws)
+        if imgs.min() < 0:
+            imgs = (imgs + 1.0) / 2.0
+        imgs = imgs.clamp(0, 1).mean(dim=1).numpy()                       # (S, Hs, Ws) gray
+        z_picks = batch["slice_indices"][0].cpu().numpy()                 # (S,)
+        t_picks = batch["timesteps"][0].cpu().numpy() if "timesteps" in batch else None
+        S, Hs, Ws = imgs.shape
+
+        # Rows: ≤4 slots at evenly-spaced DISTINCT z-depths (robust to frames-per-slice>1). When
+        # slot 0 is the target-phase reference (reference_slot), pin it as the FIRST row — a phase-
+        # matched control (Δ≈0, so its round-trip should be near-perfect), always shown.
+        present = np.unique(z_picks)
+        n_pick = min(4, len(present))
+        zsel = present[np.linspace(0, len(present) - 1, n_pick).round().astype(int)]
+        slots = [int(np.where(z_picks == zt)[0][0]) for zt in zsel]       # first slot at each z
+        ref_slot = 0 if getattr(self, "reference_slot", False) else None
+        if ref_slot is not None:                                          # pin reference first, ≤4 total
+            slots = ([ref_slot] + [s for s in slots if s != ref_slot])[:4]
+
+        vmax = float(max(V_canon.max().item(), V_gt.max().item(), 1e-3))
+        ERR = 0.1
+        dev = V_canon.device
+
+        fig = plt.figure(figsize=(4 * 2.6, len(slots) * 2.6 + 0.6), dpi=110)
+        try:
+            gs = _gs.GridSpec(len(slots), 4, wspace=0.06, hspace=0.14)
+            fig.suptitle(f"Lookup (round-trip @pred) — {caption}", fontsize=8)
+            col_titles = ["input I", "V_canon @ pred", "V_gt @ pred", "|V_canon−V_gt| @ pred"]
+
+            for r, s in enumerate(slots):
+                pos = wp[s].reshape(1, -1, 3).to(dev)                      # (1, Hs*Ws, 3)
+                rc = sample_volume(V_canon.unsqueeze(0), pos).reshape(Hs, Ws).cpu().numpy()
+                rg = sample_volume(V_gt.unsqueeze(0), pos).reshape(Hs, Ws).cpu().numpy()
+                err = np.abs(rc - rg)
+                zt = int(z_picks[s]); tt = int(t_picks[s]) if t_picks is not None else -1
+                is_ref = (ref_slot is not None and s == ref_slot)
+                cells = [
+                    (imgs[s], "gray",   0, 1.0),
+                    (rc,      "gray",   0, vmax),
+                    (rg,      "gray",   0, vmax),
+                    (err,     "magma",  0, ERR),
+                ]
+                for c, (data, cmap, vmin, vm) in enumerate(cells):
+                    ax = fig.add_subplot(gs[r, c])
+                    ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vm)
+                    ax.set_xticks([]); ax.set_yticks([])
+                    if r == 0:
+                        ax.set_title(col_titles[c], fontsize=7)
+                    if c == 0:
+                        lbl = ("REF " if is_ref else "") + f"slot{s}\nt={tt} z={zt}"
+                        ax.set_ylabel(lbl, fontsize=7)
+
+            self.wandb_writer.log(f"{group}/{name}_Lookup", wandb.Image(fig, caption=caption), step)
+        finally:
+            plt.close(fig)
 
     def run(self):
         """Main entry point to start the training or validation process."""
@@ -2168,26 +2261,34 @@ class Trainer:
             caption_parts.append(f"step={log_step}")
             caption = "  ".join(caption_parts)
 
-            # Wandb key prefix. Val gets a per-subject suffix so the 3 subjects don't collide.
+            # Wandb key prefix. Train stays in the media_others/ bucket; val gets a per-subject
+            # section (media_val_subj{i}/) so the 4 val subjects' panels group together.
             if phase == "train":
-                name = "Train_Visuals"
+                name, group = "Train_Visuals", "media_others"
             else:
-                name = f"Val_Visuals_subj{self._val_iter}"
+                name, group = "Val_Visuals", f"media_val_subj{self._val_iter}"
 
             # Render both figures and log. Diagnostic only — a render error (e.g. a
             # shape regression in the per-slot r/|d| titles, or a matplotlib/wandb
             # hiccup) must NEVER crash training/validation, so guard the whole call.
             try:
-                self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption)
+                self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption, group=group)
             except Exception as e:
                 logging.warning(f"volume/DVF visual log failed (ignored): {e}")
 
-            # Refiner panel — additive, only when the refiner ran (key present). Logs to a
-            # SEPARATE namespace (media_others/refiner_*), never touches the existing panels.
+            # Refiner panel — additive, only when the refiner ran (key present). Logs to the same
+            # per-subject section (group/refiner_*), never touches the existing panels.
             try:
-                self._log_refiner_viz_to_wandb(batch, name, log_step, caption)
+                self._log_refiner_viz_to_wandb(batch, name, log_step, caption, group=group)
             except Exception as e:
                 logging.warning(f"refiner visual log failed (ignored): {e}")
+
+            # Round-trip lookup panel — val-only (GT-referenced, in-distribution).
+            if phase != "train":
+                try:
+                    self._log_lookup_to_wandb(batch, name, log_step, caption, group=group)
+                except Exception as e:
+                    logging.warning(f"lookup visual log failed (ignored): {e}")
 
 
 def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mapping]:

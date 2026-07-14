@@ -612,9 +612,10 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                 logging.warning(f"docs/38 recov/static val metric failed (ignored): {e}")
 
             # (2) breathing through-plane recovery vs the EXACT applied sim shift.
-            # predicted Δz per non-reference slot (mm) vs applied SI (resp_disp_mm[...,0]) →
+            # predicted Δz per slot (mm) vs applied SI (resp_disp_mm[...,0]) →
             # slope/corr/EPE + deep-breath-ignored. Brings tools/exp_4wok_analysis.py online.
-            # No-op when breathing is off (resp_disp_mm absent). Slot 0 = reference anchor, skipped.
+            # No-op when breathing is off (resp_disp_mm absent). Slot 0 (reference anchor) is
+            # INCLUDED — matched to eval's run_vggt.py:resp_diag so the two numbers are comparable.
             # Per-subject then meter-averaged ⇒ EPE is the robust headline; slope is clamped so one
             # low-applied-variance subject can't dominate; corr is SIGNED Pearson (differs from the
             # offline abs-corr in exp_4wok_analysis.py — see docs/38).
@@ -627,7 +628,7 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                     sl, co, epe, deep_ign = [], [], [], []
                     for b in range(B):
                         xs, ys = [], []
-                        for s in range(1, dvf.shape[1]):               # skip slot 0 (reference)
+                        for s in range(dvf.shape[1]):                  # all slots incl. slot 0 (reference)
                             msk = img_int[b, s] > 0.05
                             if bool(msk.any()):
                                 xs.append(disp[b, s, 0])
