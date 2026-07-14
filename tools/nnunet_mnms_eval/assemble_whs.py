@@ -76,6 +76,30 @@ def _canon_tfm():
     ]), TARGET_SPACING
 
 
+def _canon_fov(seg_file):
+    """Canonical native-FOV mask (256,256,12) bool: 1 = a voxel that came from real acquired data,
+    0 = zero-padding introduced by fitting the subject into the fixed canonical cube. Built by pushing
+    a ONES volume (the native acquired extent) through the SAME spatial transforms as the seg, so
+    ResizeWithPadOrCrop's constant-0 pad marks the padded region. Used to clamp the canonical ROI's
+    +-1 z dilation so it can't spill onto no-data planes (clamp_heart_roi_to_fov.py retro-fixed the
+    already-written ROIs; this keeps future rebuilds correct)."""
+    import torch
+    from monai.transforms import (Compose, LoadImaged, EnsureChannelFirstd, Lambdad,
+                                  Orientationd, Spacingd, ResizeWithPadOrCropd)
+    pp = _load_preprocess()
+    TARGET_SPACING, TARGET_SHAPE = pp.TARGET_SPACING, pp.TARGET_SHAPE
+    k = ["fov"]
+    tfm = Compose([
+        LoadImaged(keys=k, image_only=True),
+        EnsureChannelFirstd(keys=k),
+        Lambdad(keys=k, func=torch.ones_like),               # native FOV = ones over the acquired extent
+        Orientationd(keys=k, axcodes="LPS"),
+        Spacingd(keys=k, pixdim=TARGET_SPACING, mode="nearest"),
+        ResizeWithPadOrCropd(keys=k, spatial_size=TARGET_SHAPE, mode="constant", value=0),
+    ])
+    return np.asarray(tfm({"fov": seg_file})["fov"])[0] > 0.5
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True)
@@ -125,7 +149,8 @@ def main():
         caffine = np.diag([*cspacing, 1.0])
         nib.save(nib.Nifti1Image(cseg, caffine), os.path.join(out_dir, "heart_seg_canonical.nii.gz"))
         cunion = (cseg > 0).any(axis=-1).astype(np.uint8)
-        croi = build_roi(cunion, cspacing, in_mm=args.in_mm, z_extend=1)
+        cfov = _canon_fov(seg_files[0])                       # native FOV on the canonical grid
+        croi = build_roi(cunion, cspacing, in_mm=args.in_mm, z_extend=1, fov_mask=cfov)  # clamp z-spill
         nib.save(nib.Nifti1Image(croi.astype(np.uint8), caffine),
                  os.path.join(out_dir, "heart_roi_canonical.nii.gz"))
 

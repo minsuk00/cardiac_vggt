@@ -22,8 +22,14 @@ def _disk(r):
     return (xx * xx + yy * yy) <= r * r
 
 
-def build_roi(seg, spacing, in_mm=6.0, z_extend=1):
-    """seg: (X,Y,Z) int; spacing: (sx,sy,sz) mm. Returns uint8 (X,Y,Z)."""
+def build_roi(seg, spacing, in_mm=6.0, z_extend=1, fov_mask=None):
+    """seg: (X,Y,Z) int; spacing: (sx,sy,sz) mm. Returns uint8 (X,Y,Z).
+
+    fov_mask: optional (X,Y,Z) bool of the native field-of-view (1=real acquired data). On the
+    CANONICAL (padded) grid the `z_extend` through-plane dilation spills the ROI onto zero-padding
+    planes that carry no acquired data (GT is all zeros there), which then poisons any recon metric.
+    Passing fov_mask clamps the ROI to `& fov_mask` so it never extends past real data. On native
+    (unpadded) space there is nothing to spill onto, so it can be left None."""
     heart = seg > 0
     sx = float(spacing[0])                                   # in-plane mm/voxel (sx≈sy)
     r = max(1, int(round(in_mm / sx)))
@@ -39,6 +45,8 @@ def build_roi(seg, spacing, in_mm=6.0, z_extend=1):
         out[..., z] = ndimage.binary_fill_holes(s)
     if z_extend > 0:                                          # grow ±z_extend planes (apex tip + toward base)
         out = ndimage.binary_dilation(out, np.ones((1, 1, 2 * z_extend + 1), bool))
+    if fov_mask is not None:                                  # clamp to native FOV (drops padding-plane spill)
+        out = out & fov_mask.astype(bool)
     return out.astype(np.uint8)
 
 
