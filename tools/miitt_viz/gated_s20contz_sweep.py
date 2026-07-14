@@ -18,7 +18,7 @@ sys.path.insert(0, "."); sys.path.insert(0, "training")
 from inference.adapters import MIITTGatedAdapter, OCMRAdapter, ACDCGatedAdapter
 from inference.inference import load_rtfb_model_reference
 from inference.run_gated_ood import load_rcfg
-from tools.miitt_viz.gated_gather05_7row import capture, render_7row
+from tools.miitt_viz.gated_gather05_7row import capture, render_inputstrip
 
 DEV = "cuda"; OUT = "result/gated_model_sweep"; REGIME = "1frame_contz"; CLEAN_REF = True
 SEED = 72          # dynamic breathing seed (breathing spread across planes, ref plane ~0)
@@ -107,14 +107,15 @@ def main():
                 alab = ("clean (no breathing)" if not breathing
                         else f"normal: SI breathing mean {si_mean:.1f} max {si_max:.1f}mm, {n_breath} planes>8mm (ref clean)")
                 t1 = time.time()
-                render_7row(cap, f"{MNAME} 1frame-contz | {ds}/{subj} | {alab}", base + ".gif", dpi=130)
+                render_inputstrip(cap, f"{MNAME} 1frame-contz | {ds}/{subj} | {alab}", base + ".gif", dpi=130)
                 t_render = time.time() - t1
                 np.savez_compressed(base + ".npz", gt=cap["GT"], recon=cap["RE"], inp=cap["IN"],
                                     dvf=cap["DV"], cov=cap["CO"], has_slot=np.array(cap["has_slot"]),
                                     ref_zmid=cap["z_mid"], zbr=cap["rd"][:, 0], sop=np.array(cap["sop"]),
                                     applied_disp=cap["rd"], per_phase_motion=np.array(cap["metr"]["motion"]),
                                     per_phase_full=np.array(cap["metr"]["full"]),
-                                    per_phase_ssim=np.array(cap["metr"]["ssim"]))
+                                    per_phase_ssim=np.array(cap["metr"]["ssim"]),
+                                    in_slots=cap["IN_slots"], slot_zf=cap["slot_zf"])
                 summary.append(dict(model=MNAME, dataset=ds, subject=subj, condition=tag,
                                     si_breath_mean_mm=si_mean, si_breath_max_mm=si_max,
                                     n_planes_breathing=n_breath, mean=means))

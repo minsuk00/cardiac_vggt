@@ -163,6 +163,10 @@ def capture(model, phases_bundle, bbox, breathing, rcfg, regime="multiframe", cl
         return up.repeat(1, 3, 1, 1)
     GT = np.zeros((nT, D, 256, 256), np.float32); RE = np.zeros_like(GT); IN = np.zeros_like(GT); CO = np.zeros_like(GT)
     DV = np.zeros((nT, D, 256, 256, 3), np.float32); rd = None
+    S = batch["images"].shape[1]
+    IN_slots = np.zeros((nT, S, 256, 256), np.float32)   # ACTUAL fed slice per slot (not 12-col collapse)
+    DV_slots = np.zeros((nT, S, 256, 256, 3), np.float32)  # per-INPUT-slot Δ (mm) — DVF is per input slice
+    slot_zf = slice_z.astype(np.float32).copy()          # (S,) fractional canonical z of each fed slot
     metr = {k: [] for k in _MK}
     for ti, t in enumerate(phase_ids):
         t = int(t)
@@ -189,14 +193,17 @@ def capture(model, phases_bundle, bbox, breathing, rcfg, regime="multiframe", cl
             metr[k].append(float(out[mk]) if mk in out else float("nan"))
         im = F.interpolate(batch["images"][0, :, 0][:, None], size=(256, 256),
                            mode="bilinear", align_corners=True)[:, 0].cpu().numpy()
-        for p in range(D):
+        IN_slots[ti] = im                                # every fed slot, at its true fractional z
+        for s in range(S):                               # per-INPUT-slot Δ = world_points - scanner_coords
+            d = (wp[s] - sc[s]) * MM[None, None, :]
+            DV_slots[ti, s] = np.stack([to256(d[..., k]) for k in range(3)], -1)
+        for p in range(D):                               # 12-plane views (nearest slot) for legacy render_7row
             IN[ti, p] = im[sop[p]]
-            d = (wp[sop[p]] - sc[sop[p]]) * MM[None, None, :]
-            DV[ti, p] = np.stack([to256(d[..., k]) for k in range(3)], -1)
+            DV[ti, p] = DV_slots[ti, sop[p]]
     if rd is None:
         rd = np.zeros((batch["images"].shape[1], 3), np.float32)
     return dict(GT=GT, RE=RE, IN=IN, CO=CO, DV=DV, rd=rd, sop=sop, has_slot=has_slot,
-                z_mid=z_mid, metr=metr)
+                z_mid=z_mid, metr=metr, IN_slots=IN_slots, slot_zf=slot_zf, DV_slots=DV_slots)
 
 
 def render_7row(cap, title_prefix, path, dpi=66):
@@ -227,6 +234,62 @@ def render_7row(cap, title_prefix, path, dpi=66):
             fig.text(0.011, yc, lab, rotation=90, va="center", ha="center", fontsize=10)
         fig.suptitle(f"{title_prefix} | col title = simulated z-breathing per slice | phase {t}/{T-1}", fontsize=11)
         fig.subplots_adjust(left=0.028, right=0.997, top=0.94, bottom=0.005, wspace=0.04, hspace=0.16)
+        fig.canvas.draw(); frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()); plt.close(fig)
+    imageio.mimsave(path, frames, duration=0.2, loop=0)
+    return dict(vlx=vlx, vly=vly, vlz=vlz, covmax=covmax, covvmax=covvmax)
+
+
+def render_inputstrip(cap, title_prefix, path, dpi=130):
+    """7-row view that keeps PER-OUTPUT-PLANE and PER-INPUT-SLICE quantities on their OWN axes:
+      GT, recon                 — per OUTPUT canonical plane (12 columns)
+      input, Δx, Δy, Δz         — per INPUT slice (S columns, sorted by depth, ALIGNED under input)
+      coverage                  — per OUTPUT canonical plane (12 columns)
+    The DVF (Δ = world_points − scanner_coords) is defined per input slice, so it lives on the input
+    strip aligned under each fed slice — NOT crammed onto the output-plane grid (docs: per-input vs
+    per-output). Needs cap['IN_slots'] (nT,S,256,256), cap['DV_slots'] (nT,S,256,256,3), cap['slot_zf']."""
+    GT, RE, CO = cap["GT"], cap["RE"], cap["CO"]
+    INS, DVS, zf = cap["IN_slots"], cap["DV_slots"], np.asarray(cap["slot_zf"]); rd = cap["rd"]
+    has_slot, rz = cap["has_slot"], cap["z_mid"]; zbr = rd[:, 0]
+    T = GT.shape[0]; S = INS.shape[1]
+    order = list(np.argsort(zf))                          # display slots shallow→deep
+    vlx, vly, vlz = [max(1.0, np.percentile(np.abs(DVS[..., k]), 99)) for k in range(3)]
+    covmax = float(CO.max()); covvmax = float(np.percentile(CO[CO > 0], 95)) if (CO > 0).any() else 1.0
+    gv, rv, iv = np.percentile(GT, 99.5), np.percentile(RE, 99.5), np.percentile(INS, 99.5)
+    blank = np.zeros((256, 256), np.float32)
+    # rows: kind 'out' = per-output-plane (12 cols); kind 'in' = per-input-slice strip (S cols).
+    # (kind, label, array, cmap, lo, hi, blank_flag)
+    rows = [
+        ("out", "GT", GT, "gray", 0, gv, False),
+        ("out", "recon", RE, "gray", 0, rv, False),
+        ("in", f"input ({S})", INS, "gray", 0, iv, False),
+        ("in", f"Dx±{vlx:.0f}", DVS[..., 0], "bwr", -vlx, vlx, False),
+        ("in", f"Dy±{vly:.0f}", DVS[..., 1], "bwr", -vly, vly, False),
+        ("in", f"Dz±{vlz:.0f}mm", DVS[..., 2], "bwr", -vlz, vlz, False),
+        ("out", f"cov 0-{covvmax:.0f} (max {covmax:.0f})", CO, "viridis", 0, covvmax, False),
+    ]
+    nr = len(rows); ycen = [0.925 - (i + 0.5) * (0.925 - 0.01) / nr for i in range(nr)]
+    frames = []
+    for t in range(T):
+        fig = plt.figure(figsize=(2 * D, 1.85 * nr), dpi=dpi)
+        outer = fig.add_gridspec(nr, 1, left=0.028, right=0.997, top=0.94, bottom=0.005, hspace=0.28)
+        for ri, (kind, lab, arr, cm, lo, hi, bl) in enumerate(rows):
+            if kind == "in":                              # per-input-slice strip (S cols, sorted)
+                inner = outer[ri].subgridspec(1, S, wspace=0.04)
+                for j, s in enumerate(order):
+                    ax = fig.add_subplot(inner[0, j])
+                    ax.imshow(arr[t, s], cmap=cm, vmin=lo, vmax=hi); ax.axis("off")
+                    if lab.startswith("input"):           # label the fed slices once (top strip row)
+                        ax.set_title(f"z{zf[s]:.1f}{'*REF' if s == 0 else ''}\nbr{zbr[s]:+.0f}", fontsize=7)
+            else:                                         # per-output-plane (12 cols)
+                inner = outer[ri].subgridspec(1, D, wspace=0.04)
+                for p in range(D):
+                    ax = fig.add_subplot(inner[0, p])
+                    ax.imshow(arr[t, p], cmap=cm, vmin=lo, vmax=hi); ax.axis("off")
+                    if ri == 0:
+                        ax.set_title(f"z{p}" + ("*REF" if p == rz else ""), fontsize=7)
+        for yc, (_, lab, *_ ) in zip(ycen, rows):
+            fig.text(0.011, yc, lab, rotation=90, va="center", ha="center", fontsize=10)
+        fig.suptitle(f"{title_prefix} | GT/recon/cov=output planes, input+DVF=fed slices at true z | phase {t}/{T-1}", fontsize=11)
         fig.canvas.draw(); frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()); plt.close(fig)
     imageio.mimsave(path, frames, duration=0.2, loop=0)
     return dict(vlx=vlx, vly=vly, vlz=vlz, covmax=covmax, covvmax=covvmax)
