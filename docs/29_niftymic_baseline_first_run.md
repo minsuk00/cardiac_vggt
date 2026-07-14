@@ -23,8 +23,11 @@
 > signature SimpleITK 2.x removed — patched via a bind-mounted fixed copy of that one file
 > (setter-based API), no Docker tag has this fixed. (3) NiftyMIC's Tikhonov SRR solve does
 > **not** preserve absolute input intensity scale (`pred ≈ 1.03·gt + 1.0`, not `pred ≈ gt`)
-> — standard in the SVR literature; score with a linear intensity calibration fit on the
-> anatomy region, not raw MAE/PSNR (raw PSNR_full was a meaningless 1.7 dB before this).
+> — score with a linear intensity calibration fit on the anatomy region, not raw MAE/PSNR
+> (raw PSNR_full was a meaningless 1.7 dB before this). **⚠️ But calibration is
+> reconstructor-specific — NOT universal: SVRTK preserves scale and must be scored as-is
+> (calibrating it inflates PSNR); see the ⚠️ correction in §Problems before applying this to
+> any other engine.**
 >
 > **Runtime: ~18–25 min/subject, CPU-only** (registration ~3–4 min, Tikhonov SR
 > ~14–20 min, did not fully converge at the default 10-iteration cap). Confirms the
@@ -103,6 +106,26 @@ solves in general, not specific to our off-label cardiac use — cross-method PS
 comparisons in the SVR literature routinely calibrate intensity before scoring for exactly
 this reason. `score.py` fits+inverts the calibration on the anatomy region before computing
 final metrics; raw (uncalibrated) numbers are also printed for transparency.
+
+> **⚠️ Calibration is RECONSTRUCTOR-SPECIFIC — measure before applying (correction, 2026-07-12).**
+> The "SVR literature routinely calibrates" framing above is correct **for NiftyMIC here**
+> (offset `+1.0` → raw PSNR is meaningless), but must NOT be applied blindly to other engines.
+> Whether to calibrate depends on whether the *specific* tool preserves the input intensity
+> scale — **always check first** by comparing recon mean/std to GT *inside the anatomy mask*:
+> - **NiftyMIC** — does NOT preserve scale (`pred ≈ 1.03·gt + 1.0`, large additive offset) → calibrate. ✅
+> - **SVRTK (`mirtk reconstruct`)** — **DOES preserve scale**: it reconstructs in the normalized
+>   `[0,1]` input space, so recon mean/std ≈ GT inside the mask across subjects (measured on 3
+>   CMRxRecon val subjects). Here a linear `a·gt+b` calibration is **UNJUSTIFIED** — it absorbs
+>   *real* reconstruction error (the recon's genuinely higher variance / brightness) into the fit
+>   and **inflates PSNR by 1–3 dB**, and the least-squares slope-shrinkage (`a≈corr·σ_gt/σ_pred`)
+>   washes out display contrast. **Score SVRTK as-is (no `a,b`).**
+> - **SVRTK also writes a `-1` out-of-mask sentinel** (≈50% of the recon box; real intensities are
+>   ≥0, with a hard gap at 0 — it's a flag, not intensity). **Clip/mask it before scoring/display**
+>   or the resampling boundary leaks it into the ROI and drags the metric ~1 dB.
+>
+> Lesson: don't treat "SVR needs intensity calibration" as universal. Measure scale-preservation
+> per engine; calibrate only the ones that actually drift. The SVRTK-on-simulated-breathing eval
+> that established this lives in `scratch/eval/` (GPFS).
 
 ## Results (n=2)
 
