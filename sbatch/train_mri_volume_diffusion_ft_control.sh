@@ -30,7 +30,7 @@ MASTER_PORT=29534
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
 RESUME_FROM=""
-CKPT_ONLY="/home/minsukc/vggt/scratch/base_weights/4wok_weights_only.pt"
+CKPT_ONLY="/home/minsukc/vggt/scratch/checkpoints/4wok_weights_only.pt"
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
