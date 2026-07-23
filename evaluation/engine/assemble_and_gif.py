@@ -14,6 +14,7 @@ Paths/naming go through evaluation/paths.py (the single source of truth).
 """
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -166,6 +167,11 @@ def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None):
 def main():
     subj = sys.argv[1] if len(sys.argv) > 1 else "Train_P053"
     method = sys.argv[2] if len(sys.argv) > 2 else "svrtk3d"
+    # Short display tag for the GIF row labels: the raw arm slug (e.g.
+    # "vggt_20260719_1f_gather05_ep99") overflows the rotated y-label slot and clips.
+    # Strip the "vggt_<date>_1f_" prefix + "_ep##..." suffix -> "gather05"; baseline
+    # names (svrtk3d/nesvor) don't match either pattern and pass through unchanged.
+    arm_label = re.sub(r"_ep\d+.*$", "", re.sub(r"^vggt_\d+_1f_", "", method))
     ds = DATASET
     sd = str(paths.subject_dir(ds, subj))                # subject dir = SHARED frozen bundle
     md = str(paths.arm_dir(ds, subj, method)); os.makedirs(md, exist_ok=True)   # per-method outputs
@@ -263,14 +269,14 @@ def main():
     pd = [float(disp_mag[z]) if (canonical_disp and content[:, :, z].any()) else None
           for z in range(SHAPE_XYZ[2])]
     render_gif(os.path.join(md, "gif_clean.gif"),
-               [("GT", gt), (f"{method}\n(no breath)", cines["clean"])], planes, T, vmax,
+               [("GT", gt), (f"{arm_label}\n(no breath)", cines["clean"])], planes, T, vmax,
                f"{subj} [{method}]  —  clean input (no breathing)   phase t={{t}}", plane_disp=pd)
     render_gif(os.path.join(md, "gif_breath.gif"),
-               [("GT", gt), (f"{method}\n(breathing)", cines["breath"])], planes, T, vmax,
+               [("GT", gt), (f"{arm_label}\n(breathing)", cines["breath"])], planes, T, vmax,
                f"{subj} [{method}]  —  breathing input (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
                plane_disp=pd)
     render_gif(os.path.join(md, "gif_combined.gif"),
-               [("GT", gt), (f"{method}\nno-breath", cines["clean"]), (f"{method}\nbreathing", cines["breath"])],
+               [("GT", gt), (f"{arm_label}\nno-breath", cines["clean"]), (f"{arm_label}\nbreathing", cines["breath"])],
                planes, T, vmax,
                f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
                plane_disp=pd)
