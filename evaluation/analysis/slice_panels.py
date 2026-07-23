@@ -32,7 +32,7 @@ cohorts resample native->canonical in `fetch`, so they cannot be read straight o
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
-  $PY evaluation/diagnostics/slice_panels.py                    # hub x 4 cohorts, rep subject
+  $PY evaluation/analysis/slice_panels.py                    # hub x 4 cohorts, rep subject
   $PY .../slice_panels.py --cohort acdc --subject patient042 --method vggt_20260719_1f_dino_ft_ep99
 """
 import argparse
@@ -54,7 +54,7 @@ sys.path.insert(0, str(paths.EVAL_ROOT / "engine"))                            #
 import run_vggt as R                                                            # noqa: E402
 from inference.adapters.base import D_CANON, MM_PER_NORM                        # noqa: E402
 
-OUT_DEFAULT = str(paths.EVAL_ROOT / "diagnostics" / "out" / "slice_panels")
+OUT_DEFAULT = str(paths.EVAL_ROOT / "analysis" / "out" / "slice_panels")
 HUB = "vggt_20260719_1f_gather05_ep99"
 COHORTS = list(paths.DATASETS)
 FOV_GATE = 0.05                                    # matches run_vggt.resp_diag's `imgs > 0.05`

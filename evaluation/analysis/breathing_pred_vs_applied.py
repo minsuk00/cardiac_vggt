@@ -10,9 +10,9 @@ reports how well the model recovers breathing:
                                                     EPE=mean|pred-applied|) — the honest cohort number
   - a pooled scatter PNG (applied vs predicted Δz, y=x + fit line).
 
-Pure disk read (no GPU/model). Writes JSON + PNG under diagnostics/out/<ds>/ (regenerable).
+Pure disk read (no GPU/model). Writes JSON + PNG under analysis/out/<ds>/ (regenerable).
 
-Run: python evaluation/diagnostics/breathing_pred_vs_applied.py --dataset cmrxrecon --arm vggt_20260719_1f_gather05_ep99
+Run: python evaluation/analysis/breathing_pred_vs_applied.py --dataset cmrxrecon --arm vggt_20260719_1f_gather05_ep99
 """
 import argparse
 import json
@@ -49,7 +49,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--arm", required=True)
-    ap.add_argument("--out", default=None, help="JSON path (PNG alongside); default diagnostics/out/<ds>/<arm>_breathing.json")
+    ap.add_argument("--out", default=None, help="JSON path (PNG alongside); default analysis/out/<ds>/<arm>_breathing.json")
     args = ap.parse_args()
     ds, arm = args.dataset, args.arm
 
@@ -75,7 +75,7 @@ def main():
         "pooled": {"slope": p_slope, "corr": p_corr, "epe_mm": p_epe},
         "per_subject": rows,
     }
-    out = Path(args.out) if args.out else paths.EVAL_ROOT / "diagnostics" / "out" / ds / f"{arm}_breathing.json"
+    out = Path(args.out) if args.out else paths.EVAL_ROOT / "analysis" / "out" / ds / f"{arm}_breathing.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2))
 

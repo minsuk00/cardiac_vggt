@@ -20,7 +20,7 @@ evaluation/
 ├── _copy_ckpts.sh      # one-shot helper: copy the "final" ckpts into checkpoints/
 ├── engine/             # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor,
 │                       #   assemble_and_gif, aggregate, build_inputs/<ds>.py + geom.py)
-├── diagnostics/        # the standing every-eval diagnostics (breathing, slice panels, EF/Dice)
+├── analysis/        # the standing every-eval analyses (breathing, slice panels, EF/Dice)
 ├── results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
 │
 ├── volumes/     -> GPFS (subject-major data; gitignored)
@@ -44,11 +44,11 @@ Real-time free-breathing (RTFB) inference is **out of scope for now** and stays 
 ## What lives here vs elsewhere (the curation rule)
 
 - **`evaluation/` holds only scripts run on *every* eval** — the core harness (build_inputs,
-  run_*, assemble_and_gif, aggregate) and the standing diagnostics. Everything here must be
+  run_*, assemble_and_gif, aggregate) and the standing analysis. Everything here must be
   **simple and 100% correct**; it is not a scratchpad.
 - **One-off / report-specific / exploratory scripts stay in `tools/`.** Do not migrate a
   script into `evaluation/` unless it is re-run on every eval.
-- **`diagnostics/` is human-curated.** Do not add a script here on your own initiative —
+- **`analysis/` is human-curated.** Do not add a script here on your own initiative —
   write it to `tools/` and ask.
 - **Relationship to sibling dirs:** `inference/` = the shared library (model loading +
   dataset adapters; the harness imports it). `baselines/` = classical-method
@@ -97,8 +97,8 @@ matches a raw glob of the real tree, across all four datasets.
 ## Running the harness
 
 Pipeline per dataset: build the frozen bundle once → reconstruct each method → score →
-aggregate → diagnostics. The **read/scoring** side (`run_vggt`, `assemble_and_gif`,
-`aggregate`, diagnostics) resolves every path through `paths.py`; the bundle **builders**
+aggregate → analysis. The **read/scoring** side (`run_vggt`, `assemble_and_gif`,
+`aggregate`, analysis) resolves every path through `paths.py`; the bundle **builders**
 and the classical-baseline shells write to the same location via their own `OUT_ROOT`/`SD`
 (verbatim snapshots — see "What lives here").
 
@@ -116,12 +116,12 @@ EVAL_DATASET=<ds> python evaluation/engine/assemble_and_gif.py <subj> <arm>
 python evaluation/engine/aggregate.py <ds> <arm>
 ```
 
-Standing diagnostics (write to the gitignored `diagnostics/out/`):
+Standing analysis (write to the gitignored `analysis/out/`):
 
 ```bash
-python evaluation/diagnostics/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
-python evaluation/diagnostics/slice_panels.py --cohort <ds> --method <arm> --arm breath
-python evaluation/diagnostics/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
+python evaluation/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
+python evaluation/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
+python evaluation/analysis/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
 #   then nnUNet_predict (nnunet env) -> ef_dice.py score <seg_dir> --input <dir> --out <json>
 ```
 
@@ -141,7 +141,7 @@ Cohort numbers live in git at `results/<dataset>/<arm>.json`; per-arm provenance
 - **New dataset/cohort** — the sore spot: each dataset needs its own prep + adapter, so expect
   to touch **`paths.DATASETS`**, `run_vggt.py` (`--dataset` choices + a `prep_<ds>` in
   `prep_by_ds`), `engine/build_inputs/<ds>.py`, `inference/adapters/<ds>.py`, and the
-  `diagnostics/` per-dataset dispatches (`slice_panels.PREP`, `ef_dice --cohorts`). Start from
+  `analysis/` per-dataset dispatches (`slice_panels.PREP`, `ef_dice --cohorts`). Start from
   `paths.DATASETS` and grep the codebase for the current members.
 
 **contz naming (historical):** existing OOD contz arms are stored *doubled*
