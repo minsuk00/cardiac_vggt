@@ -52,6 +52,7 @@ def main():
         rows.append({
             "subject": s, "group": group_of(s),
             "clean_psnr": d["clean_psnr_mean"], "clean_ssim": d["clean_ssim_mean"],
+            "clean_ncc": d.get("clean_ncc_mean"), "breath_ncc": d.get("breath_ncc_mean"),
             "breath_psnr": d["breath_psnr_mean"], "breath_ssim": d["breath_ssim_mean"],
             "cost_psnr": d["clean_psnr_mean"] - d["breath_psnr_mean"],
             "breath_disp_mm": d["breath_mean_disp_mm"],
@@ -94,15 +95,16 @@ def main():
         if not subset:
             return None
         cp = stat([r["clean_psnr"] for r in subset]); cs = stat([r["clean_ssim"] for r in subset])
+        cn = stat([r["clean_ncc"] for r in subset]); bn = stat([r["breath_ncc"] for r in subset])
         bp = stat([r["breath_psnr"] for r in subset]); bs = stat([r["breath_ssim"] for r in subset])
         ct = stat([r["cost_psnr"] for r in subset]); dz = stat([r["breath_disp_mm"] for r in subset])
         print(f"\n[{label}]  n={cp[2]}")
-        print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}")
-        print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}")
+        print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}   NCC {cn[0]:.3f} +- {cn[1]:.3f}")
+        print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}   NCC {bn[0]:.3f} +- {bn[1]:.3f}")
         print(f"  breathing cost (clean-breath): {ct[0]:.2f} +- {ct[1]:.2f} dB   |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm")
         return {"n": cp[2],
-                "clean_psnr": cp[:2], "clean_ssim": cs[:2],
-                "breath_psnr": bp[:2], "breath_ssim": bs[:2],
+                "clean_psnr": cp[:2], "clean_ssim": cs[:2], "clean_ncc": cn[:2],
+                "breath_psnr": bp[:2], "breath_ssim": bs[:2], "breath_ncc": bn[:2],
                 "cost_psnr": ct[:2], "breath_disp_mm": dz[:2]}
 
     summary = {"dataset": dataset, "method": method, "n": len(rows),
