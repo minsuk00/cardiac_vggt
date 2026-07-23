@@ -23,7 +23,7 @@
 # to [0,1] at load time (per-method rule, assemble_and_gif.py).
 #
 # Usage: [EVAL_DATASET=cmrxrecon|miitt] [MASK_FILE=...] [T=] [THICK=] [J=] \
-#          bash scratch/eval/engine/run_nesvor.sh <subject> <clean|breath> [res_mm]
+#          bash evaluation/engine/run_nesvor.sh <subject> <clean|breath> [res_mm]
 set -uo pipefail
 VGGT=/home/minsukc/vggt
 module load singularity 2>/dev/null || true

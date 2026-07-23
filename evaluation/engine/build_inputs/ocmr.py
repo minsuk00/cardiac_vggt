@@ -25,7 +25,7 @@ Writes under scratch/eval/ocmr/out/<exam>__<subj>/ :
   heart_seg_native.nii.gz   native per-phase seg (for later EF/Dice)
   manifest.json             T, native shape, per-native-slice disp, bbox, scale, native_source
 
-Run: micromamba run -n svr python scratch/eval/ocmr/build_inputs.py <exam>/<subj>
+Run: micromamba run -n svr python evaluation/engine/build_inputs/ocmr.py <exam>/<subj>
      e.g. ... exam_fs_0074/sax__fs_0074_1_5T   (default: all discovered SAX gated subjects)
 """
 import glob
@@ -42,7 +42,7 @@ from omegaconf import OmegaConf
 VGGT = "/home/minsukc/vggt"
 sys.path.insert(0, VGGT)
 sys.path.insert(0, os.path.join(VGGT, "training"))
-sys.path.insert(0, os.path.join(VGGT, "scratch", "eval", "miitt"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # local geom.py (copied into git)
 
 from inference.adapters.ocmr import OCMRAdapter  # noqa: E402
 from inference.adapters.base import percentile_scale  # noqa: E402

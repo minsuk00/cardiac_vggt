@@ -1,6 +1,6 @@
 """Aggregate per-subject metrics.json across a dataset into a cohort summary.
 
-Reads  scratch/eval/<dataset>/out/<subject>/<method>/metrics.json  (produced by
+Reads  volumes/<dataset>/out/<subject>/<method>/metrics.json  (produced by
 assemble_and_gif.py) and reports cohort clean/breath PSNR/SSIM + breathing-cost
 (clean - breath) mean+-std, plus a volunteer-vs-patient split (subjects whose
 name contains 'Patient' are pathology; everything else is treated as volunteer/

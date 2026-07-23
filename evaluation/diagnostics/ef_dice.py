@@ -11,9 +11,9 @@ Two steps around one nnU-Net call:
   score <seg_dir>    : read Task114 segs -> per-subject EF(clean/breath/gt) + Dice; aggregate per cohort.
 
 Usage (see sbatch/ef_dice_ood.sh for the full chain):
-  python tools/ef_dice_1frame.py dump  <input_dir> --method <m> --cohorts miitt ocmr acdc
+  python evaluation/diagnostics/ef_dice.py dump  <input_dir> --method <m> --cohorts miitt ocmr acdc
   # nnUNet_predict -t 114 -m 2d -tr nnUNetTrainerV2_MMS -i <input_dir> -o <seg_dir>   (nnunet env)
-  python tools/ef_dice_1frame.py score <seg_dir> --input <input_dir> --out <ef.json>
+  python evaluation/diagnostics/ef_dice.py score <seg_dir> --input <input_dir> --out <ef.json>
 """
 import argparse, glob, json, os, shutil, sys
 import numpy as np

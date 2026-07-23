@@ -28,9 +28,9 @@ provenance.txt, metadata.json (model card), ed_dvf.npz (ED Δ field, the VGGT an
 
 Run:
   EVAL_DATASET=cmrxrecon micromamba run -n svr env PYTHONPATH=training:. python \
-      scratch/eval/engine/run_vggt.py --dataset cmrxrecon --model-name gather05 --regime onef
+      evaluation/engine/run_vggt.py --dataset cmrxrecon --model-name gather05 --regime onef
   EVAL_DATASET=miitt micromamba run -n svr env PYTHONPATH=training:. python \
-      scratch/eval/engine/run_vggt.py --dataset miitt --model-name gather05 --regime onef [--continuous-z]
+      evaluation/engine/run_vggt.py --dataset miitt --model-name gather05 --regime onef [--continuous-z]
 """
 import argparse
 import glob
@@ -332,14 +332,15 @@ def write_provenance(path, args, ckpt, method, model_load_s):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", required=True, choices=["cmrxrecon", "miitt", "ocmr", "acdc"])
+    ap.add_argument("--dataset", required=True, choices=list(paths.DATASETS))
     ap.add_argument("--ckpt", default=(DEFAULT_CKPT[0] if DEFAULT_CKPT else None))
     ap.add_argument("--model-name", default="gather05")
     ap.add_argument("--date", default=None, help="legacy: include date in the arm name "
                     "(vggt_<date>_<model>); omit for the slug form vggt_<model> (scheme/date -> MODELS.md)")
     ap.add_argument("--regime", choices=["onef", "multiframe"], default="onef")
     ap.add_argument("--frames-per-slice", type=int, default=5, help="multiframe only")
-    ap.add_argument("--continuous-z", action="store_true", help="MIITT: fractional z (no 12mm snap)")
+    ap.add_argument("--continuous-z", action="store_true",
+                    help="OOD (miitt/ocmr/acdc): fractional physical z, no 12mm snap; no-op on cmrxrecon")
     ap.add_argument("--refiner", action="store_true")
     ap.add_argument("--stage-tmp", action="store_true",
                     help="copy ckpt to node-local /tmp + strip to weights-only for fast loads "

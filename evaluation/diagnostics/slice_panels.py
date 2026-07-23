@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""fig_slice_panels.py — per-z-plane cardiac-cycle + Δz panels for the frozen eval bundles.
+"""slice_panels.py — per-z-plane cardiac-cycle + Δz panels for the frozen eval bundles.
 
 Replaces the "mid-ventricular slice only" figures, which showed almost nothing: the mid plane IS
 the reference plane, so it is the one slice the model is handed at the queried phase.
@@ -32,8 +32,8 @@ cohorts resample native->canonical in `fetch`, so they cannot be read straight o
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
-  $PY scratch/eval/engine/analysis/fig_slice_panels.py                    # hub x 4 cohorts, rep subject
-  $PY .../fig_slice_panels.py --cohort acdc --subject patient042 --method vggt_20260719_1f_dino_ft_ep99
+  $PY evaluation/diagnostics/slice_panels.py                    # hub x 4 cohorts, rep subject
+  $PY .../slice_panels.py --cohort acdc --subject patient042 --method vggt_20260719_1f_dino_ft_ep99
 """
 import argparse
 import glob

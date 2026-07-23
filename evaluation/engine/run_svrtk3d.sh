@@ -7,7 +7,7 @@
 # tmp-file-exchange/, output-metric-*.txt) into its CWD, so parallel phases MUST each run in
 # their OWN working dir or they clobber each other (seen: all died at iteration 0).
 #
-# Usage: [EVAL_DATASET=cmrxrecon|miitt] [MASK_FILE=...] [T=] [THICK=] bash scratch/eval/engine/run_svrtk3d.sh <subject> <clean|breath> [res_mm] [iters]
+# Usage: [EVAL_DATASET=cmrxrecon|miitt] [MASK_FILE=...] [T=] [THICK=] bash evaluation/engine/run_svrtk3d.sh <subject> <clean|breath> [res_mm] [iters]
 set -uo pipefail
 VGGT=/home/minsukc/vggt
 export PATH="$VGGT/baselines/fetal_cmr_4d/bin:$PATH"

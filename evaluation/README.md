@@ -13,11 +13,13 @@ symlinked out — with **one deliberate divergence**: the data under `volumes/` 
 
 ```
 evaluation/
-├── paths.py            # the ONE source of truth for every path + arm-name convention
+├── paths.py            # source of truth for paths + arm-name conventions on the READ side
 ├── check_paths.py      # read-only self-check: paths.py resolves the real tree
-├── MODELS.md           # provenance: one row per arm -> ckpt / config / scheme / wandb
+├── build_models_table.py  # harvest metadata.json -> MODELS.md + models.json
+├── MODELS.md  models.json # provenance: one row per arm -> ckpt / config / scheme / wandb
+├── _copy_ckpts.sh      # one-shot helper: copy the "final" ckpts into checkpoints/
 ├── engine/             # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor,
-│                       #   assemble_and_gif, aggregate, per-dataset build_inputs)
+│                       #   assemble_and_gif, aggregate, build_inputs/<ds>.py + geom.py)
 ├── diagnostics/        # the standing every-eval diagnostics (breathing, slice panels, EF/Dice)
 ├── results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
 │
@@ -95,15 +97,20 @@ matches a raw glob of the real tree, across all four datasets.
 ## Running the harness
 
 Pipeline per dataset: build the frozen bundle once → reconstruct each method → score →
-aggregate → diagnostics. Everything reads/writes through `paths.py`.
+aggregate → diagnostics. The **read/scoring** side (`run_vggt`, `assemble_and_gif`,
+`aggregate`, diagnostics) resolves every path through `paths.py`; the bundle **builders**
+and the classical-baseline shells write to the same location via their own `OUT_ROOT`/`SD`
+(verbatim snapshots — see "What lives here").
 
 ```bash
 # 1. build the frozen breathing bundle (once per dataset)
 python evaluation/engine/build_inputs/<dataset>.py ...
 # 2. reconstruct — VGGT [GPU], or a classical baseline
 python evaluation/engine/run_vggt.py --dataset <ds> --ckpt <pt> --model-name <slug>
-EVAL_DATASET=<ds> bash evaluation/engine/run_svrtk3d.sh <subj> <arm>
-# 3. score per subject -> <subj>/<arm>/metrics.json (+ gifs)
+#    baseline shells take (subject, variant); the arm/method is the METHOD env var, ONE call per variant:
+EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/engine/run_svrtk3d.sh <subj> clean
+EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/engine/run_svrtk3d.sh <subj> breath
+# 3. score per subject -> <subj>/<arm>/metrics.json (+ gifs)   [<arm> = method dir name]
 EVAL_DATASET=<ds> python evaluation/engine/assemble_and_gif.py <subj> <arm>
 # 4. cohort summary -> results/<ds>/<arm>.json  (git-tracked, citable)
 python evaluation/engine/aggregate.py <ds> <arm>
@@ -119,6 +126,29 @@ python evaluation/diagnostics/ef_dice.py dump <dir> --method <arm> --cohorts <ds
 ```
 
 Cohort numbers live in git at `results/<dataset>/<arm>.json`; per-arm provenance in `MODELS.md`.
+
+## Extending
+
+- **New VGGT arm (any input scheme)** — near one row: `run_vggt.py --model-name <slug>`
+  (+ `--regime multiframe --frames-per-slice N` / `--continuous-z` as needed), then a
+  `MODELS.md` row (regenerate with `build_models_table.py`). `canonical_arm` builds the name;
+  scheme/epoch/date live in the registry, not the name. *Caveat:* `slice_panels.py` only
+  reproduces `regime='onef'` slot ordering and raises on a multiframe dir — a multiframe arm
+  needs new diagnostic code, not just a row.
+- **New baseline method** — write `engine/run_<method>.sh` (mirror the `(subject, variant)` +
+  `METHOD=` shell contract), score/aggregate are arm-name-agnostic. If its output isn't on the
+  GT `[0,1]` scale, add it to `SELF_NORM_METHODS` / `PURE_SCALE_METHODS` in `assemble_and_gif.py`.
+- **New dataset/cohort** — the sore spot: each dataset needs its own prep + adapter, so expect
+  to touch **`paths.DATASETS`**, `run_vggt.py` (`--dataset` choices + a `prep_<ds>` in
+  `prep_by_ds`), `engine/build_inputs/<ds>.py`, `inference/adapters/<ds>.py`, and the
+  `diagnostics/` per-dataset dispatches (`slice_panels.PREP`, `ef_dice --cohorts`). Start from
+  `paths.DATASETS` and grep the codebase for the current members.
+
+**contz naming (historical):** existing OOD contz arms are stored *doubled*
+(`vggt_..._contz_contz`) because an old `run_vggt` appended `_contz` twice. `canonical_arm`
+fixes this for **new** runs (single `_contz`), but readers of the **legacy** dirs must try both
+suffixes — `slice_panels.method_dir`, `ef_dice.method_dir`, and `slice_panels.rep_subject` all
+do. New runs are single; don't rename the old doubled dirs.
 
 ## Why subject-major (the one divergence from MRI2CT)
 

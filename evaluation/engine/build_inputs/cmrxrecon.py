@@ -5,7 +5,7 @@ Everything downstream (SVRTK recon, scoring, GIF) reads these frozen files. The 
 is the trainer's OWN sim (training/data/respiratory.py), deterministic per subject via a
 stable name-hash seed (not the positional seq_index -> robust to split reordering).
 
-Run: micromamba run -n svr python scratch/eval/cmrxrecon/build_inputs.py [subject_idx]
+Run: micromamba run -n svr python evaluation/engine/build_inputs/cmrxrecon.py [subject_idx]
 """
 import hashlib
 import json

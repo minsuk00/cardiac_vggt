@@ -101,8 +101,10 @@ def main():
     print(f"   pooled : slope {p_slope:.3f}  corr {p_corr:.3f}  EPE {p_epe:.3f} mm"
           f"  (n_subj={len(rows)}, n_slots={len(pooled_app)})")
     psm = summary["per_subject_mean"]
-    print(f"   per-subj mean: slope {psm['slope']['mean']:.3f}  corr {psm['corr']['mean']:.3f}  "
-          f"EPE {psm['epe']['mean']:.3f} mm")
+    def f3(v):                                        # a degenerate cohort can leave a mean None
+        return "n/a" if v is None else f"{v:.3f}"
+    print(f"   per-subj mean: slope {f3(psm['slope']['mean'])}  corr {f3(psm['corr']['mean'])}  "
+          f"EPE {f3(psm['epe']['mean'])} mm")
 
 
 if __name__ == "__main__":

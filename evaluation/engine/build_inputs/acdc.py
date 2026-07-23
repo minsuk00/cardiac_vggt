@@ -18,7 +18,7 @@ Writes under scratch/eval/acdc/out/patientXXX/ : same layout as ocmr/miitt
   (gt/, clean/, breath/, mask_heart.nii.gz, mask_fov.nii.gz, heart_seg_native.nii.gz, manifest.json).
 manifest adds: group (pathology class), ED/ES (1-based Info.cfg indices), native_source (4d path).
 
-Run: micromamba run -n svr python scratch/eval/acdc/build_inputs.py patient001 [patient002 ...]
+Run: micromamba run -n svr python evaluation/engine/build_inputs/acdc.py patient001 [patient002 ...]
      (default: all training patients)
 """
 import glob
@@ -36,7 +36,7 @@ from omegaconf import OmegaConf
 VGGT = "/home/minsukc/vggt"
 sys.path.insert(0, VGGT)
 sys.path.insert(0, os.path.join(VGGT, "training"))
-sys.path.insert(0, os.path.join(VGGT, "scratch", "eval", "miitt"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # local geom.py (copied into git)
 
 from inference.adapters.acdc import ACDCGatedAdapter  # noqa: E402
 from inference.adapters.base import percentile_scale  # noqa: E402
