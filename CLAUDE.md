@@ -146,7 +146,12 @@ Tools:
 - `tools/test_sequential_sampling.py` — diagonal `(t=k+offset, z=k)` for one subject; PNGs to `result/`.
 - `baselines/eval_all_baselines.py`, `baselines/eval_within_body_mask.py` — PSNR sweeps over the val set (identity-Δ floor, etc.).
 
-**Evaluation & SVR baselines** (external datasets / occasional runs — not the training loop): the inference/eval harness lives in `inference/` (`run_cmrxrecon.py` in-distribution EF/Dice, `run_rtfb.py` real-time free-breathing inference, `adapters/`, `seg_metrics_cmrxrecon.py`); classical SVR baselines (NiftyMIC / NeSVoR / fetal_cmr_4d) live in `baselines/`. Rationale, protocol, results: `docs/24` + `docs/29–35` (index in `docs/README.md`).
+**Where new scripts go** (sort by *reuse potential*, not temp-vs-permanent):
+- **Throwaway** one-off probe / sanity-check you won't rerun → scratchpad dir, NOT the repo.
+- **Might reuse, or an experiment script backing a `docs/` finding** → `tools/` (git-tracked; several `tools/exp_*`/`toy_*` are cited by docs as repro provenance).
+- **`evaluation/` is OFF-LIMITS for auto-adding** — it holds only standing eval code we always run. **NEVER add anything to `evaluation/` on your own initiative; the user decides what goes there.** Write to `tools/` and ask.
+
+**Evaluation & SVR baselines** (external datasets / occasional runs — not the training loop): the inference/eval harness lives in `inference/` (`run_cmrxrecon.py` in-distribution EF/Dice, `run_rtfb.py` real-time free-breathing inference, `adapters/`, `seg_metrics_cmrxrecon.py`); classical SVR baselines (NiftyMIC / NeSVoR / fetal_cmr_4d) live in `baselines/`. Rationale, protocol, results: `docs/24` + `docs/29–35` (index in `docs/README.md`). The frozen breathing-simulated baseline harness is now git-tracked in **`evaluation/`** (`evaluation/README.md`; the heavy data stays on gitignored GPFS via `evaluation/volumes` → `scratch/eval`). Standing analysis/figure scripts live in `evaluation/analysis/` — but per the off-limits rule above, **never add to `evaluation/` on your own initiative; write to `tools/` and ask.**
 
 ## Logging (wandb, project `vggt-mri`)
 

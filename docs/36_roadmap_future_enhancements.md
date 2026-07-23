@@ -7,7 +7,7 @@
 
 Notes for follow-up work. None of these are in the current pipeline.
 
-- **Realistic real-time acquisition simulation (headline direction).** Current "simulation" = scattered single-frame sampling + in-plane aug on clean gated cine. Real transfer needs the physics real-time acquisition imposes: bSSFP transient/contrast, single-shot undersampling artifacts, respiratory + through-plane motion. `SPINER/` + `lixuan_simulation/` (untracked) are starting points.
+- **Realistic real-time acquisition simulation (headline direction).** Current "simulation" = scattered single-frame sampling + in-plane aug on clean gated cine. Real transfer needs the physics real-time acquisition imposes: bSSFP transient/contrast, single-shot undersampling artifacts, respiratory + through-plane motion. `~/SPINER/` (moved out of the repo) is a starting point (the earlier `lixuan_simulation/` ESPIRiT recon has since been removed from GPFS).
 
   - **Respiratory motion simulation** — research + design scoped in `docs/01_respiratory_motion_simulation.md` (literature-validated; not implemented). Gist: per-slice respiratory phase sampled independently of cardiac phase (XCAT two-clocks); rigid SI translation ~10–15 mm along canonical Z + deform-then-reslice the cached `phases` bundle. See the doc for numbers, sources, the correct-vs-condition fork, and reference code (NeSVoR/SVRTK). **MRXCAT/XCAT was evaluated and dropped** (doc §6): MRXCAT only renders MR physics, the motion engine is XCAT's (closed binary; XCAT 3.0's public release is segmentation-only), so there's no portable sim code — we reimplement the simple rigid 6-DOF model ourselves on real cine (path A). The inspection did independently confirm our model + give reference amplitudes.
 
