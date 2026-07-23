@@ -17,10 +17,10 @@ evaluation/
 ├── check_paths.py      # read-only self-check: paths.py resolves the real tree
 ├── build_models_table.py  # harvest metadata.json -> MODELS.md + models.json
 ├── MODELS.md  models.json # provenance: one row per arm -> ckpt / config / scheme / wandb
-├── _copy_ckpts.sh      # one-shot helper: copy the "final" ckpts into checkpoints/
-├── engine/             # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor,
+├── engine/             # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor, run_seg,
 │                       #   assemble_and_gif, aggregate, build_inputs/<ds>.py + geom.py)
-├── analysis/        # the standing every-eval analyses (breathing, slice panels, EF/Dice)
+├── analysis/        # the standing every-eval analyses (breathing, slice panels, EF/Dice,
+│                    #   compare_methods = multi-arm GIF, compare_table = cross-arm ranking)
 ├── results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
 │
 ├── volumes/     -> GPFS (subject-major data; gitignored)
@@ -122,7 +122,18 @@ Standing analysis (write to the gitignored `analysis/out/`):
 python evaluation/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
 python evaluation/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
 python evaluation/analysis/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
-#   then nnUNet_predict (nnunet env) -> ef_dice.py score <seg_dir> --input <dir> --out <json>
+bash   evaluation/engine/run_seg.sh   <dir> <seg_dir>          # nnU-Net Task114 2d (nnunet env, wrapped)
+python evaluation/analysis/ef_dice.py score <seg_dir> --input <dir> --out <ef.json>
+python evaluation/analysis/ef_dice.py plot  <ef.json> --out <ef.png>    # EF scatter + Dice bars
+```
+
+Cross-method comparison (any mix of arms — classical baselines + vggt — one subject / cohort):
+
+```bash
+# multi-arm cardiac-cycle GIF: GT row + one recon row per arm, same subject (auto-picked if omitted)
+python evaluation/analysis/compare_methods.py --cohort <ds> --subject <s> --arms svrtk3d nesvor vggt_<slug> --variant breath
+# rank every arm of a dataset by a metric, straight from results/<ds>/*.json
+python evaluation/analysis/compare_table.py <ds> --metric breath_psnr [--arms svrtk3d nesvor vggt_<slug> ...]
 ```
 
 Cohort numbers live in git at `results/<dataset>/<arm>.json`; per-arm provenance in `MODELS.md`.
