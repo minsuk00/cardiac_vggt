@@ -305,11 +305,73 @@ def stage_ckpt_to_tmp(ckpt):
     return wo
 
 
+def _ckpt_fingerprint(ckpt):
+    """Cheap identity for the checkpoint without hashing GBs off GPFS: (size:mtime)."""
+    try:
+        st = os.stat(ckpt)
+        return f"{st.st_size}:{int(st.st_mtime)}"
+    except OSError:
+        return None
+
+
+def _run_identity(args):
+    """The fields that make two runs the SAME model/config. A mismatch under one arm name means a
+    different run would clobber the existing recons."""
+    return {"ckpt": args.ckpt, "ckpt_fingerprint": _ckpt_fingerprint(args.ckpt),
+            "regime": args.regime, "z_mode": "continuous" if args.continuous_z else "snapped"}
+
+
+def _same_ckpt(prev, ident):
+    """Same checkpoint? Prefer the content fingerprint (size:mtime) when BOTH sides have it — that
+    catches a same-PATH file retrained in place (fingerprint differs) and ignores abs-vs-rel path
+    spelling. Legacy metadata has no fingerprint -> fall back to realpath(path) so a pre-guard resume
+    with the real ckpt does NOT false-conflict."""
+    pf, cf = prev.get("ckpt_fingerprint"), ident.get("ckpt_fingerprint")
+    if pf and cf:
+        return pf == cf
+    return os.path.realpath(prev.get("ckpt") or "") == os.path.realpath(ident.get("ckpt") or "")
+
+
+def check_overwrite(ds, subjects, method, ident, overwrite):
+    """Refuse to write into an arm whose existing recons came from a DIFFERENT run (ckpt content/
+    regime/z_mode), unless --overwrite. Same identity = a legit resume/re-run; arms with no
+    metadata.json yet (fresh, or classical baselines) never conflict. A corrupt/unreadable
+    metadata.json is treated as no-conflict (warn, don't crash) so a killed prior run can't wedge the
+    guard. Fail fast BEFORE the ~1 min model load."""
+    conflicts = []
+    for subject in subjects:
+        mpath = str(paths.metadata(ds, subject, method))
+        if not os.path.exists(mpath):
+            continue
+        try:
+            with open(mpath) as fh:
+                prev = json.load(fh)
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"[run_vggt] WARNING: unreadable {mpath} ({e}); treating as fresh", flush=True)
+            continue
+        if not isinstance(prev, dict):   # valid JSON but not an object (null/list/scalar) -> don't .get-crash
+            print(f"[run_vggt] WARNING: {mpath} is not a JSON object; treating as fresh", flush=True)
+            continue
+        if (prev.get("regime") != ident["regime"] or prev.get("z_mode") != ident["z_mode"]
+                or not _same_ckpt(prev, ident)):
+            conflicts.append((subject, {k: prev.get(k) for k in ("ckpt", "regime", "z_mode")}))
+    if conflicts and not overwrite:
+        detail = "\n".join(f"    {s}: {p}" for s, p in conflicts[:5])
+        more = "" if len(conflicts) <= 5 else f"\n    ... +{len(conflicts) - 5} more"
+        sys.exit(
+            f"REFUSING to overwrite arm '{method}': {len(conflicts)} existing subject(s) came from a "
+            f"DIFFERENT run.\n  this run: {ident}\n  on disk:\n{detail}{more}\n"
+            f"  -> pass --overwrite to replace, or use a different --model-name.")
+    if conflicts:
+        print(f"[run_vggt] --overwrite: replacing {len(conflicts)} subject(s) of arm '{method}' "
+              f"from a different prior run", flush=True)
+
+
 def build_metadata(args, ckpt, method):
     exp = os.path.basename(os.path.dirname(os.path.dirname(ckpt)))
     return {
         "method": method, "model_name": args.model_name, "date": args.date,
-        "ckpt": ckpt, "exp_name": exp, "wandb_id": _wandb_id(ckpt),
+        "ckpt": ckpt, "ckpt_fingerprint": _ckpt_fingerprint(ckpt), "exp_name": exp, "wandb_id": _wandb_id(ckpt),
         "config": args.config, "regime": args.regime, "frames_per_slice": args.frames_per_slice,
         "z_mode": "continuous" if args.continuous_z else "snapped",
         "breathing_source": "frozen (eval bundle breath/ + manifest disp)",
@@ -334,7 +396,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True, choices=list(paths.DATASETS))
     ap.add_argument("--ckpt", default=(DEFAULT_CKPT[0] if DEFAULT_CKPT else None))
-    ap.add_argument("--model-name", default="gather05")
+    ap.add_argument("--model-name", required=True,
+                    help="arm slug; the output dir is vggt_<model-name>. REQUIRED (no default) so a "
+                         "stray run can't silently overwrite a named arm like gather05.")
     ap.add_argument("--date", default=None, help="legacy: include date in the arm name "
                     "(vggt_<date>_<model>); omit for the slug form vggt_<model> (scheme/date -> MODELS.md)")
     ap.add_argument("--regime", choices=["onef", "multiframe"], default="onef")
@@ -348,6 +412,9 @@ def main():
     ap.add_argument("--config", default="mri_volume_diffusion", help="for the model card")
     ap.add_argument("--note", default="")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all built subjects")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing an existing arm produced by a DIFFERENT run (ckpt/regime/"
+                         "z_mode); without it, run_vggt refuses to clobber a named arm.")
     args = ap.parse_args()
     assert args.ckpt, "no gather05 ckpt found; pass --ckpt"
 
@@ -360,6 +427,8 @@ def main():
     subjects = args.subjects or paths.subjects(ds)
     if not subjects:
         sys.exit(f"no built subjects under {root}/*/manifest.json")
+
+    check_overwrite(ds, subjects, method, _run_identity(args), args.overwrite)  # fail fast before model load
 
     load_ckpt = stage_ckpt_to_tmp(args.ckpt) if args.stage_tmp else args.ckpt  # metadata still uses args.ckpt
     device = torch.device("cuda")

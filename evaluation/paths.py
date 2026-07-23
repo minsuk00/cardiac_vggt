@@ -67,8 +67,13 @@ def arms(dataset, subject=None):
     subjects. Excludes the input-bundle dirs (gt/clean/breath)."""
     def _arms_in(subj):
         sd = subject_dir(dataset, subj)
+        if not sd.is_dir():
+            return set()
+        # A real method arm has recon_{clean,breath}; the positive filter excludes stray dirs
+        # (aborted runs, __pycache__, scratch) that would otherwise become phantom arms.
         return {d.name for d in sd.iterdir()
-                if d.is_dir() and d.name not in BUNDLE_DIRS} if sd.is_dir() else set()
+                if d.is_dir() and d.name not in BUNDLE_DIRS
+                and ((d / "recon_clean").is_dir() or (d / "recon_breath").is_dir())}
 
     if subject is not None:
         return sorted(_arms_in(subject))
@@ -108,7 +113,7 @@ def fov_mask(dataset, subject):
     for name in ("mask.nii.gz", "mask_fov.nii.gz"):
         if (sd / name).is_file():
             return sd / name
-    return sd / "mask.nii.gz"  # canonical fallback
+    raise FileNotFoundError(f"no FOV mask (mask.nii.gz / mask_fov.nii.gz) under {sd}")
 
 
 def heart_mask(dataset, subject):

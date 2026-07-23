@@ -85,6 +85,9 @@ def prep_recon(rec, method, roi):
     # else make np.percentile return NaN and silently poison this method's whole PSNR/SSIM/NCC mean.
     if method not in SELF_NORM_METHODS:
         return clip_sentinel(rec)
+    if not np.asarray(roi).any():           # empty ROI: no voxels to self-normalize against, and
+        return np.clip(rec, 0.0, 1.0)       # np.percentile would IndexError on the zero-size slice.
+    #                                         Scoring then NaNs on the empty mask (psnr/ssim/ncc guard it).
     vals = rec[:, roi] if rec.ndim == 4 else rec[roi]
     hi = np.percentile(vals, 99.9)
     if method in PURE_SCALE_METHODS:
@@ -212,9 +215,9 @@ def main():
         for t in range(T):
             pv.append(psnr(rec[t], gt[t], mask)); sv.append(ssim(rec[t], gt[t], mask)); nv.append(ncc(rec[t], gt[t], mask))
         metrics["per_phase"][var] = {"psnr": pv, "ssim": sv, "ncc": nv}
-        metrics[f"{var}_psnr_mean"] = float(np.mean(pv))
-        metrics[f"{var}_ssim_mean"] = float(np.mean(sv))
-        metrics[f"{var}_ncc_mean"] = float(np.nanmean(nv))
+        metrics[f"{var}_psnr_mean"] = float(np.nanmean(pv))   # nanmean for all three so a degenerate phase
+        metrics[f"{var}_ssim_mean"] = float(np.nanmean(sv))   # (constant/empty-ROI -> NaN) drops CONSISTENTLY
+        metrics[f"{var}_ncc_mean"] = float(np.nanmean(nv))    # across metrics (NCC could already be NaN)
         print(f"  {var}: PSNR {np.mean(pv):.2f} dB  SSIM {np.mean(sv):.3f}  NCC {np.nanmean(nv):.3f}")
 
     # save 4D cines (X,Y,Z,T): cine_gt is method-independent -> subject level (shared, written once);
@@ -224,6 +227,17 @@ def main():
     for k in ("clean", "breath"):
         nib.save(nib.Nifti1Image(np.moveaxis(cines[k], 0, -1), aff), os.path.join(md, f"cine_{k}.nii.gz"))
     metrics["method"] = method
+    # Provenance stamp: tie this metrics.json to the recon it scored so aggregate can catch stale or
+    # mixed-provenance arms. VGGT arms carry metadata.json (ckpt/regime/commit); classical baselines
+    # don't -> those fields stay None. recon_mtime = newest scored recon (staleness reference).
+    meta_path = str(paths.metadata(ds, subj, method))
+    arm_meta = json.load(open(meta_path)) if os.path.exists(meta_path) else {}
+    recon_files = [str(paths.recon(ds, subj, method, v, t)) for v in ("clean", "breath") for t in range(T)]
+    metrics["ckpt"] = arm_meta.get("ckpt")
+    metrics["ckpt_fingerprint"] = arm_meta.get("ckpt_fingerprint")   # content id (size:mtime) for aggregate's mix check
+    metrics["regime"] = arm_meta.get("regime")
+    metrics["git_commit"] = arm_meta.get("git_commit")
+    metrics["recon_mtime"] = max((os.path.getmtime(f) for f in recon_files if os.path.exists(f)), default=0.0)
     json.dump(metrics, open(os.path.join(md, "metrics.json"), "w"), indent=2)
 
     # Shared display window across all rows (GT + both recons), computed ONCE over all phases so it
@@ -242,8 +256,12 @@ def main():
     _in = mask[None].repeat(T, axis=0)
     vmax = float(np.percentile(np.concatenate([gt[_in], cines["clean"][_in], cines["breath"][_in]]), 99.9))
     breath_tag = f"breathing |disp| mean {breath_mean_mm:.1f} / max {breath_max_mm:.1f} mm"
-    # per-z applied |disp| (mm) under z-labels; None on padding planes (no anatomy -> label blank)
-    pd = [float(disp_mag[z]) if content[:, :, z].any() else None for z in range(SHAPE_XYZ[2])]
+    # per-z applied |disp| (mm) under z-labels — ONLY when disp is canonical-indexed (cmrx: len==12).
+    # For OOD (native-indexed, len 10/11/13) the native slice shown at canonical plane z != disp[z], so a
+    # per-plane number would MISLABEL; show None there (the title carries the cohort mean/max instead).
+    canonical_disp = len(disp_mag) == SHAPE_XYZ[2]
+    pd = [float(disp_mag[z]) if (canonical_disp and content[:, :, z].any()) else None
+          for z in range(SHAPE_XYZ[2])]
     render_gif(os.path.join(md, "gif_clean.gif"),
                [("GT", gt), (f"{method}\n(no breath)", cines["clean"])], planes, T, vmax,
                f"{subj} [{method}]  —  clean input (no breathing)   phase t={{t}}", plane_disp=pd)

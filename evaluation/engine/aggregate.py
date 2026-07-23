@@ -28,8 +28,13 @@ def group_of(name):
 
 
 def stat(xs):
+    """Mean/std/n over the VALID (non-NaN) values, so one unscorable subject (empty-ROI NaN) doesn't
+    poison the whole cohort number. n = count of valid values."""
     xs = np.asarray(xs, dtype=np.float64)
-    return float(xs.mean()), float(xs.std()), int(xs.size)
+    valid = xs[~np.isnan(xs)]
+    if valid.size == 0:
+        return float("nan"), float("nan"), 0
+    return float(valid.mean()), float(valid.std()), int(valid.size)
 
 
 def main():
@@ -50,7 +55,31 @@ def main():
             "breath_psnr": d["breath_psnr_mean"], "breath_ssim": d["breath_ssim_mean"],
             "cost_psnr": d["clean_psnr_mean"] - d["breath_psnr_mean"],
             "breath_disp_mm": d["breath_mean_disp_mm"],
+            # stamped by assemble_and_gif (None for pre-stamp metrics / baselines)
+            "ckpt": d.get("ckpt"), "ckpt_fingerprint": d.get("ckpt_fingerprint"),
         })
+
+    # Completeness + provenance checks (a partial or mixed-ckpt cohort must NOT summarize as if whole).
+    # Pick ONE keying mode for the whole cohort (not per-row): use fingerprints only if EVERY
+    # ckpt-bearing row has one, else key everything by realpath(path). Per-row keying would give a
+    # fingerprinted subject and a legacy path-only subject of the SAME ckpt two different keys -> a
+    # false mix warning. Fingerprint mode catches a same-path retrain; realpath mode ignores abs-vs-rel
+    # spelling. None (legacy / baseline) drops out either way. (Mirrors run_vggt._same_ckpt's rule.)
+    ckpt_rows = [r for r in rows if r.get("ckpt")]
+    use_fp = bool(ckpt_rows) and all(r.get("ckpt_fingerprint") for r in ckpt_rows)
+    def _ckpt_key(r):
+        if not r.get("ckpt"):
+            return None
+        return r["ckpt_fingerprint"] if use_fp else os.path.realpath(r["ckpt"])
+    expected = paths.subjects(dataset)
+    missing = sorted(set(expected) - {r["subject"] for r in rows})
+    ckpts = sorted({k for r in rows if (k := _ckpt_key(r))})
+    if missing:
+        print(f"  !! WARNING: {len(rows)}/{len(expected)} subjects scored; MISSING {len(missing)}: "
+              f"{', '.join(missing[:8])}{' ...' if len(missing) > 8 else ''}")
+    if len(ckpts) > 1:
+        print(f"  !! WARNING: arm '{method}' mixes {len(ckpts)} distinct checkpoints across subjects "
+              f"(re-run under a reused name?): {ckpts}")
 
     # per-subject table (sorted by group then subject)
     print(f"\n=== {dataset} / {method}  (n={len(rows)}) ===")
@@ -77,6 +106,7 @@ def main():
                 "cost_psnr": ct[:2], "breath_disp_mm": dz[:2]}
 
     summary = {"dataset": dataset, "method": method, "n": len(rows),
+               "n_expected": len(expected), "missing": missing, "ckpts": ckpts,
                "all": summarize(rows, "ALL")}
     for g in ("volunteer", "patient"):
         sub = [r for r in rows if r["group"] == g]

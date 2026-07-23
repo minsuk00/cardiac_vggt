@@ -24,7 +24,7 @@ def epoch_of(arm, meta):
     """Best-effort epoch from the arm name (…_ep99), model_name, ckpt path, or note.
     (The 20260715 arms carry the epoch only in the ckpt filename / note, not the arm name.)"""
     for s in (arm, meta.get("model_name", ""), meta.get("ckpt", ""), meta.get("note", "")):
-        m = re.search(r"ep(\d+)", s)
+        m = re.search(r"(?:^|[_-])ep(\d+)", s)   # anchored: don't match 'ep' inside step2/deep3/prep10
         if m:
             return int(m.group(1))
     return None
