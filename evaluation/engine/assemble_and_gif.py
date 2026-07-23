@@ -1,0 +1,263 @@
+"""Step 3/3 — resample a method's recons to the canonical grid, score vs GT, and render GT-vs-pred
+montage GIFs (all z-planes, animated over the cardiac cycle).
+
+Layout (see README "Directory layout"): <subject>/ holds the SHARED frozen bundle; each method writes
+under <subject>/<method>/. This reads recons from <subject>/<method>/recon_{clean,breath}/ and writes:
+  <subject>/cine_gt.nii.gz                        4D canonical GT (method-independent, shared, once)
+  <subject>/<method>/cine_{clean,breath}.nii.gz   this method's recons on the canonical grid
+  <subject>/<method>/metrics.json                 per-phase PSNR/SSIM (heart&FOV ROI), clean & breath
+  <subject>/<method>/gif_{clean,breath,combined}.gif
+
+Run: EVAL_DATASET=<ds> micromamba run -n svr python evaluation/engine/assemble_and_gif.py <subject> [method=svrtk3d]
+
+Paths/naming go through evaluation/paths.py (the single source of truth).
+"""
+import json
+import os
+import sys
+
+import numpy as np
+import nibabel as nib
+import nibabel.processing as nibproc
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import imageio.v2 as imageio
+
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import paths  # noqa: E402
+
+DATASET = os.environ.get("EVAL_DATASET", "cmrxrecon")
+SPACING_XYZ = (1.4, 1.4, 12.0)
+SHAPE_XYZ = (256, 256, 12)
+
+
+def canon_affine():
+    return np.diag([*SPACING_XYZ, 1.0])
+
+
+def load_canon(path):
+    """Load a NIfTI and resample onto the canonical (256,256,12) grid (X,Y,Z)."""
+    img = nib.load(path)
+    if tuple(img.shape[:3]) == SHAPE_XYZ and np.allclose(img.affine, canon_affine()):
+        return np.asarray(img.dataobj, dtype=np.float32)
+    out = nibproc.resample_from_to(img, (SHAPE_XYZ, canon_affine()), order=1, cval=0.0)
+    return np.asarray(out.dataobj, dtype=np.float32)
+
+
+def clip_sentinel(rec):
+    """SVRTK writes -1 for voxels outside the recon mask (real intensities are >=0, hard gap
+    at 0 — it's a flag, not intensity). Clip to 0 = treat as no-data/background. NO intensity
+    calibration: SVRTK reconstructs in the normalized [0,1] input space and preserves that
+    scale inside the mask, so a linear a*gt+b fit would absorb real reconstruction error and
+    inflate PSNR (doc 29 ⚠️ correction). Score as-is."""
+    return np.clip(rec, 0.0, None)
+
+
+# Methods whose output is NOT on the input [0,1] scale (measured, Train_P053): NeSVoR pins its
+# output to --output-intensity-mean=700 (arbitrary global gauge, k≈12000 vs GT); NiftyMIC adds a
+# +1.0 pedestal (c≈+1.0). Scale-preserving methods (SVRTK: k≈1.05, c≈-0.01) are NOT listed —
+# self-normalizing them LOSES ~1.9 dB of real reconstruction signal (29.85→27.93). This is a
+# per-method rule keyed on measured scale-preservation, NOT a blanket uniform rescale.
+SELF_NORM_METHODS = {"nesvor", "niftymic"}
+# Of the self-norm methods, those whose gauge is a PURE global SCALE (offset≈0) — measured on
+# Train_P053: NeSVoR pred≈2065·gt (offset/scale≈0.012). For these, subtracting the in-ROI p0.5 would
+# inject a small ARTIFICIAL offset (the heart floor is not the true zero) and *under*-score the recon
+# by ~0.3 dB (conservative but wrong-direction: it flatters our own method). Divide-only is the
+# GT-consistent map (a perfect pure-scale recon → GT exactly). Methods with a real additive pedestal
+# (NiftyMIC: c≈+1.0) are NOT here — they genuinely need the subtraction.
+PURE_SCALE_METHODS = {"nesvor"}
+
+
+def prep_recon(rec, method, roi):
+    """Bring a method's recon onto the GT [0,1] scale for scoring, per-method:
+      - scale-preserving (SVRTK): clip the -1 sentinel, score AS-IS.
+      - pure-scale gauge (NeSVoR): divide by the recon's OWN in-ROI p99.9, clamp[0,1] (NO subtract).
+      - offset+scale gauge (NiftyMIC): subtract in-ROI p0.5, divide by (p99.9-p0.5), clamp[0,1].
+    All self-referenced (recon's OWN percentiles, NO GT → no leak). One global scale over all phases
+    (keeps real phase-to-phase contrast, removes the arbitrary gauge). This is a GT-FREE APPROXIMATION
+    of GT's normalization (preprocess.py: 0.5/99.9 over the non-zero FOV + clamp[0,1]) — we use the
+    heart&FOV scoring ROI, not the full FOV, so it doesn't EXACTLY reproduce GT's affine, but the
+    residual is ~0.3 dB on our data (GT heart p0.5≈0.013≈0). For a scale-INVARIANT read that sidesteps
+    this entirely, use the ncc() metric (which needs no normalization)."""
+    rec = np.nan_to_num(rec, nan=0.0, posinf=0.0, neginf=0.0)  # harden: a NaN/Inf in the recon would
+    # else make np.percentile return NaN and silently poison this method's whole PSNR/SSIM/NCC mean.
+    if method not in SELF_NORM_METHODS:
+        return clip_sentinel(rec)
+    vals = rec[:, roi] if rec.ndim == 4 else rec[roi]
+    hi = np.percentile(vals, 99.9)
+    if method in PURE_SCALE_METHODS:
+        return np.clip(rec / max(hi, 1e-6), 0.0, 1.0)                # pure scale → divide only
+    lo = np.percentile(vals, 0.5)
+    return np.clip((rec - lo) / max(hi - lo, 1e-6), 0.0, 1.0)        # offset+scale → subtract then divide
+
+
+def psnr(a, b, m):
+    if not m.any():                       # empty ROI: b[m].max() would raise on a zero-size array
+        return float("nan")
+    mse = (((a - b) ** 2)[m]).mean()
+    peak = max(b[m].max(), 1e-6)
+    return float(10 * np.log10(peak ** 2 / max(mse, 1e-10)))
+
+
+def ssim(a, b, m):
+    a, b = a[m], b[m]
+    if a.size < 2:
+        return float("nan")
+    mu_a, mu_b, va, vb = a.mean(), b.mean(), a.var(), b.var()
+    cov = ((a - mu_a) * (b - mu_b)).mean()
+    L = max(a.max(), b.max()) - min(a.min(), b.min()) + 1e-9
+    c1, c2 = (0.01 * L) ** 2, (0.03 * L) ** 2
+    return float(((2 * mu_a * mu_b + c1) * (2 * cov + c2)) /
+                 ((mu_a ** 2 + mu_b ** 2 + c1) * (va + vb + c2)))
+
+
+def ncc(a, b, m):
+    """Normalized cross-correlation over the ROI — INVARIANT to affine intensity (a·x+b), so it needs
+    NO intensity normalization and is immune to prep_recon's self-norm scale/region choice. Standard SVR
+    metric (the NeSVoR paper reports NCC). Returns NaN for <2 voxels or a constant image."""
+    if not m.any() or m.sum() < 2:
+        return float("nan")
+    x, y = a[m], b[m]
+    sx, sy = x.std(), y.std()
+    if sx < 1e-8 or sy < 1e-8:
+        return float("nan")
+    return float(((x - x.mean()) * (y - y.mean())).mean() / (sx * sy))
+
+
+def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None):
+    """rows: list of (label, cine[T,X,Y,Z]); one animation frame per cardiac phase t,
+    each frame = len(rows) x len(planes) montage. plane_disp: optional per-z applied breathing
+    |disp| (mm), shown under each z-label so you can read the corruption per plane."""
+    nrow, ncol = len(rows), len(planes)
+    H = nrow * 1.15 + 0.8            # reserve a fixed strip at top for the title + z/disp labels
+    top = 1.0 - 0.68 / H            # so the title never overlaps the montage
+    frames = []
+    for t in range(T):
+        fig, axes = plt.subplots(nrow, ncol, figsize=(ncol * 1.15, H))
+        axes = np.atleast_2d(axes)
+        for ri, (label, cine) in enumerate(rows):
+            for ci, z in enumerate(planes):
+                ax = axes[ri, ci]
+                ax.imshow(cine[t, :, :, z].T, cmap="gray", vmin=0, vmax=vmax,
+                          origin="lower", interpolation="nearest")
+                ax.set_xticks([]); ax.set_yticks([])
+                if ri == 0:
+                    v = None if plane_disp is None else plane_disp[z]
+                    lbl = f"z{z}" if v is None else f"z{z}\n{v:.1f}mm"   # blank on padding planes
+                    ax.set_title(lbl, fontsize=6.5)
+                if ci == 0:
+                    ax.set_ylabel(label, fontsize=8)
+        fig.suptitle(titles.format(t=t), fontsize=9, y=0.985, va="top")
+        fig.subplots_adjust(left=0.06, right=0.99, top=top, bottom=0.01,
+                            wspace=0.03, hspace=0.06)
+        fig.canvas.draw()
+        buf = np.asarray(fig.canvas.buffer_rgba())   # mpl>=3.8: tostring_rgb removed
+        frames.append(buf[..., :3].copy())
+        plt.close(fig)
+    imageio.mimsave(out_path, frames, duration=1.0 / fps, loop=0)
+    print(f"  -> {out_path}")
+
+
+def main():
+    subj = sys.argv[1] if len(sys.argv) > 1 else "Train_P053"
+    method = sys.argv[2] if len(sys.argv) > 2 else "svrtk3d"
+    ds = DATASET
+    sd = str(paths.subject_dir(ds, subj))                # subject dir = SHARED frozen bundle
+    md = str(paths.arm_dir(ds, subj, method)); os.makedirs(md, exist_ok=True)   # per-method outputs
+    manifest = json.load(open(paths.manifest(ds, subj)))
+    T = manifest["T"]
+    # Scoring ROI = GT whole-heart seg (dilated +-1 plane) INTERSECT native-FOV mask. The dilation
+    # spills the ROI onto zero-padded edge planes with no acquired data; SVRTK (told to reconstruct
+    # inside -mask) hallucinates spurious content there, and scoring it vs zero-padding GT drags PSNR
+    # down artifactually (e.g. Train_P053 clean 20.2->27.5 dB once z0 is dropped). Intersecting with
+    # the native FOV drops those no-data planes -> honest metric + no edge-plane flicker in the GIF.
+    heart = load_canon(str(paths.heart_mask(ds, subj))) > 0.5   # (X,Y,Z) dilated whole-heart ROI
+    content = load_canon(str(paths.fov_mask(ds, subj))) > 0.5   # (X,Y,Z) native FOV (1=real data); fov_mask picks mask.nii.gz (cmrx) vs mask_fov.nii.gz (OOD)
+    mask = heart & content                                # SCORING ROI: drop no-data padding planes
+    planes = list(range(SHAPE_XYZ[2]))                    # DISPLAY: show ALL 12 planes z0-z11 (even empty)
+    print(f"{subj} [{method}]: T={T} display planes z0-z11  scoring ROI=heart&FOV  "
+          f"mask_voxels={int(mask.sum())} (heart-only {int(heart.sum())}, dropped {int(heart.sum()-mask.sum())})")
+
+    # Breathing magnitude actually applied to this subject (frozen in the manifest; identical across
+    # ALL baselines + the model, but different per subject). Per-plane displacement norm in mm.
+    disp = np.asarray(manifest["breath"]["disp_dhw_mm"], dtype=np.float64)   # (D,3): d_Z (through-plane), d_Y, d_X
+    disp_mag = np.linalg.norm(disp, axis=1)                                   # 3D VECTOR MAGNITUDE per plane (mm)
+    dz = np.abs(disp[:, 0])                                                    # through-plane component (reference)
+    # Report the vector MAGNITUDE: it's the quantity actually sampled (|SI+AP| = SI*sqrt(1+ap_ratio^2))
+    # and is TILT-INVARIANT -- the per-subject tilt is a rigid rotation, so it preserves |disp| and only
+    # redistributes it between through-plane dZ and in-plane. dZ alone varies with tilt, so magnitude is
+    # the consistent thing to log (dZ kept as a secondary field).
+    breath_mean_mm = float(disp_mag.mean()); breath_max_mm = float(disp_mag.max())
+    print(f"  breathing |disp|: mean {breath_mean_mm:.2f} mm  max {breath_max_mm:.2f} mm  "
+          f"(tilt-invariant; through-plane dZ mean {dz.mean():.2f} mm; frozen, same for all methods)")
+
+    gt = np.stack([load_canon(str(paths.bundle_stack(ds, subj, "gt", t))) for t in range(T)])
+    cines = {"gt": gt}
+    metrics = {"subject": subj, "planes": planes,
+               "breath_mean_disp_mm": breath_mean_mm, "breath_max_disp_mm": breath_max_mm,
+               "breath_mean_dz_mm": float(dz.mean()), "breath_max_dz_mm": float(dz.max()),
+               "breath_disp_per_plane_mm": disp_mag.tolist(), "per_phase": {}}
+    for var in ("clean", "breath"):
+        rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)))
+                        for t in range(T)])
+        rec = prep_recon(rec, method, mask)  # per-method: SVRTK as-is; nesvor/niftymic self-percentile [0,1]
+        rec = rec * content[None]            # DISPLAY: zero the recon in NO-DATA planes (content FOV empty:
+                                             # z0/z10/z11) — NeSVoR's 1.4mm-iso→12mm resample bleeds a blob
+                                             # into them (SVRTK's hard -mask doesn't). Scoring is UNAFFECTED
+                                             # (score mask ⊆ content, and GT is already 0 there).
+        cines[var] = rec
+        pv, sv, nv = [], [], []
+        for t in range(T):
+            pv.append(psnr(rec[t], gt[t], mask)); sv.append(ssim(rec[t], gt[t], mask)); nv.append(ncc(rec[t], gt[t], mask))
+        metrics["per_phase"][var] = {"psnr": pv, "ssim": sv, "ncc": nv}
+        metrics[f"{var}_psnr_mean"] = float(np.mean(pv))
+        metrics[f"{var}_ssim_mean"] = float(np.mean(sv))
+        metrics[f"{var}_ncc_mean"] = float(np.nanmean(nv))
+        print(f"  {var}: PSNR {np.mean(pv):.2f} dB  SSIM {np.mean(sv):.3f}  NCC {np.nanmean(nv):.3f}")
+
+    # save 4D cines (X,Y,Z,T): cine_gt is method-independent -> subject level (shared, written once);
+    # the recon cines -> the method dir.
+    aff = canon_affine()
+    nib.save(nib.Nifti1Image(np.moveaxis(cines["gt"], 0, -1), aff), os.path.join(sd, "cine_gt.nii.gz"))
+    for k in ("clean", "breath"):
+        nib.save(nib.Nifti1Image(np.moveaxis(cines[k], 0, -1), aff), os.path.join(md, f"cine_{k}.nii.gz"))
+    metrics["method"] = method
+    json.dump(metrics, open(os.path.join(md, "metrics.json"), "w"), indent=2)
+
+    # Shared display window across all rows (GT + both recons), computed ONCE over all phases so it
+    # never changes frame-to-frame. Use the 99.9th percentile over the UNION of GT+clean+breath in-ROI
+    # voxels: p99 let ~0.7-3.4% of breath voxels saturate to white and that fraction swung per phase
+    # (white-saturation flicker); p99.9 drops it to <=0.6% and near-constant. (A residual ~17% per-phase
+    # brightness variation remains -- that's SVR re-matching intensity independently per phase, genuine,
+    # not a windowing artifact.) Metric untouched.
+    # SKIP_GIF=1: metrics.json only, no GIF rendering. For cohort sweeps where only the numbers are
+    # wanted (rendering 3 GIFs x 43 subjects x 6 models dominates wall-clock on a 4-core node).
+    # Default is unset => every existing output reproduces byte-identically.
+    if os.environ.get("SKIP_GIF") == "1":
+        print(f"done (SKIP_GIF=1, metrics only) -> {md}")
+        return
+
+    _in = mask[None].repeat(T, axis=0)
+    vmax = float(np.percentile(np.concatenate([gt[_in], cines["clean"][_in], cines["breath"][_in]]), 99.9))
+    breath_tag = f"breathing |disp| mean {breath_mean_mm:.1f} / max {breath_max_mm:.1f} mm"
+    # per-z applied |disp| (mm) under z-labels; None on padding planes (no anatomy -> label blank)
+    pd = [float(disp_mag[z]) if content[:, :, z].any() else None for z in range(SHAPE_XYZ[2])]
+    render_gif(os.path.join(md, "gif_clean.gif"),
+               [("GT", gt), (f"{method}\n(no breath)", cines["clean"])], planes, T, vmax,
+               f"{subj} [{method}]  —  clean input (no breathing)   phase t={{t}}", plane_disp=pd)
+    render_gif(os.path.join(md, "gif_breath.gif"),
+               [("GT", gt), (f"{method}\n(breathing)", cines["breath"])], planes, T, vmax,
+               f"{subj} [{method}]  —  breathing input (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
+               plane_disp=pd)
+    render_gif(os.path.join(md, "gif_combined.gif"),
+               [("GT", gt), (f"{method}\nno-breath", cines["clean"]), (f"{method}\nbreathing", cines["breath"])],
+               planes, T, vmax,
+               f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
+               plane_disp=pd)
+    print(f"done -> {md}")
+
+
+if __name__ == "__main__":
+    main()

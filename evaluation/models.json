@@ -1,0 +1,482 @@
+[
+  {
+    "arm": "nesvor",
+    "type": "baseline",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": null,
+    "ckpt_copied": false,
+    "config": null,
+    "regime": null,
+    "frames_per_slice": null,
+    "z_mode": null,
+    "date": null,
+    "git_commit": null,
+    "wandb_id": null,
+    "ckpt": null,
+    "note": null
+  },
+  {
+    "arm": "svrtk3d",
+    "type": "baseline",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": null,
+    "ckpt_copied": false,
+    "config": null,
+    "regime": null,
+    "frames_per_slice": null,
+    "z_mode": null,
+    "date": null,
+    "git_commit": null,
+    "wandb_id": null,
+    "ckpt": null,
+    "note": null
+  },
+  {
+    "arm": "vggt_20260713_gather05",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": null,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260713",
+    "git_commit": "92fd739",
+    "wandb_id": "81li618p",
+    "ckpt": "/home/minsukc/vggt/scratch/logs/216539845_mri_volume_diffusion_ftgather05_1frame_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt",
+    "note": ""
+  },
+  {
+    "arm": "vggt_20260713_gather05_contz",
+    "type": "vggt",
+    "datasets": [
+      "miitt"
+    ],
+    "epoch": null,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "continuous",
+    "date": "20260713",
+    "git_commit": "92fd739",
+    "wandb_id": "81li618p",
+    "ckpt": "/home/minsukc/vggt/scratch/logs/216539845_mri_volume_diffusion_ftgather05_1frame_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt",
+    "note": ""
+  },
+  {
+    "arm": "vggt_20260715_1f_aug_moderate",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 39,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_aug_moderate_ep39.pt",
+    "note": "1frame ablation ckpt ep39"
+  },
+  {
+    "arm": "vggt_20260715_1f_contz",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon"
+    ],
+    "epoch": 39,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_contz_ep39.pt",
+    "note": "1frame ablation ckpt ep39"
+  },
+  {
+    "arm": "vggt_20260715_1f_contz_contz",
+    "type": "vggt",
+    "datasets": [
+      "miitt"
+    ],
+    "epoch": 39,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "continuous",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_contz_ep39.pt",
+    "note": "1frame ablation ckpt ep39"
+  },
+  {
+    "arm": "vggt_20260715_1f_dino_ft",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 33,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_dino_ft_ep33.pt",
+    "note": "1frame ablation ckpt ep33"
+  },
+  {
+    "arm": "vggt_20260715_1f_gather05",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 39,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_gather05_ep39.pt",
+    "note": "1frame ablation ckpt ep39"
+  },
+  {
+    "arm": "vggt_20260715_1f_lowdiff100",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 25,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_lowdiff100_ep25.pt",
+    "note": "1frame ablation ckpt ep25"
+  },
+  {
+    "arm": "vggt_20260715_1f_no_gather",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 37,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260715",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260715_1frame_no_gather_ep37.pt",
+    "note": "1frame ablation ckpt ep37"
+  },
+  {
+    "arm": "vggt_20260716_1f_aug_moderate_ep59",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 59,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_aug_moderate_ep59.pt",
+    "note": "1frame ablation RESUMED ckpt ep59"
+  },
+  {
+    "arm": "vggt_20260716_1f_contz_ep59",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon"
+    ],
+    "epoch": 59,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_contz_ep59.pt",
+    "note": "1frame ablation RESUMED ckpt ep59"
+  },
+  {
+    "arm": "vggt_20260716_1f_contz_ep59_contz",
+    "type": "vggt",
+    "datasets": [
+      "miitt"
+    ],
+    "epoch": 59,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "continuous",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_contz_ep59.pt",
+    "note": "1frame ablation RESUMED ckpt ep59"
+  },
+  {
+    "arm": "vggt_20260716_1f_dino_ft_ep50",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 50,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_dino_ft_ep50.pt",
+    "note": "1frame ablation RESUMED ckpt ep50"
+  },
+  {
+    "arm": "vggt_20260716_1f_gather05_ep60",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 60,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_gather05_ep60.pt",
+    "note": "1frame ablation RESUMED ckpt ep60"
+  },
+  {
+    "arm": "vggt_20260716_1f_lowdiff100_ep44",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 44,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_lowdiff100_ep44.pt",
+    "note": "1frame ablation RESUMED ckpt ep44"
+  },
+  {
+    "arm": "vggt_20260716_1f_no_gather_ep57",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon",
+      "miitt"
+    ],
+    "epoch": 57,
+    "ckpt_copied": false,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260716",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260716_1frame_no_gather_ep57.pt",
+    "note": "1frame ablation RESUMED ckpt ep57"
+  },
+  {
+    "arm": "vggt_20260719_1f_aug_moderate_ep99",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "cmrxrecon",
+      "miitt",
+      "ocmr"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_aug_moderate_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  },
+  {
+    "arm": "vggt_20260719_1f_contz_ep99",
+    "type": "vggt",
+    "datasets": [
+      "cmrxrecon"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_contz_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  },
+  {
+    "arm": "vggt_20260719_1f_contz_ep99_contz",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "miitt",
+      "ocmr"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "continuous",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_contz_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  },
+  {
+    "arm": "vggt_20260719_1f_dino_ft_ep99",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "cmrxrecon",
+      "miitt",
+      "ocmr"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_dino_ft_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  },
+  {
+    "arm": "vggt_20260719_1f_gather05_ep99",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "cmrxrecon",
+      "miitt",
+      "ocmr"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_gather05_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  },
+  {
+    "arm": "vggt_20260719_1f_lowdiff100_ep99",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "cmrxrecon",
+      "miitt",
+      "ocmr"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_lowdiff100_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  },
+  {
+    "arm": "vggt_20260719_1f_no_gather_ep99",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "cmrxrecon",
+      "miitt",
+      "ocmr"
+    ],
+    "epoch": 99,
+    "ckpt_copied": true,
+    "config": "mri_volume_diffusion",
+    "regime": "onef",
+    "frames_per_slice": 5,
+    "z_mode": "snapped",
+    "date": "20260719",
+    "git_commit": "4a98b3a",
+    "wandb_id": "unknown",
+    "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+    "note": "1frame ablation FINAL ckpt ep99"
+  }
+]
