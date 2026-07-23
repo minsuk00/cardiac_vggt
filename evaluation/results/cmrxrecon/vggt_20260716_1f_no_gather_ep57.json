@@ -1,0 +1,361 @@
+{
+  "dataset": "cmrxrecon",
+  "method": "vggt_20260716_1f_no_gather_ep57",
+  "n": 30,
+  "all": {
+    "n": 30,
+    "clean_psnr": [
+      22.159379300449977,
+      1.4205017361950365
+    ],
+    "clean_ssim": [
+      0.908346576885308,
+      0.03237076776865621
+    ],
+    "breath_psnr": [
+      20.702893298179454,
+      1.4101087514623503
+    ],
+    "breath_ssim": [
+      0.8667334839848578,
+      0.04286520188701268
+    ],
+    "cost_psnr": [
+      1.4564860022705262,
+      0.9305255900495183
+    ],
+    "breath_disp_mm": [
+      6.668246459376248,
+      2.344641671121947
+    ]
+  },
+  "volunteer": {
+    "n": 30,
+    "clean_psnr": [
+      22.159379300449977,
+      1.4205017361950365
+    ],
+    "clean_ssim": [
+      0.908346576885308,
+      0.03237076776865621
+    ],
+    "breath_psnr": [
+      20.702893298179454,
+      1.4101087514623503
+    ],
+    "breath_ssim": [
+      0.8667334839848578,
+      0.04286520188701268
+    ],
+    "cost_psnr": [
+      1.4564860022705262,
+      0.9305255900495183
+    ],
+    "breath_disp_mm": [
+      6.668246459376248,
+      2.344641671121947
+    ]
+  },
+  "per_subject": [
+    {
+      "subject": "Test_P012",
+      "group": "volunteer",
+      "clean_psnr": 24.66252606312381,
+      "clean_ssim": 0.9483739373043688,
+      "breath_psnr": 22.43437721862294,
+      "breath_ssim": 0.9093864216060497,
+      "cost_psnr": 2.2281488445008684,
+      "breath_disp_mm": 5.232756717556474
+    },
+    {
+      "subject": "Test_P020",
+      "group": "volunteer",
+      "clean_psnr": 23.026953651655703,
+      "clean_ssim": 0.8838059893156544,
+      "breath_psnr": 21.86197557308395,
+      "breath_ssim": 0.8363491769940166,
+      "cost_psnr": 1.1649780785717532,
+      "breath_disp_mm": 14.920600063634671
+    },
+    {
+      "subject": "Test_P023",
+      "group": "volunteer",
+      "clean_psnr": 22.799769174637607,
+      "clean_ssim": 0.8996450798968855,
+      "breath_psnr": 21.783833088542078,
+      "breath_ssim": 0.8652448620810502,
+      "cost_psnr": 1.0159360860955289,
+      "breath_disp_mm": 7.886244834476592
+    },
+    {
+      "subject": "Test_P025",
+      "group": "volunteer",
+      "clean_psnr": 21.494583629180315,
+      "clean_ssim": 0.9110187438228218,
+      "breath_psnr": 20.595179425646695,
+      "breath_ssim": 0.8867549268180618,
+      "cost_psnr": 0.8994042035336207,
+      "breath_disp_mm": 6.794005135664439
+    },
+    {
+      "subject": "Test_P028",
+      "group": "volunteer",
+      "clean_psnr": 25.17483731770469,
+      "clean_ssim": 0.9080132845360005,
+      "breath_psnr": 23.679437027831472,
+      "breath_ssim": 0.869531002480751,
+      "cost_psnr": 1.495400289873217,
+      "breath_disp_mm": 5.5890777841127806
+    },
+    {
+      "subject": "Test_P044",
+      "group": "volunteer",
+      "clean_psnr": 18.466802181351635,
+      "clean_ssim": 0.7578082756481607,
+      "breath_psnr": 18.125201016977,
+      "breath_ssim": 0.7270745966691536,
+      "cost_psnr": 0.3416011643746337,
+      "breath_disp_mm": 10.065501510985934
+    },
+    {
+      "subject": "Test_P054",
+      "group": "volunteer",
+      "clean_psnr": 23.699257868258318,
+      "clean_ssim": 0.9266957827254957,
+      "breath_psnr": 22.287187530416674,
+      "breath_ssim": 0.9019716870142235,
+      "cost_psnr": 1.4120703378416444,
+      "breath_disp_mm": 2.2061965579138434
+    },
+    {
+      "subject": "Test_P063",
+      "group": "volunteer",
+      "clean_psnr": 19.171616842614295,
+      "clean_ssim": 0.9120563032642462,
+      "breath_psnr": 18.663694288095225,
+      "breath_ssim": 0.8989315761284083,
+      "cost_psnr": 0.5079225545190695,
+      "breath_disp_mm": 5.137159175438916
+    },
+    {
+      "subject": "Test_P064",
+      "group": "volunteer",
+      "clean_psnr": 23.13615628382472,
+      "clean_ssim": 0.9339043451269338,
+      "breath_psnr": 22.79480667856573,
+      "breath_ssim": 0.9273542568727242,
+      "cost_psnr": 0.3413496052589906,
+      "breath_disp_mm": 5.527515134520751
+    },
+    {
+      "subject": "Test_P068",
+      "group": "volunteer",
+      "clean_psnr": 22.695194362930597,
+      "clean_ssim": 0.9260105119445501,
+      "breath_psnr": 19.01132193071867,
+      "breath_ssim": 0.8098608354197737,
+      "cost_psnr": 3.6838724322119276,
+      "breath_disp_mm": 7.88848550066825
+    },
+    {
+      "subject": "Train_P011",
+      "group": "volunteer",
+      "clean_psnr": 23.08742777397602,
+      "clean_ssim": 0.9172977068876703,
+      "breath_psnr": 22.366287386578197,
+      "breath_ssim": 0.8980102200125458,
+      "cost_psnr": 0.7211403873978242,
+      "breath_disp_mm": 5.721869797328577
+    },
+    {
+      "subject": "Train_P034",
+      "group": "volunteer",
+      "clean_psnr": 22.352413900048905,
+      "clean_ssim": 0.8941075860420183,
+      "breath_psnr": 20.623342605129636,
+      "breath_ssim": 0.8325000690484746,
+      "cost_psnr": 1.7290712949192688,
+      "breath_disp_mm": 7.8630043543776855
+    },
+    {
+      "subject": "Train_P035",
+      "group": "volunteer",
+      "clean_psnr": 22.385883342055198,
+      "clean_ssim": 0.9166990927341471,
+      "breath_psnr": 19.745640525275483,
+      "breath_ssim": 0.8414667483847813,
+      "cost_psnr": 2.6402428167797147,
+      "breath_disp_mm": 4.634046558969139
+    },
+    {
+      "subject": "Train_P053",
+      "group": "volunteer",
+      "clean_psnr": 19.934714534245384,
+      "clean_ssim": 0.8975755128182215,
+      "breath_psnr": 18.393590407229095,
+      "breath_ssim": 0.8575161967470674,
+      "cost_psnr": 1.541124127016289,
+      "breath_disp_mm": 6.979994794483912
+    },
+    {
+      "subject": "Train_P074",
+      "group": "volunteer",
+      "clean_psnr": 23.23022224022476,
+      "clean_ssim": 0.9001296909991406,
+      "breath_psnr": 22.179629511525217,
+      "breath_ssim": 0.8670990623925595,
+      "cost_psnr": 1.0505927286995416,
+      "breath_disp_mm": 6.9172776944694325
+    },
+    {
+      "subject": "Train_P091",
+      "group": "volunteer",
+      "clean_psnr": 22.988180646396433,
+      "clean_ssim": 0.9137801793008619,
+      "breath_psnr": 20.31167885870043,
+      "breath_ssim": 0.8305461863757034,
+      "cost_psnr": 2.6765017876960044,
+      "breath_disp_mm": 8.89164932252457
+    },
+    {
+      "subject": "Train_P113",
+      "group": "volunteer",
+      "clean_psnr": 21.060823445919024,
+      "clean_ssim": 0.9315749846101543,
+      "breath_psnr": 19.2141410227781,
+      "breath_ssim": 0.8890927281063553,
+      "cost_psnr": 1.8466824231409227,
+      "breath_disp_mm": 6.51972495640624
+    },
+    {
+      "subject": "Train_P120",
+      "group": "volunteer",
+      "clean_psnr": 21.914514338395325,
+      "clean_ssim": 0.8994525912159476,
+      "breath_psnr": 20.284480063394657,
+      "breath_ssim": 0.8446457338836219,
+      "cost_psnr": 1.6300342750006678,
+      "breath_disp_mm": 6.195986948043333
+    },
+    {
+      "subject": "Train_P127",
+      "group": "volunteer",
+      "clean_psnr": 21.089456474934728,
+      "clean_ssim": 0.8984140607869664,
+      "breath_psnr": 19.414826786032844,
+      "breath_ssim": 0.8452044295102709,
+      "cost_psnr": 1.6746296889018844,
+      "breath_disp_mm": 9.575762885068356
+    },
+    {
+      "subject": "Train_P130",
+      "group": "volunteer",
+      "clean_psnr": 23.00503043444945,
+      "clean_ssim": 0.9134495413831786,
+      "breath_psnr": 20.985220222852494,
+      "breath_ssim": 0.8583691084272668,
+      "cost_psnr": 2.0198102115969547,
+      "breath_disp_mm": 9.621826102849816
+    },
+    {
+      "subject": "Train_P132",
+      "group": "volunteer",
+      "clean_psnr": 22.24481292929032,
+      "clean_ssim": 0.9003920806497225,
+      "breath_psnr": 21.236814460689388,
+      "breath_ssim": 0.8723494343206225,
+      "cost_psnr": 1.0079984686009311,
+      "breath_disp_mm": 7.44266668883548
+    },
+    {
+      "subject": "Train_P141",
+      "group": "volunteer",
+      "clean_psnr": 20.13211202047228,
+      "clean_ssim": 0.913955624422512,
+      "breath_psnr": 19.488870468285768,
+      "breath_ssim": 0.8984088026312218,
+      "cost_psnr": 0.6432415521865131,
+      "breath_disp_mm": 6.052868512531933
+    },
+    {
+      "subject": "Train_P142",
+      "group": "volunteer",
+      "clean_psnr": 22.00551841366688,
+      "clean_ssim": 0.9314138186779867,
+      "breath_psnr": 21.234564235754615,
+      "breath_ssim": 0.915496980660503,
+      "cost_psnr": 0.770954177912266,
+      "breath_disp_mm": 4.418861050098902
+    },
+    {
+      "subject": "Train_P145",
+      "group": "volunteer",
+      "clean_psnr": 21.80214249894205,
+      "clean_ssim": 0.9341390174230272,
+      "breath_psnr": 20.446951335171292,
+      "breath_ssim": 0.9061979705600375,
+      "cost_psnr": 1.3551911637707583,
+      "breath_disp_mm": 5.975625528190794
+    },
+    {
+      "subject": "Train_P175",
+      "group": "volunteer",
+      "clean_psnr": 22.317828857457954,
+      "clean_ssim": 0.9187323446298672,
+      "breath_psnr": 21.371353500151084,
+      "breath_ssim": 0.8969196314804808,
+      "cost_psnr": 0.9464753573068698,
+      "breath_disp_mm": 4.530024492961258
+    },
+    {
+      "subject": "Train_P178",
+      "group": "volunteer",
+      "clean_psnr": 21.097813116589972,
+      "clean_ssim": 0.8997727600435729,
+      "breath_psnr": 20.124900056355504,
+      "breath_ssim": 0.874820558075532,
+      "cost_psnr": 0.9729130602344682,
+      "breath_disp_mm": 4.677947106100848
+    },
+    {
+      "subject": "Train_P193",
+      "group": "volunteer",
+      "clean_psnr": 22.390768509269765,
+      "clean_ssim": 0.9461765708571271,
+      "breath_psnr": 21.62917818122823,
+      "breath_ssim": 0.9353340562221519,
+      "cost_psnr": 0.7615903280415353,
+      "breath_disp_mm": 5.065942132397319
+    },
+    {
+      "subject": "Val_P048",
+      "group": "volunteer",
+      "clean_psnr": 21.937421776821694,
+      "clean_ssim": 0.9050533035883892,
+      "breath_psnr": 20.22034207409493,
+      "breath_ssim": 0.8538502965806475,
+      "cost_psnr": 1.717079702726764,
+      "breath_disp_mm": 4.819775407756736
+    },
+    {
+      "subject": "Val_P054",
+      "group": "volunteer",
+      "clean_psnr": 23.153179493161165,
+      "clean_ssim": 0.92704034229296,
+      "breath_psnr": 18.721743698680445,
+      "breath_ssim": 0.7845537086021275,
+      "cost_psnr": 4.43143579448072,
+      "breath_disp_mm": 8.089103074633103
+    },
+    {
+      "subject": "Val_P055",
+      "group": "volunteer",
+      "clean_psnr": 22.323416891900468,
+      "clean_ssim": 0.8839082436106596,
+      "breath_psnr": 21.85622976697584,
+      "breath_ssim": 0.8671632554395557,
+      "cost_psnr": 0.467187124924628,
+      "breath_disp_mm": 4.805893958287374
+    }
+  ]
+}

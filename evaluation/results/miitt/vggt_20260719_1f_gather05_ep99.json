@@ -1,0 +1,218 @@
+{
+  "dataset": "miitt",
+  "method": "vggt_20260719_1f_gather05_ep99",
+  "n": 13,
+  "all": {
+    "n": 13,
+    "clean_psnr": [
+      15.32421546432661,
+      1.37790814614115
+    ],
+    "clean_ssim": [
+      0.6623869083421254,
+      0.10655305036285545
+    ],
+    "breath_psnr": [
+      15.97546153034916,
+      1.0198187287566511
+    ],
+    "breath_ssim": [
+      0.6974660683270412,
+      0.08151592085586178
+    ],
+    "cost_psnr": [
+      -0.6512460660225533,
+      0.9493989656507192
+    ],
+    "breath_disp_mm": [
+      6.874960666126021,
+      2.6532020309852475
+    ]
+  },
+  "volunteer": {
+    "n": 10,
+    "clean_psnr": [
+      15.22841766047778,
+      1.470359686275584
+    ],
+    "clean_ssim": [
+      0.6827092427371324,
+      0.09716605906305628
+    ],
+    "breath_psnr": [
+      15.808139596571479,
+      1.1073634981352565
+    ],
+    "breath_ssim": [
+      0.708670499483115,
+      0.08743313896584574
+    ],
+    "cost_psnr": [
+      -0.5797219360936969,
+      0.9598527977069201
+    ],
+    "breath_disp_mm": [
+      7.039599377739778,
+      2.7996088116407445
+    ]
+  },
+  "patient": {
+    "n": 3,
+    "clean_psnr": [
+      15.643541477156033,
+      0.9425047479548486
+    ],
+    "clean_ssim": [
+      0.5946457936921026,
+      0.10845460510895619
+    ],
+    "breath_psnr": [
+      16.533201309608103,
+      0.12202003174179878
+    ],
+    "breath_ssim": [
+      0.660117964473462,
+      0.038718713541105156
+    ],
+    "cost_psnr": [
+      -0.8896598324520747,
+      0.87231585093443
+    ],
+    "breath_disp_mm": [
+      6.3261649607468415,
+      1.99671138036221
+    ]
+  },
+  "per_subject": [
+    {
+      "subject": "Patient_2023Sep23_ARVC",
+      "group": "patient",
+      "clean_psnr": 15.648642443114216,
+      "clean_ssim": 0.6106397840510649,
+      "breath_psnr": 16.398018975444405,
+      "breath_ssim": 0.643864873011174,
+      "cost_psnr": -0.7493765323301886,
+      "breath_disp_mm": 6.446081041691396
+    },
+    {
+      "subject": "Patient_2024Feb08_HCM",
+      "group": "patient",
+      "clean_psnr": 16.795310397542345,
+      "clean_ssim": 0.7187538561686684,
+      "breath_psnr": 16.69367753801278,
+      "breath_ssim": 0.7135279059568695,
+      "cost_psnr": 0.10163285952956613,
+      "breath_disp_mm": 3.822950976896933
+    },
+    {
+      "subject": "Patient_2024Jan04_Cardiomyopathy_AFib",
+      "group": "patient",
+      "clean_psnr": 14.48667159081153,
+      "clean_ssim": 0.4545437408565744,
+      "breath_psnr": 16.507907415367132,
+      "breath_ssim": 0.6229611144523426,
+      "cost_psnr": -2.0212358245556015,
+      "breath_disp_mm": 8.709462863652195
+    },
+    {
+      "subject": "Volunteer1",
+      "group": "volunteer",
+      "clean_psnr": 14.200857753465018,
+      "clean_ssim": 0.6945093717114621,
+      "breath_psnr": 14.49452778695199,
+      "breath_ssim": 0.7037039850546841,
+      "cost_psnr": -0.29367003348697196,
+      "breath_disp_mm": 4.443440280061413
+    },
+    {
+      "subject": "Volunteer10",
+      "group": "volunteer",
+      "clean_psnr": 16.015650094186245,
+      "clean_ssim": 0.788146446538862,
+      "breath_psnr": 16.668250246295205,
+      "breath_ssim": 0.8072076825716201,
+      "cost_psnr": -0.6526001521089597,
+      "breath_disp_mm": 6.032036300423353
+    },
+    {
+      "subject": "Volunteer2",
+      "group": "volunteer",
+      "clean_psnr": 13.85737264465035,
+      "clean_ssim": 0.4919896652150676,
+      "breath_psnr": 15.017496346012965,
+      "breath_ssim": 0.5733942852648641,
+      "cost_psnr": -1.1601237013626147,
+      "breath_disp_mm": 5.648646067153586
+    },
+    {
+      "subject": "Volunteer3",
+      "group": "volunteer",
+      "clean_psnr": 15.045664083104205,
+      "clean_ssim": 0.6628215667776044,
+      "breath_psnr": 15.548326375300057,
+      "breath_ssim": 0.6805155251267127,
+      "cost_psnr": -0.5026622921958523,
+      "breath_disp_mm": 11.39458773840637
+    },
+    {
+      "subject": "Volunteer4",
+      "group": "volunteer",
+      "clean_psnr": 14.153555644581896,
+      "clean_ssim": 0.6083703543485096,
+      "breath_psnr": 16.025064263512654,
+      "breath_ssim": 0.7470610609738807,
+      "cost_psnr": -1.8715086189307577,
+      "breath_disp_mm": 7.843579438750397
+    },
+    {
+      "subject": "Volunteer5",
+      "group": "volunteer",
+      "clean_psnr": 13.663563423552732,
+      "clean_ssim": 0.6806076697990027,
+      "breath_psnr": 15.335388935835478,
+      "breath_ssim": 0.7654048360192119,
+      "cost_psnr": -1.6718255122827461,
+      "breath_disp_mm": 5.1031864358488965
+    },
+    {
+      "subject": "Volunteer6",
+      "group": "volunteer",
+      "clean_psnr": 16.999429568743725,
+      "clean_ssim": 0.8393324645067705,
+      "breath_psnr": 18.097626061349455,
+      "breath_ssim": 0.8635135885726172,
+      "cost_psnr": -1.0981964926057302,
+      "breath_disp_mm": 7.035405069166162
+    },
+    {
+      "subject": "Volunteer7",
+      "group": "volunteer",
+      "clean_psnr": 14.718509617858752,
+      "clean_ssim": 0.6165647030658075,
+      "breath_psnr": 15.354846523310199,
+      "breath_ssim": 0.6550265854880648,
+      "cost_psnr": -0.6363369054514472,
+      "breath_disp_mm": 5.366653123204316
+    },
+    {
+      "subject": "Volunteer8",
+      "group": "volunteer",
+      "clean_psnr": 15.083157983267768,
+      "clean_ssim": 0.6560300609566737,
+      "breath_psnr": 14.469192312655638,
+      "breath_ssim": 0.5818944414010015,
+      "cost_psnr": 0.6139656706121297,
+      "breath_disp_mm": 4.487627634047532
+    },
+    {
+      "subject": "Volunteer9",
+      "group": "volunteer",
+      "clean_psnr": 18.54641579136711,
+      "clean_ssim": 0.7887201244515639,
+      "breath_psnr": 17.07067711449113,
+      "breath_ssim": 0.7089830043584929,
+      "cost_psnr": 1.4757386768759808,
+      "breath_disp_mm": 13.040831690335743
+    }
+  ]
+}

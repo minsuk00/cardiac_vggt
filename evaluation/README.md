@@ -92,6 +92,34 @@ for arm in paths.arms("cmrxrecon"):              # arm-style iteration over subj
 Run `python evaluation/check_paths.py` after any layout change — it asserts every resolver
 matches a raw glob of the real tree, across all four datasets.
 
+## Running the harness
+
+Pipeline per dataset: build the frozen bundle once → reconstruct each method → score →
+aggregate → diagnostics. Everything reads/writes through `paths.py`.
+
+```bash
+# 1. build the frozen breathing bundle (once per dataset)
+python evaluation/engine/build_inputs/<dataset>.py ...
+# 2. reconstruct — VGGT [GPU], or a classical baseline
+python evaluation/engine/run_vggt.py --dataset <ds> --ckpt <pt> --model-name <slug>
+EVAL_DATASET=<ds> bash evaluation/engine/run_svrtk3d.sh <subj> <arm>
+# 3. score per subject -> <subj>/<arm>/metrics.json (+ gifs)
+EVAL_DATASET=<ds> python evaluation/engine/assemble_and_gif.py <subj> <arm>
+# 4. cohort summary -> results/<ds>/<arm>.json  (git-tracked, citable)
+python evaluation/engine/aggregate.py <ds> <arm>
+```
+
+Standing diagnostics (write to the gitignored `diagnostics/out/`):
+
+```bash
+python evaluation/diagnostics/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
+python evaluation/diagnostics/slice_panels.py --cohort <ds> --method <arm> --arm breath
+python evaluation/diagnostics/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
+#   then nnUNet_predict (nnunet env) -> ef_dice.py score <seg_dir> --input <dir> --out <json>
+```
+
+Cohort numbers live in git at `results/<dataset>/<arm>.json`; per-arm provenance in `MODELS.md`.
+
 ## Why subject-major (the one divergence from MRI2CT)
 
 MRI2CT is arm-major because every entity there is one immutable file per subject. VGGT is

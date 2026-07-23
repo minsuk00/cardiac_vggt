@@ -335,7 +335,8 @@ def main():
     ap.add_argument("--dataset", required=True, choices=["cmrxrecon", "miitt", "ocmr", "acdc"])
     ap.add_argument("--ckpt", default=(DEFAULT_CKPT[0] if DEFAULT_CKPT else None))
     ap.add_argument("--model-name", default="gather05")
-    ap.add_argument("--date", default="20260713")
+    ap.add_argument("--date", default=None, help="legacy: include date in the arm name "
+                    "(vggt_<date>_<model>); omit for the slug form vggt_<model> (scheme/date -> MODELS.md)")
     ap.add_argument("--regime", choices=["onef", "multiframe"], default="onef")
     ap.add_argument("--frames-per-slice", type=int, default=5, help="multiframe only")
     ap.add_argument("--continuous-z", action="store_true", help="MIITT: fractional z (no 12mm snap)")
@@ -349,9 +350,10 @@ def main():
     args = ap.parse_args()
     assert args.ckpt, "no gather05 ckpt found; pass --ckpt"
 
-    method = f"vggt_{args.date}_{args.model_name}" + ("_contz" if args.continuous_z else "")
-    # NOTE: kept inline (not paths.canonical_arm) so this migration is byte-identical — canonical_arm
-    # de-doubles _contz, which would rename the existing OOD contz arms. Phase 5 switches new runs to it.
+    method = paths.canonical_arm(args.model_name, date=args.date, continuous_z=args.continuous_z)
+    # Slug in name, scheme in registry: --date omitted -> vggt_<model_name>; passing --date keeps the
+    # legacy vggt_<date>_<model> form. canonical_arm de-doubles _contz (fixes the historical bug), so a
+    # NEW contz OOD run is named vggt_..._contz (single), unlike the existing doubled dirs (left as-is).
     ds = args.dataset
     root = paths.dataset_root(ds)
     subjects = args.subjects or paths.subjects(ds)

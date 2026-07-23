@@ -84,7 +84,8 @@ def main():
             summary[g] = summarize(sub, g.upper())
     summary["per_subject"] = rows
 
-    out = str(paths.legacy_summary(dataset, method))
+    out = paths.summary(dataset, method)              # git-tracked results/<ds>/<arm>.json
+    out.parent.mkdir(parents=True, exist_ok=True)
     json.dump(summary, open(out, "w"), indent=2)
     print(f"\n-> {out}")
 

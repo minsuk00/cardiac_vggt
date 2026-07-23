@@ -1,3 +1,5 @@
 # Heavy data lives on GPFS; only code + small results/provenance are tracked.
 /volumes
 /checkpoints
+# regenerable diagnostic figures/summaries
+/diagnostics/out/
