@@ -339,7 +339,7 @@ class Trainer:
         self.gradient_clipper = instantiate(self.optim_conf.gradient_clip)
         # GradScaler only helps fp16 (prevents underflow). bf16 has fp32 range, so loss
         # scaling is dead weight — disable to keep the train loop honest.
-        self.scaler = torch.cuda.amp.GradScaler(
+        self.scaler = torch.amp.GradScaler("cuda",
             enabled=self.optim_conf.amp.enabled and self.optim_conf.amp.amp_dtype == "float16"
         )
 
@@ -765,7 +765,7 @@ class Trainer:
                             mode="bilinear", align_corners=True)  # (1, 1, 518, 518) in [0, 1]
                         batch["images"][:, 0] = ref_up.repeat(1, 3, 1, 1)
                 batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)  # (1, D, H, W)
-                with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=amp_dtype):
+                with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=amp_dtype):
                     preds = model(batch["images"], batch=batch)
                     out = compute_volume_intensity_loss(
                         {"world_points": preds["world_points"].float()},
@@ -1571,7 +1571,7 @@ class Trainer:
             # measure data loading time
             data_time.update(time.time() - end)
 
-            with torch.cuda.amp.autocast(enabled=False):
+            with torch.amp.autocast("cuda", enabled=False):
                 batch = self._process_batch(batch)
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
             # Val never AFFINE-augments, but respiratory (if enabled) applies
@@ -1591,7 +1591,7 @@ class Trainer:
 
             # compute output
             with torch.no_grad():
-                with torch.cuda.amp.autocast(
+                with torch.amp.autocast("cuda",
                     enabled=self.optim_conf.amp.enabled,
                     dtype=amp_type,
                 ):
@@ -1773,7 +1773,7 @@ class Trainer:
             # measure data loading time
             data_time.update(time.time() - end)
 
-            with torch.cuda.amp.autocast(enabled=False):
+            with torch.amp.autocast("cuda", enabled=False):
                 batch = self._process_batch(batch)
 
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
@@ -1900,7 +1900,7 @@ class Trainer:
             grad_accum_context = contextlib.nullcontext()
 
             with grad_accum_context:
-                with torch.cuda.amp.autocast(
+                with torch.amp.autocast("cuda",
                     enabled=self.optim_conf.amp.enabled,
                     dtype=amp_type,
                 ):
