@@ -92,8 +92,6 @@ logging:
   # Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val epoch.
   # Overwrites in place (constant ~360 MB disk). Identity affine (canonical voxel space).
   save_val_volumes: true
-  tensorboard_writer:
-    path: ${logging.log_dir}/tensorboard
   wandb_writer:
     _target_: train_utils.wandb_writer.WandbLogger
     project: "vggt-mri"

@@ -18,9 +18,6 @@ logging:
   log_level_primary: DEBUG
   log_level_secondary: WARNING
   all_ranks: False
-  tensorboard_writer:
-    _target_: train_utils.tb_writer.TensorBoardLogger
-    path: ${logging.log_dir}/tensorboard
   wandb_writer: null
 
 
