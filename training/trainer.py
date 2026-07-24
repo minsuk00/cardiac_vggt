@@ -43,10 +43,10 @@ from trainer_viz import TrainerVizMixin
 
 class Trainer(TrainerVizMixin):
     """
-    A generic trainer for DDP training. This should naturally support multi-node training.
+    A single-GPU trainer. (The multi-GPU DDP apparatus was removed in 284992c —
+    this repo trains on one GPU and the 1-process DDP wrap did nothing useful.)
 
     This class orchestrates the entire training and validation process, including:
-    - Setting up the distributed environment (DDP).
     - Initializing the model, optimizers, loss functions, and data loaders.
     - Handling checkpointing for resuming training.
     - Executing the main training and validation loops.
@@ -90,7 +90,7 @@ class Trainer(TrainerVizMixin):
             device: "cuda" or "cpu".
             seed_value: A random seed for reproducibility.
             val_epoch_freq: Frequency (in epochs) to run validation.
-            distributed: Hydra config for DDP settings.
+            distributed: Unused (kept so older configs still instantiate); DDP was removed.
             cuda: Hydra config for CUDA-specific settings (e.g., cuDNN).
             limit_train_batches: Limit the number of training batches per epoch (for debugging).
             limit_val_batches: Limit the number of validation batches per epoch (for debugging).
@@ -475,6 +475,7 @@ class Trainer(TrainerVizMixin):
 
     def run_train(self):
         """Runs the main training loop over all epochs."""
+        ran_an_epoch = False
         while self.epoch < self.max_epochs:
             set_seeds(self.seed_value + self.epoch * 100, self.max_epochs, 0)
 
@@ -496,8 +497,14 @@ class Trainer(TrainerVizMixin):
                 self.run_val()
 
             self.epoch += 1
+            ran_an_epoch = True
 
-        self.epoch -= 1
+        # Step back to the last epoch actually completed. Guarded: when the loop never
+        # runs (a full-checkpoint resume whose prev_epoch >= max_epochs — the docs/37
+        # CKPT_ONLY trap) an unguarded decrement walks the counter BACKWARDS past the
+        # resumed value. No effect on a normal run, where the loop always executes.
+        if ran_an_epoch:
+            self.epoch -= 1
 
     def run_val(self):
         """Runs a full validation epoch if a validation dataset is available."""

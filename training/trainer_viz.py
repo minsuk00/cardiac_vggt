@@ -185,38 +185,40 @@ class TrainerVizMixin:
             n_rows = len(subj_indices)
 
             fig, axes = plt.subplots(n_rows, 3, figsize=(9.0, 3.2 * n_rows), dpi=90)
-            axes = np.atleast_2d(axes)  # (n_rows, 3) even when n_rows == 1
-            for row, subj_idx in enumerate(subj_indices):
-                data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=mri_ds.num_slices)
-                phases = np.asarray(data["phases"]).astype(np.float32)   # (T, D, H, W)
-                ed = phases[0]                                           # (D, H, W)
-                motion_mag = phases.max(0) - phases.min(0)              # (D, H, W)
-                mask = compute_motion_mask(
-                    torch.from_numpy(phases).unsqueeze(0)
-                )[0].cpu().numpy()                                      # (D, H, W) bool
-                bbox = np.asarray(data["anatomy_bbox"]).astype(int)
-                z0, z1 = int(bbox[0]), int(bbox[1])
-                z = (z0 + z1) // 2
-                frac = float(mask[z0:z1].mean())
-                vmax = max(float(ed.max()), 1e-3)
-                mmax = max(float(motion_mag.max()), 1e-3)
+            try:
+                axes = np.atleast_2d(axes)  # (n_rows, 3) even when n_rows == 1
+                for row, subj_idx in enumerate(subj_indices):
+                    data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=mri_ds.num_slices)
+                    phases = np.asarray(data["phases"]).astype(np.float32)   # (T, D, H, W)
+                    ed = phases[0]                                           # (D, H, W)
+                    motion_mag = phases.max(0) - phases.min(0)              # (D, H, W)
+                    mask = compute_motion_mask(
+                        torch.from_numpy(phases).unsqueeze(0)
+                    )[0].cpu().numpy()                                      # (D, H, W) bool
+                    bbox = np.asarray(data["anatomy_bbox"]).astype(int)
+                    z0, z1 = int(bbox[0]), int(bbox[1])
+                    z = (z0 + z1) // 2
+                    frac = float(mask[z0:z1].mean())
+                    vmax = max(float(ed.max()), 1e-3)
+                    mmax = max(float(motion_mag.max()), 1e-3)
 
-                ax = axes[row]
-                ax[0].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
-                ax[0].set_title(f"subj {subj_idx}: V_gt ED (z={z})", fontsize=9)
-                ax[1].imshow(motion_mag[z], cmap="magma", vmin=0, vmax=mmax)
-                ax[1].set_title("motion = max-min", fontsize=9)
-                ax[2].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
-                overlay = np.zeros((*mask[z].shape, 4))
-                overlay[mask[z]] = [1, 0, 0, 0.45]
-                ax[2].imshow(overlay)
-                ax[2].set_title(f"mask tau={MOTION_MASK_TAU} ({frac*100:.1f}% of bbox)", fontsize=9)
-                for a in ax:
-                    a.set_xticks([]); a.set_yticks([])
-            fig.suptitle("Motion mask (val subjects, mid-bbox z)", fontsize=10)
-            fig.tight_layout(rect=[0, 0, 1, 0.97])
-            self.wandb_writer.log("media_others/val_motion_mask_example", wandb.Image(fig), log_step)
-            plt.close(fig)
+                    ax = axes[row]
+                    ax[0].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
+                    ax[0].set_title(f"subj {subj_idx}: V_gt ED (z={z})", fontsize=9)
+                    ax[1].imshow(motion_mag[z], cmap="magma", vmin=0, vmax=mmax)
+                    ax[1].set_title("motion = max-min", fontsize=9)
+                    ax[2].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
+                    overlay = np.zeros((*mask[z].shape, 4))
+                    overlay[mask[z]] = [1, 0, 0, 0.45]
+                    ax[2].imshow(overlay)
+                    ax[2].set_title(f"mask tau={MOTION_MASK_TAU} ({frac*100:.1f}% of bbox)", fontsize=9)
+                    for a in ax:
+                        a.set_xticks([]); a.set_yticks([])
+                fig.suptitle("Motion mask (val subjects, mid-bbox z)", fontsize=10)
+                fig.tight_layout(rect=[0, 0, 1, 0.97])
+                self.wandb_writer.log("media_others/val_motion_mask_example", wandb.Image(fig), log_step)
+            finally:
+                plt.close(fig)
         except Exception as e:
             logging.warning(f"motion mask example log failed (ignored): {e}")
 
@@ -582,21 +584,23 @@ class TrainerVizMixin:
             caption = (f"GPU aug = {' + '.join(applied) if applied else 'none'} | top=original, "
                        f"bottom=ACTUAL draw applied (the realized affine subset is visible there); step={step}")
             fig = plt.figure(figsize=(1.6 * S + 0.4, 3.6), dpi=90)
-            gs = _gs.GridSpec(2, S, wspace=0.04, hspace=0.12)
-            fig.suptitle("Data augmentation -- original (top) vs augmented (bottom)", fontsize=8)
-            for s in range(S):
-                ax0 = fig.add_subplot(gs[0, s])
-                ax0.imshow(orig[s], cmap="gray", vmin=0, vmax=1)
-                ax0.set_xticks([]); ax0.set_yticks([])
-                if s == 0:
-                    ax0.set_ylabel("original", fontsize=8)
-                ax1 = fig.add_subplot(gs[1, s])
-                ax1.imshow(aug[s], cmap="gray", vmin=0, vmax=1)
-                ax1.set_xticks([]); ax1.set_yticks([])
-                if s == 0:
-                    ax1.set_ylabel("augmented", fontsize=8)
-            self.wandb_writer.log("media_others/Train_Visuals_Augmentation", wandb.Image(fig, caption=caption), step)
-            plt.close(fig)
+            try:
+                gs = _gs.GridSpec(2, S, wspace=0.04, hspace=0.12)
+                fig.suptitle("Data augmentation -- original (top) vs augmented (bottom)", fontsize=8)
+                for s in range(S):
+                    ax0 = fig.add_subplot(gs[0, s])
+                    ax0.imshow(orig[s], cmap="gray", vmin=0, vmax=1)
+                    ax0.set_xticks([]); ax0.set_yticks([])
+                    if s == 0:
+                        ax0.set_ylabel("original", fontsize=8)
+                    ax1 = fig.add_subplot(gs[1, s])
+                    ax1.imshow(aug[s], cmap="gray", vmin=0, vmax=1)
+                    ax1.set_xticks([]); ax1.set_yticks([])
+                    if s == 0:
+                        ax1.set_ylabel("augmented", fontsize=8)
+                self.wandb_writer.log("media_others/Train_Visuals_Augmentation", wandb.Image(fig, caption=caption), step)
+            finally:
+                plt.close(fig)
         except Exception as e:
             logging.warning(f"augmentation visual log failed (ignored): {e}")
 
@@ -641,45 +645,47 @@ class TrainerVizMixin:
             resp_r = batch["resp_r"][0].float().cpu().numpy() if "resp_r" in batch else None
 
             fig = plt.figure(figsize=(1.6 * n_cols + 1.6, 7.5), dpi=90)
-            gs = _gs.GridSpec(4, n_cols + 1, width_ratios=[1.0] * n_cols + [0.05], wspace=0.04, hspace=0.18)
-            fig.suptitle(f"Volumes — {caption}", fontsize=8)
+            try:
+                gs = _gs.GridSpec(4, n_cols + 1, width_ratios=[1.0] * n_cols + [0.05], wspace=0.04, hspace=0.18)
+                fig.suptitle(f"Volumes — {caption}", fontsize=8)
 
-            # Row 0: input slices
-            for s in range(S):
-                ax = fig.add_subplot(gs[0, s])
-                ax.imshow(imgs[s], cmap="gray", vmin=0, vmax=1)
-                ax.set_xticks([]); ax.set_yticks([])
-                if t_picks is not None and z_picks is not None:
-                    ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
-                    if resp_r is not None:
-                        ttl += f"\nr={resp_r[s]:.2f} |d|={resp_dmag[s]:.0f}mm"
-                    ax.set_title(ttl, fontsize=7)
-                if s == 0:
-                    ax.set_ylabel("input slice", fontsize=8)
-            for s in range(S, n_cols):
-                fig.add_subplot(gs[0, s]).axis("off")
-            fig.add_subplot(gs[0, n_cols]).axis("off")
-
-            def _vol_row(r, vol, cmap, vmin, vmax, ylabel, show_titles=False):
-                last_im = None
-                for d in range(D):
-                    ax = fig.add_subplot(gs[r, d])
-                    last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
+                # Row 0: input slices
+                for s in range(S):
+                    ax = fig.add_subplot(gs[0, s])
+                    ax.imshow(imgs[s], cmap="gray", vmin=0, vmax=1)
                     ax.set_xticks([]); ax.set_yticks([])
-                    if show_titles:
-                        ax.set_title(f"z={d}", fontsize=7)
-                    if d == 0:
-                        ax.set_ylabel(ylabel, fontsize=8)
-                for d in range(D, n_cols):
-                    fig.add_subplot(gs[r, d]).axis("off")
-                plt.colorbar(last_im, cax=fig.add_subplot(gs[r, n_cols]))
+                    if t_picks is not None and z_picks is not None:
+                        ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
+                        if resp_r is not None:
+                            ttl += f"\nr={resp_r[s]:.2f} |d|={resp_dmag[s]:.0f}mm"
+                        ax.set_title(ttl, fontsize=7)
+                    if s == 0:
+                        ax.set_ylabel("input slice", fontsize=8)
+                for s in range(S, n_cols):
+                    fig.add_subplot(gs[0, s]).axis("off")
+                fig.add_subplot(gs[0, n_cols]).axis("off")
 
-            _vol_row(1, V_gt,    "gray",   0,     v_vmax, "V_gt", show_titles=True)
-            _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon")
-            _vol_row(3, diff,    "RdBu_r", -ERR,  ERR,    f"V_canon-V_gt\n(±{ERR})")
+                def _vol_row(r, vol, cmap, vmin, vmax, ylabel, show_titles=False):
+                    last_im = None
+                    for d in range(D):
+                        ax = fig.add_subplot(gs[r, d])
+                        last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
+                        ax.set_xticks([]); ax.set_yticks([])
+                        if show_titles:
+                            ax.set_title(f"z={d}", fontsize=7)
+                        if d == 0:
+                            ax.set_ylabel(ylabel, fontsize=8)
+                    for d in range(D, n_cols):
+                        fig.add_subplot(gs[r, d]).axis("off")
+                    plt.colorbar(last_im, cax=fig.add_subplot(gs[r, n_cols]))
 
-            self.wandb_writer.log(f"{group}/{name}_Volume", wandb.Image(fig, caption=caption), step)
-            plt.close(fig)
+                _vol_row(1, V_gt,    "gray",   0,     v_vmax, "V_gt", show_titles=True)
+                _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon")
+                _vol_row(3, diff,    "RdBu_r", -ERR,  ERR,    f"V_canon-V_gt\n(±{ERR})")
+
+                self.wandb_writer.log(f"{group}/{name}_Volume", wandb.Image(fig, caption=caption), step)
+            finally:
+                plt.close(fig)
 
         # ── DVF figure (per-slot Δx/Δy/Δz) ─────────────────────────────────
         # The model's predicted Δ is recovered as (pred_world_points - scanner_coords).
@@ -710,34 +716,36 @@ class TrainerVizMixin:
             THROUGH_R = 25.0                          # through-plane colorbar half-range (mm)
 
             fig = plt.figure(figsize=(1.6 * S + 1.6, 7.5), dpi=90)
-            gs = _gs.GridSpec(4, S + 1, width_ratios=[1.0] * S + [0.05], wspace=0.04, hspace=0.18)
-            fig.suptitle(
-                f"DVF — {caption}    |Δ|(norm) p50={p50:.3f} p95={p95:.3f} p99={p99:.3f}",
-                fontsize=8,
-            )
-            rows = [
-                ("input intensity", imgs,                          "gray",   0,           1.0,        True),
-                ("Δx (mm)",         pred_dvf[..., 0] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
-                ("Δy (mm)",         pred_dvf[..., 1] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
-                ("Δz (mm)",         pred_dvf[..., 2] * THROUGH_MM,  "RdBu_r", -THROUGH_R,  THROUGH_R,  False),
-            ]
-            for r, (lbl, data, cmap, vmin, vmax, is_top) in enumerate(rows):
-                last_im = None
-                for s in range(S):
-                    ax = fig.add_subplot(gs[r, s])
-                    last_im = ax.imshow(data[s], cmap=cmap, vmin=vmin, vmax=vmax)
-                    ax.set_xticks([]); ax.set_yticks([])
-                    if is_top and t_picks is not None and z_picks is not None:
-                        ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
-                        if resp_r is not None:
-                            ttl += f"\nr={resp_r[s]:.2f} |d|={resp_dmag[s]:.0f}mm"
-                        ax.set_title(ttl, fontsize=7)
-                    if s == 0:
-                        ax.set_ylabel(lbl, fontsize=8)
-                plt.colorbar(last_im, cax=fig.add_subplot(gs[r, S]))
+            try:
+                gs = _gs.GridSpec(4, S + 1, width_ratios=[1.0] * S + [0.05], wspace=0.04, hspace=0.18)
+                fig.suptitle(
+                    f"DVF — {caption}    |Δ|(norm) p50={p50:.3f} p95={p95:.3f} p99={p99:.3f}",
+                    fontsize=8,
+                )
+                rows = [
+                    ("input intensity", imgs,                          "gray",   0,           1.0,        True),
+                    ("Δx (mm)",         pred_dvf[..., 0] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
+                    ("Δy (mm)",         pred_dvf[..., 1] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
+                    ("Δz (mm)",         pred_dvf[..., 2] * THROUGH_MM,  "RdBu_r", -THROUGH_R,  THROUGH_R,  False),
+                ]
+                for r, (lbl, data, cmap, vmin, vmax, is_top) in enumerate(rows):
+                    last_im = None
+                    for s in range(S):
+                        ax = fig.add_subplot(gs[r, s])
+                        last_im = ax.imshow(data[s], cmap=cmap, vmin=vmin, vmax=vmax)
+                        ax.set_xticks([]); ax.set_yticks([])
+                        if is_top and t_picks is not None and z_picks is not None:
+                            ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
+                            if resp_r is not None:
+                                ttl += f"\nr={resp_r[s]:.2f} |d|={resp_dmag[s]:.0f}mm"
+                            ax.set_title(ttl, fontsize=7)
+                        if s == 0:
+                            ax.set_ylabel(lbl, fontsize=8)
+                    plt.colorbar(last_im, cax=fig.add_subplot(gs[r, S]))
 
-            self.wandb_writer.log(f"{group}/{name}_DVF", wandb.Image(fig, caption=caption), step)
-            plt.close(fig)
+                self.wandb_writer.log(f"{group}/{name}_DVF", wandb.Image(fig, caption=caption), step)
+            finally:
+                plt.close(fig)
 
     # Subjects shown in the ED-vs-ES panel (the EF sweep reconstructs each at its ED and ES).
     _ED_ES_SUBJECTS = (0, 7, 14, 21)
@@ -750,7 +758,12 @@ class TrainerVizMixin:
         try:
             mri_ds = self._get_mri_dataset()
             vt = getattr(mri_ds, "val_targets", None)
-            i = int(self._val_iter)
+            # Index by the SAMPLE's own seq_index (as _save_ef_volume does), not the
+            # per-BATCH counter _val_iter. They coincide only while the val batch size is
+            # 1 (max_img_per_gpu // img_nums == 1); raising max_img_per_gpu would other-
+            # wise silently mislabel which subject/phase each stashed panel belongs to.
+            seqs = batch.get("seq_index")
+            i = int(seqs[0].flatten()[0].item()) if seqs is not None else int(self._val_iter)
             if vt is None or i >= len(vt):
                 return
             subj_idx = vt[i][0]
@@ -862,28 +875,30 @@ class TrainerVizMixin:
         diff = V_refined - V_gt
 
         fig = plt.figure(figsize=(1.6 * D + 1.6, 7.5), dpi=90)
-        gs = _gs.GridSpec(4, D + 1, width_ratios=[1.0] * D + [0.05], wspace=0.04, hspace=0.18)
-        fig.suptitle(f"Refiner — {caption}", fontsize=8)
+        try:
+            gs = _gs.GridSpec(4, D + 1, width_ratios=[1.0] * D + [0.05], wspace=0.04, hspace=0.18)
+            fig.suptitle(f"Refiner — {caption}", fontsize=8)
 
-        def _row(r, vol, cmap, vmin, vmax, ylabel, titles=False):
-            last_im = None
-            for d in range(D):
-                ax = fig.add_subplot(gs[r, d])
-                last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
-                ax.set_xticks([]); ax.set_yticks([])
-                if titles:
-                    ax.set_title(f"z={d}", fontsize=7)
-                if d == 0:
-                    ax.set_ylabel(ylabel, fontsize=8)
-            plt.colorbar(last_im, cax=fig.add_subplot(gs[r, D]))
+            def _row(r, vol, cmap, vmin, vmax, ylabel, titles=False):
+                last_im = None
+                for d in range(D):
+                    ax = fig.add_subplot(gs[r, d])
+                    last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
+                    ax.set_xticks([]); ax.set_yticks([])
+                    if titles:
+                        ax.set_title(f"z={d}", fontsize=7)
+                    if d == 0:
+                        ax.set_ylabel(ylabel, fontsize=8)
+                plt.colorbar(last_im, cax=fig.add_subplot(gs[r, D]))
 
-        _row(0, V_gt,      "gray",   0,    v_vmax, "V_gt", titles=True)
-        _row(1, V_canon,   "gray",   0,    v_vmax, "V_canon (splat)")
-        _row(2, V_refined, "gray",   0,    v_vmax, "V_refined")
-        _row(3, diff,      "RdBu_r", -ERR, ERR,    f"V_refined-V_gt\n(±{ERR})")
+            _row(0, V_gt,      "gray",   0,    v_vmax, "V_gt", titles=True)
+            _row(1, V_canon,   "gray",   0,    v_vmax, "V_canon (splat)")
+            _row(2, V_refined, "gray",   0,    v_vmax, "V_refined")
+            _row(3, diff,      "RdBu_r", -ERR, ERR,    f"V_refined-V_gt\n(±{ERR})")
 
-        self.wandb_writer.log(f"{group}/refiner_{name}_Volume", wandb.Image(fig, caption=caption), step)
-        plt.close(fig)
+            self.wandb_writer.log(f"{group}/refiner_{name}_Volume", wandb.Image(fig, caption=caption), step)
+        finally:
+            plt.close(fig)
 
     def _log_lookup_to_wandb(self, batch: dict, name: str, step: int, caption: str,
                              group: str = "media_others"):

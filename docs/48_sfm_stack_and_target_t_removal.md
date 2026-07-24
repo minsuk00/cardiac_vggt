@@ -120,11 +120,15 @@ baselines, `git checkout 4b55619 -- <path>`.
 - **Dataset filler keys**: ~~`MRIDataset.get_data` still emits dummy `extrinsics`/…~~ **DONE (docs/50,
   2026-07-24).** Stripped all 8 filler keys, deleted the `co3d`/`vkitti`/`track_util` orphans, and
   rebased `batch_size` to `data["images"]`. Byte-identical.
-- **`training/trainer.py` size** (~2.3k lines): ~1k lines are wandb/matplotlib viz methods that could
-  move to a mixin; the TensorBoard dual-logging path is also removable. **Still not touched** — the
-  last remaining item from this cleanup effort.
-- **DDP removal**: the user always runs single-GPU; the DDP plumbing (~56 refs) is removable but was
-  deliberately left for a later pass.
+- ~~**`training/trainer.py` size** (~2.3k lines): ~1k lines are wandb/matplotlib viz methods…~~
+  **DONE (docs/51, 2026-07-24).** 13 viz methods (1039 lines) extracted to `training/trainer_viz.py`
+  as `TrainerVizMixin`; trainer.py 2217 → 1163. TensorBoard removed entirely (it received scalars
+  only — the visual wrapper had zero callers). Byte-identical.
+- ~~**DDP removal**~~ **DONE (`284992c`)** — already landed; this bullet was stale.
+
+**This cleanup effort is now complete.** The follow-on pass (docs/51) also collapsed the SfM dataset
+base class (`base_dataset.py` + `dataset_util.py` + `vggt/utils/geometry.py`, ~1200 lines) and deleted
+the orphan SfM pose modules.
 
 ## Verification status
 
