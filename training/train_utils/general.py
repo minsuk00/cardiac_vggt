@@ -249,16 +249,6 @@ def set_seeds(seed_value, max_epochs, dist_rank):
 
 
 
-def log_env_variables():
-    env_keys = sorted(list(os.environ.keys()))
-    st = ""
-    for k in env_keys:
-        v = os.environ[k]
-        st += f"{k}={v}\n"
-    logging.info("Logging ENV_VARIABLES")
-    logging.info(st)
-
-
 def is_dist_avail_and_initialized():
     if not dist.is_available():
         return False
