@@ -30,10 +30,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torchvision
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
-from omegaconf import DictConfig, ListConfig, OmegaConf
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from data.respiratory import RespiratoryConfig
 from train_utils.checkpoint import DDPCheckpointSaver
@@ -41,7 +39,6 @@ from train_utils.distributed import get_machine_local_and_dist_rank
 from train_utils.freeze import freeze_modules
 from train_utils.general import *
 from train_utils.logging import setup_logging
-from train_utils.normalization import normalize_camera_extrinsics_and_points_batch
 from train_utils.optimizer import construct_optimizers
 
 
@@ -504,7 +501,6 @@ class Trainer:
         training path. Failures are caught and logged — training proceeds either way.
         """
         try:
-            from loss import compute_volume_intensity_loss
             from data.composed_dataset import _data_to_batch_tensors as _maybe_to_batch  # type: ignore
         except Exception:
             _maybe_to_batch = None  # we'll do the conversion inline
@@ -1509,7 +1505,6 @@ class Trainer:
         batch_time = AverageMeter("Batch Time", self.device, ":.4f")
         data_time = AverageMeter("Data Time", self.device, ":.4f")
         mem = AverageMeter("Mem (GB)", self.device, ":.4f")
-        data_times = []
         phase = "val"
 
         # Fresh per-phase accumulators for this val epoch (diagnostic only; train unaffected).
@@ -1615,7 +1610,6 @@ class Trainer:
 
             # measure data loading time
             data_time.update(time.time() - end)
-            data_times.append(data_time.val)
 
             with torch.cuda.amp.autocast(enabled=False):
                 batch = self._process_batch(batch)
@@ -1771,7 +1765,6 @@ class Trainer:
         batch_time = AverageMeter("Batch Time", self.device, ":.4f")
         data_time = AverageMeter("Data Time", self.device, ":.4f")
         mem = AverageMeter("Mem (GB)", self.device, ":.4f")
-        data_times = []
         phase = "train"
 
         loss_names = self._get_scalar_log_keys(phase)
@@ -1821,7 +1814,6 @@ class Trainer:
 
             # measure data loading time
             data_time.update(time.time() - end)
-            data_times.append(data_time.val)
 
             with torch.cuda.amp.autocast(enabled=False):
                 batch = self._process_batch(batch)
@@ -1976,66 +1968,10 @@ class Trainer:
                 self.scaler.scale(loss).backward()
                 loss_meters[loss_key].update(loss.item(), batch_size)
 
-    def _apply_batch_repetition(self, batch: Mapping) -> Mapping:
-        """
-        Applies a data augmentation by concatenating the original batch with a
-        flipped version of itself.
-        """
-        # Refuse on MRI batches — keys like z_indices/t_indices/t_target carry per-sample
-        # identity. Flipping or duplicating without also handling them scrambles the (t, z)
-        # mapping and silently corrupts training. If you ever want batch repetition for MRI,
-        # design a method that handles those keys correctly rather than extending the list here.
-        mri_keys = {"z_indices", "t_indices", "target_t_indices", "t_target", "gt_target_volume", "timesteps", "slice_indices"}
-        present = mri_keys & set(batch.keys())
-        assert not present, (
-            f"_apply_batch_repetition called with MRI-specific keys present ({present}); "
-            "this method would scramble z/t/target identity. Set repeat_batch=False."
-        )
-        tensor_keys = [
-            "images",
-            "depths",
-            "extrinsics",
-            "intrinsics",
-            "cam_points",
-            "world_points",
-            "point_masks",
-            "geom_masks",
-            "scanner_coords",
-        ]
-        string_keys = ["seq_name"]
-
-        for key in tensor_keys:
-            if key in batch:
-                original_tensor = batch[key]
-                batch[key] = torch.concatenate([original_tensor, torch.flip(original_tensor, dims=[1])], dim=0)
-
-        for key in string_keys:
-            if key in batch:
-                batch[key] = batch[key] * 2
-
-        return batch
-
     def _process_batch(self, batch: Mapping):
-        if self.data_conf.train.common_config.repeat_batch:
-            batch = self._apply_batch_repetition(batch)
-
-        # Normalize camera extrinsics and points if enabled (default: True)
-        if self.data_conf.train.common_config.get("normalize_points", True):
-            # Normalize camera extrinsics and points. The function returns new tensors.
-            normalized_extrinsics, normalized_cam_points, normalized_world_points, normalized_depths = normalize_camera_extrinsics_and_points_batch(
-                extrinsics=batch["extrinsics"],
-                cam_points=batch["cam_points"],
-                world_points=batch["world_points"],
-                depths=batch["depths"],
-                point_masks=batch["point_masks"],
-            )
-
-            # Replace the original values in the batch with the normalized ones.
-            batch["extrinsics"] = normalized_extrinsics
-            batch["cam_points"] = normalized_cam_points
-            batch["world_points"] = normalized_world_points
-            batch["depths"] = normalized_depths
-
+        # Passthrough hook. The legacy SfM batch-repetition (repeat_batch) and camera/point
+        # normalization (normalize_points) were removed — both were gated off for the MRI
+        # pipeline, so this returns the batch unchanged.
         return batch
 
     def _step(self, batch, model: nn.Module, phase: str, loss_meters: dict):

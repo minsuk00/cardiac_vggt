@@ -41,11 +41,8 @@ def _build_from_cfg(cfg, warp_head_type=None):
     m = cfg.model
     return VGGT(
         img_size=518, patch_size=14, embed_dim=1024,
-        enable_camera=m.enable_camera, enable_depth=m.enable_depth,
-        enable_point=m.enable_point, enable_track=m.enable_track,
+        enable_point=m.enable_point,
         use_z_pose_embedding=m.use_z_pose_embedding,
-        use_t_pose_embedding=m.use_t_pose_embedding,
-        use_target_t_pose_embedding=m.use_target_t_pose_embedding,
         use_reference_token=m.use_reference_token,
         train_on_residual_dvf=m.train_on_residual_dvf,
         warp_head_type=warp_head_type or m.warp_head_type,
@@ -90,8 +87,6 @@ def test_mri_volume_uses_reference_conditioning(cfg_only):
     m = cfg_only.model
     assert m.use_reference_token is True
     assert m.use_z_pose_embedding is True
-    assert m.use_t_pose_embedding is False
-    assert m.use_target_t_pose_embedding is False
     assert cfg_only.reference_slot is True
     assert cfg_only.distributed.find_unused_parameters is True
 

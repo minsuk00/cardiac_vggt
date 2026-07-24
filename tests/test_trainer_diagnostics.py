@@ -234,40 +234,7 @@ def test_baseline_skipped_when_no_dataset():
     stub._compute_identity_baseline()  # must not raise
 
 
-# ── 4. _apply_batch_repetition refuses MRI batches ────────────────────────────
-
-def test_apply_batch_repetition_rejects_mri_keys():
-    """Per-sample identity keys (z_indices, t_indices, t_target, …) must trip the assert.
-    Without this guard, flipping/duplicating would scramble (t, z) → silent corruption."""
-    from trainer import Trainer
-    stub = SimpleNamespace()
-    stub._apply_batch_repetition = Trainer._apply_batch_repetition.__get__(stub)
-    mri_batch = {
-        "images": torch.zeros(1, 4, 3, 8, 8),
-        "z_indices": torch.zeros(1, 4, 1),  # MRI-specific
-        "t_indices": torch.zeros(1, 4, 1),
-        "t_target": torch.zeros(1, 1, dtype=torch.long),
-    }
-    with pytest.raises(AssertionError, match="MRI-specific keys"):
-        stub._apply_batch_repetition(mri_batch)
-
-
-def test_apply_batch_repetition_accepts_non_mri_batch():
-    """Non-MRI batches (no z/t identity keys) pass through and get duplicated."""
-    from trainer import Trainer
-    stub = SimpleNamespace()
-    stub._apply_batch_repetition = Trainer._apply_batch_repetition.__get__(stub)
-    batch = {
-        "images": torch.randn(2, 4, 3, 8, 8),
-        "world_points": torch.randn(2, 4, 8, 8, 3),
-        "seq_name": ["a", "b"],
-    }
-    out = stub._apply_batch_repetition(batch)
-    assert out["images"].shape[0] == 4, "batch dim should be doubled"
-    assert out["seq_name"] == ["a", "b", "a", "b"], "string keys should be repeated"
-
-
-# ── 5. NaN counter ────────────────────────────────────────────────────────────
+# ── 4. NaN counter ────────────────────────────────────────────────────────────
 
 def test_nan_loss_counter_increments_and_logs():
     """When the chunk-level NaN guard fires, _nan_batch_count must increment and the

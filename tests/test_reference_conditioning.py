@@ -161,18 +161,6 @@ def test_no_target_t_embedder_in_reference_model():
 # ──────────────────────────────────────────────────────────────────────────────
 # Warm-start tolerance
 # ──────────────────────────────────────────────────────────────────────────────
-def test_warmstart_old_target_t_ckpt_into_reference_model():
-    """An OLD target_t checkpoint loads into the reference model under strict=False:
-    target_t_embedder.* is flagged unexpected (dropped); the shared camera_token/z_embedder load."""
-    ref = _tiny(use_reference_token=True)                       # no target_t_embedder
-    old = _tiny(use_target_t_pose_embedding=True)               # HAS target_t_embedder
-    result = ref.load_state_dict(old.state_dict(), strict=False)
-    assert any("target_t_embedder" in k for k in result.unexpected_keys), \
-        f"expected target_t_embedder.* in unexpected_keys; got {result.unexpected_keys}"
-    assert not any("camera_token" in k for k in result.missing_keys)
-    assert not any("camera_token" in k for k in result.unexpected_keys)
-
-
 def test_warmstart_reference_to_reference_clean():
     """Reference → reference loads with no missing/unexpected keys (no accidental new params)."""
     a = _tiny(use_reference_token=True)

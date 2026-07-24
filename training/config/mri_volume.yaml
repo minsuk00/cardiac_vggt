@@ -9,7 +9,7 @@
 # slot-0's image content. This fixes BOTH the flat-EF amplitude regression and the
 # target_t=k/12 phase-timing ambiguity. Requires the aggregator finetune (aggft) so the
 # camera_token / z_embedder can specialize. `target_t_indices` is still emitted by the dataset
-# but is INERT (use_target_t_pose_embedding=false → the model ignores it).
+# but is INERT (the legacy target_t conditioning was removed → the model ignores it).
 
 defaults:
   - mri_finetune
@@ -22,8 +22,6 @@ config_name: "mri_volume"
 use_reference_token: true            # MODEL: add the native camera_token anchor on slot 0
 reference_slot: true                 # DATASET: slot 0 = (t_target, mid-ventricular z)
 use_z_pose_embedding: true           # keep per-slice depth
-use_t_pose_embedding: false          # input cardiac phase is obsolete (docs/05/09) and blind-input contract (docs/04)
-use_target_t_pose_embedding: false   # the broken content-free index — replaced by the reference slice
 
 # ── EF-aware validation (overrides parent default off) ───────────────────────────────────────
 ef_val_sweep: true                   # val = targeted 30×{ED,ES} sweep (honest per-phase + EF volumes)
@@ -116,12 +114,6 @@ distributed:
   find_unused_parameters: true
 
 loss:
-  camera:
-    weight: 0.0
-  depth:
-    weight: 0.0
-  point:
-    weight: 0.0  # disable supervised DVF loss
   volume:
     weight: 1.0
     grid_shape: ${gt_grid_shape}  # (D, H, W); shared with MRIDataset.gt_grid_shape

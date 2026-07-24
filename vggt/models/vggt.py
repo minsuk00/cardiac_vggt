@@ -8,10 +8,8 @@ import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin  # used for model hub
 
-from vggt.heads.camera_head import CameraHead
 from vggt.heads.dpt_head import DPTHead
 from vggt.heads.bspline_head import BSplineWarpHead
-from vggt.heads.track_head import TrackHead
 from vggt.models.aggregator import Aggregator
 from vggt.models.refiner import VolumeRefiner
 from vggt.utils.splat import splat_predictions
@@ -19,16 +17,14 @@ from vggt.utils.splat import splat_predictions
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024, enable_camera=True, enable_point=True, enable_depth=True, enable_track=True, use_z_pose_embedding=False, use_t_pose_embedding=False, use_target_t_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
+        self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True, use_z_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
         enable_refiner=False, grid_shape=(12, 256, 256), refiner_base_channels=16, refiner_levels=2, refiner_use_coverage=False,
-        warp_head_type="dpt", bspline_grid_size=32
+        warp_head_type="dpt", bspline_grid_size=32, **kwargs
     ):
         super().__init__()
         self.train_on_residual_dvf = train_on_residual_dvf
 
-        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_t_pose_embedding=use_t_pose_embedding, use_target_t_pose_embedding=use_target_t_pose_embedding, use_reference_token=use_reference_token)
-
-        self.camera_head = CameraHead(dim_in=2 * embed_dim) if enable_camera else None
+        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_reference_token=use_reference_token)
 
         point_activation = "linear" if train_on_residual_dvf else "inv_log"
         if not enable_point:
@@ -40,8 +36,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             self.point_head = DPTHead(dim_in=2 * embed_dim, output_dim=4, activation=point_activation, conf_activation="expp1")
         else:
             raise ValueError(f"Unknown warp_head_type: {warp_head_type!r} (expected 'dpt' or 'bspline')")
-        self.depth_head = DPTHead(dim_in=2 * embed_dim, output_dim=2, activation="exp", conf_activation="expp1") if enable_depth else None
-        self.track_head = TrackHead(dim_in=2 * embed_dim, patch_size=patch_size) if enable_track else None
 
         # Optional 3D UNet refiner on the splatted volume (default OFF → pipeline unchanged).
         # Runs INSIDE forward (so its params are used in the DDP-wrapped forward); the loss
@@ -96,16 +90,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         predictions = {}
 
         with torch.cuda.amp.autocast(enabled=False):
-            if self.camera_head is not None:
-                pose_enc_list = self.camera_head(aggregated_tokens_list)
-                predictions["pose_enc"] = pose_enc_list[-1]  # pose encoding of the last iteration
-                predictions["pose_enc_list"] = pose_enc_list
-
-            if self.depth_head is not None:
-                depth, depth_conf = self.depth_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx)
-                predictions["depth"] = depth
-                predictions["depth_conf"] = depth_conf
-
             if self.point_head is not None:
                 head_output, head_conf = self.point_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx)
 
@@ -133,12 +117,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
                     predictions["V_canon"] = V_canon
                     predictions["coverage"] = coverage
                     predictions["V_refined"] = V_refined
-
-        if self.track_head is not None and query_points is not None:
-            track_list, vis, conf = self.track_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx, query_points=query_points)
-            predictions["track"] = track_list[-1]  # track of the last iteration
-            predictions["vis"] = vis
-            predictions["conf"] = conf
 
         if not self.training:
             predictions["images"] = images  # store the images for visualization during inference
