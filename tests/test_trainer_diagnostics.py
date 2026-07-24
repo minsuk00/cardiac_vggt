@@ -35,10 +35,10 @@ def _make_data(t_targets, B=None, V_shape=(2, 4, 4)):
         # Different error per t_target so per-phase PSNR is distinguishable.
         V_gt[b] = (tt / 12.0)  # constant per slot; MSE = (1 - tt/12)^2.
     t_target = torch.tensor(t_targets, dtype=torch.int64).reshape(B, 1)
-    extrinsics = torch.eye(3, 4).unsqueeze(0).expand(B, -1, -1).contiguous()  # required by _update_and_log_scalars
+    images = torch.zeros(B, 1)  # only .shape[0] (batch size) is read by _update_and_log_scalars
     return {
         "V_canon": V_canon, "V_gt": V_gt, "t_target": t_target,
-        "extrinsics": extrinsics,
+        "images": images,
     }
 
 
@@ -138,7 +138,7 @@ def test_per_phase_accumulator_handles_missing_keys():
     """If the batch is missing V_canon/V_gt/t_target (legacy supervised pipeline?),
     the diagnostic should silently skip — never raise."""
     stub = _make_stub_trainer(t_target_fixed=None)
-    data = {"extrinsics": torch.eye(3, 4).unsqueeze(0)}  # nothing else
+    data = {"images": torch.zeros(1, 1)}  # only the batch-size key, nothing else
     stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
     assert len(stub._per_phase_val_psnr_full) == 0
 

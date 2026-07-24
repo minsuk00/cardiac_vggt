@@ -72,12 +72,10 @@ def test_t_total_correct(train_ds):
 
 def test_output_shapes(train_ds):
     s = train_ds.get_data(0, img_per_seq=8)
-    for key in ["images", "world_points", "scanner_coords"]:
+    for key in ["images", "scanner_coords"]:
         for item in s[key]:
             assert item.shape == (TARGET_SIZE, TARGET_SIZE, 3), \
                 f"{key}: expected ({TARGET_SIZE},{TARGET_SIZE},3), got {item.shape}"
-    for item in s["point_masks"]:
-        assert item.shape == (TARGET_SIZE, TARGET_SIZE)
     assert len(s["timesteps"]) == 8
     assert len(s["z_indices"]) == 8
 
@@ -85,6 +83,13 @@ def test_legacy_dvf_fields_absent(train_ds):
     s = train_ds.get_data(0, img_per_seq=4)
     assert "gt_dvfs" not in s, "gt_dvfs should be gone (supervised DVF pipeline deprecated)"
     assert "scale_factors" not in s, "scale_factors should be gone"
+
+def test_sfm_filler_fields_absent(train_ds):
+    """SfM-heritage filler keys were stripped (nothing on the MRI path read them)."""
+    s = train_ds.get_data(0, img_per_seq=4)
+    for key in ["world_points", "cam_points", "point_masks", "geom_masks",
+                "depths", "extrinsics", "intrinsics", "tracks"]:
+        assert key not in s, f"{key} should be gone (SfM filler removed)"
 
 def test_new_canonical_batch_fields_present(train_ds):
     """Canonical-grid pipeline adds gt_target_volume, anatomy_bbox, content_mask, phases."""
@@ -108,15 +113,6 @@ def test_images_in_valid_range(train_ds):
 
 # ── 4. Coordinate space (canonical, geometric) ────────────────────────────────
 
-def test_world_points_equals_scanner_coords(train_ds):
-    """DVF supervision removed → world_points and scanner_coords are identical."""
-    s = train_ds.get_data(0, img_per_seq=8)
-    for i in range(len(s["world_points"])):
-        np.testing.assert_array_equal(
-            s["world_points"][i], s["scanner_coords"][i],
-            err_msg=f"slot {i}: world_points must equal scanner_coords after DVF removal",
-        )
-
 def test_scanner_coords_normalized_range(train_ds):
     """Every pixel has a valid canonical coord in [-1, 1] — no -2.0 sentinel, no padding."""
     s = train_ds.get_data(0, img_per_seq=8)
@@ -139,15 +135,6 @@ def test_z_axis_spans_range(train_ds):
     s = train_ds.get_data(0, img_per_seq=8)
     z_vals = [float(z[0]) for z in s["z_indices"]]
     assert max(z_vals) - min(z_vals) > 0.2, f"z range too small: {z_vals}"
-
-
-# ── 5. Masks (all-True; no letterbox padding region) ──────────────────────────
-
-def test_point_masks_all_true(train_ds):
-    """No letterbox padding under the canonical pipeline → every pixel is valid."""
-    s = train_ds.get_data(0, img_per_seq=4)
-    for mask in s["point_masks"]:
-        assert mask.all(), "point_masks must be all-True (no padding region)"
 
 
 # ── 6. z sampled within the geometric bbox ────────────────────────────────────

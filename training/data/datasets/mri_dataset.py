@@ -20,8 +20,6 @@ multi-phase contract, and produces:
                                                             (x_norm, y_norm, z_norm)
                                                             same formula for every
                                                             subject
-    world_points    same as scanner_coords (DVF supervision removed)
-    cam_points      same as scanner_coords (legacy field)
     z_indices       (S, 1)   z_i / (D-1) * 2 - 1, D=12
     t_indices       (S, 1)   t_i / T * 2 - 1, T=12  (cyclic — wraps at +1)
     gt_target_volume (D, H, W) = phases_splat[t_target]
@@ -32,8 +30,6 @@ multi-phase contract, and produces:
                                           phases consistently then re-extract
                                           slices + V_gt + bbox.
     t_target        (1,) int64
-    point_masks     (S, 518, 518) bool  all True (no letterbox padding region)
-    geom_masks      (S, 518, 518) bool  all True (legacy field, kept for compat)
 
 Drops (vs the legacy implementation):
     - scipy.ndimage.map_coordinates / cv2.resize / np.pad of inputs
@@ -413,9 +409,6 @@ class MRIDataset(BaseDataset):
         frame_ids_list = []
         timesteps_list = []
         slice_indices_list = []
-        depths_list = []
-        extrinsics_list = []
-        intrinsics_list = []
         original_sizes_list = []
 
         # Per-pixel canonical (x, y, z) coords for a 518×518 input image.
@@ -479,28 +472,7 @@ class MRIDataset(BaseDataset):
             timesteps_list.append(t_idx)
             slice_indices_list.append(z_i)
 
-            # Legacy-shape filler fields (kept so ComposedDataset and downstream
-            # code paths don't have to special-case the MRI dataset).
-            depths_list.append(np.zeros((self.target_size, self.target_size), np.float32))
-            extrinsics_list.append(np.eye(3, 4, dtype=np.float32))
-            intrinsics_list.append(
-                np.array(
-                    [[self.target_size, 0, self.target_size / 2],
-                     [0, self.target_size, self.target_size / 2],
-                     [0, 0, 1]],
-                    np.float32,
-                )
-            )
             original_sizes_list.append(np.array([H_can, W_can], np.float32))
-
-        # ── Masks (all-True; no letterbox padding region in the new pipeline) ─
-        all_true = np.ones((INPUT_IMG_SIZE, INPUT_IMG_SIZE), dtype=bool)
-        point_masks_list = [all_true.copy() for _ in range(S)]
-        geom_masks_list = [all_true.copy() for _ in range(S)]
-
-        # ── world_points = cam_points = scanner_coords (DVF supervision removed) ─
-        world_points_list = [sc.copy() for sc in scanner_coords_list]
-        cam_points_list = [sc.copy() for sc in scanner_coords_list]
 
         # ── V_gt + full phases bundle (for Phase 4 aug) ───────────────────
         # `anatomy_bbox` was already computed above (used to constrain z sampling).
@@ -528,14 +500,7 @@ class MRIDataset(BaseDataset):
 
         return {
             "images": images_list,
-            "world_points": world_points_list,
-            "cam_points": cam_points_list,
             "scanner_coords": scanner_coords_list,
-            "point_masks": point_masks_list,
-            "geom_masks": geom_masks_list,
-            "depths": depths_list,
-            "extrinsics": extrinsics_list,
-            "intrinsics": intrinsics_list,
             "original_sizes": original_sizes_list,
             "frame_ids": frame_ids_list,
             "timesteps": timesteps_list,
@@ -547,7 +512,6 @@ class MRIDataset(BaseDataset):
             "seq_name": seq_name,
             "ids": np.array(frame_ids_list, np.int64),
             "frame_num": S,
-            "tracks": np.zeros((1, 1, 2), np.float32),
             "gt_target_volume": gt_target_volume,
             "t_target": np.array([t_target], dtype=np.int64),
             "anatomy_bbox": anatomy_bbox,

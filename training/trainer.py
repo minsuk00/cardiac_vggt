@@ -1948,7 +1948,7 @@ class Trainer:
     def _update_and_log_scalars(self, data: Mapping, phase: str, step: int, loss_meters: dict):
         """Updates average meters and logs scalar values to TensorBoard."""
         keys_to_log = self._get_scalar_log_keys(phase)
-        batch_size = data["extrinsics"].shape[0]
+        batch_size = data["images"].shape[0]
 
         for key in keys_to_log:
             if key in data:

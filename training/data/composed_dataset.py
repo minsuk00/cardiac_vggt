@@ -15,7 +15,6 @@ from torch.utils.data import ConcatDataset, Dataset
 
 from .augmentation import get_image_augmentation
 from .dataset_util import *
-from .track_util import *
 
 
 class ComposedDataset(Dataset, ABC):
@@ -65,12 +64,6 @@ class ComposedDataset(Dataset, ABC):
         # Force a specific aspect ratio for all images
         self.fixed_aspect_ratio = common_config.fix_aspect_ratio
 
-        # --- Track Settings ---
-        # Whether to include point tracks in the output
-        self.load_track = common_config.load_track
-        # Number of point tracks to include per sequence
-        self.track_num = common_config.track_num
-
         # --- Mode Settings ---
         # Whether the dataset is being used for training (affects augmentations)
         self.training = common_config.training
@@ -111,13 +104,7 @@ class ComposedDataset(Dataset, ABC):
         images = images.permute(0, 3, 1, 2).to(torch.get_default_dtype()).div(255)
 
         # Convert other data to tensors with appropriate types
-        depths = torch.from_numpy(np.stack(batch["depths"]).astype(np.float32))
-        extrinsics = torch.from_numpy(np.stack(batch["extrinsics"]).astype(np.float32))
-        intrinsics = torch.from_numpy(np.stack(batch["intrinsics"]).astype(np.float32))
-        cam_points = torch.from_numpy(np.stack(batch["cam_points"]).astype(np.float32))
-        world_points = torch.from_numpy(np.stack(batch["world_points"]).astype(np.float32))
         scanner_coords = torch.from_numpy(np.stack(batch["scanner_coords"]).astype(np.float32)) if "scanner_coords" in batch else None
-        point_masks = torch.from_numpy(np.stack(batch["point_masks"]))  # Mask indicating valid depths / world points / cam points per frame
         ids = torch.from_numpy(batch["ids"])  # Frame indices sampled from the original sequence
 
         # --- Apply Color Augmentation (training mode only) ---
@@ -135,12 +122,6 @@ class ComposedDataset(Dataset, ABC):
             "seq_name": seq_name,
             "ids": ids,
             "images": images,
-            "depths": depths,
-            "extrinsics": extrinsics,
-            "intrinsics": intrinsics,
-            "cam_points": cam_points,
-            "world_points": world_points,
-            "point_masks": point_masks,
         }
         if scanner_coords is not None:
             sample["scanner_coords"] = scanner_coords
@@ -159,8 +140,6 @@ class ComposedDataset(Dataset, ABC):
             # is exact, so the discrete-grid pipeline is numerically unchanged. timesteps stays
             # int64 — cardiac phase is always discrete.
             sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.float32))
-        if "geom_masks" in batch:
-            sample["geom_masks"] = torch.from_numpy(np.stack(batch["geom_masks"]))
         if "rotations" in batch:
             sample["rotations"] = torch.from_numpy(np.stack(batch["rotations"]).astype(np.float32))
         if "gt_target_volume" in batch:
@@ -180,38 +159,6 @@ class ComposedDataset(Dataset, ABC):
             # (Phase 4); inert under aug-off. Kept as float16 to keep batch
             # transfer cheap (~18 MB per sample at T=12, D=12, H=W=256).
             sample["phases"] = torch.from_numpy(np.asarray(batch["phases"]))
-        # --- Track Processing (if enabled) ---
-        if self.load_track:
-            if batch["tracks"] is not None:
-                # Use pre-computed tracks from the dataset
-                tracks = torch.from_numpy(np.stack(batch["tracks"]).astype(np.float32))
-                track_vis_mask = torch.from_numpy(np.stack(batch["track_masks"]).astype(bool))
-
-                # Sample a subset of tracks randomly
-                valid_indices = torch.where(track_vis_mask[0])[0]
-                if len(valid_indices) >= self.track_num:
-                    # If we have enough tracks, sample without replacement
-                    sampled_indices = valid_indices[torch.randperm(len(valid_indices))][: self.track_num]
-                else:
-                    # If not enough tracks, sample with replacement (allow duplicates)
-                    sampled_indices = valid_indices[torch.randint(0, len(valid_indices), (self.track_num,), dtype=torch.int64, device=valid_indices.device)]
-
-                # Extract the sampled tracks and their masks
-                tracks = tracks[:, sampled_indices, :]
-                track_vis_mask = track_vis_mask[:, sampled_indices]
-                track_positive_mask = torch.ones(track_vis_mask.shape[1]).bool()
-
-            else:
-                # Generate tracks on-the-fly using depth information
-                # This creates synthetic tracks based on the 3D information available
-                tracks, track_vis_mask, track_positive_mask = build_tracks_by_depth(
-                    extrinsics, intrinsics, world_points, depths, point_masks, images, target_track_num=self.track_num, seq_name=seq_name
-                )
-
-            # Add track information to the sample dictionary
-            sample["tracks"] = tracks
-            sample["track_vis_mask"] = track_vis_mask
-            sample["track_positive_mask"] = track_positive_mask
 
         return sample
 
