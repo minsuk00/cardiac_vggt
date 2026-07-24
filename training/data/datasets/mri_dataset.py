@@ -50,7 +50,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from data.base_dataset import BaseDataset
+from torch.utils.data import Dataset
+
 from data.preprocess import (
     NUM_PHASES,
     TARGET_SHAPE,
@@ -77,7 +78,7 @@ GRID_SHAPE_SPLAT = (TARGET_SHAPE[2], TARGET_SHAPE[1], TARGET_SHAPE[0])  # (12, 2
 INPUT_IMG_SIZE = 518  # DINOv2 patch_embed expects 518×518 (37 × 14)
 
 
-class MRIDataset(BaseDataset):
+class MRIDataset(Dataset):
     def __init__(
         self,
         common_conf,
@@ -109,7 +110,7 @@ class MRIDataset(BaseDataset):
             dvf_dirname: DVF supervision was removed; this is ignored.
             gt_grid_shape: must equal `GRID_SHAPE_SPLAT` (canonical grid is fixed).
         """
-        super().__init__(common_conf=common_conf)
+        super().__init__()
         self.data_root = os.path.abspath(data_root)
         self.split = split
         self.split_file = os.path.abspath(split_file) if split_file else None
@@ -255,6 +256,21 @@ class MRIDataset(BaseDataset):
 
     def __len__(self):
         return self.len_train
+
+    def __getitem__(self, idx_N):
+        """
+        Get an item from the dataset.
+
+        Args:
+            idx_N: Tuple containing (seq_index, img_per_seq, aspect_ratio)
+
+        Returns:
+            Dataset item as returned by get_data()
+        """
+        seq_index, img_per_seq, aspect_ratio = idx_N
+        return self.get_data(
+            seq_index=seq_index, img_per_seq=img_per_seq, aspect_ratio=aspect_ratio
+        )
 
     # ── Main get_data ────────────────────────────────────────────────────
     def get_data(self, seq_index=0, img_per_seq=None, **kwargs):

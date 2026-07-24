@@ -144,27 +144,13 @@ data:
     common_config:
       fix_img_num: -1
       fix_aspect_ratio: 1.0
-      load_track: False
-      track_num: 1024
       training: True
       inside_random: True
-      img_size: ${img_size}
-      patch_size: ${patch_size}
-      rescale: True
-      rescale_aug: True
-      landscape_check: False
-      debug: False
-      get_nearby: True
-      load_depth: False
       img_nums: [20, 20]  # fixed S=20 slot budget (multi-frame: full z-coverage + uniform-random extras)
       max_img_per_gpu: ${max_img_per_gpu}
-      allow_duplicate_img: True
-      repeat_batch: False
-      normalize_points: false
       augs:
         cojitter: True
         cojitter_ratio: 0.0
-        scales: [1.0, 1.0]
         aspects: [1.0, 1.0]
         color_jitter:
           p: 0.0
@@ -197,27 +183,13 @@ data:
     common_config:
       fix_img_num: -1
       fix_aspect_ratio: 1.0
-      load_track: False
-      track_num: 1024
       training: False
       inside_random: False
-      img_size: ${img_size}
-      patch_size: ${patch_size}
-      rescale: True
-      rescale_aug: False
-      landscape_check: False
-      debug: False
-      get_nearby: True
-      load_depth: False
       img_nums: [20, 20]  # fixed S=20 slot budget (multi-frame: full z-coverage + uniform-random extras)
       max_img_per_gpu: ${max_img_per_gpu}
-      allow_duplicate_img: True
-      repeat_batch: False
-      normalize_points: false
       augs:
         cojitter: False
         cojitter_ratio: 0.0
-        scales: [1.0, 1.0]
         aspects: [1.0, 1.0]
         color_jitter:
           p: 0.0

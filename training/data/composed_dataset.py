@@ -14,7 +14,6 @@ from hydra.utils import instantiate
 from torch.utils.data import ConcatDataset, Dataset
 
 from .augmentation import get_image_augmentation
-from .dataset_util import *
 
 
 class ComposedDataset(Dataset, ABC):
