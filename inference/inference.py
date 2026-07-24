@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from vggt.models.vggt import VGGT
+from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 from vggt.utils.splat import splat_predictions
 from inference.adapters.base import (
     GRID_SHAPE, DEFAULT_CKPT, DEFAULT_CKPT_REFERENCE, INPUT_IMG_SIZE, to_canonical_inplane,
@@ -30,7 +31,7 @@ def load_rtfb_model(ckpt=DEFAULT_CKPT, *, refiner=False, device="cuda"):
         use_target_t_pose_embedding=True, train_on_residual_dvf=True,
         enable_refiner=refiner, refiner_use_coverage=refiner, grid_shape=GRID_SHAPE,
     )
-    ck = torch.load(ckpt, map_location="cpu", weights_only=False)
+    ck = torch.load(stage_checkpoint_to_local(ckpt), map_location="cpu", weights_only=False)
     state = ck["model"] if "model" in ck else ck
     missing, unexpected = model.load_state_dict(state, strict=False)
     bad = [k for k in missing if any(s in k for s in
@@ -53,7 +54,7 @@ def load_rtfb_model_reference(ckpt=DEFAULT_CKPT_REFERENCE, *, refiner=False, dev
         use_target_t_pose_embedding=False, use_reference_token=True, train_on_residual_dvf=True,
         enable_refiner=refiner, refiner_use_coverage=refiner, grid_shape=GRID_SHAPE,
     )
-    ck = torch.load(ckpt, map_location="cpu", weights_only=False)
+    ck = torch.load(stage_checkpoint_to_local(ckpt), map_location="cpu", weights_only=False)
     state = ck["model"] if "model" in ck else ck
     missing, unexpected = model.load_state_dict(state, strict=False)
     bad = [k for k in missing if any(s in k for s in
@@ -78,7 +79,7 @@ def forward(model, batch, *, target_t=-1.0, want=("V",), device="cuda", grid_sha
     """
     S = batch["images"].shape[1]
     batch["target_t_indices"] = torch.full((1, S, 1), target_t, dtype=torch.float32, device=device)
-    with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
 
     wp = preds["world_points"].float()

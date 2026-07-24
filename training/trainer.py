@@ -32,7 +32,8 @@ from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from data.respiratory import RespiratoryConfig
-from train_utils.checkpoint import CheckpointSaver, stage_checkpoint_to_local
+from train_utils.checkpoint import CheckpointSaver
+from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 from train_utils.freeze import freeze_modules
 from train_utils.general import *
 from train_utils.logging import setup_logging
@@ -270,7 +271,7 @@ class Trainer:
         # for an ~8GB ckpt), so repeated loads (e.g. smoke runs) reuse one /tmp copy.
         # ONLY the configured resume_checkpoint_path (immutable) is staged; a run's own
         # save_dir checkpoint_last.pt (overwritten each requeue) is loaded directly to
-        # avoid ever reusing a stale copy. Byte-identical (pure copy); see checkpoint.py.
+        # avoid ever reusing a stale copy. Byte-identical (pure copy); see checkpoint_stage.py.
         load_path = ckpt_path
         resume_cfg = self.checkpoint_conf.resume_checkpoint_path
         if resume_cfg and os.path.abspath(ckpt_path) == os.path.abspath(resume_cfg):
