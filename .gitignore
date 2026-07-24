@@ -164,6 +164,8 @@ skyseg.onnx
 slurm_logs/
 wandb/
 logs/
+# Generated HTML analysis reports (large base64-embedded blobs; local only)
+_html/
 # GPFS symlinks (resolve per-machine)
 /result
 /elastix_grid_search
