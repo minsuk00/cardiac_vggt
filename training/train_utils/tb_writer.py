@@ -12,8 +12,6 @@ from typing import Any, Dict, Optional, Union
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from .distributed import get_machine_local_and_dist_rank
-
 
 class TensorBoardLogger:
     """A wrapper around TensorBoard SummaryWriter with distributed training support.
@@ -39,7 +37,7 @@ class TensorBoardLogger:
             *args, **kwargs: Additional arguments passed to SummaryWriter
         """
         self._writer: Optional[SummaryWriter] = None
-        _, self._rank = get_machine_local_and_dist_rank()
+        self._rank = 0  # single-GPU only
         self._path: str = path
         if self._rank == 0:
             logging.info(f"TensorBoard SummaryWriter instantiated. Files will be stored in: {path}")

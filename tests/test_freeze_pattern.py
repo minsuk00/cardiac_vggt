@@ -88,7 +88,6 @@ def test_mri_volume_uses_reference_conditioning(cfg_only):
     assert m.use_reference_token is True
     assert m.use_z_pose_embedding is True
     assert cfg_only.reference_slot is True
-    assert cfg_only.distributed.find_unused_parameters is True
 
 
 def test_patch_embed_is_frozen(model_with_freeze):

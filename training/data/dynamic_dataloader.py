@@ -54,8 +54,11 @@ class DynamicTorchDataset(ABC):
         if len(self.image_num_range) != 2 or self.image_num_range[0] < 1 or self.image_num_range[0] > self.image_num_range[1]:
             raise ValueError(f"image_num_range must be [min, max] with 1 <= min <= max, got {self.image_num_range}")
 
-        # Create samplers
-        self.sampler = DynamicDistributedSampler(self.dataset, seed=seed, shuffle=shuffle)
+        # Create samplers. Single-GPU only: pass num_replicas=1, rank=0 explicitly so the
+        # sampler does NOT require an initialized torch process group (it otherwise falls back
+        # to dist.get_world_size()/get_rank()). This yields the identical unsharded permutation
+        # that the former 1-process DDP group produced — torch.randperm(N, seed+epoch).
+        self.sampler = DynamicDistributedSampler(self.dataset, num_replicas=1, rank=0, seed=seed, shuffle=shuffle)
         self.batch_sampler = DynamicBatchSampler(
             self.sampler,
             self.aspect_ratio_range,

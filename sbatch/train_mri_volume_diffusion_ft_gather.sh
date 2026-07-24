@@ -117,21 +117,20 @@ else
     { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi
 
-echo "Running: torchrun ... --config $CONFIG $OVERRIDES"
+echo "Running: python ... --config $CONFIG $OVERRIDES"
 
 # --- SLURM auto-requeue signal forwarding (see _archive/legacy_sbatch/train_mri_volume.sh) ---
+# Single-GPU / plain-python launch: forward SIGUSR1 straight to the python worker (it installs
+# the requeue handler itself) instead of to torchrun's children.
 _forward_usr1() {
-    echo "[requeue] batch shell caught SIGUSR1 — forwarding to torchrun workers (children of ${TORCHRUN_PID})"
-    pkill -USR1 -P "$TORCHRUN_PID" 2>/dev/null
-    wait "$TORCHRUN_PID"
+    echo "[requeue] batch shell caught SIGUSR1 — forwarding to python worker (${TRAIN_PID})"
+    kill -USR1 "$TRAIN_PID" 2>/dev/null
+    wait "$TRAIN_PID"
 }
 trap _forward_usr1 USR1
 
 export PYTHONPATH=training:.
-torchrun \
-    --nproc_per_node=$NGPU \
-    --master_port=$MASTER_PORT \
-    training/launch.py \
+python training/launch.py \
     --config $CONFIG $OVERRIDES &
-TORCHRUN_PID=$!
-wait "$TORCHRUN_PID"
+TRAIN_PID=$!
+wait "$TRAIN_PID"

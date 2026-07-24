@@ -16,9 +16,6 @@ try:
 except ImportError:
     wandb = None
 
-from .distributed import get_machine_local_and_dist_rank
-
-
 class WandbLogger:
     """A wrapper around Weights & Biases with distributed training support."""
 
@@ -31,8 +28,7 @@ class WandbLogger:
         resume_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        self._rank = 0
-        _, self._rank = get_machine_local_and_dist_rank()
+        self._rank = 0  # single-GPU only
 
         if self._rank == 0 and wandb is not None:
             # Using print AND logging.info to ensure visibility everywhere

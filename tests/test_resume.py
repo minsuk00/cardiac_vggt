@@ -52,7 +52,6 @@ class _MinimalTrainer:
     """Stripped-down trainer that only has the checkpoint-loading plumbing."""
 
     def __init__(self, model, optimizer):
-        self.rank = 0
         self.epoch = 0
         self.steps = {"train": 0, "val": 0}
         self.ckpt_time_elapsed = 0
@@ -268,8 +267,7 @@ class TestWandbResume(unittest.TestCase):
         mock_wandb = MagicMock()
         mock_wandb.init.return_value = mock_run
 
-        with patch.object(ww, "wandb", mock_wandb), \
-             patch("train_utils.wandb_writer.get_machine_local_and_dist_rank", return_value=(0, 0)):
+        with patch.object(ww, "wandb", mock_wandb):
             ww.WandbLogger(project="test-proj", name="test-run", resume_id="ypigj8ew")
 
         call_kwargs = mock_wandb.init.call_args.kwargs
@@ -288,8 +286,7 @@ class TestWandbResume(unittest.TestCase):
         mock_wandb = MagicMock()
         mock_wandb.init.return_value = mock_run
 
-        with patch.object(ww, "wandb", mock_wandb), \
-             patch("train_utils.wandb_writer.get_machine_local_and_dist_rank", return_value=(0, 0)):
+        with patch.object(ww, "wandb", mock_wandb):
             ww.WandbLogger(project="test-proj", name="test-run", resume_id=None)
 
         call_kwargs = mock_wandb.init.call_args.kwargs

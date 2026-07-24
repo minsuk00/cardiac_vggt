@@ -18,4 +18,4 @@ model:
   warp_head_type: "bspline"
   bspline_grid_size: 32
 
-# aggft (freeze only patch_embed) + find_unused_parameters=true are inherited from mri_volume.
+# aggft (freeze only patch_embed) is inherited from mri_volume.

@@ -35,18 +35,16 @@ GLOB_FLAGS = (
 
 
 
-class DDPCheckpointSaver:
+class CheckpointSaver:
     def __init__(
         self,
         checkpoint_folder: str,
         checkpoint_names: List[str],
-        rank: int,
         epoch: int,
     ):
         super().__init__()
         self.checkpoint_folder = checkpoint_folder
         self.checkpoint_names = checkpoint_names
-        self.worker_id = rank
         self.epoch = epoch
 
     def save_checkpoint(
@@ -57,15 +55,14 @@ class DDPCheckpointSaver:
         checkpoint = dict(**kwargs)
         checkpoint["model"] = model.state_dict()
 
-        if self.worker_id == 0:
-            for ckpt_name in self.checkpoint_names:
-                checkpoint_path = os.path.join(
-                    self.checkpoint_folder, f"{ckpt_name}.pt"
-                )
-                logging.info(
-                    f"Saving checkpoint at epoch {self.epoch} to {checkpoint_path}"
-                )
-                robust_torch_save(checkpoint, checkpoint_path)
+        for ckpt_name in self.checkpoint_names:
+            checkpoint_path = os.path.join(
+                self.checkpoint_folder, f"{ckpt_name}.pt"
+            )
+            logging.info(
+                f"Saving checkpoint at epoch {self.epoch} to {checkpoint_path}"
+            )
+            robust_torch_save(checkpoint, checkpoint_path)
 
 
 

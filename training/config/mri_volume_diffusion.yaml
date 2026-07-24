@@ -20,4 +20,4 @@ loss:
     # sweeping higher (1e3–1e4) to actually flatten the warp — watch loss_diffusion vs loss_volume.
     diffusion_weight: 1000.0
 
-# aggft (freeze only patch_embed) + find_unused_parameters=true are inherited from mri_volume.
+# aggft (freeze only patch_embed) is inherited from mri_volume.

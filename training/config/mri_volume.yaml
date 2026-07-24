@@ -104,14 +104,9 @@ checkpoint:
 # Reference conditioning needs the camera_token (the slot-0 anchor) + z_embedder to specialize,
 # so we train the DINOv2 attention blocks + embedders + camera_token and freeze ONLY patch_embed
 # (NOT the head-only "*aggregator*" wildcard the parent mri_finetune uses). ~2.8× slower,
-# ~27 GB/A40. find_unused_parameters=true is required once the aggregator is unfrozen (disabled
-# depth/track/camera heads + register tokens get no gradient in the point-only forward), else
-# DDP raises "Expected to have finished reduction…". Mirrors mri_volume_bspline/diffusion.
+# ~27 GB/A40. Mirrors mri_volume_bspline/diffusion.
 optim:
   frozen_module_names: ["*patch_embed*"]
-
-distributed:
-  find_unused_parameters: true
 
 loss:
   volume:

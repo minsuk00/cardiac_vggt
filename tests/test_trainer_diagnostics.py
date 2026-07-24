@@ -42,7 +42,7 @@ def _make_data(t_targets, B=None, V_shape=(2, 4, 4)):
     }
 
 
-def _make_stub_trainer(t_target_fixed=None, rank=0):
+def _make_stub_trainer(t_target_fixed=None):
     """Stub Trainer-like object that has just enough state for the val-only methods we test."""
     from trainer import Trainer
     stub = SimpleNamespace()
@@ -53,7 +53,6 @@ def _make_stub_trainer(t_target_fixed=None, rank=0):
     stub._per_phase_val_psnr_bbox = defaultdict(list)
     # `_motion` = voxels that move across the cardiac cycle (the val_motion panel).
     stub._per_phase_val_psnr_motion = defaultdict(list)
-    stub.rank = rank
     stub.logging_conf = SimpleNamespace(log_freq=1)
     # Mock scalar log to a list we can assert against.
     stub._logged = []
@@ -226,7 +225,6 @@ def test_baseline_skipped_when_no_dataset():
     stub = SimpleNamespace()
     stub.t_target_fixed = None
     stub.device = "cpu"
-    stub.rank = 0
     stub.logging_conf = SimpleNamespace(log_dir="/tmp")
     stub._get_mri_dataset = lambda: None
     stub._log_scalar = lambda *a, **kw: None

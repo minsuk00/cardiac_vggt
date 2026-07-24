@@ -24,18 +24,15 @@ import logging
 import math
 import time
 from collections import defaultdict
-from datetime import timedelta
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from data.respiratory import RespiratoryConfig
-from train_utils.checkpoint import DDPCheckpointSaver
-from train_utils.distributed import get_machine_local_and_dist_rank
+from train_utils.checkpoint import CheckpointSaver
 from train_utils.freeze import freeze_modules
 from train_utils.general import *
 from train_utils.logging import setup_logging
@@ -126,21 +123,19 @@ class Trainer:
         self.where = 0.0
 
         self._setup_device(device)
-        self._setup_torch_dist_and_backend(cuda, distributed)
+        self._setup_backends(cuda)
 
         # Setup logging directory and configure logger
         safe_makedirs(self.logging_conf.log_dir)
         setup_logging(
             __name__,
             output_dir=self.logging_conf.log_dir,
-            rank=self.rank,
+            rank=0,
             log_level_primary=self.logging_conf.log_level_primary,
             log_level_secondary=self.logging_conf.log_level_secondary,
             all_ranks=self.logging_conf.all_ranks,
         )
-        set_seeds(seed_value, self.max_epochs, self.distributed_rank)
-
-        assert is_dist_avail_and_initialized(), "Torch distributed needs to be initialized before calling the trainer."
+        set_seeds(seed_value, self.max_epochs, 0)
 
         # Instantiate components (model, loss, etc.)
         self._setup_components()
@@ -163,12 +158,6 @@ class Trainer:
         )
         if ckpt_to_load is not None:
             self._load_resuming_checkpoint(ckpt_to_load)
-
-        # Wrap the model with DDP
-        self._setup_ddp_distributed_training(distributed, device)
-
-        # Barrier to ensure all processes are synchronized before starting
-        dist.barrier()
 
         # ── Diagnostics state (val-only; never touches training) ──────────
         # Cache the dataset's `t_target_fixed` setting so val-only diagnostics can gate on it.
@@ -229,10 +218,10 @@ class Trainer:
         self.respiratory_cfg = RespiratoryConfig.from_cfg(
             aug_cfg.get("respiratory", None) if aug_cfg is not None else None)
         self.resp_generator = torch.Generator(device=self.device).manual_seed(
-            int(self.seed_value) + int(self.distributed_rank))
+            int(self.seed_value))
 
         # Compute identity-Δ baseline once at startup.
-        if self.mode in ["train", "val"] and self.rank == 0:
+        if self.mode in ["train", "val"]:
             self._compute_identity_baseline()
             # Motion-mask reference panel (3 val subjects). Data-derived + static across
             # training, so logged once here rather than every val epoch.
@@ -263,8 +252,8 @@ class Trainer:
                 os.environ[variable_name] = value
         logging.info(f"Environment:\n{json.dumps(dict(os.environ), sort_keys=True, indent=2)}")
 
-    def _setup_torch_dist_and_backend(self, cuda_conf: Dict, distributed_conf: Dict) -> None:
-        """Initializes the distributed process group and configures PyTorch backends."""
+    def _setup_backends(self, cuda_conf: Dict) -> None:
+        """Configures PyTorch CUDA backends. Single-GPU: no process group is created."""
         if torch.cuda.is_available():
             # Configure CUDA backend settings for performance
             torch.backends.cudnn.deterministic = cuda_conf.cudnn_deterministic
@@ -272,13 +261,9 @@ class Trainer:
             torch.backends.cuda.matmul.allow_tf32 = cuda_conf.allow_tf32
             torch.backends.cudnn.allow_tf32 = cuda_conf.allow_tf32
 
-        # Initialize the DDP process group
-        dist.init_process_group(backend=distributed_conf.backend, timeout=timedelta(minutes=distributed_conf.timeout_mins))
-        self.rank = dist.get_rank()
-
     def _load_resuming_checkpoint(self, ckpt_path: str):
         """Loads a checkpoint from the given path to resume training."""
-        logging.info(f"Resuming training from {ckpt_path} (rank {self.rank})")
+        logging.info(f"Resuming training from {ckpt_path}")
 
         with g_pathmgr.open(ckpt_path, "rb") as f:
             checkpoint = torch.load(f, map_location="cpu")
@@ -286,13 +271,12 @@ class Trainer:
         # Load model state
         model_state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
         missing, unexpected = self.model.load_state_dict(model_state_dict, strict=self.checkpoint_conf.strict)
-        if self.rank == 0:
-            logging.info(f"Model state loaded. Missing keys count: {len(missing) if missing else 0}. Unexpected keys count: {len(unexpected) if unexpected else 0}.")
+        logging.info(f"Model state loaded. Missing keys count: {len(missing) if missing else 0}. Unexpected keys count: {len(unexpected) if unexpected else 0}.")
 
         # Load optimizer state if available and in training mode (self.optims is only
         # constructed when self.mode != "val"; skip otherwise to avoid AttributeError).
         if "optimizer" in checkpoint and self.mode != "val":
-            logging.info(f"Loading optimizer state dict (rank {self.rank})")
+            logging.info("Loading optimizer state dict")
             opt_states = checkpoint["optimizer"]
             if not isinstance(opt_states, list):
                 opt_states = [opt_states]
@@ -313,10 +297,10 @@ class Trainer:
 
     def _setup_device(self, device: str):
         """Sets up the device for training (CPU or CUDA)."""
-        self.local_rank, self.distributed_rank = get_machine_local_and_dist_rank()
+        # Single-GPU only: always device 0 (was read from torchrun's LOCAL_RANK env).
         if device == "cuda":
-            self.device = torch.device("cuda", self.local_rank)
-            torch.cuda.set_device(self.local_rank)
+            self.device = torch.device("cuda", 0)
+            torch.cuda.set_device(0)
         elif device == "cpu":
             self.device = torch.device("cpu")
         else:
@@ -350,18 +334,17 @@ class Trainer:
 
         # Freeze specified model parameters if any
         if getattr(self.optim_conf, "frozen_module_names", None):
-            logging.info(f"[Start] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}")
+            logging.info(f"[Start] Freezing modules: {self.optim_conf.frozen_module_names}")
             self.model = freeze_modules(
                 self.model,
                 patterns=self.optim_conf.frozen_module_names,
             )
-            logging.info(f"[Done] Freezing modules: {self.optim_conf.frozen_module_names} on rank {self.distributed_rank}")
+            logging.info(f"[Done] Freezing modules: {self.optim_conf.frozen_module_names}")
 
-        # Log model summary on rank 0
-        if self.rank == 0:
-            model_summary_path = os.path.join(self.logging_conf.log_dir, "model.txt")
-            model_summary(self.model, log_file=model_summary_path, logging_func=logging.info)
-            logging.info(f"Model summary saved to {model_summary_path}")
+        # Log model summary
+        model_summary_path = os.path.join(self.logging_conf.log_dir, "model.txt")
+        model_summary(self.model, log_file=model_summary_path, logging_func=logging.info)
+        logging.info(f"Model summary saved to {model_summary_path}")
 
         logging.info("Successfully initialized training components.")
 
@@ -378,23 +361,6 @@ class Trainer:
         if self.mode in ["train"]:
             self.train_dataset = instantiate(self.data_conf.train, _recursive_=False)
             self.train_dataset.seed = self.seed_value
-
-    def _setup_ddp_distributed_training(self, distributed_conf: Dict, device: str):
-        """Wraps the model with DistributedDataParallel (DDP)."""
-        assert isinstance(self.model, torch.nn.Module)
-
-        ddp_options = dict(
-            find_unused_parameters=distributed_conf.find_unused_parameters,
-            gradient_as_bucket_view=distributed_conf.gradient_as_bucket_view,
-            bucket_cap_mb=distributed_conf.bucket_cap_mb,
-            broadcast_buffers=distributed_conf.broadcast_buffers,
-        )
-
-        self.model = nn.parallel.DistributedDataParallel(
-            self.model,
-            device_ids=[self.local_rank] if device == "cuda" else [],
-            **ddp_options,
-        )
 
     def save_checkpoint(self, epoch: int, checkpoint_names: Optional[List[str]] = None):
         """
@@ -424,16 +390,14 @@ class Trainer:
         if self.optim_conf.amp.enabled:
             checkpoint_content["scaler"] = self.scaler.state_dict()
 
-        # Save the checkpoint for DDP only
-        saver = DDPCheckpointSaver(
+        saver = CheckpointSaver(
             checkpoint_folder,
             checkpoint_names=checkpoint_names,
-            rank=self.distributed_rank,
             epoch=epoch,
         )
 
-        if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-            model = self.model.module
+        # Single-GPU: self.model is the bare module (no DDP wrap to unwrap).
+        model = self.model
 
         saver.save_checkpoint(
             model=model,
@@ -481,9 +445,9 @@ class Trainer:
 
     def _log_resp_disp_scalar(self, batch, step: int, prefix: str):
         """Log the per-slot respiratory displacement magnitude (mm) as scalars under
-        `{prefix}/resp/disp_mm_{mean,max}`. No-op when breathing is off (key absent)
-        or off rank 0. Read-only diagnostic — never affects training."""
-        if self.rank != 0 or not self.wandb_writer:
+        `{prefix}/resp/disp_mm_{mean,max}`. No-op when breathing is off (key absent).
+        Read-only diagnostic — never affects training."""
+        if not self.wandb_writer:
             return
         disp = batch.get("resp_disp_mm")
         if disp is None:
@@ -758,7 +722,7 @@ class Trainer:
                 batch = gpu_augment_batch(
                     batch, None, self.device,
                     respiratory_cfg=self.respiratory_cfg, train=False)
-            model = self.model.module if hasattr(self.model, "module") else self.model
+            model = self.model
             # Reference-slice mode (docs/25): slot 0 defines the queried phase via its IMAGE, not a
             # target_t index, so it must OBSERVE phase t at each query. z_mid (the bbox z-center) is
             # constant across the sweep, so scanner_coords[0]/z_indices[0] from get_data stay valid;
@@ -971,7 +935,7 @@ class Trainer:
             logging.warning(f"[ef] save pred volume failed (ignored): {e}")
 
     def _compute_and_log_ef(self, step: int) -> None:
-        """End of an EF-epoch (rank 0): one batched nnU-Net Task114 seg over the saved ED/ES pred
+        """End of an EF-epoch: one batched nnU-Net Task114 seg over the saved ED/ES pred
         volumes, then predicted-vs-GT EF slope/Spearman/MAE logged to wandb. Try/except-wrapped so
         a seg/subprocess failure never touches training."""
         try:
@@ -1017,7 +981,7 @@ class Trainer:
         Top row = original input slices, bottom row = the augmented slices the model
         actually trains on, so it's visible which augmentations are active and how
         strong they are (the caption lists the tier's ops + per-op probabilities).
-        Diagnostic only: gated on aug enabled + rank 0 + the epoch cadence at the call
+        Diagnostic only: gated on aug enabled + the epoch cadence at the call
         site, and wrapped in try/except so it can never perturb training.
         """
         if not self.wandb_writer or orig_images is None or aug_images is None:
@@ -1463,9 +1427,9 @@ class Trainer:
     def run_train(self):
         """Runs the main training loop over all epochs."""
         while self.epoch < self.max_epochs:
-            set_seeds(self.seed_value + self.epoch * 100, self.max_epochs, self.distributed_rank)
+            set_seeds(self.seed_value + self.epoch * 100, self.max_epochs, 0)
 
-            dataloader = self.train_dataset.get_loader(epoch=int(self.epoch + self.distributed_rank))
+            dataloader = self.train_dataset.get_loader(epoch=int(self.epoch))
             self.train_epoch(dataloader)
 
             # Save checkpoint after each training epoch
@@ -1492,7 +1456,7 @@ class Trainer:
             logging.info("No validation dataset configured. Skipping validation.")
             return
 
-        dataloader = self.val_dataset.get_loader(epoch=int(self.epoch + self.distributed_rank))
+        dataloader = self.val_dataset.get_loader(epoch=int(self.epoch))
         self.val_epoch(dataloader)
 
         del dataloader
@@ -1565,25 +1529,13 @@ class Trainer:
         if _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None:
             limit_val_batches = len(_mri_ds.val_targets)
 
-        # Predicted-EF metric: is this an EF-epoch? (opt-in, val-only, rank 0, cadence-gated,
+        # Predicted-EF metric: is this an EF-epoch? (opt-in, val-only, cadence-gated,
         # requires the ED/ES sweep). If so, reset the pred dir; volumes are dumped per batch below.
-        # SINGLE-GPU ONLY: the sweep is rank-0-collected but the val DistributedSampler shards
-        # seq_index across ranks, so under DDP rank 0 sees an incomplete/duplicated subset and
-        # subjects lose their ED↔ES pairing → EF would be wrong or empty. Gate on world_size==1.
-        _world_size = dist.get_world_size() if (dist.is_available() and dist.is_initialized()) else 1
         self._ef_this_epoch = bool(
-            self.rank == 0
-            and _world_size == 1
-            and getattr(self.logging_conf, "ef_eval_enable", False)
+            getattr(self.logging_conf, "ef_eval_enable", False)
             and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
             and self.epoch % max(1, getattr(self.logging_conf, "ef_eval_every_n_val_epochs", 5)) == 0
         )
-        if (self.rank == 0 and _world_size > 1 and getattr(self.logging_conf, "ef_eval_enable", False)
-                and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
-                and not getattr(self, "_ef_ddp_warned", False)):
-            logging.warning("[ef] predicted-EF metric is single-GPU only (val is DistributedSampler-"
-                            f"sharded across {_world_size} ranks); skipping EF. Run val on 1 GPU for EF.")
-            self._ef_ddp_warned = True
         if self._ef_this_epoch:
             import shutil
             self._ef_pred_dir = os.path.join(self.logging_conf.log_dir, "ef_tmp", "pred")
@@ -1592,11 +1544,8 @@ class Trainer:
 
         # ED-vs-ES panel: on visual epochs, stash ED+ES reconstructions for the chosen subjects
         # (needs the sweep so each subject is hit at both phases). Rendered at end of epoch.
-        # SINGLE-GPU ONLY (same reason as EF): _stash_ed_es maps via the local data_iter, but the
-        # val DistributedSampler shards seq_index across ranks, so under DDP the panels would
-        # mislabel subjects/phases. Gate on world_size==1 (reuses _world_size from the EF block).
         self._viz_ed_es = bool(
-            self.rank == 0 and _world_size == 1 and getattr(self.logging_conf, "log_visuals", True)
+            getattr(self.logging_conf, "log_visuals", True)
             and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
             and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
         )
@@ -1637,12 +1586,11 @@ class Trainer:
                 ):
                     val_loss_dict = self._step(batch, self.model, phase, loss_meters)
 
-            if self.rank == 0:
-                self._save_val_volumes(batch, val_loss_dict)
-                if getattr(self, "_ef_this_epoch", False):
-                    self._save_ef_volume(batch, val_loss_dict)
-                if getattr(self, "_viz_ed_es", False):
-                    self._stash_ed_es(batch, val_loss_dict)
+            self._save_val_volumes(batch, val_loss_dict)
+            if getattr(self, "_ef_this_epoch", False):
+                self._save_ef_volume(batch, val_loss_dict)
+            if getattr(self, "_viz_ed_es", False):
+                self._stash_ed_es(batch, val_loss_dict)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -1664,100 +1612,99 @@ class Trainer:
 
         # Log validation averages at the end of the epoch to WandB and TB
         # We log these at the current TRAINING step to align with training progress
-        if self.rank == 0:
-            current_train_step = self.steps["train"]
-            prefix = f"Loss/{phase}_"
-            for name, meter in loss_meters.items():
-                raw_name = name[len(prefix):] if name.startswith(prefix) else name
-                self._log_scalar(self._scalar_name("val", raw_name), meter.avg, current_train_step)
+        current_train_step = self.steps["train"]
+        prefix = f"Loss/{phase}_"
+        for name, meter in loss_meters.items():
+            raw_name = name[len(prefix):] if name.startswith(prefix) else name
+            self._log_scalar(self._scalar_name("val", raw_name), meter.avg, current_train_step)
 
-            # ── Per-phase val PSNR (only when t_target is varying) ──
-            # Metric name bakes in n and the identity baseline:
-            #   val_psnr/t{k}_n{n}_base{b:.1f}
-            # With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11)
-            # so each phase keeps one stable panel. If val ever loses determinism, n drifts
-            # and new panels appear — that drift is the smoke alarm.
-            # Multi-phase mode logs TWO parallel namespaces:
-            #   val/psnr/full/t{k}_n{n}_base{b:.1f}   averages over the whole cube
-            #   val/psnr/bbox/t{k}_n{n}_base{b:.1f}   averages over the subject's geometric content region only
-            # Both go to wandb so you can sanity-check that they track each other; large divergence
-            # means something's off (e.g., model hallucinating outside the FOV).
-            for namespace, accum, baseline_per_phase, baseline_mean in [
-                ("val/psnr/full", self._per_phase_val_psnr_full,
-                 self._identity_baseline_full_per_phase, self._identity_baseline_full_mean),
-                ("val/psnr/bbox", self._per_phase_val_psnr_bbox,
-                 self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
-                ("val/psnr/motion", self._per_phase_val_psnr_motion,
-                 self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
-                # Refiner panels — additive; empty (skipped) unless the refiner ran. Same
-                # identity baselines as their V_canon counterparts so val/psnr/bbox vs
-                # val/psnr/bbox_refined are directly comparable.
-                ("val/psnr/bbox_refined", self._per_phase_val_psnr_bbox_refined,
-                 self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
-                ("val/psnr/motion_refined", self._per_phase_val_psnr_motion_refined,
-                 self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
-            ]:
-                if len(accum) == 0:
-                    continue
-                # Single-phase runs log ONLY the motion panels: full/bbox already go to the
-                # standard Loss/val_metric_* meters, so per-phase full/bbox would be redundant
-                # (that's why fixed-phase originally skipped this loop entirely). Motion is the
-                # one metric the standard meters don't cover, so it must still be logged.
-                if self.t_target_fixed is not None and not namespace.startswith("val/psnr/motion"):
-                    continue
-                try:
-                    all_psnrs = []
-                    per_phase_means = []
-                    for t in sorted(accum.keys()):
-                        psnrs = accum[t]
-                        all_psnrs.extend(psnrs)
-                        n = len(psnrs)
-                        phase_mean = float(sum(psnrs) / n)
-                        per_phase_means.append((t, phase_mean))
-                        baseline = (baseline_per_phase or {}).get(t)
-                        base_tag = f"_base{baseline:.1f}" if baseline is not None else ""
-                        self._log_scalar(
-                            f"{namespace}/t{t}_n{n}{base_tag}",
-                            phase_mean,
-                            current_train_step,
-                        )
-                    n_total = len(all_psnrs)
-                    overall_mean = float(sum(all_psnrs) / n_total)
-                    base_tag = f"_base{baseline_mean:.1f}" if baseline_mean is not None else ""
+        # ── Per-phase val PSNR (only when t_target is varying) ──
+        # Metric name bakes in n and the identity baseline:
+        #   val_psnr/t{k}_n{n}_base{b:.1f}
+        # With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11)
+        # so each phase keeps one stable panel. If val ever loses determinism, n drifts
+        # and new panels appear — that drift is the smoke alarm.
+        # Multi-phase mode logs TWO parallel namespaces:
+        #   val/psnr/full/t{k}_n{n}_base{b:.1f}   averages over the whole cube
+        #   val/psnr/bbox/t{k}_n{n}_base{b:.1f}   averages over the subject's geometric content region only
+        # Both go to wandb so you can sanity-check that they track each other; large divergence
+        # means something's off (e.g., model hallucinating outside the FOV).
+        for namespace, accum, baseline_per_phase, baseline_mean in [
+            ("val/psnr/full", self._per_phase_val_psnr_full,
+             self._identity_baseline_full_per_phase, self._identity_baseline_full_mean),
+            ("val/psnr/bbox", self._per_phase_val_psnr_bbox,
+             self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
+            ("val/psnr/motion", self._per_phase_val_psnr_motion,
+             self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
+            # Refiner panels — additive; empty (skipped) unless the refiner ran. Same
+            # identity baselines as their V_canon counterparts so val/psnr/bbox vs
+            # val/psnr/bbox_refined are directly comparable.
+            ("val/psnr/bbox_refined", self._per_phase_val_psnr_bbox_refined,
+             self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
+            ("val/psnr/motion_refined", self._per_phase_val_psnr_motion_refined,
+             self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
+        ]:
+            if len(accum) == 0:
+                continue
+            # Single-phase runs log ONLY the motion panels: full/bbox already go to the
+            # standard Loss/val_metric_* meters, so per-phase full/bbox would be redundant
+            # (that's why fixed-phase originally skipped this loop entirely). Motion is the
+            # one metric the standard meters don't cover, so it must still be logged.
+            if self.t_target_fixed is not None and not namespace.startswith("val/psnr/motion"):
+                continue
+            try:
+                all_psnrs = []
+                per_phase_means = []
+                for t in sorted(accum.keys()):
+                    psnrs = accum[t]
+                    all_psnrs.extend(psnrs)
+                    n = len(psnrs)
+                    phase_mean = float(sum(psnrs) / n)
+                    per_phase_means.append((t, phase_mean))
+                    baseline = (baseline_per_phase or {}).get(t)
+                    base_tag = f"_base{baseline:.1f}" if baseline is not None else ""
                     self._log_scalar(
-                        f"{namespace}/mean_n{n_total}{base_tag}",
-                        overall_mean,
+                        f"{namespace}/t{t}_n{n}{base_tag}",
+                        phase_mean,
                         current_train_step,
                     )
-                    # Also emit to the TEXT log (slurm log), not just wandb, so per-phase
-                    # progress and the identity-baseline delta are readable straight from the
-                    # log file. Δ>0 means the model beats the no-motion-correction baseline.
-                    per_phase_str = " ".join(f"t{t}={m:.2f}" for t, m in per_phase_means)
-                    if baseline_mean is not None:
-                        head = f"mean={overall_mean:.2f} (Δ={overall_mean - baseline_mean:+.2f} vs identity {baseline_mean:.2f})"
-                    else:
-                        head = f"mean={overall_mean:.2f}"
-                    logging.info(f"[val per-phase @ step {current_train_step}] {namespace}: {head} | {per_phase_str}")
-                except Exception as e:
-                    logging.warning(f"per-phase {namespace} log failed (ignored): {e}")
+                n_total = len(all_psnrs)
+                overall_mean = float(sum(all_psnrs) / n_total)
+                base_tag = f"_base{baseline_mean:.1f}" if baseline_mean is not None else ""
+                self._log_scalar(
+                    f"{namespace}/mean_n{n_total}{base_tag}",
+                    overall_mean,
+                    current_train_step,
+                )
+                # Also emit to the TEXT log (slurm log), not just wandb, so per-phase
+                # progress and the identity-baseline delta are readable straight from the
+                # log file. Δ>0 means the model beats the no-motion-correction baseline.
+                per_phase_str = " ".join(f"t{t}={m:.2f}" for t, m in per_phase_means)
+                if baseline_mean is not None:
+                    head = f"mean={overall_mean:.2f} (Δ={overall_mean - baseline_mean:+.2f} vs identity {baseline_mean:.2f})"
+                else:
+                    head = f"mean={overall_mean:.2f}"
+                logging.info(f"[val per-phase @ step {current_train_step}] {namespace}: {head} | {per_phase_str}")
+            except Exception as e:
+                logging.warning(f"per-phase {namespace} log failed (ignored): {e}")
 
-            # ── Cardiac-cycle filmstrip (every N val epochs) ──
-            # Useful in BOTH modes: in multi-phase it's the qualitative proof of
-            # cross-phase reconstruction; in fixed-ED it shows what the model does at
-            # phases it wasn't trained on (degenerate or not — diagnostic).
-            filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
-            if self.epoch % filmstrip_every_n == 0:
-                self._log_cardiac_cycle_filmstrip(current_train_step)
+        # ── Cardiac-cycle filmstrip (every N val epochs) ──
+        # Useful in BOTH modes: in multi-phase it's the qualitative proof of
+        # cross-phase reconstruction; in fixed-ED it shows what the model does at
+        # phases it wasn't trained on (degenerate or not — diagnostic).
+        filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
+        if self.epoch % filmstrip_every_n == 0:
+            self._log_cardiac_cycle_filmstrip(current_train_step)
 
-            # ED-vs-ES per-subject panels (per-z; from the sweep's ED+ES reconstructions)
-            if getattr(self, "_viz_ed_es", False):
-                self._log_ed_es_panels(current_train_step)
+        # ED-vs-ES per-subject panels (per-z; from the sweep's ED+ES reconstructions)
+        if getattr(self, "_viz_ed_es", False):
+            self._log_ed_es_panels(current_train_step)
 
-            # Predicted-EF metric (nnU-Net seg of the ED/ES pred volumes → slope/Spearman).
-            if getattr(self, "_ef_this_epoch", False):
-                self._compute_and_log_ef(current_train_step)
+        # Predicted-EF metric (nnU-Net seg of the ED/ES pred volumes → slope/Spearman).
+        if getattr(self, "_ef_this_epoch", False):
+            self._compute_and_log_ef(current_train_step)
 
-            logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
+        logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
 
         return True
 
@@ -1824,7 +1771,7 @@ class Trainer:
             # can log a before/after augmentation example. This never alters the batch the
             # model trains on — gpu_augment_batch runs identically either way.
             _aug_log = (
-                (self.gpu_transforms is not None or self.respiratory_cfg.enable) and self.rank == 0
+                (self.gpu_transforms is not None or self.respiratory_cfg.enable)
                 and self.logging_conf.log_visuals and data_iter == 0
                 and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
             )
@@ -1835,7 +1782,7 @@ class Trainer:
                 resp_generator=self.resp_generator)
             if _aug_log:
                 self._log_augmentation_to_wandb(_orig_images, batch.get("images"), self.steps["train"])
-            if self.rank == 0 and data_iter == 0:
+            if data_iter == 0:
                 self._log_resp_disp_scalar(batch, self.steps["train"], "train")
 
             accum_steps = self.accum_steps
@@ -1938,9 +1885,10 @@ class Trainer:
             amp_type = torch.float16
 
         for i, chunked_batch in enumerate(chunked_batches):
-            ddp_context = self.model.no_sync() if i < accum_steps - 1 else contextlib.nullcontext()
+            # Single-GPU: no DDP, so no gradient sync to defer — no_sync() was a no-op anyway.
+            grad_accum_context = contextlib.nullcontext()
 
-            with ddp_context:
+            with grad_accum_context:
                 with torch.cuda.amp.autocast(
                     enabled=self.optim_conf.amp.enabled,
                     dtype=amp_type,
@@ -2010,7 +1958,7 @@ class Trainer:
                     loss_meters[meter_key].update(value, batch_size)
 
                 # Only log batch-level scalars for training to avoid step collision and noise
-                if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
+                if phase == "train" and step % self.logging_conf.log_freq == 0:
                     self._log_scalar(self._scalar_name("train", key), value, step)
 
         # ── Val-only diagnostic: per-phase PSNR accumulation (gated, never touches train) ──
@@ -2078,7 +2026,7 @@ class Trainer:
         # Refiner train scalars — additive, logged directly (NOT via the meter allowlist, so
         # an OFF run's console/meters are byte-identical to today). Only fires when the refiner
         # ran (keys present). Val is covered by the per-phase val_psnr_*_refined panels above.
-        if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
+        if phase == "train" and step % self.logging_conf.log_freq == 0:
             for key in ("loss_refiner", "loss_refiner_ssim", "metric_ssim_2d_refined",
                         "metric_psnr_3d_full_refined",
                         "metric_psnr_3d_bbox_refined", "metric_psnr_3d_motion_refined"):
@@ -2090,7 +2038,7 @@ class Trainer:
         # NOTE: with the decoupled-target design, slot 0 is NO LONGER the t_target slice —
         # input phases are sampled independently of t_target. These are just the raw (t, z)
         # picks for the first slots, for sanity-checking the sampler.
-        if phase == "train" and step % self.logging_conf.log_freq == 0 and self.rank == 0:
+        if phase == "train" and step % self.logging_conf.log_freq == 0:
             # data["timesteps"] and data["slice_indices"] are [B, S]
             if "timesteps" in data and "slice_indices" in data:
                 ts = data["timesteps"]
