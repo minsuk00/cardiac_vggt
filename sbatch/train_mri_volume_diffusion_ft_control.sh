@@ -25,8 +25,6 @@
 # ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM and
 # CKPT_ONLY empty. aggft: ~2.8× slower, ~27 GB/A40.
 CONFIG="mri_volume_diffusion"
-NGPU=1
-MASTER_PORT=29534
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
 RESUME_FROM=""

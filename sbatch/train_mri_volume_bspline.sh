@@ -27,8 +27,6 @@
 # CKPT_ONLY empty. aggft: ~2.8× slower, ~27 GB/A40. (The B-spline head's params differ from DPT, so
 # it always trains from scratch regardless of warm-start — it's small/fast.)
 CONFIG="mri_volume_bspline"
-NGPU=1
-MASTER_PORT=29524
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
 RESUME_FROM=""

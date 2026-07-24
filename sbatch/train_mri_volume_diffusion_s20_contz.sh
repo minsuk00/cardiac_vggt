@@ -29,8 +29,6 @@
 # ./scratch/base_weights/vggt1b_base.pt, strict=false). Leave RESUME_FROM and CKPT_ONLY empty.
 # aggft: ~2.8× slower, ~27 GB/A40.
 CONFIG="mri_volume_diffusion"
-NGPU=1
-MASTER_PORT=29532
 VARIANT_TAG="s20contz"                   # exp_name/dir suffix (avoids collision with the s20 partner)
 VARIANT_OVERRIDES="continuous_z=true"   # jitter non-ref slots off-grid (z_jitter=0.5), 2-plane blend
 

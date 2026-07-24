@@ -27,8 +27,6 @@
 # slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via mri_volume.yaml
 # (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe), affine aug off.
 CONFIG="mri_volume"
-NGPU=1
-MASTER_PORT=29522
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
 # RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
