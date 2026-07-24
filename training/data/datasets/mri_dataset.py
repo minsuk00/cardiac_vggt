@@ -186,7 +186,7 @@ class MRIDataset(BaseDataset):
         # ── monai PersistentDataset cache ─────────────────────────────────
         if PersistentDataset is None:
             raise RuntimeError(
-                "monai is required for canonical-grid MRIDataset — pip install monai>=1.4,<1.5"
+                "monai is required for canonical-grid MRIDataset — pip install monai>=1.6,<1.7"
             )
         # Subdir keyed by content-defining params (spacing/shape/normalization) so a
         # normalization change routes to a fresh cache instead of silently reusing a

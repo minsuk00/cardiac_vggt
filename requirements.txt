@@ -1,29 +1,34 @@
-torch==2.3.1
-torchvision==0.18.1
-numpy==1.26.1
+torch==2.13.0
+torchvision==0.28.0
+numpy==1.26.4
 Pillow
 huggingface_hub
 einops
 safetensors
 
-# ── MRI / data preprocessing & augmentation (added 2026-05-24) ─────────────
-# monai pinned to 1.4.x because monai>=1.5 requires torch>=2.4.1, which would
-# force a torch upgrade away from 2.3.1 (VGGT's frozen build target).
-monai>=1.4,<1.5
+# ── MRI / data preprocessing & augmentation ───────────────────────────────
+# monai 1.6.x — requires torch>=2.8, so it rides with the torch 2.13 upgrade
+# (2026-07). It was previously pinned <1.5 only to hold torch at 2.3.1; that
+# constraint is lifted. numpy stays <2 (1.26.x) — torch 2.13 runs fine on it
+# and monai 1.6 allows numpy<3; a numpy-2 migration is deliberately separate.
+monai>=1.6,<1.7
 
 # batchaug is NOT on PyPI — install from the MRI2CT clone:
 #   pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/
 #
-# Use --no-deps to bypass batchaug's `triton>=3.0` requirement. Our env has
-# triton 2.3.1 (bundled with torch 2.3.1); triton 3.x has API breakage that
-# can disrupt torch.compile / inductor paths under torch 2.3. To stay safe
-# we force batchaug onto its PyTorch backend at runtime:
+# --no-deps still recommended so pip doesn't re-resolve the pinned torch stack.
+# batchaug ships a triton backend wanting `triton>=3.0`; torch 2.13 now provides
+# the matched triton 3.7.1, so that requirement is satisfied. We nonetheless
+# force the PyTorch backend at runtime for reproducibility:
 #
 #     import batchaug as B
 #     B.set_backend("pytorch")   # NOT "triton" or "auto"
 #
-# The PyTorch backend works on any torch>=2.0, no triton dependency. It is
-# slower than the triton backend on spatial ops, but augmentation runtime
-# is dominated by model forward/backward anyway, so the slowdown is noise.
-# Revisit triton-3 upgrade only if augmentation becomes a real bottleneck
-# AND a clean way to coexist with torch 2.3 is verified.
+# The PyTorch backend works on any torch>=2.0. Augmentation runtime is dominated
+# by model forward/backward, so the triton backend's speedup is noise; switching
+# to it is an optional, separately-verified optimization.
+#
+# torchaudio (unused) and triton are transitive: `pip install torch==2.13.0`
+# from PyPI pulls the cu130 build + triton 3.7.1 automatically. fused_ssim (the
+# optional refiner-SSIM loss / SSIM-3D metric) is a CUDA extension rebuilt from
+# git against the active torch — see docs on the torch-2.13 upgrade.

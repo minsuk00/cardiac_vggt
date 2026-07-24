@@ -25,12 +25,12 @@ The "**4-day baseline**" (referenced below) is the prior ED-only run at `./scrat
 ```bash
 micromamba activate svr
 pip install -e .
-pip install -r requirements.txt           # includes monai>=1.4,<1.5
+pip install -r requirements.txt           # includes monai>=1.6,<1.7
 pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/  # GPU aug — see note below
 pip install -r requirements_demo.txt       # demos only
 ```
 
-**monai** is pinned `>=1.4,<1.5` — monai 1.5+ requires torch≥2.4 which would force-upgrade away from torch 2.3.1 (VGGT's frozen build). **batchaug** is not on PyPI; install editable from the MRI2CT clone with `--no-deps` to skip its `triton>=3.0` requirement (our env has triton 2.3.1 bundled with torch 2.3.1; triton 3.x risks breaking torch.compile/inductor paths). At runtime `gpu_aug.py` forces `batchaug.set_backend("pytorch")` so triton is never used. Full rationale is in the comment block at the bottom of `requirements.txt`.
+**Stack: torch 2.13.0+cu130 / torchvision 0.28.0 / triton 3.7.1 / monai 1.6.0 / numpy 1.26.4** (upgraded 2026-07 from the frozen torch 2.3.1 build — see the torch-2.13 upgrade doc). **monai** is `>=1.6,<1.7` (needs torch>=2.8); it was pinned `<1.5` only to hold torch at 2.3.1, a constraint now lifted. numpy stays `<2` deliberately (torch 2.13 runs on 1.26.x; a numpy-2 migration is separate). **batchaug** is not on PyPI; install editable from the MRI2CT clone with `--no-deps` (keeps pip from re-resolving the pinned torch stack). torch 2.13 now supplies the matched triton 3.7.1 that batchaug's triton backend wants, but `gpu_aug.py` still forces `batchaug.set_backend("pytorch")` at runtime for reproducibility, so triton stays dormant. **fused_ssim** (optional refiner-SSIM loss + SSIM-3D metric) is a CUDA extension that must be rebuilt against the active torch (`module load gcc/11.2.0 cuda/13.1.0`, then `pip install --no-build-isolation` from its pinned git commit). Full rationale in the comment block at the bottom of `requirements.txt`.
 
 ## Training
 

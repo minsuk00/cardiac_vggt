@@ -17,10 +17,10 @@ After aug, the trainer:
     3. Recomputes `anatomy_bbox` from the augmented content_mask
 
 batchaug backend is forced to `"pytorch"` at import. See `requirements.txt` —
-our env has triton 2.3.1 (bundled with torch 2.3.1), and triton 3.x has API
-breakage that risks torch.compile / inductor paths. The PyTorch backend is
-slower for spatial ops but plenty fast for our workload (1 affine per subject,
-small tensors). Revisit triton-3 only if augmentation becomes a bottleneck.
+torch 2.13 supplies the matched triton 3.7.1 that batchaug's triton backend
+wants, but we keep the PyTorch backend for reproducibility. It is slower for
+spatial ops but plenty fast for our workload (1 affine per subject, small
+tensors), so switching to triton is an optional, separately-verified speedup.
 """
 
 from __future__ import annotations
