@@ -80,8 +80,8 @@ The key design decision that preserved byte-identity across ~85 call sites: **`V
   false) and the `normalize_points` branch of `_process_batch` (→ passthrough); dropped the dead
   `normalize_camera_extrinsics_and_points_batch` import. (Also earlier this session: removed dead
   imports `torchvision`/`DictConfig`/`ListConfig`/`OmegaConf`, a duplicate loss import, and an
-  unread `data_times` accumulator.) **Left** `batch_size = data["extrinsics"].shape[0]` — the MRI
-  dataset still emits dummy `extrinsics` fillers (see "Deferred").
+  unread `data_times` accumulator.) ~~**Left** `batch_size = data["extrinsics"].shape[0]`~~ — rebased
+  to `data["images"]` once the fillers were stripped (docs/50).
 - `training/config/default.yaml`: removed the `defaults: [default_dataset]` link, the CO3D `data`
   block, camera/depth `scalar_keys_to_log`, `loss.camera/depth/point/track`, camera/depth
   `gradient_clip` groups, and `model.enable_camera/depth/track`.
@@ -114,16 +114,15 @@ baselines, `git checkout 4b55619 -- <path>`.
 
 ## Deferred (not done here — a clean follow-on)
 
-- **`vggt/dependency/` tree** (SfM/COLMAP/tracker code): still on disk. Its only live tether is
-  `vggt/utils/geometry.py:12` importing `dependency.distortion`, used by SfM helpers in `geometry.py`
-  (`img_from_cam`, etc.) that the MRI path never calls. Deleting `dependency/` requires first pruning
-  those SfM functions from the **live** `geometry.py` — its own careful, separately-verified pass.
-- **Dataset filler keys**: `MRIDataset.get_data` still emits dummy `extrinsics`/`intrinsics`/`depths`/
-  `cam_points`/`world_points`(batch)/`point_masks`/`geom_masks` (identity/zeros/all-True/scanner-coords
-  copies). Now read only by `batch_size = data["extrinsics"].shape[0]` (`trainer.py`). Strippable once
-  that line rebases to `data["images"]` — deferred.
+- ~~**`vggt/dependency/` tree** (SfM/COLMAP/tracker code)~~ **DONE (`d88bd03`, 2026-07-24).** Pruned the
+  SfM helpers from live `geometry.py` (removed the `dependency.distortion` import + `img_from_cam` etc.),
+  then deleted the tree. Single-GPU **DDP removal** (`284992c`) also landed in the same effort.
+- **Dataset filler keys**: ~~`MRIDataset.get_data` still emits dummy `extrinsics`/…~~ **DONE (docs/50,
+  2026-07-24).** Stripped all 8 filler keys, deleted the `co3d`/`vkitti`/`track_util` orphans, and
+  rebased `batch_size` to `data["images"]`. Byte-identical.
 - **`training/trainer.py` size** (~2.3k lines): ~1k lines are wandb/matplotlib viz methods that could
-  move to a mixin; the TensorBoard dual-logging path is also removable. Not touched.
+  move to a mixin; the TensorBoard dual-logging path is also removable. **Still not touched** — the
+  last remaining item from this cleanup effort.
 - **DDP removal**: the user always runs single-GPU; the DDP plumbing (~56 refs) is removable but was
   deliberately left for a later pass.
 

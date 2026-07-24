@@ -183,6 +183,7 @@ promptly also avoids the carry-over, but the worktree is the real fix when sever
 ## Local gotchas
 
 - Don't pipe `torchrun` through `| tail -N` in background — buffering. Redirect to file: `... > /tmp/run.log 2>&1 &`, then `tail -F /tmp/run.log`.
+- **Checkpoint loads auto-stage to node-local `/tmp`** (`vggt/utils/checkpoint_stage.py`, docs/50) — GPFS `torch.load` is ~266s vs ~5s from `/tmp`. Training stages only the immutable base/seed weights (`resume_checkpoint_path`, NOT the mutable requeue `checkpoint_last.pt`); inference (`inference/inference.py`, all `run_*.py`) stages every load (cache validated by size+mtime, so a re-saved ckpt is never served stale). Pure copy → byte-identical; any failure falls back to the original path.
 - Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
 - Local pilots: `WANDB_MODE=offline`. The cluster scripts (`sbatch/train_mri_volume_*.sh`) set `WANDB_MODE=online`.
 - Hydra custom resolvers (`rev_ts:`, `basename:`, `phase_mode:`) are registered in `training/launch.py`. For standalone `compose()`: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`; `OmegaConf.register_new_resolver('basename', lambda p: os.path.basename(p))`; `OmegaConf.register_new_resolver('phase_mode', lambda t: 'multiphase' if t is None else f't{int(t)}')`.
