@@ -170,6 +170,16 @@ Metrics carry a `_full` / `_bbox` suffix: `_full` = whole 12×256×256 cube, `_b
 - Logs: `/home/minsukc/vggt/slurm_logs/`.
 - **Monai cache is node-local `/tmp`, rebuilt per job** (`/tmp/vggt-mri_${USER}_monai_cache/`, ~55 MB/subject). Lazy first-epoch rebuild ~3–10 min for ~270 subjects, overlaps GPU compute. Intentionally not on GPFS — cached GPFS reads are ~18–20× slower than /tmp, so persisting would slow every epoch to save one rebuild.
 
+## Git / branches (multi-agent hygiene)
+
+Multiple agents/sessions share this repo's single working tree, so a bare `git switch`/`checkout`
+with **uncommitted** changes drags them onto whatever branch HEAD lands on — that is how a
+session's work can silently end up on another agent's branch. **Do branch-based work in a dedicated
+`git worktree`, not by switching HEAD in place:** `git worktree add ../vggt-<task> -b cleanup/<task>`
+gives that branch its own isolated working directory, so switches elsewhere can't contaminate it (and
+vice-versa). When the work is merged, remove it: `git worktree remove ../vggt-<task>`. (Committing
+promptly also avoids the carry-over, but the worktree is the real fix when several agents are active.)
+
 ## Local gotchas
 
 - Don't pipe `torchrun` through `| tail -N` in background — buffering. Redirect to file: `... > /tmp/run.log 2>&1 &`, then `tail -F /tmp/run.log`.
