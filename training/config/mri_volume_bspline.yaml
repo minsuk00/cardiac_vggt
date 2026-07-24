@@ -18,12 +18,4 @@ model:
   warp_head_type: "bspline"
   bspline_grid_size: 32
 
-# aggft: train the DINOv2 attention blocks + embedders (freeze only patch_embed), not head-only.
-# ~2.8× slower, ~27 GB/A40. find_unused_parameters=true is required once the aggregator is
-# unfrozen (camera/register tokens + disabled depth/track heads get no gradient). Matches the
-# train_run8_multiphase_allphases_aggft.sh reference regime.
-optim:
-  frozen_module_names: ["*patch_embed*"]
-
-distributed:
-  find_unused_parameters: true
+# aggft (freeze only patch_embed) + find_unused_parameters=true are inherited from mri_volume.
