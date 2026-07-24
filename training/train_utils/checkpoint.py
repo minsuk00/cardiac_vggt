@@ -5,7 +5,12 @@
 # LICENSE file in the root directory of this source tree.
 
 
+import getpass
+import hashlib
 import logging
+import shutil
+import tempfile
+import time
 from typing import (
     Any,
     Dict,
@@ -33,6 +38,63 @@ GLOB_FLAGS = (
 )
 
 
+
+
+def stage_checkpoint_to_local(ckpt_path: str) -> str:
+    """Stage an IMMUTABLE checkpoint onto node-local /tmp before loading, then return
+    the path to load from.
+
+    `torch.load` straight off GPFS is pathologically slow because it reads the file
+    storage-by-storage (many small, seeky reads) — measured ~266 s for an ~8 GB ckpt
+    vs ~5 s from /tmp; a *sequential* copy read is fine. So we copy once to /tmp keyed
+    by the source's absolute path and reuse it thereafter — the win is loading the same
+    ckpt more than once per node (e.g. repeated smoke runs sharing the base weights).
+
+    IMPORTANT — there is NO staleness check by design. Only pass a checkpoint that is
+    immutable for the life of the /tmp cache: the base/seed weights via
+    `resume_checkpoint_path` (`vggt1b_base.pt` never changes). Do NOT use this for a
+    file overwritten in place (e.g. `checkpoint_last.pt` across SLURM requeues) — it
+    would reuse the stale cached copy. If you ever regenerate a staged source in place,
+    clear `/tmp/vggt-ckpt-stage_<user>/`.
+
+    Staging is a pure performance optimization: on any failure, or when the source is
+    not a local file / already under /tmp, it returns the original path so a load can
+    never be blocked by staging.
+    """
+    tmp = None
+    try:
+        if not os.path.isfile(ckpt_path):
+            return ckpt_path  # remote URI / nonexistent → let the caller handle it
+        src = os.path.abspath(ckpt_path)
+        if src.startswith(tempfile.gettempdir() + os.sep):
+            return ckpt_path  # already node-local; nothing to gain
+
+        stage_dir = os.path.join(
+            tempfile.gettempdir(), f"vggt-ckpt-stage_{getpass.getuser()}"
+        )
+        os.makedirs(stage_dir, exist_ok=True)
+        staged = os.path.join(stage_dir, hashlib.sha1(src.encode()).hexdigest() + ".pt")
+
+        if os.path.isfile(staged):
+            logging.info(f"Using node-local checkpoint stage {staged} (source {src})")
+            return staged
+
+        logging.info(f"Staging checkpoint {src} → {staged} (one-time copy to node-local /tmp)")
+        t0 = time.time()
+        tmp = staged + ".tmp"
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, staged)  # atomic; an interrupted copy leaves no usable staged file
+        tmp = None
+        logging.info(f"Staged checkpoint in {time.time() - t0:.1f}s")
+        return staged
+    except BaseException as e:
+        logging.warning(f"Checkpoint staging failed ({e}); loading directly from {ckpt_path}")
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return ckpt_path
 
 
 class CheckpointSaver:
