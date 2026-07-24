@@ -77,8 +77,19 @@ def robust_torch_save(checkpoint: Dict[str, Any], checkpoint_path: str) -> None:
     checkpoint fully intact rather than a truncated, unloadable file. The atomic
     rename supersedes the older move-to-.bak scheme (which left a window where the
     live file was absent or partial).
+
+    If the write fails (e.g. OSError errno 122, disk quota exceeded) the partial tmp
+    is removed before re-raising: leaving it behind permanently consumes the very
+    quota that just ran out, making the next save more likely to fail too.
     """
     tmp_checkpoint_path = checkpoint_path + ".tmp"
-    with g_pathmgr.open(tmp_checkpoint_path, "wb") as f:
-        torch.save(checkpoint, f)
-    os.replace(tmp_checkpoint_path, checkpoint_path)
+    try:
+        with g_pathmgr.open(tmp_checkpoint_path, "wb") as f:
+            torch.save(checkpoint, f)
+        os.replace(tmp_checkpoint_path, checkpoint_path)
+    except BaseException:
+        try:
+            os.remove(tmp_checkpoint_path)
+        except OSError:
+            pass
+        raise

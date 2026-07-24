@@ -76,6 +76,21 @@ class TensorBoardLogger:
             self._writer.close()
             self._writer = None
 
+    def _disable_after_write_error(self, exc: OSError) -> None:
+        """Drop TensorBoard after a write failure instead of killing training.
+
+        A full disk (e.g. OSError errno 122, quota exceeded) surfaces out of the
+        SummaryWriter's background writer thread on the next add_*, and would
+        otherwise propagate into the training loop and end the run. TensorBoard is
+        secondary to wandb here, so disable it and keep training. Reuses the
+        `_writer = None` sentinel every log method already guards on.
+        """
+        logging.warning(
+            f"TensorBoard write failed ({exc!r}) — disabling TensorBoard for the rest "
+            f"of this run. Training continues; wandb logging is unaffected."
+        )
+        self._writer = None
+
     def log_dict(self, payload: Dict[str, Any], step: int) -> None:
         """Log multiple scalar values to TensorBoard.
 
@@ -100,7 +115,10 @@ class TensorBoardLogger:
         if not self._writer:
             return
 
-        self._writer.add_scalar(name, data, global_step=step, new_style=True)
+        try:
+            self._writer.add_scalar(name, data, global_step=step, new_style=True)
+        except OSError as e:
+            self._disable_after_write_error(e)
 
     def log_visuals(self, name: str, data: Union[torch.Tensor, Any], step: int, fps: int = 4) -> None:
         """Log image or video data to TensorBoard.
@@ -117,9 +135,13 @@ class TensorBoardLogger:
         if not self._writer:
             return
 
-        if data.ndim == 3:
-            self._writer.add_image(name, data, global_step=step)
-        elif data.ndim == 5:
-            self._writer.add_video(name, data, global_step=step, fps=fps)
-        else:
+        if data.ndim not in (3, 5):
             raise ValueError(f"Unsupported data dimensions: {data.ndim}. Expected 3D for images or 5D for videos.")
+
+        try:
+            if data.ndim == 3:
+                self._writer.add_image(name, data, global_step=step)
+            else:
+                self._writer.add_video(name, data, global_step=step, fps=fps)
+        except OSError as e:
+            self._disable_after_write_error(e)
