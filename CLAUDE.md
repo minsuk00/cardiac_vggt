@@ -27,7 +27,6 @@ micromamba activate svr
 pip install -e .
 pip install -r requirements.txt           # includes monai>=1.6,<1.7
 pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/  # GPU aug — see note below
-pip install -r requirements_demo.txt       # demos only
 ```
 
 **Stack: torch 2.13.0+cu130 / torchvision 0.28.0 / triton 3.7.1 / monai 1.6.0 / numpy 2.2.6** (upgraded 2026-07 from the frozen torch 2.3.1 + numpy 1.26.4 build — see the torch-2.13 upgrade doc). **monai** is `>=1.6,<1.7` (needs torch>=2.8); it was pinned `<1.5` only to hold torch at 2.3.1, a constraint now lifted. **numpy** is `>=2,<2.5` (upper bound = scipy/numba); the numpy-2 migration needed one source fix in `inference/adapters/base.py` (`np.percentile` on float32 now returns float32, which silently disabled a divide-by-zero guard → all-NaN OOD inputs). Re-verify any future dependency bump with `bash tools/verify_env_migration.sh`. **batchaug** is not on PyPI; install editable from the MRI2CT clone with `--no-deps` (keeps pip from re-resolving the pinned torch stack). torch 2.13 now supplies the matched triton 3.7.1 that batchaug's triton backend wants, but `gpu_aug.py` still forces `batchaug.set_backend("pytorch")` at runtime for reproducibility, so triton stays dormant. **fused_ssim** (optional refiner-SSIM loss + SSIM-3D metric) is a CUDA extension that must be rebuilt against the active torch (`module load gcc/11.2.0 cuda/13.1.0`, then `pip install --no-build-isolation` from its pinned git commit). Full rationale in the comment block at the bottom of `requirements.txt`.
