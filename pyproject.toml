@@ -1,7 +1,10 @@
 [project]
 authors = [{name = "Jianyuan Wang", email = "jianyuan@robots.ox.ac.uk"}]
 dependencies = [
-    "numpy<2",
+    # numpy 2 as of 2026-07-24 (docs/49). Upper bound 2.5 tracks scipy/numba.
+    # Previously capped below 2, which silently downgraded the env on
+    # `pip install -e .` and reverted the numpy-2 migration.
+    "numpy>=2,<2.5",
     "Pillow",
     "huggingface_hub",
     "einops",

@@ -66,7 +66,7 @@ def main():
     cfg_on = RespiratoryConfig(enable=True, **base)
     cfg_off = RespiratoryConfig(enable=False, **base)
     def run_model(b):
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(b["images"], batch=b)
         Vm, _ = splat_predictions({"world_points": preds["world_points"].float()}, b, GRID_SHAPE)
         return Vm[0]

@@ -92,7 +92,7 @@ def main():
             data = ds.get_data(seq_index=seq, img_per_seq=NUM_SLICES)
             batch = build_batch(data, device, seq_index=seq)
             batch = gpu_augment_batch(batch, None, device, respiratory_cfg=cfg, train=False)
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 preds = model(batch["images"], batch=batch)
             Vc_draws.append(preds["V_canon"][0].float())
             Vr_draws.append(preds["V_refined"][0].float())

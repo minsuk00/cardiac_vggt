@@ -40,7 +40,7 @@ ys, xs = torch.meshgrid(torch.linspace(-1, 1, 518, device=device), torch.linspac
 mesh518 = torch.stack([xs, ys], dim=-1)
 ys2, xs2 = torch.meshgrid(torch.linspace(-1, 1, 256, device=device), torch.linspace(-1, 1, 256, device=device), indexing="ij")
 mesh256 = torch.stack([xs2, ys2], dim=-1)
-with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
     preds = model(batch["images"], batch=batch)
 Vref = preds["V_refined"][0].float().cpu().numpy()
 Vgt = V_gt.cpu().numpy()

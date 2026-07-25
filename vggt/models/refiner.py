@@ -69,7 +69,7 @@ class VolumeRefiner(nn.Module):
 
     def forward(self, V_canon: torch.Tensor, coverage: torch.Tensor = None) -> torch.Tensor:
         # V_canon: (B, D, H, W). coverage: (B, D, H, W) or None.
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast("cuda", enabled=False):
             Vc = V_canon.float()
             x = Vc.unsqueeze(1)  # (B, 1, D, H, W)
             if self.use_coverage:

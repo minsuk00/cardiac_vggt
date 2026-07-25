@@ -64,7 +64,7 @@ def main():
         batch = build_batch(data, device, seq_index=seq)
         batch = gpu_augment_batch(batch, None, device, respiratory_cfg=cfg, train=False)
         bbox = [int(v) for v in batch["anatomy_bbox"][0].tolist()]
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         out = compute_volume_intensity_loss(preds, batch, grid_shape=GRID_SHAPE, tv_weight=0.0)
         Vc = preds["V_canon"][0].float().cpu().numpy()

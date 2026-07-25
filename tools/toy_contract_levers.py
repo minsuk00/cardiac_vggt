@@ -115,7 +115,7 @@ def run(model, dev, n, S, seeds):
             b = build_batch(phases, gt, bbox, t_target, t_seq, z_set, dev)
             # C2 identity full, C3 model full
             Vid = splat_V(b["scanner_coords"], b)
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 pr = model(b["images"], batch=b)
             Vm = splat_V(pr["world_points"].float(), b)
             # C1 identity on ONLY the K target slices (pure observation), K>=1
@@ -143,7 +143,7 @@ def run(model, dev, n, S, seeds):
             t_seq = [rb.choice(pool) for _ in range(S)]
             b = build_batch(phases, gt, bbox, t_target, t_seq, z_set, dev)
             Vid = splat_V(b["scanner_coords"], b)
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 pr = model(b["images"], batch=b)
             Vm = splat_V(pr["world_points"].float(), b)
             rec["B"][name] = dict(C2_id=mpsnr(Vid, Vgt, mmask), C3_model=mpsnr(Vm, Vgt, mmask),

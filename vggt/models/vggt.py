@@ -56,24 +56,22 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         Args:
             images (torch.Tensor): Input images with shape [S, 3, H, W] or [B, S, 3, H, W], in range [0, 1].
                 B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
-            query_points (torch.Tensor, optional): Query points for tracking, in pixel coordinates.
-                Shape: [N, 2] or [B, N, 2], where N is the number of query points.
-                Default: None
-            batch (dict, optional): Batch dictionary containing extra inputs like z_indices.
+            query_points (torch.Tensor, optional): Unused. Retained for signature compatibility with
+                callers from the original VGGT (tracking was removed). Default: None
+            batch (dict, optional): Batch dictionary with the extra inputs the point head needs —
+                z_indices, scanner_coords, and (for the refiner) images.
 
         Returns:
             dict: A dictionary containing the following predictions:
-                - pose_enc (torch.Tensor): Camera pose encoding with shape [B, S, 9] (from the last iteration)
-                - depth (torch.Tensor): Predicted depth maps with shape [B, S, H, W, 1]
-                - depth_conf (torch.Tensor): Confidence scores for depth predictions with shape [B, S, H, W]
                 - world_points (torch.Tensor): 3D world coordinates for each pixel with shape [B, S, H, W, 3]
-                - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W]
-                - images (torch.Tensor): Original input images, preserved for visualization
-
-                If query_points is provided, also includes:
-                - track (torch.Tensor): Point tracks with shape [B, S, N, 2] (from the last iteration), in pixel coordinates
-                - vis (torch.Tensor): Visibility scores for tracked points with shape [B, S, N]
-                - conf (torch.Tensor): Confidence scores for tracked points with shape [B, S, N]
+                  (scanner_coords + predicted DVF when train_on_residual_dvf, else the head output directly).
+                - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W].
+                - dvfs (torch.Tensor): The predicted normalized T→0 DVF [B, S, H, W, 3]. Only when
+                  train_on_residual_dvf is set.
+                - V_canon, coverage, V_refined (torch.Tensor): Splatted canonical volume, its coverage,
+                  and the refined volume. Only when the optional refiner is enabled (default off).
+                - images (torch.Tensor): Original input images, preserved for visualization. Only when
+                  not self.training (i.e. inference).
         """
         # If without batch dimension, add it
         if len(images.shape) == 4:
@@ -89,7 +87,7 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
         predictions = {}
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast("cuda", enabled=False):
             if self.point_head is not None:
                 head_output, head_conf = self.point_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx)
 

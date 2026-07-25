@@ -118,7 +118,7 @@ def val_forward(model, mri_ds, rcfg, seq_index, breathing):
     t_target = seq_index % T
     t_norm = t_target / max(1, T) * 2.0 - 1.0
     batch["target_t_indices"] = torch.full((1, S, 1), t_norm, dtype=torch.float32, device=DEV)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     wp = preds["world_points"].float()
     V_canon, coverage = splat_predictions({"world_points": wp}, batch, GRID_SHAPE)
@@ -150,7 +150,7 @@ def ocmr_forward(model, subj_dir):
     batch, S, picks = build_batch(cine, meta, scale, z_map, rng, DEV)
     # ED (phase 0) normalizes to -1.0 (t/T*2-1); 0.0 would be phase 6. Match the report convention.
     batch["target_t_indices"] = torch.full((1, S, 1), -1.0, dtype=torch.float32, device=DEV)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     wp = preds["world_points"].float()
     V_canon, coverage = splat_predictions({"world_points": wp}, batch, GRID_SHAPE)

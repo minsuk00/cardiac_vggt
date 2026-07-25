@@ -85,7 +85,7 @@ def one_draw(model, ds, rcfg, seed):
 
     S = batch["images"].shape[1]
     batch["target_t_indices"] = torch.full((1, S, 1), -1.0, dtype=torch.float32, device=DEV)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     V = preds.get("V_canon")
     if V is None:

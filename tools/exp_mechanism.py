@@ -93,7 +93,7 @@ def motion_psnr(model, mri_ds, rcfg, seq_index, mode, fps, dup, device):
                                 mode="bilinear", align_corners=True)
             batch["images"][:, 0] = ref.repeat(1, 3, 1, 1)
         batch["gt_target_volume"] = ph[t].unsqueeze(0)
-        with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
             out = compute_volume_intensity_loss({"world_points": preds["world_points"].float()},
                                                 batch, grid_shape=grid, tv_weight=0.0)

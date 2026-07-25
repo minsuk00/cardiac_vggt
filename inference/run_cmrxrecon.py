@@ -173,7 +173,7 @@ def reconstruct_from_bundle(model, phases_bundle, bbox, rcfg, seq_index, breathi
                                    mode="bilinear", align_corners=True)  # (1,1,518,518) in [0,1]
             batch["images"][:, 0] = ref_up.repeat(1, 3, 1, 1)
         batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)   # (1,D,H,W) = V_gt at phase t
-        with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
             out = compute_volume_intensity_loss(
                 {"world_points": preds["world_points"].float()},

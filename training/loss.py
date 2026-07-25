@@ -99,7 +99,7 @@ def diffusion_loss_l2(field):
     high-frequency (e.g. ViT-patch-period) ripples in the predicted warp. fp32-forced so
     the reduction stays accurate under autocast(bf16).
     """
-    with torch.cuda.amp.autocast(enabled=False):
+    with torch.amp.autocast("cuda", enabled=False):
         f = field.float()
         return (
             (f[:, :, 1:, :, :] - f[:, :, :-1, :, :]).pow(2).mean()
@@ -160,7 +160,7 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
 
     # Plain TV on pos_pred — mean absolute difference between H/W neighbors. fp32-forced
     # so the reduction stays accurate under autocast(bf16).
-    with torch.cuda.amp.autocast(enabled=False):
+    with torch.amp.autocast("cuda", enabled=False):
         pos_fp = pos_pred.float()
         loss_pos_tv = (
             (pos_fp[:, :, 1:, :, :] - pos_fp[:, :, :-1, :, :]).abs().mean()
@@ -187,7 +187,7 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     # 'zeros' in sample_volume means predicting p outside the FOV samples 0 → mismatch → the aux
     # discourages moving pixels out of bounds. gather_weight=0.0 ⇒ exactly 0.0 ⇒ no-op (bit-identical).
     if gather_weight > 0:
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast("cuda", enabled=False):
             gi = batch["images"].float().mean(dim=2)          # (B, S, H, W) input intensity
             if gi.max() > 2.0:
                 gi = gi / 255.0

@@ -128,7 +128,7 @@ def main():
                                                      grid_shape=GRID_SHAPE, tv_weight=0.0)
                 Vg = outg["V_gt"][0].float().cpu().numpy()
                 mm = compute_motion_mask(b["phases"])[0].cpu().numpy()
-                with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+                with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                     pc = model(b["images"], batch=b)
                 p_clean = psnr(pc["V_refined"][0].float().cpu().numpy()[mm], Vg[mm])
                 # ALIASED: undersample each input slice's k-space (per-slot seed)
@@ -140,7 +140,7 @@ def main():
                     rec, _ = single_shot(g, R, seed=100 + s)
                     aliased[0, s] = torch.from_numpy(rec).to(device).repeat(3, 1, 1)
                 b2 = dict(b); b2["images"] = aliased
-                with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+                with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                     pa = model(aliased, batch=b2)
                 p_alias = psnr(pa["V_refined"][0].float().cpu().numpy()[mm], Vg[mm])
                 drops.append((p_clean, p_alias))

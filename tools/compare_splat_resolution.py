@@ -84,7 +84,7 @@ def main():
         data = ds.get_data(seq_index=i, img_per_seq=H.NUM_SLICES)
         batch = H.build_batch(data, dev, seq_index=i)
         batch = H.gpu_augment_batch(batch, None, dev, respiratory_cfg=resp, train=False)
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         wp = preds["world_points"].float()                       # (1,S,518,518,3)
         inten = batch["images"].float().mean(dim=2)              # (1,S,518,518) in [0,1]

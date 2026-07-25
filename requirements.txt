@@ -1,6 +1,6 @@
 torch==2.13.0
 torchvision==0.28.0
-numpy==1.26.4
+numpy==2.2.6
 Pillow
 huggingface_hub
 einops
@@ -9,8 +9,13 @@ safetensors
 # ── MRI / data preprocessing & augmentation ───────────────────────────────
 # monai 1.6.x — requires torch>=2.8, so it rides with the torch 2.13 upgrade
 # (2026-07). It was previously pinned <1.5 only to hold torch at 2.3.1; that
-# constraint is lifted. numpy stays <2 (1.26.x) — torch 2.13 runs fine on it
-# and monai 1.6 allows numpy<3; a numpy-2 migration is deliberately separate.
+# constraint is lifted.
+#
+# numpy 2.2.6 (migrated 2026-07-24, docs/49). Keep it BELOW 2.5 — scipy and numba
+# both cap at <2.5. Pinned exact rather than ranged because numpy 2 changed
+# np.percentile on float32 to interpolate in float32, which required a source fix
+# in inference/adapters/base.py; a future numpy bump should re-run
+# `bash tools/verify_env_migration.sh` before being accepted.
 monai>=1.6,<1.7
 
 # batchaug is NOT on PyPI — install from the MRI2CT clone:

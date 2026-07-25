@@ -61,7 +61,7 @@ def build_cache(n_train, draws, seed0):
         out = compute_volume_intensity_loss({"world_points": b["scanner_coords"]}, b, grid_shape=GRID_SHAPE, tv_weight=0.0)
         V_gt = out["V_gt"][0].float(); mmask = compute_motion_mask(b["phases"])[0]
         feats["chunks"] = []
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(b["images"], batch=b)
         wp = preds["world_points"][0].float()                       # (S,518,518,3)
         fmap = torch.cat(feats["chunks"], dim=0).float()            # (S,Cf,hf,wf) — all frame chunks

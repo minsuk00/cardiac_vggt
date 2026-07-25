@@ -96,7 +96,7 @@ def eval_cell(ds, cfg, device, seqs, img_per_seq, model=None):
         rec["oracle_undo"].append(psnr(Vp.float().cpu().numpy(), V_gt.cpu().numpy(), mmask))
         rec["oracle_neg"].append(psnr(Vn.float().cpu().numpy(), V_gt.cpu().numpy(), mmask))
         if model is not None:
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 preds = model(b["images"], batch=b)
             Vm = preds.get("V_canon")
             if Vm is None:

@@ -133,7 +133,7 @@ def reconstruct_cycle(model, mri_ds, subj_idx, do_resp, reference_slot, resp_cfg
                     mode="bilinear", align_corners=True)
                 batch["images"][:, 0] = ref_up.repeat(1, 3, 1, 1)
         batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
             out = compute_volume_intensity_loss(
                 {"world_points": preds["world_points"].float()},

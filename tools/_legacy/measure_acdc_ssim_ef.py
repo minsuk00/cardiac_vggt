@@ -80,7 +80,7 @@ def main():
         for k in range(T):
             batch["target_t_indices"] = torch.full((1, S, 1), k / T * 2.0 - 1.0,
                                                     dtype=torch.float32, device=DEV)
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 preds = m(batch["images"], batch=batch)
             V = preds["V_refined"][0].float().cpu().numpy()
             save_nnunet(V, args.out_dir, f"{pid}_t{k:02d}")

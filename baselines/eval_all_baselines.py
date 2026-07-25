@@ -220,7 +220,7 @@ def main():
         batch_e = {k: v.to(device) for k, v in batch_e.items()}
         batch_c = {k: v.to(device) for k, v in batch_c.items()}
 
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch_e["images"], batch=batch_e)
         wp_model = preds["world_points"][0].float()
         scanner = batch_e["scanner_coords"][0].float()

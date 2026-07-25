@@ -100,7 +100,7 @@ def load_model(cfg):
 def run_one(model, ds, seq_index, t_target):
     batch, phases, data = make_batch(ds, seq_index, t_target)
     bd = {k: v.to(DEV) for k, v in batch.items()}
-    with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(bd["images"], batch=bd)
     preds["world_points"] = preds["world_points"].float()
     out = compute_volume_intensity_loss(preds, bd, grid_shape=(12, 256, 256), tv_weight=0.1)

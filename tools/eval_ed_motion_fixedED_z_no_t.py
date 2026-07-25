@@ -104,7 +104,7 @@ def main():
         model = load_model(ckpt)
         for batch, phases in batches:
             bd = {k: v.to(DEV) for k, v in batch.items()}
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 preds = model(bd["images"], batch=bd)
             rows[mkey].append(eval_world_points(preds["world_points"], bd, phases))
             del bd, preds; torch.cuda.empty_cache()

@@ -45,7 +45,7 @@ def run(subj, amp):
         batch = gpu_augment_batch(batch, None, dev, respiratory_cfg=rc, train=False)
         if t == 0: disp_max = float(np.linalg.norm(batch["resp_disp_mm"][0].cpu().numpy(), axis=1).max())
         batch["gt_target_volume"] = phases[t].unsqueeze(0)
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
             out = compute_volume_intensity_loss({"world_points": preds["world_points"].float()}, batch, grid_shape=grid, tv_weight=0.0)
         RE = out["V_canon"][0].float().cpu().numpy(); GT = out["V_gt"][0].float().cpu().numpy()

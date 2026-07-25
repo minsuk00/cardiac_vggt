@@ -222,7 +222,7 @@ def reconstruct(model, prep, breathing, regime, frames_per_slice, seq_index, dev
                            mode="bilinear", align_corners=True).to(device)
         batch["images"][:, 0] = up.repeat(1, 3, 1, 1)
         torch.cuda.synchronize(); t0 = time.perf_counter()
-        with torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         wp = preds["world_points"].float()
         V_ref = preds.get("V_refined")                                         # refiner ckpts emit V_refined/V_canon

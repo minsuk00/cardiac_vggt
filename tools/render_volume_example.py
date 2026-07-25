@@ -96,7 +96,7 @@ def main():
     model.eval()
 
     print("Forward pass...")
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     preds["world_points"] = preds["world_points"].float()
 

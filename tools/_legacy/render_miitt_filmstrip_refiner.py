@@ -55,7 +55,7 @@ def build_model():
 def v_refined(m, batch, target_t):
     S = batch["images"].shape[1]
     batch["target_t_indices"] = torch.full((1, S, 1), target_t, dtype=torch.float32, device=DEV)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = m(batch["images"], batch=batch)
     return preds["V_refined"][0].float().cpu().numpy()  # (12,256,256)
 

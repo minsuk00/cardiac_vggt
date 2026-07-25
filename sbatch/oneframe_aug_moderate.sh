@@ -30,8 +30,14 @@ NGPU=1
 MASTER_PORT=29542
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
-RESUME_FROM=""
+RESUME_FROM="/home/minsukc/vggt/scratch/logs/216003592_mri_volume_diffusion_oneframe_aug_moderate_dynamic_axial_Cine_combined"
 CKPT_ONLY="/home/minsukc/vggt/scratch/checkpoints/4wok_weights_only.pt"
+
+# Per-variant ablation overrides. Defined here (not inside the CKPT_ONLY branch) so the
+# RESUME_FROM branch applies them too: without this a resume silently reverts to the
+# mri_volume defaults (one_frame_per_slice=false -> multiframe S=20, gather_weight=0,
+# max_epochs=200) and is no longer the same experiment.
+ABLATION_OVERRIDES="max_epochs=100 max_img_per_gpu=12 one_frame_per_slice=true checkpoint.save_freq=50 loss.volume.gather_weight=0.5 data.augmentation.enable=true data.augmentation.tier=moderate logging.wandb_writer.tags=[mri_volume_diffusion,multiphase,1frame_series,aug_moderate]"
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
@@ -88,7 +94,8 @@ else
             echo "ERROR: RESUME_FROM is set but $CKPT_PATH does not exist."
             exit 1
         fi
-        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH}"
+        EXTRA_OVERRIDES="${ABLATION_OVERRIDES}"
+        OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_PATH} ${EXTRA_OVERRIDES}"
         echo "Resuming (same exp + wandb) from: $CKPT_PATH"
         WANDB_DIR=$(ls -dt "${RESUME_FROM}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
         if [ ! -z "$WANDB_DIR" ]; then
@@ -103,7 +110,7 @@ else
         fi
         REV_TS=$((2000000000 - $(date +%s)))
         EXP_NAME="${REV_TS}_mri_volume_diffusion_oneframe_aug_moderate_dynamic_axial_Cine_combined"
-        EXTRA_OVERRIDES="max_epochs=100 max_img_per_gpu=12 one_frame_per_slice=true checkpoint.save_freq=50 loss.volume.gather_weight=0.5 data.augmentation.enable=true data.augmentation.tier=moderate logging.wandb_writer.tags=[mri_volume_diffusion,multiphase,1frame_series,aug_moderate]"
+        EXTRA_OVERRIDES="${ABLATION_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "ONEFRAME aug_moderate: exp_name=${EXP_NAME}"
     else

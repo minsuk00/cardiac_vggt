@@ -138,7 +138,7 @@ def main():
         subject_path, batch = _build_batch(i)
         name = os.path.basename(os.path.dirname(subject_path))
         batch = {k: v.to(device) for k, v in batch.items()}
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
 
         # All three position fields → V_canon via the same loss helper

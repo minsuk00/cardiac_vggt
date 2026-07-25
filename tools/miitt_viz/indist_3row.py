@@ -61,7 +61,7 @@ def run_model(name, pat):
         batch["timesteps"][:, 0] = t
         batch = gpu_augment_batch(batch, None, dev, respiratory_cfg=resp_cfg, train=False)  # breathing re-extract
         batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
             out = compute_volume_intensity_loss({"world_points": preds["world_points"].float()},
                                                 batch, grid_shape=grid_shape, tv_weight=0.0)

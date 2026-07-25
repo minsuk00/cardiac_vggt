@@ -100,7 +100,7 @@ def prep_subject_batch(ds, seq, args, cfg_on, dev):
 
 
 def fwd(model, b):
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(b["images"], batch=b)
     wp = preds["world_points"].float()
     dvf = (wp[0] - b["scanner_coords"][0]).float()                    # (S,H,W,3) norm

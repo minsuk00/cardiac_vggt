@@ -149,7 +149,7 @@ def run(n, device):
         V_gt_np = V_gt.float().cpu().numpy()
         mmask = compute_motion_mask(batch["phases"])[0].cpu().numpy()
 
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         V_canon = preds["V_canon"][0].float()
         V_ref = preds["V_refined"][0].float()
@@ -183,7 +183,7 @@ def run(n, device):
                                    respiratory_cfg=RespiratoryConfig(enable=True, **RESP_OOD), train=False)
         out_id2 = compute_volume_intensity_loss({"world_points": batch2["scanner_coords"]},
                                                 batch2, grid_shape=GRID_SHAPE, tv_weight=0.0)
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds2 = model(batch2["images"], batch=batch2)
         ood["identity"].append(psnr(out_id2["V_canon"][0].float().cpu().numpy()[mmask], V_gt_np[mmask]))
         ood["model_canon"].append(psnr(preds2["V_canon"][0].float().cpu().numpy()[mmask], V_gt_np[mmask]))

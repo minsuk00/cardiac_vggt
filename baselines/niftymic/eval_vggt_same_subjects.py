@@ -114,7 +114,7 @@ def main():
             "gt_target_volume": torch.from_numpy(data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(device),
         }
 
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
 
         out = compute_volume_intensity_loss(preds, batch, grid_shape=(12, 256, 256), tv_weight=0.1)

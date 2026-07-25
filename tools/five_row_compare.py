@@ -80,7 +80,7 @@ def load_state(model, ckpt_path):
 def _forward(model, batch, target_t=-1.0):
     S = batch["images"].shape[1]
     batch["target_t_indices"] = torch.full((1, S, 1), target_t, dtype=torch.float32, device=DEV)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     V_can = preds.get("V_canon")
     if V_can is None:

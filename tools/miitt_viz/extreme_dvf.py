@@ -51,7 +51,7 @@ for t in range(T):
     batch = gpu_augment_batch(batch, None, dev, respiratory_cfg=resp_cfg, train=False)
     if rd is None: rd = batch["resp_disp_mm"][0].cpu().numpy()
     batch["gt_target_volume"] = phases[t].unsqueeze(0)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
         wp = preds["world_points"][0].float().cpu().numpy()   # (S,518,518,3)
         out = compute_volume_intensity_loss({"world_points": preds["world_points"].float()}, batch, grid_shape=grid, tv_weight=0.0)

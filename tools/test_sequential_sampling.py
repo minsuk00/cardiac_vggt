@@ -105,7 +105,7 @@ def build_sequential_batch(split: str, seq_index: int = 0):
 
 def run_model(model, batch, device):
     batch = {k: v.to(device) for k, v in batch.items()}
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     preds["world_points"] = preds["world_points"].float()
     out = compute_volume_intensity_loss(preds, batch, grid_shape=(12, 256, 256), tv_weight=0.1)

@@ -69,7 +69,7 @@ def _forward(model, batch, target_t=-1.0, want="refined"):
     """want: 'canon' or 'refined'."""
     S = batch["images"].shape[1]
     batch["target_t_indices"] = torch.full((1, S, 1), target_t, dtype=torch.float32, device=DEV)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
     if want == "refined" and "V_refined" in preds:
         return preds["V_refined"][0].float().cpu().numpy()

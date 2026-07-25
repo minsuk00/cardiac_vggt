@@ -39,9 +39,21 @@ def percentile_scale(cine):
     nz = cine[cine > 0]
     if nz.size == 0:                      # degenerate all-zero cine: fall back to all voxels
         nz = cine.reshape(-1)            # (matches preprocess.py's nonzero->all fallback)
-    vmin = np.percentile(nz, PCT_LO)
-    vmax = np.percentile(nz, PCT_HI)
-    return float(vmin), float(max(vmax, vmin + 1e-6))
+    # `float()` BEFORE the span guard is load-bearing under numpy 2 (docs/49):
+    # numpy 2 returns a float32 scalar from np.percentile on float32 input (numpy 1
+    # returned float64), and float32 cannot resolve `+ 1e-6` once vmin >= 32 — so
+    # the divide-by-zero guard silently became a no-op, collapsing the span to 0
+    # and yielding an all-NaN normalized cine (which _nanmean then quietly drops)
+    # instead of the finite fallback. Widening to a python float restores it at
+    # zero cost. No-op under numpy 1.
+    #
+    # NOT done deliberately: casting `nz` to float64 before np.percentile would
+    # also reproduce numpy 1's values exactly, but costs +34% time and 2.5x peak
+    # memory (measured) to recover a ~1.9e-4 difference on a [0,1] image — far
+    # below PSNR/Dice/EF noise. Not worth it; see docs/49.
+    vmin = float(np.percentile(nz, PCT_LO))
+    vmax = float(np.percentile(nz, PCT_HI))
+    return vmin, max(vmax, vmin + 1e-6)
 
 
 def assign_canonical_z(positions, continuous_z=False):

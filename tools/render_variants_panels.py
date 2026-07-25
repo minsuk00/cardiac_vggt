@@ -61,7 +61,7 @@ def fill_models(bases, device):
         ckpt = os.path.join(LOGS, run["exp_dir"], "ckpts", "checkpoint_last.pt")
         model, _ = make_model(run["use_t"], ckpt, device)
         for seq, b in bases.items():
-            with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+            with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
                 preds = model(b["base"]["images"], batch=b["base"])
             out = compute_volume_intensity_loss(preds, b["base"], grid_shape=GRID_SHAPE, tv_weight=0.0)
             b["results"][run["var"]] = (out["V_canon"][0].float().cpu().numpy(),

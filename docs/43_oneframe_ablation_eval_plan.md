@@ -7,12 +7,14 @@
 > evaluation is decided by design, not improvised afterward. The design is a **hub-and-spoke**: the
 > **`gather05` (gather=0.5)** run is the hub; each treatment (aug / physical-z / dino) is compared to it to
 > isolate that one factor, and the **no-gather** run is compared to `gather05` to isolate the gather loss
-> itself. Four A/B questions: **(1) does the gather aux loss help?** (no-gather vs gather05) → judged on the
+> itself. Five A/B questions: **(1) does the gather aux loss help?** (no-gather vs gather05) → judged on the
 > **breathing** metrics; **(2) does data aug help?** (gather05 vs +aug) → judged on **OOD transfer**
 > (MIITT/OCMR), NOT in-distribution (aug is known to cost in-dist, docs/05); **(3) does continuous physical-z
 > help?** (gather05 vs +contz) → judged on **off-grid OOD** (MIITT native 10 mm) AND a guardrail that it does
 > not kill cardiac motion (the failure mode that broke multiframe `s20contz`); **(4) does unfreezing DINO
-> help?** (gather05 vs +dino) → judged on **overall PSNR** with a **forgetting** guardrail. Metrics come from
+> help?** (gather05 vs +dino) → judged on **overall PSNR** with a **forgetting** guardrail; **(5) does less
+> diffusion reg help EF?** (gather05 vs +lowdiff100, `diffusion_weight` 1000→100) → judged on the **EF sweep**,
+> though prior evidence predicts null (docs/33: swapping the regularizer left EF unchanged). Metrics come from
 > three existing layers: **in-distribution wandb val** (the GT-referenced ship-decision metrics of docs/38 +
 > EF sweep), the **offline OOD head-to-head harness** (docs/42, `scratch/eval/engine/run_vggt.py` vs
 > SVRTK/NeSVoR on the frozen breathing bundles), and **nnU-Net EF/Dice** (docs/39). **Decision rule (docs/38):
@@ -42,13 +44,14 @@ breathing (config default); wandb tag group `1frame_series`.
 | 3 | `oneframe_aug_moderate.sh` | `aug_moderate` | + `data.augmentation.enable=true tier=moderate` |
 | 4 | `oneframe_contz.sh` | `contz` | + `continuous_z=true` (physical-z) |
 | 5 | `oneframe_dino_ft.sh` | `dino_ft,lr2e5` | + `optim.frozen_module_names=[]` (unfreeze DINO patch_embed) + peak LR 2e-5 |
+| 6 | `oneframe_lowdiff100.sh` | `lowdiff100` | + `loss.volume.diffusion_weight=100` (10× lower L2 DVF smoothness) |
 
 ("Baseline" is ambiguous: run 1 is the *no-gather* baseline; run 2 is the *reference recipe* the treatments
 build on. In this doc "the hub" = run 2 = gather05.)
 
 ---
 
-## 2. The four comparisons — what vs what, to test what
+## 2. The five comparisons — what vs what, to test what
 
 Every arrow is a **single-factor A/B** (the two runs differ by exactly one knob).
 
@@ -58,6 +61,7 @@ Every arrow is a **single-factor A/B** (the two runs differ by exactly one knob)
 | C2 | Does **data aug** help? | `gather05` → `aug_moderate` | moderate train-time GPU aug | **OOD transfer** (MIITT/OCMR head-to-head PSNR/SSIM/NCC) | OOD ↑ without catastrophic in-dist loss |
 | C3 | Does **continuous physical-z** help? | `gather05` → `contz` | off-grid z sampling + interp (docs/28) | **off-grid OOD** (MIITT native 10 mm, eval `--continuous-z`) | off-grid OOD ↑ AND motion NOT killed (guardrail) |
 | C4 | Does **unfreezing DINO** help? | `gather05` → `dino_ft` | patch_embed trainable + LR 2e-5 (a package) | **overall PSNR** (in-dist `psnr_bbox`/`psnr_motion` + OOD) | PSNR ↑ without a forgetting collapse |
+| C5 | Does **less diffusion reg** help EF? | `gather05` → `lowdiff100` | L2 DVF-smoothness weight 1000→100 | **EF** (`ef_val_sweep` slope/Spearman) | EF slope↑ toward 1 without motion/hole regression |
 
 **The universal decision rule (docs/38), applied to every comparison:** a change ships iff
 `recov_frac_heart`↑ **and** `psnr_3d_motion`↑ **without** `hole_frac_heart`↑. The factor-specific metric above
@@ -85,6 +89,15 @@ the flat static region while hurting the heart.
   of its features. Judge on overall PSNR (in-dist + OOD); **guardrail:** watch the *early-epoch* in-dist val
   PSNR for a cliff (forgetting shows up fast). dino is a 2-knob package (unfreeze + LR 2e-5), so a win is
   "DINO-finetune done properly," not attributable to the unfreeze alone.
+- **C5 lowdiff100:** hypothesis is that the L2 DVF-smoothness prior (`diffusion_weight=1000`) blunts the sharp
+  inward LV contraction → under-contracted EF. **Prior evidence predicts NULL:** docs/33 measured that swapping
+  the regularizer entirely (diffusion→L1-TV) left EF **unchanged** (slope ~0.79 vs 0.77), the diffusion term is
+  already only **~2% of the recon loss** at weight 1000 (its own config comment worries it's too *low*), and
+  docs/24 proved the under-contraction is an **information/observation limit**, not an over-smoothing artifact.
+  So this run is a **rule-out** under the new one-frame/breathing regime (docs/33's test was the old series).
+  Judge on the **EF sweep** slope/Spearman vs `gather05`; **read EF at a mature epoch (~40–50), not early** —
+  EF recovers with training (docs/33's earlier "flat EF" was undertrained). Guardrail: don't let the looser
+  prior tear coverage (`hole_frac_heart`) or add DVF noise.
 
 ---
 

@@ -86,7 +86,7 @@ def main():
         }
         batch = gpu_augment_batch(batch, None, device, respiratory_cfg=resp_cfg, train=False)
 
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         wp = preds["world_points"].float()                       # (1,S,H,W,3)
         delta = (wp - batch["scanner_coords"]).float()           # normalized residual

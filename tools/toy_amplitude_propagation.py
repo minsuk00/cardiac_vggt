@@ -58,7 +58,7 @@ def predict(model, ds, si, t, dev):
     data = ds.get_data(seq_index=si, img_per_seq=12)            # val rng seq-seeded ⇒ same input for any t
     ds.t_target_fixed = None
     b = build_batch(data, dev)
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         pr = model(b["images"], batch=b)
     out = compute_volume_intensity_loss({"world_points": pr["world_points"].float()}, b, grid_shape=GRID, tv_weight=0.0)
     return out["V_canon"][0].float(), np.asarray(data["phases"], np.float32)

@@ -16,11 +16,25 @@ After aug, the trainer:
     2. Re-extracts `S` input slices from `phases_aug` at the original (t, z) pairs
     3. Recomputes `anatomy_bbox` from the augmented content_mask
 
-batchaug backend is forced to `"pytorch"` at import. See `requirements.txt` —
-torch 2.13 supplies the matched triton 3.7.1 that batchaug's triton backend
-wants, but we keep the PyTorch backend for reproducibility. It is slower for
-spatial ops but plenty fast for our workload (1 affine per subject, small
-tensors), so switching to triton is an optional, separately-verified speedup.
+batchaug backend is forced to `"pytorch"` at import, and A/B-measured 2026-07-24
+(`tools/ab_batchaug_backend.py`, docs/49) — keep it. batchaug's triton backend
+overrides ONLY intensity transforms (`triton/geometric/` is empty), so of our 3
+active transforms just RandAdjustContrastd + RandBiasFieldd differ; the expensive
+RandAffined is the same code either way. Measured on an A40 with seeded-paired
+interleaved timing (200 rounds): triton is **not faster** — full pipeline
+-0.048 ms +/- 0.0044 SEM (0.993x, triton marginally SLOWER), and isolated at
+prob=1.0 -0.013 ms +/- 0.0104 (0.990x, null). Aug is <0.2% of a train step
+anyway, and triton is not bitwise identical (~2e-6). So: no upside, real
+reproducibility cost.
+
+Two measurement traps, both of which produced WRONG published numbers before
+being caught (docs/49): timing must be **seeded-paired** (both backends given
+identical draws per round) or the affine's Bernoulli gate injects ~1.6 ms of
+noise that swamps the effect — unseeded sd 1.139 ms vs seeded 0.062 ms; and
+cross-process GPU clock drift moved pytorch's own median 2.84 -> 2.34 ms, which
+is how an earlier run manufactured a phantom "1.18x triton win". Note also that
+intensity-transform COST is *not* probability-gated: both backends compute
+unconditionally and gate only the output via `torch.where`.
 """
 
 from __future__ import annotations

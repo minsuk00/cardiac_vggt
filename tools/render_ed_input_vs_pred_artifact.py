@@ -106,7 +106,7 @@ def reconstruct_ed(model, mri_ds, subj_idx, reference_slot, resp_cfg):
     batch = gpu_augment_batch(batch, None, DEV, respiratory_cfg=resp_cfg, train=False)
     batch["gt_target_volume"] = phases_bundle[T_TARGET].unsqueeze(0)
 
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch.bfloat16):
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
         preds = model(batch["images"], batch=batch)
         out = compute_volume_intensity_loss(
             {"world_points": preds["world_points"].float()},
