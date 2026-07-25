@@ -23,7 +23,7 @@
 #
 # WARM-START: FRESH FROM BASE VGGT-1B (the config default resume path,
 # ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM
-# and CKPT_ONLY empty for that. aggft (aggregator unfrozen, find_unused_parameters=true): ~2.8×
+# and CKPT_ONLY empty for that. aggft (aggregator unfrozen): ~2.8×
 # slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via mri_volume.yaml
 # (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe), affine aug off.
 CONFIG="mri_volume"

@@ -1015,12 +1015,25 @@ class TrainerVizMixin:
         #          Kept in sync with the ED/ES panel subjects so the same subjects get both
         #          the Volume/DVF snapshot and the per-z ED/ES panel.
         VAL_VISUAL_SUBJECT_INDICES = self._ED_ES_SUBJECTS
+        val_idx = None
         if phase == "train":
             should_log = freq > 0 and (step % freq == 0)
         else:
-            # self._val_iter resets each val epoch — using self.steps["val"] (monotonic,
-            # checkpointed) here would skip these visuals after the first epoch / on resume.
-            should_log = self._val_iter in VAL_VISUAL_SUBJECT_INDICES
+            # Identify the val sample by its OWN seq_index rather than the per-batch
+            # counter _val_iter (same reasoning as _stash_ed_es): they are equal only
+            # while the val batch size is 1, and keying on _val_iter would otherwise
+            # select the wrong samples and mislabel the per-subject wandb section.
+            # Defensive — this runs BEFORE the per-figure try/except blocks below and
+            # this method's call site (trainer.py) is NOT guarded, so it must not raise.
+            # _val_iter is the fallback: it resets each val epoch, whereas
+            # self.steps["val"] is monotonic and would skip these visuals after the
+            # first epoch / on resume.
+            try:
+                _seqs = batch.get("seq_index")
+                val_idx = int(_seqs[0].flatten()[0].item()) if _seqs is not None else int(self._val_iter)
+            except Exception:
+                val_idx = int(self._val_iter)
+            should_log = val_idx in VAL_VISUAL_SUBJECT_INDICES
         if not (self.logging_conf.log_visuals and should_log and (self.logging_conf.visuals_keys_to_log is not None)):
             return
 
@@ -1069,7 +1082,7 @@ class TrainerVizMixin:
             if phase == "train":
                 name, group = "Train_Visuals", "media_others"
             else:
-                name, group = "Val_Visuals", f"media_val_subj{self._val_iter}"
+                name, group = "Val_Visuals", f"media_val_subj{val_idx}"
 
             # Render both figures and log. Diagnostic only — a render error (e.g. a
             # shape regression in the per-slot r/|d| titles, or a matplotlib/wandb

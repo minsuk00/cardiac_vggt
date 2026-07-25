@@ -77,34 +77,6 @@ class WandbLogger:
         if self._rank == 0 and wandb is not None and wandb.run is not None:
             wandb.log(payload, step=step)
 
-    def log_visuals(self, name: str, data: Union[torch.Tensor, np.ndarray], step: int, fps: int = 4, caption: Optional[str] = None) -> None:
-        if self._rank == 0 and wandb is not None and wandb.run is not None:
-            import matplotlib.pyplot as plt
-
-            if isinstance(data, torch.Tensor):
-                data = data.cpu().numpy()
-
-            if data.ndim == 3:  # Image: (C, H, W)
-                if data.shape[0] == 3:
-                    data = data.transpose(1, 2, 0)
-
-                # Create a figure to enforce consistent scaling via vmin/vmax
-                h, w = data.shape[:2]
-                fig = plt.figure(figsize=(w / 100.0, h / 100.0), dpi=100)
-                ax = fig.add_axes([0, 0, 1, 1])
-                # We use vmin=0, vmax=1 for normalized floats, or 0-255 for ints.
-                # Since the trainer/dataset might vary, we detect the range.
-                v_max = 1.0 if data.max() <= 1.1 else 255.0
-                ax.imshow(data, vmin=0, vmax=v_max)
-                ax.axis("off")
-
-                wandb.log({name: wandb.Image(fig, caption=caption)}, step=step)
-                plt.close(fig)
-            elif data.ndim == 5:  # Video: (B, T, C, H, W)
-                wandb.log({name: wandb.Image(data, caption=caption)}, step=step)
-            else:
-                logging.warning(f"Unsupported visual dimensions for WandB: {data.ndim}")
-
     def log_3d_point_cloud(self, name: str, cloud_data: np.ndarray, step: int) -> None:
         """Logs an interactive 3D point cloud to WandB.
         cloud_data: (N, 3) or (N, 6) array. If (N, 6), format is [x, y, z, r, g, b].

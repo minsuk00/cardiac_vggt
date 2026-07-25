@@ -122,7 +122,7 @@ baselines, `git checkout 4b55619 -- <path>`.
   rebased `batch_size` to `data["images"]`. Byte-identical.
 - ~~**`training/trainer.py` size** (~2.3k lines): ~1k lines are wandb/matplotlib viz methods…~~
   **DONE (docs/51, 2026-07-24).** 13 viz methods (1039 lines) extracted to `training/trainer_viz.py`
-  as `TrainerVizMixin`; trainer.py 2217 → 1163. TensorBoard removed entirely (it received scalars
+  as `TrainerVizMixin`; trainer.py 2227 → 1163. TensorBoard removed entirely (it received scalars
   only — the visual wrapper had zero callers). Byte-identical.
 - ~~**DDP removal**~~ **DONE (`284992c`)** — already landed; this bullet was stale.
 

@@ -475,7 +475,6 @@ class Trainer(TrainerVizMixin):
 
     def run_train(self):
         """Runs the main training loop over all epochs."""
-        ran_an_epoch = False
         while self.epoch < self.max_epochs:
             set_seeds(self.seed_value + self.epoch * 100, self.max_epochs, 0)
 
@@ -497,14 +496,15 @@ class Trainer(TrainerVizMixin):
                 self.run_val()
 
             self.epoch += 1
-            ran_an_epoch = True
 
-        # Step back to the last epoch actually completed. Guarded: when the loop never
-        # runs (a full-checkpoint resume whose prev_epoch >= max_epochs — the docs/37
-        # CKPT_ONLY trap) an unguarded decrement walks the counter BACKWARDS past the
-        # resumed value. No effect on a normal run, where the loop always executes.
-        if ran_an_epoch:
-            self.epoch -= 1
+        # Step back to the last epoch actually completed. NOTE: deliberately UNGUARDED.
+        # A guard (`if ran_an_epoch`) was tried and reverted: when the loop never runs
+        # it leaves self.epoch == max_epochs, an epoch that never happened, which flips
+        # the trailing run_val()'s cadence gates (e.g. 200 % 5 == 0 fires the heavy
+        # nnU-Net EF eval on a restarted-but-already-complete run, and 100 % 3 != 0
+        # stops the filmstrip firing). The decremented value is the more accurate label
+        # in that case too, so the plain decrement stays.
+        self.epoch -= 1
 
     def run_val(self):
         """Runs a full validation epoch if a validation dataset is available."""

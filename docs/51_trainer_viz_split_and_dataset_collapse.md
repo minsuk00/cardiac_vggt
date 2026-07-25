@@ -3,18 +3,20 @@
 > **TL;DR & takeaway**
 > Finished the cleanup effort tracked in docs/48. Removed TensorBoard entirely (it only ever
 > received scalars — the visual wrapper had zero callers), split 1039 lines of wandb/matplotlib
-> code out of `trainer.py` into a `TrainerVizMixin` (2217 → 1163 lines), deleted three orphan SfM
+> code out of `trainer.py` into a `TrainerVizMixin` (2227 → 1163 lines), deleted three orphan SfM
 > pose modules, and collapsed the inherited SfM dataset base class — `base_dataset.py` +
 > `dataset_util.py` + `vggt/utils/geometry.py`, ~1200 lines that **could not execute**.
 > **Net: −2901 lines, +27.** Verified byte-identical by control-vs-treatment (204/204 tensor
 > digests and every RNG fingerprint identical), 211 tests, and GPU smokes reproducing first-step
 > loss `0.0506` and identity baseline `25.45/23.97/17.27 dB`. **No experiment needs re-running.**
-> Also fixed four pre-existing defects found during review (figure leaks, an ED/ES panel indexing
-> hazard). Status: complete; docs/48's deferred list is now empty.
+> Also fixed pre-existing defects found during review (6 matplotlib figure leaks, an ED/ES panel
+> indexing hazard, stale DDP docs) — and **reverted one attempted fix** (`run_train`'s
+> `self.epoch -= 1`, see §4 below: guarding it is worse than leaving it). Status: complete;
+> docs/48's deferred list is now empty.
 
 ## Why
 
-`trainer.py` was 2217 lines, 47% of it visualisation. The dataset layer still inherited original
+`trainer.py` was 2227 lines, 47% of it visualisation. The dataset layer still inherited original
 VGGT's multi-view-SfM machinery (photos + camera intrinsics/extrinsics + depth maps) that the MRI
 pipeline never touches. Both were the last items on docs/48's deferred list.
 
@@ -113,12 +115,29 @@ a different effort). Training is byte-identical under it, but the eval/OOD path 
 2. **`_stash_ed_es` indexed `val_targets` with `_val_iter`**, the per-*batch* counter, not the
    per-*sample* `seq_index`. Correct only while the val batch size is 1; raising
    `max_img_per_gpu` would have **silently mislabelled** which subject/phase each ED/ES panel
-   belongs to. Now reads `batch["seq_index"]` as `_save_ef_volume` does.
-3. **`run_train`'s `self.epoch -= 1`** ran unconditionally after the loop, walking the counter
-   backwards when the loop never executes (the docs/37 `CKPT_ONLY` resume trap). Now guarded.
-4. **Stale docs**: `trainer.py`'s class docstring claimed DDP/multi-node, and CLAUDE.md claimed
-   aggft requires `distributed.find_unused_parameters=true`. DDP was removed in `284992c`; the
-   config key no longer exists and nothing reads it.
+   belongs to. Now reads `batch["seq_index"]` as `_save_ef_volume` does. The same hardening was
+   applied to `_log_visuals_to_wandb` (val-subject gate + wandb section name), defensively: that
+   method's call site is **not** try/except-wrapped, so the lookup is guarded and falls back to
+   `_val_iter`. Both are no-ops today — val batch size is provably 1
+   (`floor(max_img_per_gpu / img_nums) = floor(20/20)`), and val is unshuffled so
+   `seq_index == _val_iter` for every iteration.
+3. **`WandbLogger.log_visuals`** — a 6th figure-leak site, and dead: its only caller was the
+   deleted `_log_visuals`. Removed rather than patched.
+4. **`run_train`'s `self.epoch -= 1`** — **TRIED AND REVERTED. Do not "fix" this again.** The
+   unguarded decrement looks wrong (when the loop never runs it walks the counter backwards past
+   the resumed value — the docs/37 `CKPT_ONLY` trap). Guarding it is worse. The loop is also
+   skipped when a **completed** run is restarted (requeue during the final `run_val`, or
+   `RESUME_FROM` a finished dir), and there the guard leaves `self.epoch == max_epochs` — an epoch
+   that never ran — which flips the trailing `run_val`'s cadence gates: at `max_epochs=200`,
+   `200 % 5 == 0` fires the heavy nnU-Net EF eval that previously did not run; at `max_epochs=100`,
+   `100 % 3 != 0` stops the filmstrip that previously did. The decremented value is also the more
+   accurate label (the last epoch actually completed). `run_train` is therefore AST-identical to
+   its pre-cleanup form; only an explanatory comment was added.
+5. **Stale docs**: `trainer.py`'s class docstring claimed DDP/multi-node, and CLAUDE.md +
+   `sbatch/train_mri_volume_reference.sh` claimed aggft requires
+   `distributed.find_unused_parameters=true`. DDP was removed in `284992c`; the config key no
+   longer exists and nothing reads it. (`docs/26`/`docs/47` also mention it but were left alone —
+   they are historical records of experiments run when it was true.)
 
 Still open (pre-existing, not fixed): `vggt/models/vggt.py`'s `forward` docstring documents
 `pose_enc`/`depth`/`track` returns that no longer exist — left alone because that file had
