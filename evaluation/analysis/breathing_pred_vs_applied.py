@@ -10,7 +10,7 @@ reports how well the model recovers breathing:
                                                     EPE=mean|pred-applied|) — the honest cohort number
   - a pooled scatter PNG (applied vs predicted Δz, y=x + fit line).
 
-Pure disk read (no GPU/model). Writes JSON + PNG under analysis/out/<ds>/ (regenerable).
+Pure disk read (no GPU/model). Writes JSON + PNG under figures/<ds>/ (GPFS, regenerable).
 
 Run: python evaluation/analysis/breathing_pred_vs_applied.py --dataset cmrxrecon --arm vggt_20260719_1f_gather05_ep99
 """
@@ -40,7 +40,8 @@ def fit(applied, pred):
 
 
 def mean_std(rows, key):
-    xs = [r[key] for r in rows if r[key] is not None]
+    xs = [r[key] for r in rows if r[key] is not None and not np.isnan(r[key])]  # drop NaN too (a
+    # degenerate subject stores NaN slope/corr — not None — and plain np.mean would poison the cohort)
     return {"mean": float(np.mean(xs)), "std": float(np.std(xs)), "n": len(xs)} if xs \
         else {"mean": None, "std": None, "n": 0}
 
@@ -49,7 +50,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--arm", required=True)
-    ap.add_argument("--out", default=None, help="JSON path (PNG alongside); default analysis/out/<ds>/<arm>_breathing.json")
+    ap.add_argument("--out", default=None, help="JSON path (PNG alongside); default figures/<ds>/<arm>_breathing.json")
     args = ap.parse_args()
     ds, arm = args.dataset, args.arm
 
@@ -75,7 +76,8 @@ def main():
         "pooled": {"slope": p_slope, "corr": p_corr, "epe_mm": p_epe},
         "per_subject": rows,
     }
-    out = Path(args.out) if args.out else paths.EVAL_ROOT / "analysis" / "out" / ds / f"{arm}_breathing.json"
+    # Cohort-level per-arm summary -> the FIGURES tree (GPFS): figures/<ds>/<arm>_breathing.{json,png}.
+    out = Path(args.out) if args.out else paths.cohort_fig_dir(ds) / f"{arm}_breathing.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2))
 

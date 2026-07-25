@@ -7,7 +7,9 @@ import matplotlib.pyplot as plt
 
 OUT = "/home/minsukc/vggt/result/1frame_ep100"; os.makedirs(OUT, exist_ok=True)
 METHODS = [("SVRTK", "svrtk3d"), ("NeSVoR", "nesvor"),
-           ("VGGT hub", "vggt_20260719_1f_gather05_ep99"), ("VGGT aug", "vggt_20260719_1f_aug_moderate_ep99")]
+           ("VGGT gather", "vggt_20260719_1f_gather05_ep99"),
+           ("VGGT aug", "vggt_20260719_1f_aug_moderate_ep99"),
+           ("VGGT dino", "vggt_20260719_1f_dino_ft_ep99")]
 COHORTS = ["cmrxrecon", "miitt"]
 METRICS = [("PSNR (dB)", "psnr"), ("SSIM", "ssim"), ("NCC", "ncc")]
 

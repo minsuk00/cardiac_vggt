@@ -2,6 +2,11 @@
   "dataset": "ocmr",
   "method": "vggt_20260719_1f_no_gather_ep99",
   "n": 8,
+  "n_expected": 8,
+  "missing": [],
+  "ckpts": [
+    "/gpfs/accounts/jjparkcv_root/jjparkcv98/minsukc/vggt/checkpoints/20260719_1frame_no_gather_ep99.pt"
+  ],
   "all": {
     "n": 8,
     "clean_psnr": [
@@ -12,6 +17,10 @@
       0.821477697870141,
       0.10127058966417714
     ],
+    "clean_ncc": [
+      0.822120923173222,
+      0.10075101419725882
+    ],
     "breath_psnr": [
       18.7366900811505,
       2.1648907889771754
@@ -19,6 +28,10 @@
     "breath_ssim": [
       0.7883067819373624,
       0.09159618928238315
+    ],
+    "breath_ncc": [
+      0.7892024963470818,
+      0.0923585706041811
     ],
     "cost_psnr": [
       0.9294929367239875,
@@ -39,6 +52,10 @@
       0.821477697870141,
       0.10127058966417714
     ],
+    "clean_ncc": [
+      0.822120923173222,
+      0.10075101419725882
+    ],
     "breath_psnr": [
       18.7366900811505,
       2.1648907889771754
@@ -46,6 +63,10 @@
     "breath_ssim": [
       0.7883067819373624,
       0.09159618928238315
+    ],
+    "breath_ncc": [
+      0.7892024963470818,
+      0.0923585706041811
     ],
     "cost_psnr": [
       0.9294929367239875,
@@ -62,80 +83,112 @@
       "group": "volunteer",
       "clean_psnr": 15.720244414532553,
       "clean_ssim": 0.6354432982250402,
+      "clean_ncc": 0.636860900455051,
+      "breath_ncc": 0.6077164908250173,
       "breath_psnr": 15.61003276777434,
       "breath_ssim": 0.607999531612037,
       "cost_psnr": 0.11021164675821282,
-      "breath_disp_mm": 7.835537882932332
+      "breath_disp_mm": 7.835537882932332,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0045__sax__fs_0045_3T",
       "group": "volunteer",
       "clean_psnr": 24.533642623186353,
       "clean_ssim": 0.9237422492963845,
+      "clean_ncc": 0.9233736968040467,
+      "breath_ncc": 0.8925083065032959,
       "breath_psnr": 23.16387770114725,
       "breath_ssim": 0.8923054511542129,
       "cost_psnr": 1.3697649220391028,
-      "breath_disp_mm": 4.17843091597082
+      "breath_disp_mm": 4.17843091597082,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0053__sax__fs_0053_1_5T",
       "group": "volunteer",
       "clean_psnr": 19.40900421957053,
       "clean_ssim": 0.8987165342098452,
+      "clean_ncc": 0.9012576599915822,
+      "breath_ncc": 0.8851800998051961,
       "breath_psnr": 18.82239533484263,
       "breath_ssim": 0.8812351604176561,
       "cost_psnr": 0.5866088847279016,
-      "breath_disp_mm": 6.370003642583866
+      "breath_disp_mm": 6.370003642583866,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0060__sax__fs_0060_1_5T",
       "group": "volunteer",
       "clean_psnr": 19.222516344578057,
       "clean_ssim": 0.7496397995446947,
+      "clean_ncc": 0.7508207871800378,
+      "breath_ncc": 0.7813208557310558,
       "breath_psnr": 19.837436935451812,
       "breath_ssim": 0.7777377156711306,
       "cost_psnr": -0.614920590873755,
-      "breath_disp_mm": 4.329268153977591
+      "breath_disp_mm": 4.329268153977591,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0063__sax__fs_0063_1_5T",
       "group": "volunteer",
       "clean_psnr": 22.86215248519591,
       "clean_ssim": 0.9078001013872972,
+      "clean_ncc": 0.9072379524057562,
+      "breath_ncc": 0.8210943856022574,
       "breath_psnr": 19.847424093009487,
       "breath_ssim": 0.8217590252156864,
       "cost_psnr": 3.0147283921864236,
-      "breath_disp_mm": 6.275756263221786
+      "breath_disp_mm": 6.275756263221786,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0068__sax__fs_0068_1_5T",
       "group": "volunteer",
       "clean_psnr": 16.918523044152444,
       "clean_ssim": 0.7104259096628569,
+      "clean_ncc": 0.7119729220867157,
+      "breath_ncc": 0.6864096143028953,
       "breath_psnr": 16.681813975369327,
       "breath_ssim": 0.6877727315326073,
       "cost_psnr": 0.23670906878311726,
-      "breath_disp_mm": 6.793620056144113
+      "breath_disp_mm": 6.793620056144113,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0069__sax__fs_0069_1_5T",
       "group": "volunteer",
       "clean_psnr": 18.976835563720353,
       "clean_ssim": 0.8536127444540308,
+      "clean_ncc": 0.8528719544410706,
+      "breath_ncc": 0.7887540745735169,
       "breath_psnr": 17.609863226232758,
       "breath_ssim": 0.7875450540051537,
       "cost_psnr": 1.3669723374875957,
-      "breath_disp_mm": 5.117198564047578
+      "breath_disp_mm": 5.117198564047578,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     },
     {
       "subject": "exam_fs_0074__sax__fs_0074_1_5T",
       "group": "volunteer",
       "clean_psnr": 19.68654544805968,
       "clean_ssim": 0.892440946180978,
+      "clean_ncc": 0.8925715120215165,
+      "breath_ncc": 0.8506361434334203,
       "breath_psnr": 18.320676615376378,
       "breath_ssim": 0.8500995858904152,
       "cost_psnr": 1.3658688326833008,
-      "breath_disp_mm": 4.932267834233972
+      "breath_disp_mm": 4.932267834233972,
+      "ckpt": "/home/minsukc/vggt/scratch/checkpoints/20260719_1frame_no_gather_ep99.pt",
+      "ckpt_fingerprint": null
     }
   ]
 }

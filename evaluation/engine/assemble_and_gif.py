@@ -260,7 +260,9 @@ def main():
         return
 
     _in = mask[None].repeat(T, axis=0)
-    vmax = float(np.percentile(np.concatenate([gt[_in], cines["clean"][_in], cines["breath"][_in]]), 99.9))
+    _roi_vals = np.concatenate([gt[_in], cines["clean"][_in], cines["breath"][_in]])
+    vmax = float(np.percentile(_roi_vals, 99.9)) if _roi_vals.size else 1.0  # guard empty ROI
+    # (all other percentile/score sites guard it; this one would IndexError on a heart&FOV-empty subject)
     breath_tag = f"breathing |disp| mean {breath_mean_mm:.1f} / max {breath_max_mm:.1f} mm"
     # per-z applied |disp| (mm) under z-labels — ONLY when disp is canonical-indexed (cmrx: len==12).
     # For OOD (native-indexed, len 10/11/13) the native slice shown at canonical plane z != disp[z], so a
@@ -280,6 +282,18 @@ def main():
                planes, T, vmax,
                f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
                plane_disp=pd)
+
+    # Auto-render the VGGT per-arm diagnostic panels (panel_input/dvf/lookup) alongside the gifs in
+    # the arm dir. VGGT arms only — baselines have no ed_dvf.npz, so this is skipped for them; and
+    # fully best-effort (a missing dep / multiframe dir must NEVER break scoring), hence try/except.
+    # Gated by the SKIP_GIF early-return above, so metric-only sweeps skip these too.
+    if os.path.exists(os.path.join(md, "ed_dvf.npz")):
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
+            import slice_panels as _sp
+            _sp.build(DATASET, subj, method, "breath", panels=("input", "dvf", "lookup"))
+        except Exception as e:
+            print(f"  [panels skipped — scoring unaffected] {type(e).__name__}: {e}")
     print(f"done -> {md}")
 
 

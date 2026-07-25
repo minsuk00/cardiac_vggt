@@ -1,34 +1,32 @@
 #!/usr/bin/env python
-"""slice_panels.py — per-z-plane cardiac-cycle + Δz panels for the frozen eval bundles.
+"""slice_panels.py — per-arm diagnostic panels for the frozen eval bundles.
 
-Replaces the "mid-ventricular slice only" figures, which showed almost nothing: the mid plane IS
-the reference plane, so it is the one slice the model is handed at the queried phase.
+Three panels (choose via --panel; default all), written INTO the arm dir beside the gifs
+(volumes/<ds>/out/<subj>/<arm>/) and auto-rendered by engine/assemble_and_gif.py for VGGT arms.
+(The old panel_cycle GIF was dropped — it duplicated the engine gif_clean/breath montage.)
 
-Two outputs per (cohort, method, subject, arm), kept SEPARATE on purpose: they have different
-natural column bases (planes vs slots), and forcing them into one grid misaligns one of them.
+  panel_input.gif   2 rows (clean / breath input) x N_SLOTS cols, ANIMATED over t. Only the
+                    REFERENCE column cycles (slot 0 = (t_target, z_mid)); companions stay fixed at
+                    their acquired phase — 'the middle slice is the only one moving', the one-frame
+                    input contract. Valid on BOTH arms (rows fetch clean and breath directly).
 
-  A  panel_cycle_*.gif   2 rows x D_CANON=12 cols (per canonical PLANE), animated over t
-       row1 GT      clean gated ground truth, animating
-       row2 RECON   model reconstruction, animating
-       header       z{k} + the trilinear splat weight the input slices deposit on that plane
-     Always 12 columns — the reconstructed volume has 12 planes whatever the input count.
+  panel_dvf.png     2 rows (input / predicted Δz map) x N_SLOTS cols, ED only, BREATH ARM ONLY.
+                    Δz = ed_dvf.npz delta[...,2] * MM_PER_NORM[2], diverging, shared scale.
+                    header z{k|k.k} · t={phase} [REF] · applied +X.X mm, pred vs true below.
 
-  B  panel_dvf_*.png    2 rows x N_SLOTS cols (per INPUT SLOT), ED (t=0) only, BREATH ARM ONLY
-       row1 INPUT   the single acquired frame the model was fed for that slot
-       row2 Δz map  predicted per-pixel through-plane displacement, mm
-                    (ed_dvf.npz delta[...,2] * MM_PER_NORM[2]), diverging, shared scale
-       header       z{k|k.k} · t={phase} [REF] · applied +X.X mm, and pred vs true below
-     N_SLOTS VARIES and is NOT 12: continuous-z keeps fractional z with no collision dedup, so
-     slots can share a rounded plane and outnumber D_CANON (up to 17 on ACDC).
+  panel_lookup.png  round-trip / analysis-by-synthesis (BREATH ARM, ED). ≤4 slot rows x 4 cols:
+                    input | V_canon@pred | V_gt@pred | |Δ|@pred, where pred = scanner_coords + Δ
+                    (sample_volume). Port of training's _log_lookup_to_wandb: col1≈col2 by
+                    construction (renderer blur), col2≈col3 by training (recon error).
 
-  Why B is ED-only AND breath-only: run_vggt saves the per-pixel Δ field only for t == ED_PHASE
-  and only under `if breathing:` (run_vggt.py:390). No other phase's Δ, and no clean-arm Δ, exists
-  on disk — so `--arm clean` renders panel A only (the gif is valid; pairing the breath Δ with
-  clean inputs would mislabel by up to ~4.8 mm/slot).
+N_SLOTS VARIES and is NOT 12: continuous-z keeps fractional z with no collision dedup, so slots can
+share a rounded plane and outnumber D_CANON (up to 17 on ACDC). dvf/lookup are breath-only: run_vggt
+saves the per-pixel Δ field only for t==ED_PHASE under `if breathing:` (run_vggt.py:390), so `--arm
+clean` renders panel_input only.
 
-Pure disk read — no GPU, no model load. Reuses run_vggt's own prep_* so the input frames are the
-exact pixels the model saw rather than a reimplementation that could silently drift (the OOD
-cohorts resample native->canonical in `fetch`, so they cannot be read straight off breath/).
+Pure disk read — no GPU, no VGGT model load (lookup uses torch sample_volume on CPU). Reuses
+run_vggt's own prep_* so the input frames are the exact pixels the model saw rather than a
+reimplementation that could silently drift (OOD cohorts resample native->canonical in `fetch`).
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
@@ -54,7 +52,7 @@ sys.path.insert(0, str(paths.EVAL_ROOT / "engine"))                            #
 import run_vggt as R                                                            # noqa: E402
 from inference.adapters.base import D_CANON, MM_PER_NORM                        # noqa: E402
 
-OUT_DEFAULT = str(paths.EVAL_ROOT / "analysis" / "out" / "slice_panels")
+# output dir defaults to paths.figure_dir (figures/<ds>/<subj>/<arm>/ on GPFS); --out overrides
 HUB = "vggt_20260719_1f_gather05_ep99"
 COHORTS = list(paths.DATASETS)
 FOV_GATE = 0.05                                    # matches run_vggt.resp_diag's `imgs > 0.05`
@@ -162,7 +160,7 @@ def splat_z_weights(z_cont):
     # yields 1.0000000000000004 -> a 4e-16 weight on plane 2. plane_note tests dict MEMBERSHIP for
     # the REF tag, so leaving that in would stamp REF on a plane the reference never touches.
     return {z0: 1.0} if frac <= 1e-9 else (
-        {z0: 1.0 - frac} if frac >= 1.0 - 1e-9 else {z0: 1.0 - frac, z0 + 1: frac})
+        {z0 + 1: 1.0} if frac >= 1.0 - 1e-9 else {z0: 1.0 - frac, z0 + 1: frac})
 
 
 def plane_coverage(slots, p):
@@ -276,43 +274,6 @@ def col_header(s):
     return f"{zs} · t={s['phase']}{tag}\n{s['applied']:+.1f} mm"
 
 
-def render_cycle(gt, recon, slots, out, title):
-    """GT vs RECON over the cardiac cycle, one column per CANONICAL PLANE — always D_CANON=12,
-    independent of how many input slots there were (that varies, and lives in the Δz panel)."""
-    T = gt.shape[0]
-    vmax = float(np.percentile(gt[gt > 0], 99.5)) if (gt > 0).any() else 1.0
-    fig, axes, W, H = grid(2, D_CANON, cell=1.02, top_in=0.72, bot_in=0.12,
-                           left_in=0.46, right_in=0.10, hgap_in=0.22, wgap_in=0.04)
-    handles = {}
-    for p in range(D_CANON):
-        for r in range(2):
-            axes[r, p].set_xticks([]); axes[r, p].set_yticks([])
-        handles[("gt", p)] = axes[0, p].imshow(gt[0, p], cmap="gray", origin="lower", vmin=0, vmax=vmax)
-        handles[("rc", p)] = axes[1, p].imshow(recon[0, p], cmap="gray", origin="lower", vmin=0, vmax=vmax)
-        note = plane_note(slots, p)
-        axes[0, p].set_title(f"z{p}\n{note}", fontsize=5.4,
-                             color=("#d2691e" if "REF" in note else
-                                    "#999999" if note == "no input" else "0.15"))
-    axes[0, 0].set_ylabel("GT\n(clean)", fontsize=6.5)
-    axes[1, 0].set_ylabel("RECON", fontsize=6.5)
-    sup = fig.suptitle("", fontsize=8, y=1.0 - 0.05 / H, va="top")
-
-    frames = []
-    for t in range(T):
-        for p in range(D_CANON):
-            handles[("gt", p)].set_data(gt[t, p])
-            handles[("rc", p)].set_data(recon[t, p])
-        sup.set_text(f"{title}\ncardiac phase t = {t}/{T - 1}   ·   header = splat mass per plane "
-                     f"(slice-equivalents), acquisition geometry only (pre-Δz)")
-        if t == T - 1:
-            assert_layout(fig, axes)               # widest suptitle (largest phase counter)
-        fig.canvas.draw()
-        frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
-    plt.close(fig)
-    imageio.mimsave(out, frames, duration=180, loop=0)      # ms — imageio>=2.28 PillowPlugin
-    print("wrote", out)
-
-
 def render_dvf(inputs_ed, cols, out, title):
     """One column per INPUT SLOT (count varies; continuous-z can exceed D_CANON), ordered by true
     canonical depth. Deliberately decoupled from the GT/RECON gif, which is per-plane."""
@@ -325,7 +286,7 @@ def render_dvf(inputs_ed, cols, out, title):
                            left_in=0.46, right_in=0.62, hgap_in=0.20, wgap_in=0.04, min_w=8.0)
     # SHARED input-row scale. Per-column `vmax=im.max()` stretches every slot to full white, so a
     # dim apical/basal slot looks as strong as a mid-ventricular one — hiding exactly the variation
-    # in input quality across depth this panel exists to show. render_cycle already shares its vmax.
+    # in input quality across depth this panel exists to show — so share one vmax across slots.
     ivals = np.concatenate([inputs_ed[s["i"]].ravel() for s in cols])
     ivmax = float(np.percentile(ivals[ivals > 0], 99.5)) if (ivals > 0).any() else 1.0
     m = None
@@ -359,8 +320,102 @@ def render_dvf(inputs_ed, cols, out, title):
     print("wrote", out)
 
 
+def render_input(cols, fetch, T, out, title):
+    """The one-frame INPUT the model is fed, animated over the target-phase sweep. Row 1 = clean,
+    row 2 = breathing-corrupted; one column per slot (depth-ordered). Only the REFERENCE column
+    cycles with t — slot 0 = (t_target, z_mid) — while companion slots stay fixed at their acquired
+    phase. So 'the middle slice is the only one moving', exactly the one-frame contract; the breath
+    row shows that reference slice wobbling under the respiratory corruption."""
+    def img(s, t, breathing):                                        # up-sampled 518 grid, [0,1]
+        ph = t if s["is_ref"] else s["phase"]                        # only the reference tracks t
+        return up518(fetch(ph, s["slice_idx"], breathing))
+    n = len(cols)
+    ref = next((s for s in cols if s["is_ref"]), cols[0])
+    allpix = np.concatenate([img(s, R.ED_PHASE, b).ravel() for s in cols for b in (False, True)])
+    vmax = float(np.percentile(allpix[allpix > 0], 99.5)) if (allpix > 0).any() else 1.0
+    fig, axes, W, H = grid(2, n, cell=1.02, top_in=0.60, bot_in=0.12,
+                           left_in=0.52, right_in=0.10, hgap_in=0.22, wgap_in=0.04)
+    handles = {}
+    for j, s in enumerate(cols):
+        for r in range(2):
+            axes[r, j].set_xticks([]); axes[r, j].set_yticks([])
+        handles[("c", j)] = axes[0, j].imshow(img(s, R.ED_PHASE, False), cmap="gray",
+                                              origin="lower", vmin=0, vmax=vmax)
+        handles[("b", j)] = axes[1, j].imshow(img(s, R.ED_PHASE, True), cmap="gray",
+                                              origin="lower", vmin=0, vmax=vmax)
+        axes[0, j].set_title(col_header(s), fontsize=5.4,
+                             color=("#d2691e" if s["is_ref"] else "0.15"))
+    axes[0, 0].set_ylabel("clean\ninput", fontsize=6.5)
+    axes[1, 0].set_ylabel("breath\ninput", fontsize=6.5)
+    sup = fig.suptitle("", fontsize=8, y=1.0 - 0.05 / H, va="top")
+    frames = []
+    for t in range(T):
+        for j, s in enumerate(cols):
+            if s["is_ref"]:                                          # only the ref changes per frame
+                handles[("c", j)].set_data(img(s, t, False))
+                handles[("b", j)].set_data(img(s, t, True))
+        sup.set_text(f"{title}\ninput fed to the model — reference plane (z{ref['z']}) at phase "
+                     f"t = {t}/{T - 1}; companions fixed at their acquired phase")
+        if t == T - 1:
+            assert_layout(fig, axes)
+        fig.canvas.draw()
+        frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy())
+    plt.close(fig)
+    imageio.mimsave(out, frames, duration=180, loop=0)
+    print("wrote", out)
+
+
+def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title):
+    """Round-trip / analysis-by-synthesis (breath arm, at ED). For ≤4 slots across depth, sample the
+    reconstruction V_canon AND the GT volume V_gt back at the model's predicted coords
+    p = scanner_coords + Δ, beside the input slice and the |V_canon−V_gt|@p error. Port of training's
+    `_log_lookup_to_wandb`: col1≈col2 by construction (renderer blur), col2≈col3 by training (recon
+    error). Reference row (Δ≈0) is the phase-matched control. inputs518 keyed by SLOT index i."""
+    import torch
+    from vggt.utils.splat import sample_volume
+    ref = [s for s in cols if s["is_ref"]]
+    nonref = [s for s in cols if not s["is_ref"]]
+    if nonref:
+        pick = np.linspace(0, len(nonref) - 1, min(3, len(nonref))).round().astype(int)
+        sel = (ref[:1] + [nonref[i] for i in pick])[:4]
+    else:
+        sel = ref[:4] or cols[:4]
+    hw = R.INPUT_IMG_SIZE
+    py, px = np.meshgrid(np.arange(hw), np.arange(hw), indexing="ij")
+    x_norm = (px / (hw - 1) * 2.0 - 1.0).astype(np.float32)          # matches assemble_batch exactly
+    y_norm = (py / (hw - 1) * 2.0 - 1.0).astype(np.float32)
+    Vc = torch.as_tensor(np.ascontiguousarray(V_canon))[None].float()   # (1,D,H,W)
+    Vg = torch.as_tensor(np.ascontiguousarray(V_gt))[None].float()
+    vmax = float(max(V_canon.max(), V_gt.max(), 1e-3)); ERR = 0.1
+    fig, axes, W, H = grid(len(sel), 4, cell=1.35, top_in=0.92, bot_in=0.10,
+                           left_in=0.66, right_in=0.10, hgap_in=0.12, wgap_in=0.06)
+    titles = ["input I", "V_canon @ pred", "V_gt @ pred", "|V_canon−V_gt| @ pred"]
+    for r, s in enumerate(sel):
+        z_val = s["z_cont"] / (D_CANON - 1) * 2.0 - 1.0             # recover normalized scanner z
+        d = delta_full[s["i"]].astype(np.float32)                  # (hw,hw,3) normalized Δ
+        pos = np.stack([x_norm + d[..., 0], y_norm + d[..., 1],
+                        np.full_like(x_norm, z_val) + d[..., 2]], -1)   # scanner_coords + Δ
+        pos_t = torch.as_tensor(pos.reshape(1, -1, 3)).float()
+        rc = sample_volume(Vc, pos_t).reshape(hw, hw).numpy()
+        rg = sample_volume(Vg, pos_t).reshape(hw, hw).numpy()
+        cells = [(inputs518[s["i"]], "gray", 0, max(vmax, 1e-3)),
+                 (rc, "gray", 0, vmax), (rg, "gray", 0, vmax),
+                 (np.abs(rc - rg), "magma", 0, ERR)]
+        for c, (data, cmap, vmin, vm) in enumerate(cells):
+            axes[r, c].imshow(data, cmap=cmap, origin="lower", vmin=vmin, vmax=vm)
+            axes[r, c].set_xticks([]); axes[r, c].set_yticks([])
+            if r == 0:
+                axes[r, c].set_title(titles[c], fontsize=7)
+        axes[r, 0].set_ylabel(("REF " if s["is_ref"] else "") + f"slot{s['i']}\nz{s['z']}", fontsize=6.5)
+    fig.suptitle(f"{title}\nround-trip @pred (breath, ED): input | V_canon | V_gt | |Δ|  — "
+                 f"col1≈col2 renderer blur, col2≈col3 recon error", fontsize=8, y=1.0 - 0.04 / H, va="top")
+    assert_layout(fig, axes)
+    fig.savefig(out, dpi=170); plt.close(fig)
+    print("wrote", out)
+
+
 # ── driver ───────────────────────────────────────────────────────────────────────────────────
-def build(cohort, subject, method, arm, outdir):
+def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
     subj_dir = str(paths.subject_dir(cohort, subject))
     md = method_dir(cohort, subject, method)
     meta = json.load(open(os.path.join(md, "metadata.json")))
@@ -396,22 +451,35 @@ def build(cohort, subject, method, arm, outdir):
     print(f"  {len(slots)} slots ({ndup} sharing a z-plane, {n_nofov} with no FOV), "
           f"ref z{entries[ref_k]['z_plane']}; Δz vs resp_diag: {chk}")
 
-    recon = np.stack([R._load_xyz_to_dhw(os.path.join(md, f"recon_{arm}", f"vol_t{t:02d}.nii.gz"))
-                      for t in range(T)])
-
-    os.makedirs(outdir, exist_ok=True)
+    # panel_cycle (GT-vs-recon cardiac gif) was dropped — it duplicated the engine gif_clean/breath.
     # basename(md) — NOT meta['model_name'], which drops both the date and the `_contz` suffix and
     # so collides (miitt vggt_20260713_gather05 vs ..._contz both -> 'gather05').
     mtag = os.path.basename(md)
-    tag = f"{cohort}_{subject}_{mtag}_{arm}"
-    ttl = f"{cohort} · {subject} · {mtag} · z={meta.get('z_mode','?')} · {arm} input"
-    render_cycle(gt, recon, slots, f"{outdir}/panel_cycle_{tag}.gif", ttl)
+    base = f"{cohort} · {subject} · {mtag} · z={meta.get('z_mode','?')}"        # arm-neutral prefix
+    ttl = f"{base} · {arm} input"
+    # Panels co-locate with the gifs in the arm dir (volumes/<ds>/out/<subj>/<arm>/); --out overrides.
+    def dst(name):
+        p = f"{outdir}/{name}" if outdir else str(paths.arm_dir(cohort, subject, mtag) / name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        return p
 
+    # panel_input: the model's INPUT animated (clean+breath rows); arm-independent content, so a
+    # neutral title (no clean/breath suffix) — the file is the same whichever arm triggered it.
+    if "input" in panels:
+        render_input(cols, fetch, T, dst("panel_input.gif"), base)
+
+    # panel_dvf / panel_lookup need the ED Δ field, which run_vggt dumps ONLY for the breath arm.
     if not breathing:
-        print("  [skip] panel B — run_vggt dumps ed_dvf.npz only on the breath arm "
-              "(run_vggt.py:390); no clean-arm Δ field exists on disk")
+        if any(p in panels for p in ("dvf", "lookup")):
+            print("  [skip] panel_dvf/lookup — ed_dvf.npz is breath-arm only (run_vggt.py:390)")
         return
-    render_dvf(inputs_ed, cols, f"{outdir}/panel_dvf_{tag}.png", ttl)
+    if "dvf" in panels:
+        render_dvf(inputs_ed, cols, dst("panel_dvf.png"), ttl)
+    if "lookup" in panels:
+        V_canon = R._load_xyz_to_dhw(os.path.join(md, f"recon_{arm}", f"vol_t{R.ED_PHASE:02d}.nii.gz"))
+        delta_full = np.load(os.path.join(md, "ed_dvf.npz"))["delta"].astype(np.float32)   # (S,hw,hw,3) norm
+        inputs518 = [up518(im) for im in inputs_ed]                                         # keyed by slot i
+        render_lookup(inputs518, cols, delta_full, V_canon, gt[R.ED_PHASE], dst("panel_lookup.png"), ttl)
 
 
 def main():
@@ -420,7 +488,11 @@ def main():
     ap.add_argument("--subject", default=None, help="default: cohort's median-breath-PSNR subject")
     ap.add_argument("--method", default=HUB)
     ap.add_argument("--arm", default="breath", choices=["breath", "clean"])
-    ap.add_argument("--out", default=OUT_DEFAULT)
+    ap.add_argument("--out", default=None,
+                    help="override output dir (default: the arm dir, volumes/<ds>/<subj>/<arm>/)")
+    ap.add_argument("--panel", nargs="+", default=["dvf", "input", "lookup"],
+                    choices=["dvf", "input", "lookup"],
+                    help="which panels to render (default: all three)")
     a = ap.parse_args()
     if a.subject and len(a.cohort) != 1:
         ap.error("--subject names one subject, so pass exactly one --cohort "
@@ -428,7 +500,7 @@ def main():
     for c in a.cohort:
         subj = a.subject or rep_subject(c, a.method)
         print(f"[{c}] {subj} · {a.method} · {a.arm}")
-        build(c, subj, a.method, a.arm, a.out)
+        build(c, subj, a.method, a.arm, a.out, panels=tuple(a.panel))
 
 
 if __name__ == "__main__":

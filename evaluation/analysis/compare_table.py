@@ -6,8 +6,8 @@ Reads results/<dataset>/<arm>.json (written by engine/aggregate.py) and prints a
 incomplete (missing subjects, from aggregate's n_expected/missing fields).
 
 Run:
-  python tools/compare_table.py cmrxrecon --metric breath_psnr
-  python tools/compare_table.py cmrxrecon --arms svrtk3d nesvor vggt_20260713_gather05 --out analysis/out/tbl.md
+  python evaluation/analysis/compare_table.py cmrxrecon --metric breath_psnr
+  python evaluation/analysis/compare_table.py cmrxrecon --arms svrtk3d nesvor vggt_20260713_gather05 --out figures/cmrxrecon/tbl.md
 """
 import argparse
 import json
@@ -20,7 +20,7 @@ EVAL = ROOT / "evaluation"
 sys.path.insert(0, str(EVAL))
 import paths  # noqa: E402
 
-COLS = ["clean_psnr", "breath_psnr", "cost_psnr", "clean_ssim", "breath_ssim"]
+COLS = ["clean_psnr", "breath_psnr", "cost_psnr", "clean_ssim", "breath_ssim", "clean_ncc", "breath_ncc"]
 
 
 def cell(v):
