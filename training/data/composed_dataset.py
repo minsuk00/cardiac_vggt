@@ -13,17 +13,14 @@ import torch
 from hydra.utils import instantiate
 from torch.utils.data import ConcatDataset, Dataset
 
-from .augmentation import get_image_augmentation
-
 
 class ComposedDataset(Dataset, ABC):
     """
-    Composes multiple base datasets and applies common configurations.
+    Composes base datasets and converts their raw output to batched tensors.
 
-    This dataset provides a flexible way to combine multiple base datasets while
-    applying shared augmentations, track generation, and other processing steps.
-    It handles image normalization, tensor conversion, and other preparations
-    needed for training computer vision models with sequences of images.
+    Wraps the base dataset(s) and handles the numpy->tensor conversion for every
+    batch key. (The original VGGT photometric augmentation was removed: it was
+    disabled on the MRI pipeline and only ever operated on natural RGB photos.)
     """
 
     def __init__(self, dataset_configs: dict, common_config: dict, **kwargs):
@@ -45,27 +42,12 @@ class ComposedDataset(Dataset, ABC):
         # Use custom concatenation class that supports tuple indexing
         self.base_dataset = TupleConcatDataset(base_dataset_list, common_config)
 
-        # --- Augmentation Settings ---
-        # Controls whether to apply identical color jittering across all frames in a sequence
-        self.cojitter = common_config.augs.cojitter
-        # Probability of using shared jitter vs. frame-specific jitter
-        self.cojitter_ratio = common_config.augs.cojitter_ratio
-        # Initialize image augmentations (color jitter, grayscale, gaussian blur)
-        self.image_aug = get_image_augmentation(
-            color_jitter=common_config.augs.color_jitter,
-            gray_scale=common_config.augs.gray_scale,
-            gau_blur=common_config.augs.gau_blur,
-        )
-
         # --- Optional Fixed Settings (useful for debugging) ---
         # Force each sequence to have exactly this many images (if > 0)
         self.fixed_num_images = common_config.fix_img_num
         # Force a specific aspect ratio for all images
         self.fixed_aspect_ratio = common_config.fix_aspect_ratio
 
-        # --- Mode Settings ---
-        # Whether the dataset is being used for training (affects augmentations)
-        self.training = common_config.training
         self.common_config = common_config
 
         self.total_samples = len(self.base_dataset)
@@ -105,16 +87,6 @@ class ComposedDataset(Dataset, ABC):
         # Convert other data to tensors with appropriate types
         scanner_coords = torch.from_numpy(np.stack(batch["scanner_coords"]).astype(np.float32)) if "scanner_coords" in batch else None
         ids = torch.from_numpy(batch["ids"])  # Frame indices sampled from the original sequence
-
-        # --- Apply Color Augmentation (training mode only) ---
-        if self.training and self.image_aug is not None:
-            if self.cojitter and random.random() > self.cojitter_ratio:
-                # Apply the same color jittering transformation to all frames
-                images = self.image_aug(images)
-            else:
-                # Apply different color jittering to each frame individually
-                for aug_img_idx in range(len(images)):
-                    images[aug_img_idx] = self.image_aug(images[aug_img_idx])
 
         # --- Prepare Final Sample Dictionary ---
         sample = {

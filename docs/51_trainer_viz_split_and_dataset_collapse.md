@@ -70,15 +70,26 @@ Removed 14 now-unconsumed `common_config` keys from both train and val blocks + 
 `patch_size`. Six were read only by the deleted `BaseDataset.__init__`, so config and code had to
 move together. Top-level `img_size` stays — it still feeds `target_size`.
 
-### 5. What was deliberately NOT done
-**`ComposedDataset` was left almost intact.** An early estimate called it "~200 removable lines";
-that was wrong. It does three load-bearing jobs: the numpy→tensor conversion of 17 batch keys;
-`TupleConcatDataset`, whose `inside_random: True` **is the actual train subject sampler**
-(`random.randint`), not scaffolding; and the `p=0.0` colour jitter, which is a visual no-op but
-**empirically consumes one `torch.rand(1)` per train sample** (measured: next-rand `0.768222` vs
-`0.496257`). Removing it would shift the worker RNG stream — a fresh training series, not a
-cleanup. Only inert parts were removed (a vestigial `from .dataset_util import *`, an
-always-failing `_data_to_batch_tensors` import, 8 dead config keys).
+### 5. `ComposedDataset` — partially simplified (jitter removed), class kept
+An early estimate called it "~200 removable lines"; that was wrong. It does two **load-bearing**
+jobs that were KEPT: the numpy→tensor conversion of 17 batch keys, and `TupleConcatDataset`, whose
+`inside_random: True` **is the actual train subject sampler** (`random.randint`), not scaffolding.
+Collapsing the class was rejected — `.base_dataset.datasets[0]` is reached by 12 files (trainer,
+inference, tools), so a full collapse ripples widely for modest structural gain.
+
+**What WAS removed** (2026-07-24, second pass): the original-VGGT **photometric augmentation** —
+`training/data/augmentation.py` (whole file), the `image_aug`/`cojitter` machinery, the
+training-mode aug branch in `__getitem__`, and the `color_jitter`/`gray_scale`/`gau_blur`/`cojitter`/
+`cojitter_ratio` config keys. It was disabled on the MRI pipeline (`p=0.0`, grayscale/blur off) and
+only ever made sense for natural RGB photos. But it was **not** a byte-identical removal: the
+disabled `RandomApply(p=0.0)` still consumed a `torch.rand(1)` draw **and** the `cojitter` gate a
+`random.random()` draw per train sample, and that `random` draw is shared with `get_data`'s
+subject/t/z sampling — so removing it **shifts the training series** (measured: val 0/204 tensor
+mismatches + RNG identical since the jitter is `training`-gated and never ran for val; train sample 0
+identical but samples 1+ diverge; inference bypasses `ComposedDataset` entirely and is unaffected).
+Done as a deliberate fresh-series break, not a cleanup no-op. Earlier, only strictly-inert parts had
+been removed (a vestigial `from .dataset_util import *`, an always-failing `_data_to_batch_tensors`
+import, 8 dead config keys).
 
 ## Verification
 
