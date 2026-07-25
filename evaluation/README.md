@@ -23,10 +23,14 @@ evaluation/
 │                    #   compare_methods = multi-arm GIF, compare_table = cross-arm ranking)
 ├── results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
 │
-├── volumes/     -> GPFS (subject-major data; gitignored)
+├── volumes/     -> GPFS (subject-major PRECIOUS data; gitignored)
 │   └── <dataset>/out/<subject>/
 │       ├── manifest.json  gt/  clean/  breath/  mask*  heart_seg*   # shared frozen bundle
-│       └── <arm>/ recon_clean/ recon_breath/ metrics.json timing.json …   # one dir per method
+│       └── <arm>/ recon_clean/ recon_breath/ metrics.json timing.json ed_dvf.npz
+│                  gif_{clean,breath,combined}.gif                   # per-arm renders live WITH the recons
+│                  panel_input.gif  panel_dvf.png  panel_lookup.png  #   (VGGT arms; auto-gen w/ the gifs)
+├── figures/     -> GPFS (DISPOSABLE cross-arm/cohort figures; gitignored, `rm -rf`-safe)
+│   └── <dataset>/  [<subject>/_compare/compare_*.gif]  [<arm>_breathing.{json,png}]  [ef_*.png]
 └── checkpoints/ -> GPFS (COPIED ckpts per arm; gitignored)
 ```
 
@@ -116,7 +120,13 @@ EVAL_DATASET=<ds> python evaluation/engine/assemble_and_gif.py <subj> <arm>
 python evaluation/engine/aggregate.py <ds> <arm>
 ```
 
-Standing analysis (write to the gitignored `analysis/out/`):
+Standing analysis. **Per-arm** panels (`slice_panels` → `panel_input.gif` / `panel_dvf.png` /
+`panel_lookup.png`) write INTO the arm dir (`volumes/<ds>/out/<subj>/<arm>/`, beside the gifs) and
+are **auto-rendered by `assemble_and_gif` for VGGT arms** (SKIP_GIF-gated; baselines lack `ed_dvf.npz`
+so they're skipped). **Cross-arm / cohort** figures write to the gitignored `figures/` tree on GPFS
+(`compare_methods` → `figures/<ds>/<subj>/_compare/`; breathing + EF → `figures/<ds>/`). All are
+render-on-demand for a `--subject` — a metric-only sweep (`SKIP_GIF=1`) persists just `metrics.json`
++ `results/*.json`.
 
 ```bash
 python evaluation/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>

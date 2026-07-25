@@ -14,17 +14,24 @@ recon is displayed on exactly the intensity scale it is SCORED on (SVRTK as-is, 
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
-  $PY tools/compare_methods.py --cohort cmrxrecon --subject Train_P001 \
+  $PY evaluation/analysis/compare_methods.py --cohort cmrxrecon --subject Train_P001 \
       --arms svrtk3d nesvor vggt_20260713_gather05 --variant breath
   # --subject omitted -> first built subject that has ALL requested arms.
 """
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 import numpy as np
+import nibabel as nib
+
+
+def short(arm):
+    """Compact row label: strip the vggt_<date>_1f_ prefix + _ep## suffix; baselines pass through."""
+    return re.sub(r"_ep\d+.*$", "", re.sub(r"^vggt_\d+_1f_", "", arm))
 
 HERE = Path(__file__).resolve()
 ROOT = next(p for p in HERE.parents if (p / "evaluation").is_dir())   # repo root (works from tools/ or evaluation/analysis/)
@@ -43,10 +50,17 @@ def resolve_arm_dir(ds, subj, arm):
     return None
 
 
-def load_recon(ds, subj, arm_real, variant, T, mask, content):
-    rec = np.stack([A.load_canon(str(paths.recon(ds, subj, arm_real, variant, t))) for t in range(T)])
-    rec = A.prep_recon(rec, arm_real.split("_contz")[0], mask)   # per-method norm keyed on the base arm name
-    return rec * content[None]                                   # zero no-data planes (matches assemble display)
+def load_recon(ds, subj, arm_real, variant, disp_mask):
+    """Load the CANONICAL, already-placed + per-method-normalized recon that assemble scored
+    (<arm>/cine_<variant>.nii.gz, shape X,Y,Z,T). Using the placed cine — NOT recon_<variant>/vol_t* —
+    is what makes OOD baselines show correctly: SVRTK/NeSVoR recons on miitt/OOD are in NATIVE space
+    (e.g. 78x96x79), and load_canon can't place a native affine onto the canonical grid, so it renders
+    them all-zero (black). The cine was placed via the dataset's adapter at assemble time."""
+    cine = paths.arm_dir(ds, subj, arm_real) / f"cine_{variant}.nii.gz"
+    if not cine.is_file():
+        sys.exit(f"missing {cine} — run assemble_and_gif on this arm first (it writes cine_<variant>)")
+    v = np.asarray(nib.load(str(cine)).dataobj, dtype=np.float32)   # (X,Y,Z,T) canonical, prep'd, fov-zeroed
+    return np.moveaxis(v, -1, 0) * disp_mask[None]                  # -> (T,X,Y,Z), then display mask
 
 
 def main():
@@ -55,7 +69,11 @@ def main():
     ap.add_argument("--arms", nargs="+", required=True, help="arm dir names to stack (e.g. svrtk3d nesvor vggt_...)")
     ap.add_argument("--subject", default=None, help="default: first built subject that has ALL --arms")
     ap.add_argument("--variant", default="breath", choices=list(paths.VARIANTS))
-    ap.add_argument("--out", default=None, help="default: analysis/out/<ds>/compare_<subject>_<variant>.gif")
+    ap.add_argument("--mask", action="store_true",
+                    help="restrict the display to the heart ROI (heart & FOV) — matches the scoring "
+                         "region + how the SVR baselines reconstruct; default shows the full FOV")
+    ap.add_argument("--out", default=None,
+                    help="default: figures/<ds>/<subject>/_compare/compare_<variant>[_masked].gif (GPFS)")
     a = ap.parse_args()
     ds = a.cohort
 
@@ -73,12 +91,13 @@ def main():
     heart = A.load_canon(str(paths.heart_mask(ds, subj))) > 0.5
     content = A.load_canon(str(paths.fov_mask(ds, subj))) > 0.5
     mask = heart & content
+    disp_mask = mask if a.mask else content        # --mask: restrict the display to the heart ROI
 
     gt = np.stack([A.load_canon(str(paths.bundle_stack(ds, subj, "gt", t))) for t in range(T)])
-    rows = [("GT", gt)]
+    rows = [("GT", gt)]                             # GT is ALWAYS unmasked — the full reference
     for arm in a.arms:
-        rows.append((arm.replace("vggt_", ""),
-                     load_recon(ds, subj, resolve_arm_dir(ds, subj, arm), a.variant, T, mask, content)))
+        rows.append((short(arm),
+                     load_recon(ds, subj, resolve_arm_dir(ds, subj, arm), a.variant, disp_mask)))
 
     vmax = float(np.percentile(gt[gt > 0], 99.5)) if (gt > 0).any() else 1.0
     disp = np.asarray(manifest["breath"]["disp_dhw_mm"], dtype=np.float64)     # (native_Z, 3) — NOT 12 on OOD
@@ -92,9 +111,12 @@ def main():
                       for z in range(A.SHAPE_XYZ[2])]
 
     planes = list(range(A.SHAPE_XYZ[2]))
-    out = a.out or str(EVAL / "analysis" / "out" / ds / f"compare_{subj}_{a.variant}.gif")
+    # Cross-arm figure -> the FIGURES tree (GPFS), under the subject's _compare/ (owns no single arm).
+    suffix = "_masked" if a.mask else ""
+    out = a.out or str(paths.compare_dir(ds, subj) / f"compare_{a.variant}{suffix}.gif")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    title = (f"{ds} / {subj} / {a.variant}  —  GT vs {', '.join(r[0] for r in rows[1:])}"
+    roi = "heart ROI" if a.mask else "full FOV"
+    title = (f"{ds} / {subj} / {a.variant} ({roi})  —  GT vs {', '.join(r[0] for r in rows[1:])}"
              f"\ncardiac phase t={{t}}/{T - 1}")
     A.render_gif(out, rows, planes, T, vmax, title, fps=3, plane_disp=plane_disp)
     print(f"\n-> {out}  ({len(rows)} rows x {len(planes)} planes, T={T})")

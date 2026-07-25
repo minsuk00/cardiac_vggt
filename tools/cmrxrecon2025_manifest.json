@@ -1,0 +1,1089 @@
+{
+ "TrainingData": {
+  "n_parts": 58,
+  "min": 0,
+  "max": 57,
+  "files": [
+   {
+    "part": 0,
+    "file_id": "1ByDEo74T6hII7wSBNl_cg0hYrLju1tNV",
+    "alt_ids": [],
+    "out": "TrainingData-part-000.zip"
+   },
+   {
+    "part": 1,
+    "file_id": "1dsScRHtrw_kdt_0XqVib4_5q-vxldgew",
+    "alt_ids": [],
+    "out": "TrainingData-part-001.zip"
+   },
+   {
+    "part": 2,
+    "file_id": "1T5Ta88B2vAgsFFcmlJ0_7-BLHFYtUMpe",
+    "alt_ids": [],
+    "out": "TrainingData-part-002.zip"
+   },
+   {
+    "part": 3,
+    "file_id": "1c7nngNA7YtGNBz7z32KQ22ps5xYRFprH",
+    "alt_ids": [],
+    "out": "TrainingData-part-003.zip"
+   },
+   {
+    "part": 4,
+    "file_id": "1wHMStdfcsd7BYf0GJgj_jVC_b5mQjbYR",
+    "alt_ids": [],
+    "out": "TrainingData-part-004.zip"
+   },
+   {
+    "part": 5,
+    "file_id": "1iJmIAWc8FaUkvaMev8byfG1I1TY24TYM",
+    "alt_ids": [],
+    "out": "TrainingData-part-005.zip"
+   },
+   {
+    "part": 6,
+    "file_id": "1yQyh_MO8CjU3QLTgopjA7TbOFQbgFEv0",
+    "alt_ids": [],
+    "out": "TrainingData-part-006.zip"
+   },
+   {
+    "part": 7,
+    "file_id": "1dqgFjU-plhZlX7-OWs5e-b_70Tw0rHKf",
+    "alt_ids": [],
+    "out": "TrainingData-part-007.zip"
+   },
+   {
+    "part": 8,
+    "file_id": "1lWlBiNm0l6s11jmTwnX8d4T4drwOlgiU",
+    "alt_ids": [],
+    "out": "TrainingData-part-008.zip"
+   },
+   {
+    "part": 9,
+    "file_id": "17b4G2gNeHMhMjiqfkpDYTPc7yuFI8tgw",
+    "alt_ids": [],
+    "out": "TrainingData-part-009.zip"
+   },
+   {
+    "part": 10,
+    "file_id": "1YnQbP-ATxWB1V-wMaDcTQreuIb7dwFFt",
+    "alt_ids": [],
+    "out": "TrainingData-part-010.zip"
+   },
+   {
+    "part": 11,
+    "file_id": "1eVJ4xoLU4F7lNl0CHaf1GDdzMJAsr3re",
+    "alt_ids": [],
+    "out": "TrainingData-part-011.zip"
+   },
+   {
+    "part": 12,
+    "file_id": "1UkXmKEJPrgqJ8Elaeovxya60yI1GLlwC",
+    "alt_ids": [],
+    "out": "TrainingData-part-012.zip"
+   },
+   {
+    "part": 13,
+    "file_id": "1Vjn65mjrJUZHgbOV3J1Pm3Ai2VDXSurC",
+    "alt_ids": [],
+    "out": "TrainingData-part-013.zip"
+   },
+   {
+    "part": 14,
+    "file_id": "12fD8QSPn3sBbYBZ7tMtsOGSFTbhQta-0",
+    "alt_ids": [],
+    "out": "TrainingData-part-014.zip"
+   },
+   {
+    "part": 15,
+    "file_id": "1FNaDjHWBcAfYeDc0qqaA89putphFAq6r",
+    "alt_ids": [],
+    "out": "TrainingData-part-015.zip"
+   },
+   {
+    "part": 16,
+    "file_id": "14vSRpcjl6KNXavK45rgZIefBcPV0T6iS",
+    "alt_ids": [],
+    "out": "TrainingData-part-016.zip"
+   },
+   {
+    "part": 17,
+    "file_id": "1zusuedJLi9FSrj4yqGAuv-MdPk7kmSPT",
+    "alt_ids": [],
+    "out": "TrainingData-part-017.zip"
+   },
+   {
+    "part": 18,
+    "file_id": "1yHWYVSSblhtVyOQmwxwNgB4D6iZFRYcP",
+    "alt_ids": [],
+    "out": "TrainingData-part-018.zip"
+   },
+   {
+    "part": 19,
+    "file_id": "1GpS4HUNsbir_G1DBAm-Pac7pbzibd7fm",
+    "alt_ids": [],
+    "out": "TrainingData-part-019.zip"
+   },
+   {
+    "part": 20,
+    "file_id": "1_IhQfoDN34mMG6u3zK8nahCZT9N2J1e6",
+    "alt_ids": [],
+    "out": "TrainingData-part-020.zip"
+   },
+   {
+    "part": 21,
+    "file_id": "1-ZjjNCLlRYg6PkH3_Q1wfBBrlloumW35",
+    "alt_ids": [],
+    "out": "TrainingData-part-021.zip"
+   },
+   {
+    "part": 22,
+    "file_id": "1oiRZM_0_ZyGPNAy8xlOZUAFzgJ52LXqR",
+    "alt_ids": [],
+    "out": "TrainingData-part-022.zip"
+   },
+   {
+    "part": 23,
+    "file_id": "1Yfv1Yryuck0nkOqoXKyMZ6OTFxPzU4Ei",
+    "alt_ids": [],
+    "out": "TrainingData-part-023.zip"
+   },
+   {
+    "part": 24,
+    "file_id": "19ToyUKpSq3HCjDSq3axAv4AuiG-OktRm",
+    "alt_ids": [],
+    "out": "TrainingData-part-024.zip"
+   },
+   {
+    "part": 25,
+    "file_id": "1txjVsQMDHYvZvHfdJjUm4__AWAOAeUjv",
+    "alt_ids": [],
+    "out": "TrainingData-part-025.zip"
+   },
+   {
+    "part": 26,
+    "file_id": "1D0WzlZfthblNVUuRtR1aXUbqCxn_O6KY",
+    "alt_ids": [],
+    "out": "TrainingData-part-026.zip"
+   },
+   {
+    "part": 27,
+    "file_id": "1oDpYNe58feqbgy-m672vGp818yAVmokP",
+    "alt_ids": [],
+    "out": "TrainingData-part-027.zip"
+   },
+   {
+    "part": 28,
+    "file_id": "1xiiB6zL2Ttou7Si2WCZXwlR6MyJWQkZ8",
+    "alt_ids": [],
+    "out": "TrainingData-part-028.zip"
+   },
+   {
+    "part": 29,
+    "file_id": "1Kk3vvly_kiSEbWykX4g3yAj1IWqY8Rwg",
+    "alt_ids": [],
+    "out": "TrainingData-part-029.zip"
+   },
+   {
+    "part": 30,
+    "file_id": "1B8ivj8VGw6oYVYAKJ2ajbm6EZ-9BJ3-p",
+    "alt_ids": [],
+    "out": "TrainingData-part-030.zip"
+   },
+   {
+    "part": 31,
+    "file_id": "1oK7W9QTYLdwYfbAsq5umqLityRjNsf3u",
+    "alt_ids": [],
+    "out": "TrainingData-part-031.zip"
+   },
+   {
+    "part": 32,
+    "file_id": "1KsD0o3hO8arpT4H2-cUxUtC2QEUV4u8f",
+    "alt_ids": [],
+    "out": "TrainingData-part-032.zip"
+   },
+   {
+    "part": 33,
+    "file_id": "1TQ_IUQuNzfZSCVoyUULZ7arQnfU_liBh",
+    "alt_ids": [],
+    "out": "TrainingData-part-033.zip"
+   },
+   {
+    "part": 34,
+    "file_id": "1rQOPFRNgKKX5fvys1QBzzytsqVgrBg5v",
+    "alt_ids": [],
+    "out": "TrainingData-part-034.zip"
+   },
+   {
+    "part": 35,
+    "file_id": "1qSkAlw6rzmTjptJ1P4rmSqu4CIigjcC6",
+    "alt_ids": [],
+    "out": "TrainingData-part-035.zip"
+   },
+   {
+    "part": 36,
+    "file_id": "1peQKJKe0tIV2xGBbFbRBYnmLJdqX68pu",
+    "alt_ids": [],
+    "out": "TrainingData-part-036.zip"
+   },
+   {
+    "part": 37,
+    "file_id": "1LTCY7zYXCkfcmKc4s5te_pWluVkXYcN3",
+    "alt_ids": [],
+    "out": "TrainingData-part-037.zip"
+   },
+   {
+    "part": 38,
+    "file_id": "17j7-m2Ef-ZNbCSzl44FTDHv1UiDOXJT3",
+    "alt_ids": [],
+    "out": "TrainingData-part-038.zip"
+   },
+   {
+    "part": 39,
+    "file_id": "1f4ZVpWSDN4aQI4pMLLXBFeqSKU_JiCNF",
+    "alt_ids": [],
+    "out": "TrainingData-part-039.zip"
+   },
+   {
+    "part": 40,
+    "file_id": "1tVd3EDO7s0DpEgh0xIrfTUjLWyVBW5I-",
+    "alt_ids": [],
+    "out": "TrainingData-part-040.zip"
+   },
+   {
+    "part": 41,
+    "file_id": "1uLSNqYV5zBlXLlvxwCE0Xhe-rwwDUdf9",
+    "alt_ids": [],
+    "out": "TrainingData-part-041.zip"
+   },
+   {
+    "part": 42,
+    "file_id": "1U-NxPjgro2Kcht7r5_zEL3J928SGN5xX",
+    "alt_ids": [],
+    "out": "TrainingData-part-042.zip"
+   },
+   {
+    "part": 43,
+    "file_id": "1mtXYfMU-9FUKNhxkA1BSqgbtnatOlUuM",
+    "alt_ids": [],
+    "out": "TrainingData-part-043.zip"
+   },
+   {
+    "part": 44,
+    "file_id": "1HVOez_dnQU9P5CIA-WIj-DER4bajPFzV",
+    "alt_ids": [],
+    "out": "TrainingData-part-044.zip"
+   },
+   {
+    "part": 45,
+    "file_id": "1cM7KDGlHXNAH2GyBEL35uHTIMw1jePvH",
+    "alt_ids": [],
+    "out": "TrainingData-part-045.zip"
+   },
+   {
+    "part": 46,
+    "file_id": "1aoMRjosDN9Pwc233j7Ws4mBVEfakiXe6",
+    "alt_ids": [],
+    "out": "TrainingData-part-046.zip"
+   },
+   {
+    "part": 47,
+    "file_id": "1j0zWF2lRY1g3LU1Wqnk1-nasZcO1Ujlt",
+    "alt_ids": [],
+    "out": "TrainingData-part-047.zip"
+   },
+   {
+    "part": 48,
+    "file_id": "1JceUvek-9gnObh7b0KoLCoyt4qVJPtQD",
+    "alt_ids": [],
+    "out": "TrainingData-part-048.zip"
+   },
+   {
+    "part": 49,
+    "file_id": "19upc-P8lC00m40pcOkmouZqAmFtrcJb_",
+    "alt_ids": [],
+    "out": "TrainingData-part-049.zip"
+   },
+   {
+    "part": 50,
+    "file_id": "11ys0t6XVvOwQ90zEkeCpsjfvVgJNpXpi",
+    "alt_ids": [],
+    "out": "TrainingData-part-050.zip"
+   },
+   {
+    "part": 51,
+    "file_id": "10X57N3o3-2JBuNEHGe8ZH6byVAPgMsIi",
+    "alt_ids": [],
+    "out": "TrainingData-part-051.zip"
+   },
+   {
+    "part": 52,
+    "file_id": "14eeHLrFVQmQn3RpRSwyjPL9KzPfF97eK",
+    "alt_ids": [],
+    "out": "TrainingData-part-052.zip"
+   },
+   {
+    "part": 53,
+    "file_id": "1Nh5ZvN-BtNCd3aQNmJsCUnsJkgPRCkze",
+    "alt_ids": [],
+    "out": "TrainingData-part-053.zip"
+   },
+   {
+    "part": 54,
+    "file_id": "1uzus292PJf4Q-ELtXnrRs5lKUixTBVac",
+    "alt_ids": [],
+    "out": "TrainingData-part-054.zip"
+   },
+   {
+    "part": 55,
+    "file_id": "1iFiqQzBs90Bk0Tf6h88zVlBFQfaDJ_2V",
+    "alt_ids": [],
+    "out": "TrainingData-part-055.zip"
+   },
+   {
+    "part": 56,
+    "file_id": "1tCQgpsG6aA0NUuVTmzBQIAphikFqQ6CX",
+    "alt_ids": [],
+    "out": "TrainingData-part-056.zip"
+   },
+   {
+    "part": 57,
+    "file_id": "1r_Risx6j-CMS4WsvtOEkIgR_snEFKCY-",
+    "alt_ids": [],
+    "out": "TrainingData-part-057.zip"
+   }
+  ]
+ },
+ "TaskR1": {
+  "n_parts": 51,
+  "min": 0,
+  "max": 50,
+  "files": [
+   {
+    "part": 0,
+    "file_id": "1MddUbwlm73omPqWOuBq-vFuGE0W59qsL",
+    "alt_ids": [],
+    "out": "TaskR1-part-000.zip"
+   },
+   {
+    "part": 1,
+    "file_id": "1CPe3Ib5YnoM35HdsvOUk_UJxFEjdCs-b",
+    "alt_ids": [],
+    "out": "TaskR1-part-001.zip"
+   },
+   {
+    "part": 2,
+    "file_id": "1YVLsvnRHGA8N9hh2E0fbAT42EsYf2Syy",
+    "alt_ids": [],
+    "out": "TaskR1-part-002.zip"
+   },
+   {
+    "part": 3,
+    "file_id": "1LIvKDMl-HMnkiiXHCvChRzpQY3XThbF2",
+    "alt_ids": [],
+    "out": "TaskR1-part-003.zip"
+   },
+   {
+    "part": 4,
+    "file_id": "1kyvZrVWv6qeOHiODtLzH_OJcaFB3ukky",
+    "alt_ids": [],
+    "out": "TaskR1-part-004.zip"
+   },
+   {
+    "part": 5,
+    "file_id": "1bSIfqrMqu1-kPACSCs_U_KhId75egr_4",
+    "alt_ids": [],
+    "out": "TaskR1-part-005.zip"
+   },
+   {
+    "part": 6,
+    "file_id": "17hqk83BJlsXrnSMisb10GA68ceV0ZMLN",
+    "alt_ids": [],
+    "out": "TaskR1-part-006.zip"
+   },
+   {
+    "part": 7,
+    "file_id": "1Y57IKramCErdTE0ClsAZ47ax2KCfpItF",
+    "alt_ids": [],
+    "out": "TaskR1-part-007.zip"
+   },
+   {
+    "part": 8,
+    "file_id": "1vZCJ4OERrERwhhHu3QULE-dqvaqV_vAB",
+    "alt_ids": [],
+    "out": "TaskR1-part-008.zip"
+   },
+   {
+    "part": 9,
+    "file_id": "198LP0WbLD9fbB4Xx70MCovEhC-dseUEd",
+    "alt_ids": [],
+    "out": "TaskR1-part-009.zip"
+   },
+   {
+    "part": 10,
+    "file_id": "1wWTQRPV3y-Uo9FlhrmvYTrSetH3pFdJS",
+    "alt_ids": [],
+    "out": "TaskR1-part-010.zip"
+   },
+   {
+    "part": 11,
+    "file_id": "1104CN6gRoxe0AfT6kdvze8wXkcePDS32",
+    "alt_ids": [],
+    "out": "TaskR1-part-011.zip"
+   },
+   {
+    "part": 12,
+    "file_id": "1cu2rP-gHQxzkYmuin0vyNw8u78bdVXML",
+    "alt_ids": [],
+    "out": "TaskR1-part-012.zip"
+   },
+   {
+    "part": 13,
+    "file_id": "1nJb0AtjvlQQknYEjO-Q9ZdBqboCQIDqA",
+    "alt_ids": [],
+    "out": "TaskR1-part-013.zip"
+   },
+   {
+    "part": 14,
+    "file_id": "1er58zNB9Pwlj3FEEngjGnqCuc337y3Bm",
+    "alt_ids": [],
+    "out": "TaskR1-part-014.zip"
+   },
+   {
+    "part": 15,
+    "file_id": "1Ux6ISVfybureGqgidm3ZBNW8VWN2m0ID",
+    "alt_ids": [],
+    "out": "TaskR1-part-015.zip"
+   },
+   {
+    "part": 16,
+    "file_id": "1J5f_PAypcdxql4VKN-5jAJZTYllMTBgQ",
+    "alt_ids": [],
+    "out": "TaskR1-part-016.zip"
+   },
+   {
+    "part": 17,
+    "file_id": "1uqV9xCZI1DwzhUFuc4iyO1x3GYdyL5fw",
+    "alt_ids": [],
+    "out": "TaskR1-part-017.zip"
+   },
+   {
+    "part": 18,
+    "file_id": "1qltXWsx_RIlta8Q7BZRA3SY2dku16OUT",
+    "alt_ids": [],
+    "out": "TaskR1-part-018.zip"
+   },
+   {
+    "part": 19,
+    "file_id": "1zkcmTBXGJ61tdYbaJsfijYTps3nNUoZf",
+    "alt_ids": [],
+    "out": "TaskR1-part-019.zip"
+   },
+   {
+    "part": 20,
+    "file_id": "18ROCm1Vet-JGD2Mj2nLc6F5PkYMOw6oW",
+    "alt_ids": [],
+    "out": "TaskR1-part-020.zip"
+   },
+   {
+    "part": 21,
+    "file_id": "11cdQvsRUQ34OzbpA_LyiO2O2YoB5LSmn",
+    "alt_ids": [],
+    "out": "TaskR1-part-021.zip"
+   },
+   {
+    "part": 22,
+    "file_id": "1E3mA-ccFBA28KGyLgu88KlCtVsUTA4bB",
+    "alt_ids": [],
+    "out": "TaskR1-part-022.zip"
+   },
+   {
+    "part": 23,
+    "file_id": "1379C1y8FF8Txx2hVmAGfkPZbDep0BM4Y",
+    "alt_ids": [],
+    "out": "TaskR1-part-023.zip"
+   },
+   {
+    "part": 24,
+    "file_id": "1I5KXAA79FqzP_oxJiNtNKo7sMcRdpj0j",
+    "alt_ids": [],
+    "out": "TaskR1-part-024.zip"
+   },
+   {
+    "part": 25,
+    "file_id": "1OerOfWbiVDH-EDdMzXtIM5opVr2MRNwB",
+    "alt_ids": [],
+    "out": "TaskR1-part-025.zip"
+   },
+   {
+    "part": 26,
+    "file_id": "15mJuNiuWzQTcE5_Gi_uPv1LCbirH7XCw",
+    "alt_ids": [],
+    "out": "TaskR1-part-026.zip"
+   },
+   {
+    "part": 27,
+    "file_id": "1T6IPoZfeeEhvfwfqamxzp3XDJKXCRfAj",
+    "alt_ids": [],
+    "out": "TaskR1-part-027.zip"
+   },
+   {
+    "part": 28,
+    "file_id": "1TcYzHlbciB7E7ypCmcvvw7q3xPHC0RIl",
+    "alt_ids": [],
+    "out": "TaskR1-part-028.zip"
+   },
+   {
+    "part": 29,
+    "file_id": "1IPOlmKuXafFt0qLje8eySZvnCvyUH1Og",
+    "alt_ids": [],
+    "out": "TaskR1-part-029.zip"
+   },
+   {
+    "part": 30,
+    "file_id": "1oLIKd85g3WwQv66x6B7JKPxU_7k0ZAdV",
+    "alt_ids": [],
+    "out": "TaskR1-part-030.zip"
+   },
+   {
+    "part": 31,
+    "file_id": "1T_sXxyJUmnFgm-Q9rmHvz5ESWTlRTgiW",
+    "alt_ids": [],
+    "out": "TaskR1-part-031.zip"
+   },
+   {
+    "part": 32,
+    "file_id": "1MWV19TnpJ-bFsguORmu5af6UJs5Q8Noo",
+    "alt_ids": [],
+    "out": "TaskR1-part-032.zip"
+   },
+   {
+    "part": 33,
+    "file_id": "1x_4ZrzWozgMhsT2FOW2cpBbxsrbj6H3A",
+    "alt_ids": [],
+    "out": "TaskR1-part-033.zip"
+   },
+   {
+    "part": 34,
+    "file_id": "1HeZ8WJV82c2-bi-j6MBoVAjhJ8kzzN7i",
+    "alt_ids": [],
+    "out": "TaskR1-part-034.zip"
+   },
+   {
+    "part": 35,
+    "file_id": "1hCfZr7kLj2HUJvFqIy8ceSnnlydG5nho",
+    "alt_ids": [],
+    "out": "TaskR1-part-035.zip"
+   },
+   {
+    "part": 36,
+    "file_id": "1tYKSvu-0_MtBO4VDtzqwEkNUOvfal_8V",
+    "alt_ids": [],
+    "out": "TaskR1-part-036.zip"
+   },
+   {
+    "part": 37,
+    "file_id": "17EfZnI2wA2a15aQqBzw5MWVr0DpAw2dv",
+    "alt_ids": [],
+    "out": "TaskR1-part-037.zip"
+   },
+   {
+    "part": 38,
+    "file_id": "1EoA6WWZCYlAlD9Sh17AKLdsFQzgNZ4Pd",
+    "alt_ids": [],
+    "out": "TaskR1-part-038.zip"
+   },
+   {
+    "part": 39,
+    "file_id": "1XX5ANBT2d9Ncre845dq-mMsdehxhgpmw",
+    "alt_ids": [],
+    "out": "TaskR1-part-039.zip"
+   },
+   {
+    "part": 40,
+    "file_id": "15VlsU04h3zNgmcRXhUSSXfXdpgakrWGw",
+    "alt_ids": [],
+    "out": "TaskR1-part-040.zip"
+   },
+   {
+    "part": 41,
+    "file_id": "1MUZxGt0h3YOazWQKdGq5LeCKzb_zrO37",
+    "alt_ids": [],
+    "out": "TaskR1-part-041.zip"
+   },
+   {
+    "part": 42,
+    "file_id": "1U6azfiqHSujjgjL6Tyiy_HurEPMUsuDb",
+    "alt_ids": [],
+    "out": "TaskR1-part-042.zip"
+   },
+   {
+    "part": 43,
+    "file_id": "1cNSYy-A7PrQWYUtQOFzyeZOkB_egyR2N",
+    "alt_ids": [],
+    "out": "TaskR1-part-043.zip"
+   },
+   {
+    "part": 44,
+    "file_id": "17Qx5XDD1ZPkD8zqBhJRWK__sl7w3HO59",
+    "alt_ids": [],
+    "out": "TaskR1-part-044.zip"
+   },
+   {
+    "part": 45,
+    "file_id": "1QP0Rio8-sZRyWJS6pA726BuDkugoieVO",
+    "alt_ids": [],
+    "out": "TaskR1-part-045.zip"
+   },
+   {
+    "part": 46,
+    "file_id": "1icrXSduX57FQ8qhdH6u2nKs3Oxw60gGY",
+    "alt_ids": [],
+    "out": "TaskR1-part-046.zip"
+   },
+   {
+    "part": 47,
+    "file_id": "1YHL9fe0K5OUM1gqtqAmsrRtVUhp84oJc",
+    "alt_ids": [],
+    "out": "TaskR1-part-047.zip"
+   },
+   {
+    "part": 48,
+    "file_id": "1xw7os0_gvJ1B9ERQcNSaqdpwWH5TpJyN",
+    "alt_ids": [],
+    "out": "TaskR1-part-048.zip"
+   },
+   {
+    "part": 49,
+    "file_id": "1ihLqDanTEawnEMbOU_mvKOopTPAB3_ql",
+    "alt_ids": [],
+    "out": "TaskR1-part-049.zip"
+   },
+   {
+    "part": 50,
+    "file_id": "15pHlicn1qquG6oCqvkYz9d9aqyWq-Fg5",
+    "alt_ids": [],
+    "out": "TaskR1-part-050.zip"
+   }
+  ]
+ },
+ "TaskR2": {
+  "n_parts": 59,
+  "min": 0,
+  "max": 58,
+  "files": [
+   {
+    "part": 0,
+    "file_id": "1P33yU8ued1gd1_OQXA7eGe_fG7EDINVZ",
+    "alt_ids": [],
+    "out": "TaskR2-part-000.zip"
+   },
+   {
+    "part": 1,
+    "file_id": "1VyXEZHIFB_CsSOOKF6nZVMsYLJ530YVB",
+    "alt_ids": [],
+    "out": "TaskR2-part-001.zip"
+   },
+   {
+    "part": 2,
+    "file_id": "1Hq1nyBIJUzuZrdLloKmzZKlJ3BA3YRIP",
+    "alt_ids": [],
+    "out": "TaskR2-part-002.zip"
+   },
+   {
+    "part": 3,
+    "file_id": "19A8s3seuU_RtPuYsfww0iiMfnw5_xvME",
+    "alt_ids": [],
+    "out": "TaskR2-part-003.zip"
+   },
+   {
+    "part": 4,
+    "file_id": "1dv6GkTkKjhykFkNgqpGIGDw0Tsci-MWM",
+    "alt_ids": [],
+    "out": "TaskR2-part-004.zip"
+   },
+   {
+    "part": 5,
+    "file_id": "1YUn51VQovKdai7yaBa6l_crTba-ReFZc",
+    "alt_ids": [],
+    "out": "TaskR2-part-005.zip"
+   },
+   {
+    "part": 6,
+    "file_id": "12QeO7vT2TuPNZKv35ZF97iKD20VT3qFF",
+    "alt_ids": [],
+    "out": "TaskR2-part-006.zip"
+   },
+   {
+    "part": 7,
+    "file_id": "1LZH0aVqu8YUgRl8FgRSuCUYAu8npP08C",
+    "alt_ids": [],
+    "out": "TaskR2-part-007.zip"
+   },
+   {
+    "part": 8,
+    "file_id": "1ewEfTBHoUK7IkrD7KOHaNUchlfcqjpqz",
+    "alt_ids": [],
+    "out": "TaskR2-part-008.zip"
+   },
+   {
+    "part": 9,
+    "file_id": "1U3UADtw_zz2iSMe0djYkG2Z0RKgWa-JD",
+    "alt_ids": [],
+    "out": "TaskR2-part-009.zip"
+   },
+   {
+    "part": 10,
+    "file_id": "1yfa0YIZPKXbAv1qGYDZPrIiOcVjIrYG3",
+    "alt_ids": [],
+    "out": "TaskR2-part-010.zip"
+   },
+   {
+    "part": 11,
+    "file_id": "1HY8XKYR1yzWy4q81qYMdetNb6r-IqW7n",
+    "alt_ids": [],
+    "out": "TaskR2-part-011.zip"
+   },
+   {
+    "part": 12,
+    "file_id": "1_hhd5WHeOJ0-gHGDkcbk06iY65NN-OMJ",
+    "alt_ids": [],
+    "out": "TaskR2-part-012.zip"
+   },
+   {
+    "part": 13,
+    "file_id": "1unUKDL7_coPy0UFWwxwHUoNEHP3p6tMj",
+    "alt_ids": [],
+    "out": "TaskR2-part-013.zip"
+   },
+   {
+    "part": 14,
+    "file_id": "1fexHFjYKA2Ahfp0w18G9h2vbO4sxmw7m",
+    "alt_ids": [],
+    "out": "TaskR2-part-014.zip"
+   },
+   {
+    "part": 15,
+    "file_id": "1yTisfOJmpW53k_k4UZwbz2pDKGyNbiGe",
+    "alt_ids": [],
+    "out": "TaskR2-part-015.zip"
+   },
+   {
+    "part": 16,
+    "file_id": "1J5fTJhfA10rhHV6_pgeSDo38-o-l9cbP",
+    "alt_ids": [],
+    "out": "TaskR2-part-016.zip"
+   },
+   {
+    "part": 17,
+    "file_id": "1OiOYel2GVzIkhuwTlwKKpCUa8PJmXYGg",
+    "alt_ids": [],
+    "out": "TaskR2-part-017.zip"
+   },
+   {
+    "part": 18,
+    "file_id": "1CW-U-mrkp3fQvGikicgJIDv4Z1eJ3pu6",
+    "alt_ids": [],
+    "out": "TaskR2-part-018.zip"
+   },
+   {
+    "part": 19,
+    "file_id": "1Sq5KFYmgJo4b6fuJEPJ6Pjq1ia7zq0a2",
+    "alt_ids": [],
+    "out": "TaskR2-part-019.zip"
+   },
+   {
+    "part": 20,
+    "file_id": "1SsraPVxOekGeIaTBbKEvZooHBgt2tq4q",
+    "alt_ids": [
+     "1AqkH3i6l5XCHE27_Ti6rzna0SYfgTxz-"
+    ],
+    "out": "TaskR2-part-020.zip"
+   },
+   {
+    "part": 21,
+    "file_id": "1f92DWgU-Uw8akIFHqlX5L_Sva3NqgrKP",
+    "alt_ids": [
+     "16-XhC1oI_uQB97wF5MBpx_RpIfadGbbg"
+    ],
+    "out": "TaskR2-part-021.zip"
+   },
+   {
+    "part": 22,
+    "file_id": "1afJBCVHfFiPfo8SkpycYy2QVfiUR94O2",
+    "alt_ids": [
+     "1feXG6SNjlzUS18FNAFMqfLsPCYw3Gcv7"
+    ],
+    "out": "TaskR2-part-022.zip"
+   },
+   {
+    "part": 23,
+    "file_id": "14Iu-__XFL1RqWmH3yUNa0wQ4B3VnvYWf",
+    "alt_ids": [
+     "10lU69uHgN5lA37377ru3wY649R6ORhCA"
+    ],
+    "out": "TaskR2-part-023.zip"
+   },
+   {
+    "part": 24,
+    "file_id": "1FIW_vs9vWC57A3y_rYHcC1QJfO_XBjdM",
+    "alt_ids": [
+     "1qvSLgols31xkf7nYQy3K9l_ZNXNDb9VG"
+    ],
+    "out": "TaskR2-part-024.zip"
+   },
+   {
+    "part": 25,
+    "file_id": "1nnh_00Pdsf7aSDQ_aih4WET92qS6ORsr",
+    "alt_ids": [
+     "1sB9MPxqqCz7Cc1OReHBvjeS90yqR5mgT"
+    ],
+    "out": "TaskR2-part-025.zip"
+   },
+   {
+    "part": 26,
+    "file_id": "1EbqpA-p4MbyXwxyV73u7Dq1ZX4oIh61L",
+    "alt_ids": [
+     "1ftwHV9VBd6gQt92-KSYHacCHHlTZVmD9"
+    ],
+    "out": "TaskR2-part-026.zip"
+   },
+   {
+    "part": 27,
+    "file_id": "1xxop4T5J1MQ8CKxqo5mY3EkdiLqJED26",
+    "alt_ids": [
+     "1mCvZGAnmqOLtNCgYpw7d_tualA81GES6"
+    ],
+    "out": "TaskR2-part-027.zip"
+   },
+   {
+    "part": 28,
+    "file_id": "1k_BgzFwL_WE10ahE7ZuYgxg8HoLrLmah",
+    "alt_ids": [
+     "1Us3utHYcxUwG-ptXDaJ5GA0P_UiTT2ns"
+    ],
+    "out": "TaskR2-part-028.zip"
+   },
+   {
+    "part": 29,
+    "file_id": "1-JZJLBHqZ1GqJWzpcMWqE3spo4kjfN2m",
+    "alt_ids": [
+     "1qH_qY80HB5J6xzuTqcz4Y_3PmaLsywUP"
+    ],
+    "out": "TaskR2-part-029.zip"
+   },
+   {
+    "part": 30,
+    "file_id": "1YSO5Sx3pjlJ3WEEWFO3Sl3dVhNedADXV",
+    "alt_ids": [
+     "15XLVodYCcO7EUwdXd5v0tajB1f2FUe-g"
+    ],
+    "out": "TaskR2-part-030.zip"
+   },
+   {
+    "part": 31,
+    "file_id": "1QwzKOg4cinDoEb58-ehqXMH_OJjkJlD3",
+    "alt_ids": [
+     "1O8_5Gn_W72zRHUf19jPXU258QttbLW9B"
+    ],
+    "out": "TaskR2-part-031.zip"
+   },
+   {
+    "part": 32,
+    "file_id": "1Xe5u4Rnb1-Dlh6QtD6mG03N-_i3PLe90",
+    "alt_ids": [
+     "1E7YzooBd34MHC5nmvcgQ677Tc0tViZY3"
+    ],
+    "out": "TaskR2-part-032.zip"
+   },
+   {
+    "part": 33,
+    "file_id": "1cqTMn1ji4TQrvtiJfiUQh4-O0Tmhmm9n",
+    "alt_ids": [
+     "1T9ONJV1ykTGA1B4fB_qIwZL8gxeH53BQ"
+    ],
+    "out": "TaskR2-part-033.zip"
+   },
+   {
+    "part": 34,
+    "file_id": "1JmWyV0CrkSD33klN6VNWNyiiVw1rEJhj",
+    "alt_ids": [
+     "1HH3F5i7KhGncoCoNECAO4W5xoFYXzAsb"
+    ],
+    "out": "TaskR2-part-034.zip"
+   },
+   {
+    "part": 35,
+    "file_id": "1cwN49O-7efHczylkukyM8gFPGiahUVfA",
+    "alt_ids": [
+     "1mJbEnWz-bSW-ZB1UVV73UbUzBLQFfVRV"
+    ],
+    "out": "TaskR2-part-035.zip"
+   },
+   {
+    "part": 36,
+    "file_id": "1UvuxbY0mHGOoCEFFAVCoVPAlDdbSolin",
+    "alt_ids": [
+     "1J7uVvV02ak9LkOhiudrNKyZepdr2WSBf"
+    ],
+    "out": "TaskR2-part-036.zip"
+   },
+   {
+    "part": 37,
+    "file_id": "1yXIURbAIk8UdEhoLU5WnFVkj66QoXMXl",
+    "alt_ids": [
+     "1BmQZFJC9gAeFnQzSrE_4g0TT5Ax_082j"
+    ],
+    "out": "TaskR2-part-037.zip"
+   },
+   {
+    "part": 38,
+    "file_id": "1f8xxl1pBYKyFoQVt8eDPUWAcEeulx7TL",
+    "alt_ids": [
+     "14kc5afVfwj462sUpoNiky9JfKWnX29ux"
+    ],
+    "out": "TaskR2-part-038.zip"
+   },
+   {
+    "part": 39,
+    "file_id": "1z5vAcKRlMlChoRTJUB1arbm2V45mJK2a",
+    "alt_ids": [
+     "1rh2zldY-M6s3gu3o1euYyMdGDGfYZGqk"
+    ],
+    "out": "TaskR2-part-039.zip"
+   },
+   {
+    "part": 40,
+    "file_id": "1L8Tk3jb1e2KDxBV7cvzeCr5T6UGpaGQv",
+    "alt_ids": [
+     "1c8mTCrts0lm56NkVC9elIqWeOiAYGlp6"
+    ],
+    "out": "TaskR2-part-040.zip"
+   },
+   {
+    "part": 41,
+    "file_id": "1WUlLzjGTIkJ2GXgz-KSm5v4Nn35U8ziA",
+    "alt_ids": [
+     "1f3C4Fyssdzwcl0Lme3z9b9U5VG55RvA_"
+    ],
+    "out": "TaskR2-part-041.zip"
+   },
+   {
+    "part": 42,
+    "file_id": "1Eczo-AmjJwySL1wastOn2SSeLgl0rrab",
+    "alt_ids": [
+     "194kxlv8LgijE5gAKCTzWegxdsuk-9Rfa"
+    ],
+    "out": "TaskR2-part-042.zip"
+   },
+   {
+    "part": 43,
+    "file_id": "1IHL-D6HLUlECyLORTsu6i8BP4aO9K4R6",
+    "alt_ids": [
+     "1HoHpbfyhpLz7pQgrFgH_KzPg-zZl7-eY"
+    ],
+    "out": "TaskR2-part-043.zip"
+   },
+   {
+    "part": 44,
+    "file_id": "169yW_gGtCSPgPv4T6SYwSp-XKGd1CBKw",
+    "alt_ids": [
+     "1WWZoeemr5RQkX1cyV21bLKWqJ9JHEM4F"
+    ],
+    "out": "TaskR2-part-044.zip"
+   },
+   {
+    "part": 45,
+    "file_id": "1IFA9UI7cos9Pl4ymop_pIBkxv1YxJFUs",
+    "alt_ids": [
+     "19Q029MoLvqESgOa1l5xBF1BLhmWQn1-v"
+    ],
+    "out": "TaskR2-part-045.zip"
+   },
+   {
+    "part": 46,
+    "file_id": "1tTf5vbMDwEQYiQKN5DjYTXVLBHvTNFNk",
+    "alt_ids": [
+     "1UXBfrPRcKIki0xnlkuF7O70CeAlMNec4"
+    ],
+    "out": "TaskR2-part-046.zip"
+   },
+   {
+    "part": 47,
+    "file_id": "1OLKC8zXTbuflYLFdFFKZwxQwNy1SUZm_",
+    "alt_ids": [
+     "1GgIKjL3IlWDnaaatPnAe-nJCjQaJ46T8"
+    ],
+    "out": "TaskR2-part-047.zip"
+   },
+   {
+    "part": 48,
+    "file_id": "1foVIM4cSUg7rA5BaFPZkXKsUnKi1NmdF",
+    "alt_ids": [
+     "1elkBSTyoEh6gZNt52cWao2rmxpRujeBy"
+    ],
+    "out": "TaskR2-part-048.zip"
+   },
+   {
+    "part": 49,
+    "file_id": "1SqdQRuzfYJ_SXcA5w1BCKvlTClJd8Pz5",
+    "alt_ids": [],
+    "out": "TaskR2-part-049.zip"
+   },
+   {
+    "part": 50,
+    "file_id": "1hPXqNnCZ6dR3zsQ2gw1UOPUEtucTtCpZ",
+    "alt_ids": [],
+    "out": "TaskR2-part-050.zip"
+   },
+   {
+    "part": 51,
+    "file_id": "13FtKuXUMXd4NM93jyjxPncMidCeQki_l",
+    "alt_ids": [],
+    "out": "TaskR2-part-051.zip"
+   },
+   {
+    "part": 52,
+    "file_id": "1LaV9pk-KxkDYDb3IR25dwDwhZSWo4q1q",
+    "alt_ids": [],
+    "out": "TaskR2-part-052.zip"
+   },
+   {
+    "part": 53,
+    "file_id": "1qJh58f9rR8LG2ZYkm8Xda4yiaRSOvVWH",
+    "alt_ids": [],
+    "out": "TaskR2-part-053.zip"
+   },
+   {
+    "part": 54,
+    "file_id": "1GN-EBn4p78yysAwXGuWklmq4jorR88O7",
+    "alt_ids": [],
+    "out": "TaskR2-part-054.zip"
+   },
+   {
+    "part": 55,
+    "file_id": "1rlY9JQGwPrN8YATv0HnBvnY2DPck27qJ",
+    "alt_ids": [],
+    "out": "TaskR2-part-055.zip"
+   },
+   {
+    "part": 56,
+    "file_id": "1L8y8Q5QrDa0DAHO5lJrHo_WvJvwdiJiP",
+    "alt_ids": [],
+    "out": "TaskR2-part-056.zip"
+   },
+   {
+    "part": 57,
+    "file_id": "1P8-Ct19V6ysT6g5ZgOVzMLZ5x4XYanYj",
+    "alt_ids": [],
+    "out": "TaskR2-part-057.zip"
+   },
+   {
+    "part": 58,
+    "file_id": "13SHeWr0Igd4t5sbRZ50i3fmlbmvikH4Y",
+    "alt_ids": [],
+    "out": "TaskR2-part-058.zip"
+   }
+  ]
+ }
+}

@@ -27,9 +27,10 @@ and ~15 tools/ scripts. Import standalone:
 from pathlib import Path
 
 EVAL_ROOT = Path(__file__).resolve().parent
-VOLUMES = EVAL_ROOT / "volumes"          # -> GPFS (subject-major data)
+VOLUMES = EVAL_ROOT / "volumes"          # -> GPFS (subject-major PRECIOUS data: recons/metrics)
 CHECKPOINTS = EVAL_ROOT / "checkpoints"  # -> GPFS (copied ckpts per arm)
 RESULTS = EVAL_ROOT / "results"          # git-tracked cohort summaries
+FIGURES = EVAL_ROOT / "figures"          # -> GPFS (subject-major DISPOSABLE figures; rm-safe)
 
 DATASETS = ("cmrxrecon", "acdc", "miitt", "ocmr")
 VARIANTS = ("clean", "breath")           # the two recon conditions (both in one metrics.json)
@@ -131,6 +132,26 @@ def metadata(dataset, subject, arm):
 
 def resp_diag(dataset, subject, arm):
     return arm_dir(dataset, subject, arm) / "resp_diag.json"
+
+
+# --- analysis figures ------------------------------------------------------
+# Per-arm renders (gif_*, panel_dvf.png) live IN the arm dir (arm_dir) beside the recons they
+# depict — the whole arm dir is the keep/delete unit. Only figures that belong to NO single arm
+# go to the separate FIGURES tree (on GPFS, off /home): cross-arm compares + cohort summaries.
+def panel_dvf(dataset, subject, arm):
+    """Per-arm predicted-Δz panel, co-located with the gifs: volumes/<ds>/out/<subj>/<arm>/panel_dvf.png."""
+    return arm_dir(dataset, subject, arm) / "panel_dvf.png"
+
+
+def compare_dir(dataset, subject):
+    """Cross-arm figures for one subject (compare_*.gif): figures/<ds>/<subject>/_compare/.
+    Leading '_' => never mistaken for an arm; compare spans arms so it owns no single one."""
+    return FIGURES / dataset / subject / "_compare"
+
+
+def cohort_fig_dir(dataset):
+    """Cohort-level figures (EF scatter, per-arm breathing summaries): figures/<ds>/."""
+    return FIGURES / dataset
 
 
 # --- cohort summary --------------------------------------------------------

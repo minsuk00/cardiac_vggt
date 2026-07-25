@@ -21,9 +21,11 @@ def percentile_scale(cine):
     nz = cine[cine > 0]
     if nz.size == 0:
         nz = cine.reshape(-1)
-    vmin = np.percentile(nz, PCT_LO)
-    vmax = np.percentile(nz, PCT_HI)
-    return float(vmin), float(max(vmax, vmin + 1e-6))
+    # Mirrors the numpy-2 span-guard fix in inference/adapters/base.py (docs/49)
+    # so this frozen oracle stays comparable to it. No-op under numpy 1.
+    vmin = float(np.percentile(nz, PCT_LO))
+    vmax = float(np.percentile(nz, PCT_HI))
+    return vmin, max(vmax, vmin + 1e-6)
 
 
 def assign_canonical_z(positions):
