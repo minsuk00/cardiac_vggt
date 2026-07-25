@@ -6,9 +6,14 @@ Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupe
 
 ```bash
 micromamba activate svr
-pip install -e .
 pip install -r requirements.txt
 ```
+
+This repo is not installed as a package. Run everything **from the repo root** with
+`PYTHONPATH=training:.` — both entries matter. Python puts the *script's* directory on the
+import path, never your working directory, so `.` is what makes `import vggt` resolve when you
+run `training/launch.py`; `training` is what lets the Hydra configs resolve their short
+`_target_` names such as `loss.MultitaskLoss`.
 
 ## Training
 
@@ -18,7 +23,7 @@ Entry point: `training/launch.py` (Hydra). Active config: `mri_volume`.
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config mri_volume
 ```
 
-Cluster: `bash sbatch/train_mri_volume.sh`.
+Cluster: `bash sbatch/train_mri_volume_reference.sh`.
 
 ## Acknowledgements
 
