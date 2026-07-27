@@ -50,7 +50,6 @@ def make_batch(ds, seq_index, t_target):
         "z_indices": st("z_indices"), "t_indices": st("t_indices"),
         "target_t_indices": st("target_t_indices"),
         "timesteps": st("timesteps", np.int64), "slice_indices": st("slice_indices", np.int64),
-        "point_masks": torch.from_numpy(np.stack(data["point_masks"])).unsqueeze(0),
         "gt_target_volume": torch.from_numpy(data["gt_target_volume"].astype(np.float32)).unsqueeze(0),
         "t_target": torch.from_numpy(data["t_target"].astype(np.int64)).unsqueeze(0),
     }

@@ -18,29 +18,23 @@ from inference.adapters.base import (
 
 
 def load_rtfb_model(ckpt=DEFAULT_CKPT, *, refiner=False, device="cuda"):
-    """Construct the z-only + target_t VGGT-MRI model and load weights (offline, full state).
+    """RETIRED — the legacy target_t-index model. Use `load_rtfb_model_reference` instead.
 
-    `refiner=False` == the no-refiner build (when refiner is off, `refiner_use_coverage` is
-    never read). Tolerates only absent depth/track/camera heads; raises on missing critical
-    aggregator/point_head/refiner/embedder weights.
+    The target_t conditioning this loader was built for (`TIndexEmbedder` /
+    `target_t_embedder`, `use_t/target_t_pose_embedding`) was removed in docs/48: it is the
+    content-free phase index that regressed every patient's EF to the cohort mean (docs/24,
+    docs/25), replaced by the reference-slot camera-token anchor. `VGGT.__init__` now absorbs
+    the retired flags via `**kwargs`, so this function would still *construct* and *load* —
+    but the resulting model reads no phase query at all, and `phase_sweep()` would return 12
+    IDENTICAL volumes (a non-beating "beating heart") with no error. Its missing-weights guard
+    is likewise vacuous, because the model no longer has a `target_t_embedder` to be missing.
+    Failing loudly instead of returning that model silently.
     """
-    model = VGGT(
-        img_size=518, patch_size=14, embed_dim=1024,
-        enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
-        use_z_pose_embedding=True, use_t_pose_embedding=False,
-        use_target_t_pose_embedding=True, train_on_residual_dvf=True,
-        enable_refiner=refiner, refiner_use_coverage=refiner, grid_shape=GRID_SHAPE,
+    raise NotImplementedError(
+        "load_rtfb_model() is retired: target_t-index conditioning was removed in docs/48, so "
+        "this model would ignore the target phase and phase_sweep() would yield 12 identical "
+        "volumes. Use load_rtfb_model_reference() (reference-slot conditioning) instead."
     )
-    ck = torch.load(stage_checkpoint_to_local(ckpt), map_location="cpu", weights_only=False)
-    state = ck["model"] if "model" in ck else ck
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    bad = [k for k in missing if any(s in k for s in
-           ("aggregator", "point_head", "refiner", "z_embedder", "target_t_embedder"))]
-    if bad:
-        raise RuntimeError(f"missing critical weights: {bad[:5]} ...")
-    print(f"  loaded {ckpt}  (refiner={refiner}, missing={len(missing)}, unexpected={len(unexpected)})",
-          flush=True)
-    return model.to(device).eval()
 
 
 def load_rtfb_model_reference(ckpt=DEFAULT_CKPT_REFERENCE, *, refiner=False, device="cuda"):

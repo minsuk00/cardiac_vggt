@@ -84,7 +84,6 @@ def build_sequential_batch(split: str, seq_index: int = 0):
         "images": imgs,
         "scanner_coords": stack("scanner_coords"),
         "world_points": stack("world_points"),
-        "point_masks": torch.from_numpy(np.stack(data["point_masks"])).unsqueeze(0),
         "z_indices": stack("z_indices"),
         "t_indices": stack("t_indices"),
         "target_t_indices": stack("target_t_indices"),
