@@ -21,6 +21,25 @@ import torch.nn.functional as F
 from typing import Dict, Tuple
 
 
+# Row count of the RoPE frequency table (see RotaryPositionEmbedding2D.forward). The table
+# only needs to cover the largest coordinate a patch grid can produce — max(height, width)
+# plus 1 for the special-token offset the aggregator applies (`pos = pos + 1`), i.e. 38 for
+# the 518/14 = 37x37 production grid. A fixed generous bound is used instead of deriving it
+# from the input because both alternatives are worse:
+#   * `int(positions.max())` needs a host-device sync, 48x per forward, and graph-breaks
+#     every attention block under torch.compile;
+#   * `int(positions.shape[1])` is sync-free but S-dependent for global attention (where
+#     positions is (B, S*P, 2)), so it specializes the compiled graph on S. With variable S
+#     (one_frame_per_slice) that burns one recompile per distinct S and hits dynamo's
+#     recompile_limit of 8, silently falling back to eager.
+# A constant keeps the table at one cache entry, sync-free and S-independent. 128 rows =
+# 16 KB, covers any patch grid up to 127x127 (i.e. inputs to 1778 px at patch 14 — 3.4x
+# VGGT's largest documented img_size of 1036) against a production requirement of 38.
+# `PositionGetter` asserts grids stay within it, so an oversized input fails loudly rather
+# than gathering out of bounds.
+MAX_ROPE_POSITIONS = 128
+
+
 class PositionGetter:
     """Generates and caches 2D spatial positions for patches in a grid.
 
@@ -49,13 +68,19 @@ class PositionGetter:
             Tensor of shape (batch_size, height*width, 2) containing y,x coordinates
             for each position in the grid, repeated for each batch item.
         """
-        if (height, width) not in self.position_cache:
+        # +1 covers the aggregator's special-token offset (`pos = pos + 1`), so the largest
+        # index ever fed to the frequency table is max(height, width).
+        assert max(height, width) + 1 <= MAX_ROPE_POSITIONS, (
+            f"patch grid {height}x{width} exceeds MAX_ROPE_POSITIONS={MAX_ROPE_POSITIONS}; "
+            "raise it in vggt/layers/rope.py")
+        cache_key = (height, width, device)
+        if cache_key not in self.position_cache:
             y_coords = torch.arange(height, device=device)
             x_coords = torch.arange(width, device=device)
             positions = torch.cartesian_prod(y_coords, x_coords)
-            self.position_cache[height, width] = positions
+            self.position_cache[cache_key] = positions
 
-        cached_positions = self.position_cache[height, width]
+        cached_positions = self.position_cache[cache_key]
         return cached_positions.view(1, height * width, 2).expand(batch_size, -1, -1).clone()
 
 
@@ -107,12 +132,16 @@ class RotaryPositionEmbedding2D(nn.Module):
             positions = torch.arange(seq_len, device=device, dtype=inv_freq.dtype)
             angles = torch.einsum("i,j->ij", positions, inv_freq)
 
-            # Compute and cache frequency components
+            # Compute and cache frequency components.
+            # RATIONALE: Guard dict mutation so it does not trigger High-Order Operator (HOP)
+            # side-effect graph breaks when called inside torch.utils.checkpoint during torch.compile.
             angles = angles.to(dtype)
             angles = torch.cat((angles, angles), dim=-1)
             cos_components = angles.cos().to(dtype)
             sin_components = angles.sin().to(dtype)
-            self.frequency_cache[cache_key] = (cos_components, sin_components)
+            if not torch.compiler.is_compiling():
+                self.frequency_cache[cache_key] = (cos_components, sin_components)
+            return (cos_components, sin_components)
 
         return self.frequency_cache[cache_key]
 
@@ -173,8 +202,9 @@ class RotaryPositionEmbedding2D(nn.Module):
         # Compute feature dimension for each spatial direction
         feature_dim = tokens.size(-1) // 2
 
-        # Get frequency components
-        max_position = int(positions.max()) + 1
+        # Fixed, input-independent table size: no host sync (so no graph break) and no
+        # dependence on S (so no recompile per distinct S). See MAX_ROPE_POSITIONS.
+        max_position = MAX_ROPE_POSITIONS
         cos_comp, sin_comp = self._compute_frequency_components(feature_dim, max_position, tokens.device, tokens.dtype)
 
         # Split features for vertical and horizontal processing

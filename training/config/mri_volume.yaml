@@ -105,8 +105,19 @@ checkpoint:
 # so we train the DINOv2 attention blocks + embedders + camera_token and freeze ONLY patch_embed
 # (NOT the head-only "*aggregator*" wildcard the parent mri_finetune uses). ~2.8× slower,
 # ~27 GB/A40. Mirrors mri_volume_bspline/diffusion.
+# ── Train-step speed (docs/40) ────────────────────────────────────────────────────────────────
+# Measured 1.28x on the full train step (L40S 2255 -> 1761 ms/step; A40 3940 -> 3092 ms) and
+# -1.1 GB VRAM, for ~15-22 s of one-time compile. NOT bit-identical to eager: compile matches
+# to ~4e-6 (bf16 reassociation) and fused AdamW reorders its update, so enabling these starts a
+# fresh numeric series. Set both False to reproduce a pre-2026-07-27 run exactly.
+cuda:
+  compile_attention_blocks: True
+
 optim:
   frozen_module_names: ["*patch_embed*"]
+  optimizer:
+    # Fused AdamW: one multi-tensor CUDA kernel for the 941M-param update (docs/40 E8/E9).
+    fused: True
 
 loss:
   volume:

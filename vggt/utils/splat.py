@@ -104,9 +104,14 @@ def splat_predictions(predictions, batch, grid_shape):
     images = batch["images"]
 
     B, S, H, W, _ = pos_pred.shape
-    intensity = images.float().mean(dim=2)
-    if intensity.max() > 2.0:
-        intensity = intensity / 255.0
+    # Rescale uint8-range [0, 255] inputs to [0, 1] (a no-op if already normalized), branchlessly:
+    # a 0-D scalar factor scales ALL pixels uniformly, so contrast is preserved exactly and there is
+    # no `if intensity.max() > 2.0` host-device sync (which also graph-broke every torch.compile).
+    # MULTIPLY by the reciprocal rather than divide by 255.0: eager lowers `x / 255.0` (a Python
+    # scalar) to `x * (1/255.0)`, but `x / tensor(255.0)` does a true division, which differs from it
+    # by 1 ULP on ~74% of elements. Multiplying keeps this bit-identical to the pre-refactor pipeline.
+    inv_scale = torch.where((images > 2.0).any(), 1.0 / 255.0, 1.0)
+    intensity = images.float().mean(dim=2) * inv_scale
 
     pos_flat = pos_pred.reshape(B, S * H * W, 3)
     int_flat = intensity.reshape(B, S * H * W)

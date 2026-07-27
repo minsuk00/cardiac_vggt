@@ -260,8 +260,9 @@ class Aggregator(nn.Module):
             if use_z:
                 if z_indices is None:
                     raise ValueError("use_z_pose_embedding is True but z_indices not provided in batch.")
-                if (z_indices == 0.0).all():
-                    logger.warning("z_indices are all 0.0! Sinusoidal embedding is only meaningful for 'axial' MRI mode.")
+                # (An all-zero-z_indices warning used to sit here; `.all()` is a host-device
+                # sync that graph-breaks every compiled attention block, and z is never all
+                # zero in the canonical pipeline.)
                 z_indices_flat = z_indices.view(B * S, 1).to(images.device)
                 camera_token = camera_token + self.z_embedder(z_indices_flat)  # [B*S, 1, C]
         else:

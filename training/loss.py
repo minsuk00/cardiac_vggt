@@ -188,9 +188,10 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
     # discourages moving pixels out of bounds. gather_weight=0.0 ⇒ exactly 0.0 ⇒ no-op (bit-identical).
     if gather_weight > 0:
         with torch.amp.autocast("cuda", enabled=False):
-            gi = batch["images"].float().mean(dim=2)          # (B, S, H, W) input intensity
-            if gi.max() > 2.0:
-                gi = gi / 255.0
+            # Same branchless [0,255]→[0,1] rescale as `splat_predictions` (reciprocal-multiply,
+            # so it stays bit-identical to the pre-refactor `gi / 255.0` — see splat.py).
+            inv_scale_gi = torch.where((batch["images"] > 2.0).any(), 1.0 / 255.0, 1.0)
+            gi = batch["images"].float().mean(dim=2) * inv_scale_gi   # (B, S, H, W) input intensity
             gi = gi.reshape(gi.shape[0], -1)                  # (B, S*H*W)
             gs = sample_volume(V_gt.float(), pos_pred.float().reshape(gi.shape[0], -1, 3))  # (B, S*H*W)
             gmask = (gi > 1e-3).float()                       # only real acquired (non-padded) pixels
@@ -258,7 +259,9 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
             out["metric_mean_disp_norm"] = (pos_pred - batch["scanner_coords"]).abs().sum(-1).mean()
         if V_canon.is_cuda:
             try:
-                from fused_ssim import fused_ssim3d
+                # RATIONALE: Import torch.compile-traceable fused_ssim3d (from MRI2CT fused_ssim_compat)
+                # which registers dispatcher custom ops with fake kernels, eliminating all pybind graph breaks.
+                from vggt.utils.fused_ssim_compat import fused_ssim3d
                 pred_m = V_canon.unsqueeze(1).float().contiguous()
                 targ_m = V_gt.unsqueeze(1).float().contiguous()
                 out["metric_ssim_3d_full"] = fused_ssim3d(pred_m, targ_m, train=False)
@@ -273,48 +276,72 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
         # (bbox = full cube) bbox metrics ≡ full metrics. Bbox SSIM is skipped
         # because per-sample shape varies and `fused_ssim3d` wants a fixed size.
         if "anatomy_bbox" in batch:
-            bboxes = batch["anatomy_bbox"]   # (B, 6) int64
-            psnr_bbox_list, mae_bbox_list, mse_bbox_list = [], [], []
-            for b in range(B):
-                z0, z1, y0, y1, x0, x1 = [int(v) for v in bboxes[b].tolist()]
-                # Empty bbox safety: fall back to full cube (matches the
-                # full-volume metric for that sample). Can happen after
-                # aggressive aug clears the volume.
-                if (z1 <= z0) or (y1 <= y0) or (x1 <= x0):
-                    Vc = V_canon[b]
-                    Vg = V_gt[b]
-                else:
-                    Vc = V_canon[b, z0:z1, y0:y1, x0:x1]
-                    Vg = V_gt[b, z0:z1, y0:y1, x0:x1]
-                mse_b = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
-                psnr_bbox_list.append(10.0 * torch.log10(1.0 / mse_b))
-                mae_bbox_list.append((Vc - Vg).abs().mean())
-                mse_bbox_list.append(mse_b)
-            out["metric_mae_3d_bbox"] = torch.stack(mae_bbox_list).mean()
-            out["metric_mse_3d_bbox"] = torch.stack(mse_bbox_list).mean()
-            out["metric_psnr_3d_bbox"] = torch.stack(psnr_bbox_list).mean()
+            # Vectorized with spatial coordinate masks instead of a per-sample Python loop, so
+            # the metric costs no `.tolist()` host-device syncs. (This code never runs inside a
+            # compiled region — only the aggregator's attention blocks are compiled — so the
+            # motivation is eager sync removal, not graph breaks.)
+            bboxes = batch["anatomy_bbox"].to(V_canon.device)   # (B, 6) int64
+            D, H, W = V_canon.shape[1], V_canon.shape[2], V_canon.shape[3]
+            z_idx = torch.arange(D, device=V_canon.device).view(1, -1, 1, 1)
+            y_idx = torch.arange(H, device=V_canon.device).view(1, 1, -1, 1)
+            x_idx = torch.arange(W, device=V_canon.device).view(1, 1, 1, -1)
+
+            z0, z1 = bboxes[:, 0:1, None, None], bboxes[:, 1:2, None, None]
+            y0, y1 = bboxes[:, 2:3, None, None], bboxes[:, 3:4, None, None]
+            x0, x1 = bboxes[:, 4:5, None, None], bboxes[:, 5:6, None, None]
+
+            bbox_mask = (z_idx >= z0) & (z_idx < z1) & (y_idx >= y0) & (y_idx < y1) & (x_idx >= x0) & (x_idx < x1)
+            valid_bbox = (z1 > z0) & (y1 > y0) & (x1 > x0)
+            bbox_mask = torch.where(valid_bbox, bbox_mask, torch.ones_like(bbox_mask))
+
+            # `torch.where(mask, diff, 0)` rather than `diff * mask.float()`: NaN * 0.0 == NaN,
+            # so multiplying lets a single non-finite voxel ANYWHERE in the cube (a diverged
+            # step, bad aug) turn this whole metric into NaN. The pre-vectorization loop read
+            # only in-ROI voxels via boolean indexing and so was immune. The trainer's
+            # non-finite guard skips backward but logs scalars first, and val has no guard.
+            err = V_canon - V_gt
+            zero = torch.zeros((), device=V_canon.device, dtype=err.dtype)
+            diff_sq = torch.where(bbox_mask, err ** 2, zero)
+            diff_abs = torch.where(bbox_mask, err.abs(), zero)
+            mask_sum = bbox_mask.float().sum(dim=(1, 2, 3)).clamp(min=1.0)
+
+            mse_bbox = diff_sq.sum(dim=(1, 2, 3)) / mask_sum
+            mae_bbox = diff_abs.sum(dim=(1, 2, 3)) / mask_sum
+            psnr_bbox = 10.0 * torch.log10(torch.tensor(1.0, device=V_canon.device) / mse_bbox.clamp(min=1e-10))
+
+            out["metric_mae_3d_bbox"] = mae_bbox.mean()
+            out["metric_mse_3d_bbox"] = mse_bbox.mean()
+            out["metric_psnr_3d_bbox"] = psnr_bbox.mean()
 
         # ── Motion-masked metrics (only voxels that move across the cardiac cycle) ──
-        # The dynamic heart is ~3-5% of the cube; full/bbox PSNR is dominated by
-        # static tissue and barely moves between a good and a bad model. Restricting
-        # to (max_t - min_t > tau) isolates the region the model must actually get
-        # right. Mask is derived from the full phase bundle batch["phases"].
         if "phases" in batch:
+            # Vectorized (no per-sample `bool(m.any())` host sync). Masked with torch.where,
+            # not a float multiply — see the bbox block above for why (NaN * 0.0 == NaN).
             motion_mask = compute_motion_mask(batch["phases"])  # (B, D, H, W) bool
-            psnr_motion_list, mae_motion_list = [], []
-            for b in range(B):
-                m = motion_mask[b]
-                if not bool(m.any()):
-                    continue  # no moving voxels (shouldn't happen for real cardiac data)
-                Vc = V_canon[b][m]
-                Vg = V_gt[b][m]
-                mse_m = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
-                psnr_motion_list.append(10.0 * torch.log10(1.0 / mse_m))
-                mae_motion_list.append((Vc - Vg).abs().mean())
-            if psnr_motion_list:
-                out["metric_psnr_3d_motion"] = torch.stack(psnr_motion_list).mean()
-                out["metric_mae_3d_motion"] = torch.stack(mae_motion_list).mean()
-                out["metric_motion_frac"] = motion_mask.float().mean()
+            motion_cnt = motion_mask.float().sum(dim=(1, 2, 3))
+            err = V_canon - V_gt
+            zero = torch.zeros((), device=V_canon.device, dtype=err.dtype)
+            diff_sq = torch.where(motion_mask, err ** 2, zero)
+            diff_abs = torch.where(motion_mask, err.abs(), zero)
+
+            mse_m = diff_sq.sum(dim=(1, 2, 3)) / motion_cnt.clamp(min=1.0)
+            mae_m = diff_abs.sum(dim=(1, 2, 3)) / motion_cnt.clamp(min=1.0)
+            psnr_m = 10.0 * torch.log10(torch.tensor(1.0, device=V_canon.device) / mse_m.clamp(min=1e-10))
+
+            # A sample with zero moving voxels has mse_m == 0 ⇒ psnr_m == 100 dB (the clamp
+            # floor), which would silently inflate the batch mean, so average over valid
+            # samples only. Kept branchless (no `if n_valid > 0`) to preserve the sync-free /
+            # zero-graph-break property of the whole train step: a Python-level decision here
+            # costs 4 graph breaks, measured. The degenerate case where NO sample moves
+            # therefore reports 0.0 rather than omitting the keys; it cannot occur for real
+            # cardiac data (it needs a subject whose 12 phases are identical), and consumers
+            # that aggregate this metric filter it via `metric_motion_frac == 0` — see
+            # `TrainerVizMixin._compute_identity_baseline`, which feeds baseline_identity.json.
+            valid_m = (motion_cnt > 0).float()
+            denom_m = valid_m.sum().clamp(min=1.0)
+            out["metric_psnr_3d_motion"] = (psnr_m * valid_m).sum() / denom_m
+            out["metric_mae_3d_motion"] = (mae_m * valid_m).sum() / denom_m
+            out["metric_motion_frac"] = motion_mask.float().mean()
 
         # ── Anatomy heart-ROI PSNR (val-only) ────────────────────────────────────
         # Same masked PSNR as the motion metric above, but the ROI is the nnU-Net
@@ -364,9 +391,8 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                 V_id, _ = splat_predictions({"world_points": batch["scanner_coords"]}, batch, grid_shape)
                 # oracle splat (Δ=0, TRUE target-phase content sampled at each pixel's home) —
                 # the recoverable ceiling; the model→oracle gap is the appearance wall (docs 19-21).
-                intensity = batch["images"].float().mean(dim=2)
-                if intensity.max() > 2.0:
-                    intensity = intensity / 255.0
+                inv_scale = torch.where((batch["images"] > 2.0).any(), 1.0 / 255.0, 1.0)
+                intensity = batch["images"].float().mean(dim=2) * inv_scale
                 scan_flat = batch["scanner_coords"].reshape(B, -1, 3)
                 w = (intensity.reshape(B, -1) > 1e-3).float()
                 V_or, _ = splat_to_volume(scan_flat, sample_volume(V_gt, scan_flat), grid_shape, weight=w)
