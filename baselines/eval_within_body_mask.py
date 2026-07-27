@@ -66,7 +66,6 @@ def _build_batch(seq_idx):
         "target_t_indices": st("target_t_indices"),
         "timesteps": torch.from_numpy(np.stack(data["timesteps"]).astype(np.int64)).unsqueeze(0),
         "slice_indices": torch.from_numpy(np.stack(data["slice_indices"]).astype(np.int64)).unsqueeze(0),
-        "point_masks": torch.from_numpy(np.stack(data["point_masks"])).unsqueeze(0),
     }
     if "gt_target_volume" in data:
         batch["gt_target_volume"] = torch.from_numpy(data["gt_target_volume"].astype(np.float32)).unsqueeze(0)
