@@ -105,7 +105,11 @@ class TrainerVizMixin:
                     per_phase_full[t].append(out["metric_psnr_3d_full"].item())
                 if "metric_psnr_3d_bbox" in out:
                     per_phase_bbox[t].append(out["metric_psnr_3d_bbox"].item())
-                if "metric_psnr_3d_motion" in out:
+                # Skip subjects with no moving voxels: the loss reports 0.0 dB for them rather
+                # than omitting the key (it stays branchless — see compute_volume_intensity_loss),
+                # and a 0.0 would drag this identity baseline down. Unreachable for real cardiac
+                # data; the guard just keeps baseline_identity.json honest if it ever happens.
+                if "metric_psnr_3d_motion" in out and float(out.get("metric_motion_frac", 1.0)) > 0:
                     per_phase_motion[t].append(out["metric_psnr_3d_motion"].item())
 
             # Aggregate.

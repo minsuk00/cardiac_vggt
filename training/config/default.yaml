@@ -86,3 +86,10 @@ cuda:
     cudnn_deterministic: False
     cudnn_benchmark: False
     allow_tf32: True
+    # torch.compile the 48 aggregator attention blocks in place (docs/40). The blocks are the
+    # ONLY worthwhile compile target measured: 1.28x on the full train step and -1.1 GB VRAM,
+    # ~15-22 s one-time compile. Whole-model compile OOMs (it inlines through the per-block
+    # gradient checkpointing and keeps all 48 blocks' activations live); compiling point_head
+    # is 3% SLOWER and patch_embed / the loss / max-autotune are all ~0 gain. Off here so
+    # legacy configs stay eager; the active mri_volume* configs turn it on.
+    compile_attention_blocks: False

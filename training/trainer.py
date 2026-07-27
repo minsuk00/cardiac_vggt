@@ -256,12 +256,52 @@ class Trainer(TrainerVizMixin):
 
     def _setup_backends(self, cuda_conf: Dict) -> None:
         """Configures PyTorch CUDA backends. Single-GPU: no process group is created."""
+        # Read here, applied in _compile_attention_blocks() once the model exists.
+        self.compile_attention_blocks = bool(
+            cuda_conf.get("compile_attention_blocks", False)) if cuda_conf else False
         if torch.cuda.is_available():
             # Configure CUDA backend settings for performance
             torch.backends.cudnn.deterministic = cuda_conf.cudnn_deterministic
             torch.backends.cudnn.benchmark = cuda_conf.cudnn_benchmark
             torch.backends.cuda.matmul.allow_tf32 = cuda_conf.allow_tf32
             torch.backends.cudnn.allow_tf32 = cuda_conf.allow_tf32
+
+    def _compile_attention_blocks(self) -> None:
+        """`torch.compile` the aggregator's frame/global attention blocks in place (docs/40).
+
+        Compiles each Block individually rather than the whole model: the aggregator wraps every
+        block in `torch.utils.checkpoint`, and a whole-model compile inlines through those
+        wrappers and keeps all 48 blocks' activations live (>44 GB → OOM). Per-block compilation
+        leaves the outer `checkpoint()` in eager Python, so checkpointing is fully preserved.
+
+        Uses `nn.Module.compile()`, NOT `mod = torch.compile(mod)`: the former swaps the module's
+        internal call implementation, so the module identity and `state_dict()` keys are unchanged
+        and checkpoints stay interchangeable with eager runs. The latter would wrap the block in an
+        `OptimizedModule` and prefix its keys with `_orig_mod.`.
+
+        `dynamic=True` because S varies per subject (one_frame_per_slice ⇒ S = in-FOV plane count).
+        """
+        if not self.compile_attention_blocks:
+            return
+        # Gate on the device this run actually uses, NOT on cuda.is_available(): with
+        # `device: cpu` on a GPU node the latter is True, so every block would compile
+        # against the Inductor CPU backend (minutes of C++ codegen, or an outright failure)
+        # on a run that works fine today, with no warning to explain the stall.
+        if self.device.type != "cuda":
+            logging.warning(f"compile_attention_blocks requested but device is "
+                            f"{self.device}; skipping compilation.")
+            return
+        agg = getattr(self.model, "aggregator", None)
+        if agg is None:
+            logging.warning("compile_attention_blocks requested but model has no aggregator; skipping.")
+            return
+        n = 0
+        for blocks in (getattr(agg, "frame_blocks", None), getattr(agg, "global_blocks", None)):
+            for block in (blocks or []):
+                block.compile(mode="default", dynamic=True)
+                n += 1
+        logging.info(f"torch.compile applied to {n} aggregator attention blocks "
+                     "(mode=default, dynamic=True); first steps pay one-time compilation.")
 
     def _load_resuming_checkpoint(self, ckpt_path: str):
         """Loads a checkpoint from the given path to resume training."""
@@ -352,10 +392,14 @@ class Trainer(TrainerVizMixin):
             )
             logging.info(f"[Done] Freezing modules: {self.optim_conf.frozen_module_names}")
 
-        # Log model summary
+        # Log model summary (before compilation, so it reports the eager module tree)
         model_summary_path = os.path.join(self.logging_conf.log_dir, "model.txt")
         model_summary(self.model, log_file=model_summary_path, logging_func=logging.info)
         logging.info(f"Model summary saved to {model_summary_path}")
+
+        # Compile AFTER freezing: dynamo guards on requires_grad, so compiling first would
+        # immediately recompile every block once the freeze flips those flags.
+        self._compile_attention_blocks()
 
         logging.info("Successfully initialized training components.")
 
