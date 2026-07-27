@@ -41,8 +41,9 @@ Entry point: `training/launch.py` (Hydra).
 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
     training/launch.py --config mri_volume
 
-# Multi-GPU
-PYTHONPATH=training:. torchrun --nproc_per_node=4 training/launch.py --config mri_volume
+# NOTE: single-GPU only. DDP was removed in 284992c (no process group, device hardcoded to
+# cuda:0, sampler pinned to num_replicas=1) — `--nproc_per_node>1` would run N duplicate
+# trainings on GPU 0, not a data-parallel job.
 
 # Warm-start (weights only, strict=false) from the 4-day baseline — fresh series, not a true resume
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
