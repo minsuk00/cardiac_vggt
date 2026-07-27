@@ -76,6 +76,9 @@ def lv_caliper_mm(label_vol, sx, sy):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=40)
+    ap.add_argument("--only", nargs="+", default=None,
+                    help="restrict to these 'Set/P###' ids, e.g. TrainingSet/P046 (used to probe the "
+                         "6 mm-thickness protocol variants, whose pitch is undocumented)")
     args = ap.parse_args()
 
     rows = []
@@ -84,7 +87,10 @@ def main():
         if not os.path.isdir(seg):
             continue
         for pid in sorted(os.listdir(seg)):
-            if len(rows) >= args.limit:
+            if args.only is not None:
+                if f"{pasub}/{pid}" not in args.only:
+                    continue
+            elif len(rows) >= args.limit:
                 break
             sax_l = f"{seg}/{pid}/cine_sax_label.nii.gz"
             lax_l = f"{seg}/{pid}/cine_lax_label.nii.gz"

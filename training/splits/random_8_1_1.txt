@@ -1,4 +1,39 @@
 # CMRxRecon2024 random 8:1:1 split (seed=42)
+#
+# ############################################################################
+# ##  DEPRECATED 2026-07-25 — DO NOT USE FOR NEW RUNS. IT NO LONGER LOADS.  ##
+# ############################################################################
+#
+# WILL FAIL: 7 of the directories listed below were moved out of Cine_combined into
+#   scratch/data/CMRxRecon2024/_archive/  and no longer exist at the path the loader expects:
+#       Train_P192  Train_P193  Train_P194  Train_P196  Train_P198  Train_P199  Train_P200
+#   Nothing was deleted — they are in _archive/ and can be moved back.
+#
+# WHY THEY WERE REMOVED: they are REDUNDANT DUPLICATES. CMRxRecon2024 ships 301 directories but
+#   only 294 unique people; those 7 are re-releases of subjects already present as
+#   Test_P009-P013 / Val_P024 / Val_P052 (verified bit-identical on RAW K-SPACE — see
+#   scratch/data/CMRxRecon2024/DUPLICATES.txt).
+#
+# WHY IT MATTERED: 3 of the 7 pairs STRADDLED this split, so 2 of 30 val and 1 of 31 test
+#   subjects were copies of subjects the model trained on — a real train/eval leak:
+#       Test_P012[val]  == Train_P199[train]
+#       Test_P013[test] == Train_P198[train]
+#       Val_P052[train] == Train_P193[val]      <- note Train_P193 sits in VAL here
+#
+# ⚠️ INTERPRETING PAST RESULTS: every number produced with this file (docs/24, docs/25, docs/33,
+#   evaluation/results/cmrxrecon/*.json, the EF series) was measured WITH those leaks present and
+#   is therefore mildly optimistic. Those results are not wrong, but they are a DIFFERENT SERIES
+#   from anything measured after the dedup. Do not compare across the boundary.
+#
+# THIS FILE IS KEPT UNMODIFIED BELOW (membership byte-identical to what past runs used) purely as
+#   the historical record of those runs. It is not a working split.
+#
+# ➡️ TODO — NEXT SPLIT: build one pooled split across CMRxRecon 2023 + 2024 + 2025 once the 2023
+#   and 2025 reconstructions land. It must exclude redundant duplicates in ALL years
+#   (2024: the 7 above; 2023: 68 test-side copies, see CMRxRecon2023/DUPLICATES.txt) and be keyed
+#   by prefixed ids (CMRx23_*, etc.) so subject names cannot collide across years. Not built yet —
+#   deliberately deferred until 2025 is reconstructed, so it is done once rather than three times.
+#
 [train]
 Train_P140
 Train_P010
