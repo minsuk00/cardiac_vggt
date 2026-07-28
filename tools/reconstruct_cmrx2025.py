@@ -266,6 +266,18 @@ def normalize(mat, csvp, out_mat, out_csv, use_pocs=True):
     fov_x_full = fovx if scanner.startswith("UIH") else fovx * (nx / rx)
     pixel_x = fov_x_full / nx_target
     pixel_y = fovy / ry
+
+    # PHILIPS-ONLY EXCEPTION (docs/55). The formula above assumes ReconMatrix_X counts ACQUIRED
+    # readout samples. It is an OUTPUT grid size, and the two coincide only when nx == 2*rx -- true
+    # for every Siemens/UIH subject, false for Philips (nx=304, rx=256, base=nx/2=152), where it
+    # under-scales the readout axis by rx/base = 1.684. Scoped to this one scanner deliberately:
+    # the general rule needs the FOV convention per subject, and no metadata-only discriminator
+    # exists (docs/55 sec.4a/4b -- the obvious `base = nx/2` generalisation DOUBLES Siemens_15T_Sola,
+    # which has nx == rx and quotes FOVx oversampled). pixel_y is already correct: ky zero-filling
+    # preserves the FOV while readout cropping preserves the pixel.
+    if scanner == "Philips_30T_IngeniaCX":
+        base_x = nx / float(meta.get("ReadOutOversample", 2) or 2)
+        pixel_x = fovx / base_x
     # The recon computes spacing as FOV/ReconMatrix, so pre-bake the pixel sizes into the FOVs.
     meta_out = dict(meta)
     meta_out["FOVx"] = f"{pixel_x * rx:.6f}"
