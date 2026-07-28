@@ -75,7 +75,7 @@ def main():
     with open(os.path.join(D23, "SUBJECT_MANIFEST.csv")) as f:
         ids = [r["combined_id"] for r in csv.DictReader(f) if r["reconstruct"] == "1"]
     done = [c for c in ids if os.path.exists(os.path.join(CINE, c, "sax", "4d_recon.nii.gz"))]
-    # spread the sample across the list rather than taking the first N (which are all Train_P00x)
+    # spread the sample across the list rather than taking the first N (which are all CMRx24_Train_P00x)
     step = max(1, len(done) // max(1, args.n))
     sample = done[::step][: args.n]
     for s in SIX_MM:

@@ -7,7 +7,7 @@ Outputs:
   result/4way_refiner/draws_<subj>_INPUTS.png    6 rows × S input slices
 
 Subject identities (val split, random_8_1_1.txt):
-  seq0 Train_P053, seq1 Val_P055, seq2 Train_P034, seq3 Test_P028, seq4 Train_P178
+  seq0 CMRx24_Train_P053, seq1 CMRx24_Val_P055, seq2 CMRx24_Train_P034, seq3 CMRx24_Test_P028, seq4 CMRx24_Train_P178
 """
 import os
 import random as pyrandom
@@ -34,8 +34,8 @@ DEV = torch.device("cuda")
 GRID_SHAPE = (12, 256, 256)
 
 SUBJECTS = [
-    (0, "Train_P053"), (1, "Val_P055"), (2, "Train_P034"),
-    (3, "Test_P028"), (4, "Train_P178"),
+    (0, "CMRx24_Train_P053"), (1, "CMRx24_Val_P055"), (2, "CMRx24_Train_P034"),
+    (3, "CMRx24_Test_P028"), (4, "CMRx24_Train_P178"),
 ]
 DRAWS = [("val_fixed", None), ("seed_11", 11), ("seed_22", 22),
          ("seed_33", 33), ("seed_44", 44), ("seed_55", 55)]

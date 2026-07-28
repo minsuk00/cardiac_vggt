@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run NiftyMIC's classical SVR+SR reconstruction on the exported per-phase stacks.
 # Usage: bash baselines/niftymic/run_niftymic.sh <subject>_<t> [more subject_t ...]
-#   e.g. bash baselines/niftymic/run_niftymic.sh Train_P053_t0 Val_P055_t0
+#   e.g. bash baselines/niftymic/run_niftymic.sh CMRx24_Train_P053_t0 CMRx24_Val_P055_t0
 set -euo pipefail
 
 SIF=/home/minsukc/vggt/scratch/niftymic/sif/niftymic.sif

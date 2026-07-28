@@ -10,7 +10,7 @@ import nibabel as nib
 import torch
 import torch.nn.functional as F
 
-SUBJ = "scratch/data/CMRxRecon2024/Cine_combined/Val_P002/sax"
+SUBJ = "scratch/data/CMRxRecon2024/Cine_combined/CMRx24_Val_P002/sax"
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 
 

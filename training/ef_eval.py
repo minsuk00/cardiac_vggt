@@ -87,7 +87,7 @@ def compute_ef_metrics(pred_seg_dir, subjects_ed_es, csv_path):
     """Predicted EF from the fresh segs vs GT EF from the CSV, over clean subjects.
 
     subjects_ed_es: list of (subject_id, ed, es). Excludes subjects with seg_flag != "ok"
-    (e.g. Test_P044), a missing seg, or an empty ED cavity. Returns a metrics dict or None.
+    (e.g. CMRx24_Test_P044), a missing seg, or an empty ED cavity. Returns a metrics dict or None.
     slope = d(pred_EF)/d(GT_EF) (~1 ideal, ~0 = flat/cohort-mean regression)."""
     gt = load_gt_ef(csv_path)
     gts, preds, skipped = [], [], []

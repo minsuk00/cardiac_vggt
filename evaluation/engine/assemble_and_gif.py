@@ -56,14 +56,14 @@ def clip_sentinel(rec):
     return np.clip(rec, 0.0, None)
 
 
-# Methods whose output is NOT on the input [0,1] scale (measured, Train_P053): NeSVoR pins its
+# Methods whose output is NOT on the input [0,1] scale (measured, CMRx24_Train_P053): NeSVoR pins its
 # output to --output-intensity-mean=700 (arbitrary global gauge, k≈12000 vs GT); NiftyMIC adds a
 # +1.0 pedestal (c≈+1.0). Scale-preserving methods (SVRTK: k≈1.05, c≈-0.01) are NOT listed —
 # self-normalizing them LOSES ~1.9 dB of real reconstruction signal (29.85→27.93). This is a
 # per-method rule keyed on measured scale-preservation, NOT a blanket uniform rescale.
 SELF_NORM_METHODS = {"nesvor", "niftymic"}
 # Of the self-norm methods, those whose gauge is a PURE global SCALE (offset≈0) — measured on
-# Train_P053: NeSVoR pred≈2065·gt (offset/scale≈0.012). For these, subtracting the in-ROI p0.5 would
+# CMRx24_Train_P053: NeSVoR pred≈2065·gt (offset/scale≈0.012). For these, subtracting the in-ROI p0.5 would
 # inject a small ARTIFICIAL offset (the heart floor is not the true zero) and *under*-score the recon
 # by ~0.3 dB (conservative but wrong-direction: it flatters our own method). Divide-only is the
 # GT-consistent map (a perfect pure-scale recon → GT exactly). Methods with a real additive pedestal
@@ -165,7 +165,7 @@ def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None):
 
 
 def main():
-    subj = sys.argv[1] if len(sys.argv) > 1 else "Train_P053"
+    subj = sys.argv[1] if len(sys.argv) > 1 else "CMRx24_Train_P053"
     method = sys.argv[2] if len(sys.argv) > 2 else "svrtk3d"
     # Short display tag for the GIF row labels: the raw arm slug (e.g.
     # "vggt_20260719_1f_gather05_ep99") overflows the rotated y-label slot and clips.
@@ -180,7 +180,7 @@ def main():
     # Scoring ROI = GT whole-heart seg (dilated +-1 plane) INTERSECT native-FOV mask. The dilation
     # spills the ROI onto zero-padded edge planes with no acquired data; SVRTK (told to reconstruct
     # inside -mask) hallucinates spurious content there, and scoring it vs zero-padding GT drags PSNR
-    # down artifactually (e.g. Train_P053 clean 20.2->27.5 dB once z0 is dropped). Intersecting with
+    # down artifactually (e.g. CMRx24_Train_P053 clean 20.2->27.5 dB once z0 is dropped). Intersecting with
     # the native FOV drops those no-data planes -> honest metric + no edge-plane flicker in the GIF.
     heart = load_canon(str(paths.heart_mask(ds, subj))) > 0.5   # (X,Y,Z) dilated whole-heart ROI
     content = load_canon(str(paths.fov_mask(ds, subj))) > 0.5   # (X,Y,Z) native FOV (1=real data); fov_mask picks mask.nii.gz (cmrx) vs mask_fov.nii.gz (OOD)

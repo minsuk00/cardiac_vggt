@@ -6,7 +6,7 @@ stack came from (== V_gt's grid), then compute the same MAE/PSNR/SSIM the
 in-pipeline baselines use (training/loss.py, baselines/eval_all_baselines.py).
 
 Usage: micromamba run -n svr python baselines/niftymic/score.py <tag> [<tag> ...]
-  e.g. python baselines/niftymic/score.py Train_P053_t0 Val_P055_t0
+  e.g. python baselines/niftymic/score.py CMRx24_Train_P053_t0 CMRx24_Val_P055_t0
 """
 import os
 import sys

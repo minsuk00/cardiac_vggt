@@ -24,7 +24,7 @@ from loss import compute_volume_intensity_loss  # noqa: E402
 CKPT = "/home/minsukc/vggt/scratch/logs/217721337_mri_volume_reference_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
-SUBJECT_INDICES = [0, 1]  # same as export_stack.py: Train_P053, Val_P055
+SUBJECT_INDICES = [0, 1]  # same as export_stack.py: CMRx24_Train_P053, CMRx24_Val_P055
 TARGET_PHASE = 0
 SAVE_DIR = "/home/minsukc/vggt/scratch/niftymic/vggt_volumes"
 SPACING_XYZ = (1.4, 1.4, 12.0)  # same canonical affine as export_stack.py, for viewer compatibility

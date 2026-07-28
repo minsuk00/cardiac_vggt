@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 
 TARGETS = [
-    ("2024-challenge", "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined/Test_P001/sax/cine_sax.mat"),
+    ("2024-challenge", "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined/CMRx24_Test_P001/sax/cine_sax.mat"),
     ("2023-challenge-MC", "/home/minsukc/vggt/scratch/data/CMRxRecon2023/ChallengeData/MultiCoil/Cine/TrainingSet/FullSample/P001/cine_sax.mat"),
     ("2023-challenge-SC", "/home/minsukc/vggt/scratch/data/CMRxRecon2023/ChallengeData/SingleCoil/Cine/TrainingSet/FullSample/P001/cine_sax.mat"),
     ("CMR300-ks", "/home/minsukc/vggt/scratch/data/CMRxRecon-300/TrainingSet/P003/cine_sax_ks.mat"),

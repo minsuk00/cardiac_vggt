@@ -49,7 +49,7 @@ from data.respiratory import (  # noqa: E402
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 OUT_DIR = Path("/home/minsukc/vggt/result/respiratory_examples")
-SUBJECT = "Train_P053"          # known decent FOV (bbox z≈[1,10])
+SUBJECT = "CMRx24_Train_P053"          # known decent FOV (bbox z≈[1,10])
 T_FIXED = 0                     # cardiac phase for the single-phase core demo (ED)
 T_PAIR = (0, 6)                # phases for the combined beating+breathing panel
 CFG = RespiratoryConfig(enable=True, amplitude_mm=24.0, ap_ratio=0.35, ap_axis="H", cos2n=3)

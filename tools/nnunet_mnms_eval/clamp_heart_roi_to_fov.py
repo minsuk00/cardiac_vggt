@@ -4,7 +4,7 @@ WHY: `heart_roi_canonical.nii.gz` is the whole-heart seg dilated +6mm in-plane a
 (build_heart_roi.py). On the CANONICAL (256,256,12) grid, subjects with <12 acquired slices are
 zero-padded, and the +-1 z dilation spills the ROI onto padding planes that have NO acquired data
 (GT is all zeros there). Scoring a reconstruction inside those planes is meaningless and drags the
-metric (e.g. Train_P053 clean 20.2->27.5 dB once its empty z0 is dropped). Only CMRx has canonical
+metric (e.g. CMRx24_Train_P053 clean 20.2->27.5 dB once its empty z0 is dropped). Only CMRx has canonical
 ROIs; native-space ROIs (ACDC/MIITT/OCMR/goettingen) aren't padded, so they don't spill.
 
 FIX: overwrite each heart_roi_canonical.nii.gz with (roi & content_mask), where content_mask is the

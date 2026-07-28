@@ -43,7 +43,7 @@ for name in ["control0", "gather05", "s20contz"]:
                 if ri == 0: axs[ri, p].set_title(f"z{p}" + ("*REF" if p == rz else ("" if has_slot[p] else "\n(no input)")), fontsize=8)
         for yc, (lab, _, _, _) in zip(ycen, rows):
             fig.text(0.012, yc, lab, rotation=90, va="center", ha="center", fontsize=11)
-        fig.suptitle(f"{name}  |  IN-DIST CMRxRecon VAL subj0 (Train_P053)  |  {AMP}  |  cardiac phase {t}/{T_total-1}", fontsize=12)
+        fig.suptitle(f"{name}  |  IN-DIST CMRxRecon VAL subj0 (CMRx24_Train_P053)  |  {AMP}  |  cardiac phase {t}/{T_total-1}", fontsize=12)
         fig.subplots_adjust(left=0.035, right=0.997, top=0.90, bottom=0.01, wspace=0.04, hspace=0.10)
         fig.canvas.draw(); frames.append(np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()); plt.close(fig)
     imageio.mimsave(f"result/gif_indist_{name}_3row_S0.gif", frames, duration=0.18, loop=0)

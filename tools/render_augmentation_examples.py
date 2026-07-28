@@ -49,7 +49,7 @@ from data.preprocess import (  # noqa: E402
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 OUT_DIR = Path("/home/minsukc/vggt/result/augmentation_examples")
-SUBJECT_NAME = "Train_P053"   # the val-subj-0 from our earlier smoke; has bbox z=[1, 10]
+SUBJECT_NAME = "CMRx24_Train_P053"   # the val-subj-0 from our earlier smoke; has bbox z=[1, 10]
 NUM_VARIANTS = 3              # number of augmented variants per op
 T_ED = 0                      # end-diastole phase
 T_ES = 6                      # population-median ES (per CLAUDE.md)
