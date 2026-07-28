@@ -119,8 +119,12 @@ def montage(entries, scanner, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=os.path.join(REPO, "scratch", "data", "CMRxRecon2025", "Cine_combined"))
+    ap.add_argument("--out", default=OUT,
+                    help="output dir (default result/cmrx2025_recon_check). Use a distinct dir to "
+                         "render a new recon version without overwriting the previous figures.")
     args = ap.parse_args()
-    os.makedirs(OUT, exist_ok=True)
+    out_dir = args.out
+    os.makedirs(out_dir, exist_ok=True)
 
     by_scanner = defaultdict(list)
     report = []
@@ -140,15 +144,15 @@ def main():
             print(f"  {i}/{len(dirs)}", flush=True)
 
     for scanner, entries in sorted(by_scanner.items()):
-        montage(entries, scanner, os.path.join(OUT, f"qc_montage_{scanner}.png"))
+        montage(entries, scanner, os.path.join(out_dir, f"qc_montage_{scanner}.png"))
 
-    json.dump(report, open(os.path.join(OUT, "qc_report.json"), "w"), indent=1)
+    json.dump(report, open(os.path.join(out_dir, "qc_report.json"), "w"), indent=1)
     flagged = [r for r in report if r["flags"]]
     print(f"\n=== QC SUMMARY: {len(report)} subjects, {len(flagged)} flagged ===")
     for r in flagged:
         print(f"  {r['cid']:55} {r['flags']}  (off {r['offset_y_pct']:+},{r['offset_x_pct']:+}%  "
               f"body {r['body_x_mm']}x{r['body_y_mm']}mm)")
-    print(f"\nmontages + qc_report.json -> {OUT}")
+    print(f"\nmontages + qc_report.json -> {out_dir}")
 
 
 if __name__ == "__main__":
