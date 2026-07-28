@@ -29,7 +29,7 @@ from data.respiratory import _build_disp_dhw, _rotate_disp, reslice_volume_vec  
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 OUT = Path("/home/minsukc/vggt/result/respiratory_tilt_demo.png")
-SUBJECT = "Train_P053"
+SUBJECT = "CMRx24_Train_P053"
 T_FIXED = 0
 D_MM = 18.0          # fixed SI magnitude for the demo
 AP_RATIO = 0.35

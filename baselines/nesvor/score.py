@@ -13,9 +13,9 @@ corrupted, see export_resp_stack.py). Set NESVOR_RECON_DIR to score a non-defaul
 dir (e.g. run_nesvor.sh's STACK_SUFFIX=resp_stack writes to scratch/nesvor/recon_resp_stack).
 
 Usage: micromamba run -n svr python baselines/nesvor/score.py <tag> [<tag> ...]
-  e.g. python baselines/nesvor/score.py Train_P053_t0 Val_P055_t0
+  e.g. python baselines/nesvor/score.py CMRx24_Train_P053_t0 CMRx24_Val_P055_t0
   e.g. NESVOR_RECON_DIR=/home/minsukc/vggt/scratch/nesvor/recon_resp_stack \\
-       python baselines/nesvor/score.py Train_P053_t0 Val_P055_t0
+       python baselines/nesvor/score.py CMRx24_Train_P053_t0 CMRx24_Val_P055_t0
 """
 import os
 import sys

@@ -14,7 +14,7 @@ recon is displayed on exactly the intensity scale it is SCORED on (SVRTK as-is, 
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
-  $PY evaluation/analysis/compare_methods.py --cohort cmrxrecon --subject Train_P001 \
+  $PY evaluation/analysis/compare_methods.py --cohort cmrxrecon --subject CMRx24_Train_P001 \
       --arms svrtk3d nesvor vggt_20260713_gather05 --variant breath
   # --subject omitted -> first built subject that has ALL requested arms.
 """

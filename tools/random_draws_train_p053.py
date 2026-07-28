@@ -1,4 +1,4 @@
-"""Train_P053 (val seq 0) under the OLD ckpt with the ACTUAL fixed val draw + several
+"""CMRx24_Train_P053 (val seq 0) under the OLD ckpt with the ACTUAL fixed val draw + several
 random draws. Splits results and inputs into two separate PNGs so neither is downsized.
 
 The first draw uses the canonical val sampling (`random.Random(seq_index=0)`) — bit-
@@ -114,7 +114,7 @@ def render_results(outputs, names, path):
         ax.imshow(window_pct(V[mid], V), cmap="gray", vmin=0, vmax=1)
         ax.set_title(f"{nm}\nV_canon mid-z @ ED", fontsize=10)
         ax.axis("off")
-    fig.suptitle("Train_P053 (val seq 0) — OLD ckpt — V_canon at ED, breathing OFF "
+    fig.suptitle("CMRx24_Train_P053 (val seq 0) — OLD ckpt — V_canon at ED, breathing OFF "
                  "(native 256x256, pct99.5)", fontsize=11)
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")
@@ -142,7 +142,7 @@ def render_inputs(inputs_list, zts, names, path):
         first = axes[r, 0] if S > 1 else axes[r]
         first.text(-0.10, 0.5, nm, transform=first.transAxes,
                    fontsize=11, ha="right", va="center")
-    fig.suptitle(f"Train_P053 input slices (518×518) for each draw "
+    fig.suptitle(f"CMRx24_Train_P053 input slices (518×518) for each draw "
                  "(row 0 = canonical val draw, the rest = random global seeds)",
                  fontsize=11)
     fig.tight_layout()

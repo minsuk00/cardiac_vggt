@@ -8,7 +8,7 @@ The recon itself is not reimplemented: `reconstruct_subject` is imported unmodif
     (2023 ships none) via tools/scan_cmrx2023_donor_geometry.py --write;
   * the subject list comes from SUBJECT_MANIFEST.csv (reconstruct==1), which already excludes
     the 68 test-side duplicates and P118 (no donor exists);
-  * output ids are PREFIXED `CMRx23_` so they cannot collide with 2024's `Train_P001` when the
+  * output ids are PREFIXED `CMRx23_` so they cannot collide with 2024's `CMRx24_Train_P001` when the
     years are pooled (subj_id is the directory basename);
   * the .mat is SYMLINKED rather than `shutil.copy2`-ed (2024 spent 324 GB on those copies);
   * each .mat is staged to node-local /tmp first, because GPFS small/strided reads are slow.

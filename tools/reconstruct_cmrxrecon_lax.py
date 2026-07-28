@@ -10,7 +10,7 @@ Algorithm matches _archive/batch_reconstruct_cmrxrecon2024.py (the SAX pipeline)
 NOTE: for lax the slice axis = VIEW index (3 long-axis planes), not depth; and CMRxRecon carries NO
 per-slice position/orientation, so these cines are NOT spatially registered to the SAX (see docs).
 
-Usage:  micromamba run -n svr python tools/reconstruct_cmrxrecon_lax.py [--limit N] [--subjects Train_P001 ...]
+Usage:  micromamba run -n svr python tools/reconstruct_cmrxrecon_lax.py [--limit N] [--subjects CMRx24_Train_P001 ...]
 """
 import argparse
 import csv

@@ -13,7 +13,7 @@ VGGT=/home/minsukc/vggt
 export PATH="$VGGT/baselines/fetal_cmr_4d/bin:$PATH"
 export FCMR_BIND="$VGGT/scratch"      # bind the whole GPFS tree (covers sif + eval/)
 
-# Faithful single-stack SVRTK config (validated by a param sweep on Train_P034, 2026-07-12):
+# Faithful single-stack SVRTK config (validated by a param sweep on CMRx24_Train_P034, 2026-07-12):
 #   -thickness 8    = the REAL slice thickness (8mm); the 12mm canonical Z is the slice PITCH
 #                     (8mm thickness + 4mm gap). -thickness sets the PSF width, so 8 is correct.
 #   -resolution 1.4 = match the canonical in-plane spacing (native in-plane 1.34-1.58mm).

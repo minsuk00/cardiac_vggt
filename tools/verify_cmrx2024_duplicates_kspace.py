@@ -13,12 +13,12 @@ import numpy as np
 ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 
 PAIRS = [
-    ("Test_P013", "Train_P198"),   # leaks into our TEST split
-    ("Test_P012", "Train_P199"),   # leaks into our VAL split
-    ("Train_P193", "Val_P052"),    # leaks into our VAL split
+    ("CMRx24_Test_P013", "CMRx24_Train_P198"),   # leaks into our TEST split
+    ("CMRx24_Test_P012", "CMRx24_Train_P199"),   # leaks into our VAL split
+    ("CMRx24_Train_P193", "CMRx24_Val_P052"),    # leaks into our VAL split
 ]
 # same-shape distinct subjects -> must DIFFER
-NEG = [("Test_P012", "Test_P013")]  # both (256,246,11) per the recon scan
+NEG = [("CMRx24_Test_P012", "CMRx24_Test_P013")]  # both (256,246,11) per the recon scan
 
 
 def slabs(path, picks):

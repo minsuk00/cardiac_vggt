@@ -59,7 +59,7 @@ def render(subj, var="breath", fps=3):
                     # d_D (SI / through-plane) ONLY -- this figure is about through-plane estimation,
                     # and d_D is exactly what the breathing metric regresses against. NOTE the sibling
                     # assemble_and_gif.py GIFs label the 3D vector magnitude |v| instead, which is larger
-                    # (per-subject tilt puts much of the breath in-plane: Test_P023 z10 is 12.3 mm SI but
+                    # (per-subject tilt puts much of the breath in-plane: CMRx24_Test_P023 z10 is 12.3 mm SI but
                     # 27.4 mm |v|). Different quantity -- hence the explicit "SI" in the label.
                     v = disp[z] if (z < len(disp) and content[:, :, z].any()) else None
                     ax.set_title(f"z{z}" if v is None else f"z{z}\n{v:.1f} SI", fontsize=6.5)
@@ -83,5 +83,5 @@ def render(subj, var="breath", fps=3):
 
 if __name__ == "__main__":
     import sys
-    for s in (sys.argv[1:] or ["Test_P023"]):
+    for s in (sys.argv[1:] or ["CMRx24_Test_P023"]):
         render(s)

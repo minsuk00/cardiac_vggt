@@ -102,7 +102,7 @@ def main():
     for a in ax.ravel():
         a.set_xticks([])
         a.set_yticks([])
-    fig.suptitle(f"Train_P010 slice {SLC} frame {FRAME} — ESPIRiT input-domain check", fontsize=11)
+    fig.suptitle(f"CMRx24_Train_P010 slice {SLC} frame {FRAME} — ESPIRiT input-domain check", fontsize=11)
     out = f"{REPO}/result/recon_verify_2024/espirit_domain_check.png"
     fig.savefig(out, dpi=130, bbox_inches="tight")
     print(f"\nwrote {out}")

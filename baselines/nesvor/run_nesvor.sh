@@ -2,7 +2,7 @@
 # Run NeSVoR (github.com/daviddmc/NeSVoR, Docker junshenxu/nesvor:v0.5.0) on
 # NiftyMIC's already-exported per-phase stacks
 # (scratch/niftymic/data/<tag>_{stack,mask}.nii.gz) -- same input, same 2
-# subjects (Train_P053_t0, Val_P055_t0), no separate NeSVoR export step.
+# subjects (CMRx24_Train_P053_t0, CMRx24_Val_P055_t0), no separate NeSVoR export step.
 #
 # STACK_SUFFIX selects clean vs respiratory-corrupted input (docs/30 sec4 step 2):
 #   STACK_SUFFIX=stack       (default) -- the clean stack, IS V_gt, nothing to correct
@@ -11,7 +11,7 @@
 # Writes to a suffix-specific recon dir so runs never clobber each other.
 #
 # Usage: STACK_SUFFIX=resp_stack bash baselines/nesvor/run_nesvor.sh <tag> [<tag> ...]
-#   e.g. bash baselines/nesvor/run_nesvor.sh Train_P053_t0 Val_P055_t0
+#   e.g. bash baselines/nesvor/run_nesvor.sh CMRx24_Train_P053_t0 CMRx24_Val_P055_t0
 set -euo pipefail
 
 module load singularity

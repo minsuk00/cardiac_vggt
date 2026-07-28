@@ -249,7 +249,7 @@ def build_data_dicts(subject_sax_dirs, num_phases: int = NUM_PHASES):
 
     Args:
         subject_sax_dirs: iterable of paths like
-            `/scratch/.../Cine_combined/Test_P001/sax`
+            `/scratch/.../Cine_combined/CMRx24_Test_P001/sax`
         num_phases: how many `sax_frame_{tt}.nii.gz` files to expect (default 12).
 
     Returns:
