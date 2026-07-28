@@ -111,11 +111,14 @@ def main():
         parts = mat.split("/")
         split = next(p for p in parts if p.endswith("_extracted")).replace("_extracted", "")
         # Include the Set level (`TrainingSet`/`ValidationSet`/`TestSet`): within TaskR1 the SAME
-        # center/scanner/P### occurs in both ValidationSet and TestSet (4 cases), so a
-        # split/center/scanner/pid key silently overwrites one of each pair and they never get
-        # compared. They are different people -- 2025 reuses IDs per split -- but the scan must
-        # still see them.
-        key = f"{split}/{parts[-5]}/{parts[-4]}/{parts[-3]}/{parts[-2]}"
+        # center/scanner/P### occurs in both ValidationSet and TestSet (4 cases), so a key without
+        # it silently overwrites one of each pair and they never get compared. They are different
+        # people -- 2025 reuses IDs per split -- but the scan must still see them.
+        # FIXED 2026-07-27: this previously used parts[-5], which is `FullSample_TaskR1`, NOT the
+        # Set (`parts[-6]`) -- so the intended fix was never actually in effect and those exact 4
+        # TestSet subjects were dropped from the comparison. Keyed on Set/FullSample/Center/
+        # Scanner/PID now, and the assert below makes a future key collision loud instead of silent.
+        key = f"{split}/" + "/".join(parts[-6:-1])
         try:
             recs[key] = scan_one(mat)
             recs[key]["path"] = mat
@@ -123,6 +126,14 @@ def main():
             errors[key] = f"{type(e).__name__}: {e}"[:120]
         if (i + 1) % 25 == 0:
             print(f"  {i+1}/{len(mats)}", flush=True)
+
+    # A key collision silently DROPS a subject from the comparison -- the failure mode that hid
+    # 4 TestSet subjects here. One key per file, or stop.
+    if len(recs) + len(errors) != len(mats):
+        raise RuntimeError(
+            f"KEY COLLISION: {len(mats)} files produced only {len(recs) + len(errors)} keys -- "
+            f"{len(mats) - len(recs) - len(errors)} subject(s) were silently overwritten and would "
+            f"never be compared. Fix the key before trusting any result.")
 
     print(f"\nreadable={len(recs)}  unreadable={len(errors)}", flush=True)
     for k, v in list(errors.items())[:10]:
@@ -141,7 +152,9 @@ def main():
         agree = len({recs[m]["h2"] for m in members}) == 1 and len({recs[m]["shape"] for m in members}) == 1
         (confirmed if agree else suspicious)[h] = members
 
-    splits_of = lambda members: sorted({m.split("/")[0] for m in members})
+    # Leakage is crossing a partition boundary, and that includes the Set level
+    # (TaskR1/TestSet vs TaskR1/ValidationSet), not just the task.
+    splits_of = lambda members: sorted({"/".join(m.split("/")[:2]) for m in members})
 
     print("\n=== RESULT ===", flush=True)
     print(f"subjects scanned : {len(recs)}", flush=True)
