@@ -28,7 +28,10 @@
 > challenge LAX views are *not* in the documented `3ch, 2ch, 4ch` order, which matters because
 > both slice-pitch measurements read LAX (§6a).
 >
-> **Fix: `np.roll(vol, +1, axis=z)` on every odd-Z subject.** ⚠️ **NOT YET APPLIED** — see §7.
+> **Fix APPLIED 2026-07-27** (§7): `np.roll(vol, +1, axis=2)` on the **464 detected** subjects,
+> 6032 SAX NIfTIs / 21.8 GB rewritten in place, affine untouched; re-detection afterwards reports
+> **0 rolled at both parities**. Reversible (`--revert`); full 849-row audit in each dataset's
+> `_provenance/slice_roll_fix.json` and `result/slice_roll_check/slice_roll_audit_applied.csv`.
 >
 > Detector: `tools/probe_slice_roll.py`. Figures: `result/slice_roll_check/`.
 
@@ -202,7 +205,7 @@ LAX view stacks are rolled by −1 — is measured and stands on its own. The **
 inference from an exact signature match plus the verified odd-axis prediction; the specific line
 of their code, and which of the two `fftshift` variants it was, is not recoverable from the data.
 
-## 7. Impact and the fix — ⚠️ NOT YET APPLIED
+## 7. Impact and the fix — ✅ APPLIED 2026-07-27
 
 **Impact.** 464 of the 849 live subjects have their most basal slice stored at the apical end
 of the array — a displacement of `(Z−1) × pitch` ≈ **96–144 mm** for typical Z=9–13 at 12 mm
@@ -212,29 +215,67 @@ slices, in every phase. For the currently-trained CMRxRecon2024 cohort that is *
 (62%) of subjects**. It also means the two ends of the stack are wrong for those subjects,
 which is exactly where `anatomy_bbox` and z-coverage sampling operate.
 
-**Fix.** `np.roll(vol, +1, axis=z)` for every odd-Z subject, all three years, all 12 frames
-(plus `4d_recon.nii.gz`). Two open choices to settle before applying:
+### What was done
 
-- **Affine.** Rolling the voxels while keeping the affine translates the whole stack by one
-  pitch in z. CMRxRecon ships no patient-coordinate information at all (no slice positions —
-  see the 2023 README), and the canonical grid centres geometrically, so this is probably
-  harmless; the alternative is to shift the affine origin by −1 pitch to hold the other Z−1
-  slices at their existing world positions.
-- **Where to apply it.** Rewriting the NIfTIs on disk (like the pitch relabel and the Philips
-  `pixel_x` fix) vs rolling at load time in `MRIDataset`. On-disk is consistent with how the
-  other two geometry corrections were handled and keeps every downstream consumer correct,
-  but it invalidates the monai cache and every number measured on the current tree.
+`tools/fix_slice_roll.py --apply` — **464 subjects / 6032 files / 21.8 GB rewritten in place**
+(2023: 94, 2024: 183, 2025: 187), `np.roll(data, +1, axis=2)` on all 13 SAX NIfTIs per subject
+(`sax_frame_00..11` + `4d_recon`), atomic (tmp + `os.replace`), under 10 minutes on 16 workers.
+The other 385 subjects were never opened for writing and are byte-identical on disk.
 
-**Anything measured on the current tree is affected** — including the v2 re-reconstruction
-verification, the `scratch/eval` harness, and `evaluation/results/`.
+**Verified after:** `--verify` and a fresh independent run of `probe_slice_roll.py` both report
+**0 rolled across all three years at both parities** (2023 0/101 even + 0/95 odd; 2024 0/111 +
+0/183; 2025 0/171 + 0/188), estimators still agreeing 849/849. Proven on copies first: rolled
+subject → `equals np.roll(+1)`, pure z-permutation, affine/zooms unchanged, `3d frame00 ==
+4d[...,0]`; clean subject byte-identical; `--revert` → byte-identical to original.
+
+### The two decisions, and how they were settled
+
+- **Detect per subject, never apply the parity rule blind.** Both estimators must agree on
+  `k=1`. This is what protected `CMRx25_train_Center007_Siemens_30T_Prisma_P001` (odd Z=11 but
+  genuinely correctly ordered — wrap is the minimum at 0.12, all other pairs 0.59–0.74;
+  **visually confirmed fine by the user**) and `CMRx23_Train_P073`.
+- **Affine left untouched.** Every subject's origin is `(0,0,0)` — CMRxRecon ships no slice
+  position or orientation, and the recon writes the SimpleITK default. Rolling the voxels
+  translates the stack by one pitch in a frame with no absolute meaning, and
+  `Orientationd`/`Spacingd`/`ResizeWithPadOrCropd` never read the origin.
+- **On disk, not at load time.** 66 scripts outside `training/` read this data directly; a
+  load-time roll in `MRIDataset` would leave `baselines/`, `evaluation/`, `inference/` and every
+  tool silently on the buggy volumes.
+
+### Audit trail
+
+- `<dataset>/_provenance/slice_roll_fix.json` per year — the rolled-subject list (`--revert`
+  reads it), plus `odd_z_NOT_rolled`, `even_z_rolled_UNEXPECTED` (empty) and a per-subject row
+  for **all 849**.
+- `result/slice_roll_check/slice_roll_audit_applied.{json,csv}` — the same audit as one flat
+  table: year, subject, Z, parity, action, both k estimates, `corr(last,first)`,
+  `corr(last-1,last)`, margin.
+- **Revert:** `python tools/fix_slice_roll.py --revert --apply`.
+
+⚠️ **The monai cache must be cleared on any node that has a warm one** —
+`PersistentDataset` keys on input *paths*, not contents, so it would silently serve pre-fix
+volumes: `rm -rf /tmp/vggt-mri_$USER_monai_cache/`. (None existed on the node used here.)
+
+⚠️ **Anything measured on the pre-fix tree is now a different series** — the v2
+re-reconstruction verification JSONs, the `scratch/eval` harness, and `evaluation/results/`.
 
 ## 8. Loose ends
 
 - **One genuine exception**: `CMRx25_train_Center007_Siemens_30T_Prisma_P001` (Z=11, odd, not
   rolled, margin 0.47). Unexplained. Detect per subject rather than applying the parity rule
   blind — the tool does exactly that.
-- **`P073`** (2023 challenge *and* CMRxRecon-300) has no coherent slice ordering in either
-  release. Separate issue, not diagnosed here.
+- 🔴 **`CMRx23_Train_P073` — EXCLUDE from the cohort (decided 2026-07-27).** Diagnosed: the
+  thorax is at a **different in-plane rotation in every one of its 13 slices**, so it is not a
+  stack of parallel SAX planes and has no coherent through-plane geometry. Adjacent-slice
+  correlations are mostly negative (`+0.74, -0.19, ... , +0.76`); no roll is definable (both
+  estimators return `k=11`), so `fix_slice_roll.py` skipped rather than guessed; it is **not**
+  interleaved (de-interleaving either way still leaves the min at −0.19); and the same defect is
+  in `CMRxRecon-300 TrainingSet/P073` (`k=10`), so it is in the source data.
+  **ARCHIVED 2026-07-27** (nothing deleted): `Cine_combined/CMRx23_Train_P073` →
+  `_archive/CMRx23_Train_P073_slice_rotation_excluded/`, so no split or dataloader can pick it
+  up. 2023 `Cine_combined/` now holds **195**, live 3-year cohort **848**. The 849-subject counts
+  throughout this doc are the measurement as run and were deliberately not rewritten.
+  Figure `result/slice_roll_check/P073_all_slices.png`.
 - The 2023 README's "TRAP" section should be updated: the roll is not a harmless packaging
   difference, and the challenge release — the one we reconstructed from — is the wrong side
   of it.
