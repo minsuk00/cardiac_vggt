@@ -27,8 +27,8 @@
 set -euo pipefail
 
 REPO=/home/minsukc/vggt
-TREAT_DIR="$REPO/scratch/logs/216539845_mri_volume_diffusion_ftgather05_1frame_dynamic_axial_Cine_combined"
-CTRL_DIR="$REPO/scratch/logs/216539845_mri_volume_diffusion_ftctrl_gather0_1frame_dynamic_axial_Cine_combined"
+TREAT_DIR="$REPO/scratch/logs/216539845_mri_volume_diffusion_ftgather05_1frame_dynamic_axial_pooled1343"
+CTRL_DIR="$REPO/scratch/logs/216539845_mri_volume_diffusion_ftctrl_gather0_1frame_dynamic_axial_pooled1343"
 
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate svr

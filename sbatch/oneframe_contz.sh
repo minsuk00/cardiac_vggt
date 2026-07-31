@@ -30,7 +30,7 @@ NGPU=1
 MASTER_PORT=29544
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
-RESUME_FROM="/home/minsukc/vggt/scratch/logs/216000753_mri_volume_diffusion_oneframe_gather05_contz_dynamic_axial_Cine_combined"
+RESUME_FROM="/home/minsukc/vggt/scratch/logs/216000753_mri_volume_diffusion_oneframe_gather05_contz_dynamic_axial_pooled1343"
 CKPT_ONLY="/home/minsukc/vggt/scratch/checkpoints/4wok_weights_only.pt"
 
 # Per-variant ablation overrides. Defined here (not inside the CKPT_ONLY branch) so the
@@ -109,7 +109,7 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_oneframe_gather05_contz_dynamic_axial_Cine_combined"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_oneframe_gather05_contz_dynamic_axial_pooled1343"
         EXTRA_OVERRIDES="${ABLATION_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "ONEFRAME contz (continuous_z=true): exp_name=${EXP_NAME}"
@@ -117,7 +117,7 @@ else
         # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
         # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_Cine_combined"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_pooled1343"
         EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
         echo "Fresh-from-base diffusion run: exp_name=${EXP_NAME}, max_epochs=200"
