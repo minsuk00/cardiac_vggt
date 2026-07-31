@@ -575,9 +575,6 @@ class Trainer(TrainerVizMixin):
         self._per_phase_val_psnr_full = defaultdict(list)
         self._per_phase_val_psnr_bbox = defaultdict(list)
         self._per_phase_val_psnr_motion = defaultdict(list)
-        # Refiner per-phase accumulators (only populated when the refiner ran; additive).
-        self._per_phase_val_psnr_bbox_refined = defaultdict(list)
-        self._per_phase_val_psnr_motion_refined = defaultdict(list)
         # Per-epoch val iter, read by _log_visuals_to_wandb so subject-specific visuals fire every
         # epoch (not just the first one — self.steps["val"] is monotonic and resumes carry it).
         self._val_iter = 0
@@ -736,13 +733,6 @@ class Trainer(TrainerVizMixin):
              self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
             ("val/psnr/motion", self._per_phase_val_psnr_motion,
              self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
-            # Refiner panels — additive; empty (skipped) unless the refiner ran. Same
-            # identity baselines as their V_canon counterparts so val/psnr/bbox vs
-            # val/psnr/bbox_refined are directly comparable.
-            ("val/psnr/bbox_refined", self._per_phase_val_psnr_bbox_refined,
-             self._identity_baseline_bbox_per_phase, self._identity_baseline_bbox_mean),
-            ("val/psnr/motion_refined", self._per_phase_val_psnr_motion_refined,
-             self._identity_baseline_motion_per_phase, self._identity_baseline_motion_mean),
         ]:
             if len(accum) == 0:
                 continue
@@ -819,16 +809,6 @@ class Trainer(TrainerVizMixin):
         loss_meters = {name: AverageMeter(name, self.device, ":.4f") for name in loss_names}
 
         for config in self.gradient_clipper.configs:
-            # Skip ONLY the refiner clip group when it has no params (enable_refiner=false),
-            # so an OFF run's console/meters stay byte-identical to before the refiner existed.
-            # NB: don't skip other empty groups — the aggregator group is also always-empty in
-            # mri runs (fully frozen) yet its `Grad/aggregator: 0.0000` meter was historically
-            # created + displayed; preserve that.
-            if "refiner" in config["module_names"]:
-                has_refiner = any(p.requires_grad and "refiner" in n
-                                  for n, p in self.model.named_parameters())
-                if not has_refiner:
-                    continue
             param_names = ",".join(config["module_names"])
             loss_meters[f"Grad/{param_names}"] = AverageMeter(f"Grad/{param_names}", self.device, ":.4f")
 
@@ -1105,34 +1085,8 @@ class Trainer(TrainerVizMixin):
                             mse_motion = (Vc_m - Vg_m).pow(2).mean().clamp(min=1e-10)
                             psnr_motion = (10.0 * torch.log10(1.0 / mse_motion)).item()
                             self._per_phase_val_psnr_motion[t].append(psnr_motion)
-                    # Refiner per-phase PSNR — additive, only when the refiner ran.
-                    if "V_refined" in data:
-                        Vr = data["V_refined"][b].float()
-                        if bboxes is not None:
-                            z0, z1, y0, y1, x0, x1 = [int(v) for v in bboxes[b].tolist()]
-                            if (z1 > z0) and (y1 > y0) and (x1 > x0):
-                                Vr_bb, Vg_bb = Vr[z0:z1, y0:y1, x0:x1], Vg[z0:z1, y0:y1, x0:x1]
-                            else:
-                                Vr_bb, Vg_bb = Vr, Vg
-                            mse_rb = (Vr_bb - Vg_bb).pow(2).mean().clamp(min=1e-10)
-                            self._per_phase_val_psnr_bbox_refined[t].append((10.0 * torch.log10(1.0 / mse_rb)).item())
-                        if motion_masks is not None and bool(motion_masks[b].any()):
-                            mm = motion_masks[b]
-                            mse_rm = (Vr[mm] - Vg[mm]).pow(2).mean().clamp(min=1e-10)
-                            self._per_phase_val_psnr_motion_refined[t].append((10.0 * torch.log10(1.0 / mse_rm)).item())
             except Exception as e:
                 logging.warning(f"per-phase PSNR accumulation failed (ignored): {e}")
-
-        # Refiner train scalars — additive, logged directly (NOT via the meter allowlist, so
-        # an OFF run's console/meters are byte-identical to today). Only fires when the refiner
-        # ran (keys present). Val is covered by the per-phase val_psnr_*_refined panels above.
-        if phase == "train" and step % self.logging_conf.log_freq == 0:
-            for key in ("loss_refiner", "loss_refiner_ssim", "metric_ssim_2d_refined",
-                        "metric_psnr_3d_full_refined",
-                        "metric_psnr_3d_bbox_refined", "metric_psnr_3d_motion_refined"):
-                if key in data:
-                    val = data[key].item() if torch.is_tensor(data[key]) else data[key]
-                    self._log_scalar(self._scalar_name("train", key), val, step)
 
         # Log Frame and Slice selection for the first few slots (if available).
         # NOTE: with the decoupled-target design, slot 0 is NO LONGER the t_target slice —

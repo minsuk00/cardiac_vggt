@@ -1,15 +1,16 @@
-"""MRIDataset — VGGT-MRI dataset, canonical-grid edition.
+"""MRIDataset — VGGT-MRI dataset, native-z canonical-grid edition (docs/58).
 
 Each subject's 12 cine phases live on disk as `sax_frame_{tt:02d}.nii.gz`. A
 monai `PersistentDataset` preprocess pipeline (see `training/data/preprocess.py`)
-resamples every native NIfTI to a fixed (1.4, 1.4, 12.0) mm spacing and crops
-/zero-pads to (256, 256, 12) voxels, geometric-center-aligned. The cached
-output is a single `(T=12, 1, X=256, Y=256, Z=12)` float16 tensor per subject,
-plus a `(1, X, Y, Z)` content mask that tracks which voxels came from native
-data vs zero-pad. Cache lives in `/tmp` (node-local NVMe, fast).
+resamples every native NIfTI's IN-PLANE spacing to a fixed 1.4 mm and crops
+/zero-pads X/Y to 256×256 — but does NOT resample z: each subject keeps its own
+native z spacing/plane count (`dz_mm`, `D`). The cached output is a single
+`(T=12, 1, X=256, Y=256, Z=D)` float16 tensor per subject, plus a `(1, X, Y, Z)`
+content mask and `dz_mm` (that subject's own z spacing). Cache lives in `/tmp`
+(node-local NVMe, fast).
 
 At training time `get_data` just looks up the cached bundle, permutes to splat
-order `(T, D=12, H=256, W=256)`, samples (t_target, S=(t,z)-slots) per the
+order `(T, D, H=256, W=256)`, samples (t_target, S=(t,z)-slots) per the
 multi-phase contract, and produces:
 
     images          (S, 518, 518, 3)  float32, [0, 255]   — bilinear-upsampled
@@ -17,19 +18,25 @@ multi-phase contract, and produces:
                                                             letterbox, no padding
     scanner_coords  (S, 518, 518, 3)  float32, [-1, +1]   — purely geometric:
                                                             (px, py, z_i) →
-                                                            (x_norm, y_norm, z_norm)
-                                                            same formula for every
-                                                            subject
-    z_indices       (S, 1)   z_i / (D-1) * 2 - 1, D=12
+                                                            (x_norm, y_norm, z_norm);
+                                                            x/y use the same formula
+                                                            for every subject, z is
+                                                            PHYSICAL (z_mm/Z_HALF_MM)
+                                                            so it's also comparable
+                                                            across subjects despite D
+                                                            varying (docs/58)
+    z_indices       (S, 1)   (z_i - (D-1)/2) * dz / Z_HALF_MM
     t_indices       (S, 1)   t_i / T * 2 - 1, T=12  (cyclic — wraps at +1)
     gt_target_volume (D, H, W) = phases_splat[t_target]
     anatomy_bbox    (6,) int64  — (z0, z1, y0, y1, x0, x1) from content_mask
-    content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad
+    content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad (x/y only now)
     phases          (T, D, H, W) float16 — full canonical bundle, needed by
                                           the Phase 4 GPU aug to augment all 12
                                           phases consistently then re-extract
                                           slices + V_gt + bbox.
     t_target        (1,) int64
+    dz_mm           (1,) float32 — this subject's own native z spacing
+    z_scale         (1,) float32 — Z_HALF_MM / dz_mm; required by splat.py
 
 Drops (vs the legacy implementation):
     - scipy.ndimage.map_coordinates / cv2.resize / np.pad of inputs
@@ -56,6 +63,7 @@ from data.preprocess import (
     NUM_PHASES,
     TARGET_SHAPE,
     TARGET_SPACING,
+    Z_HALF_MM,
     build_data_dicts,
     cache_signature,
     compute_geometric_bbox,
@@ -72,9 +80,11 @@ except ImportError:  # pragma: no cover — monai is a hard dep after this refac
 # ──────────────────────────────────────────────────────────────────────────────
 # Canonical-grid constants (single source of truth; mirror preprocess.py)
 # ──────────────────────────────────────────────────────────────────────────────
-# Splat-order shape (D, H, W) — used internally and by the splat. monai stores
-# in (X, Y, Z) order, which transposes to splat (D=Z, H=Y, W=X).
-GRID_SHAPE_SPLAT = (TARGET_SHAPE[2], TARGET_SHAPE[1], TARGET_SHAPE[0])  # (12, 256, 256)
+# In-plane shape (H, W) — FIXED for every subject (native-z only stops resampling Z;
+# X/Y are still resampled to this same 256×256 grid for everyone). There is no
+# fixed D anymore: each subject's canonical grid is (D, 256, 256) with D = that
+# subject's own native slice count (docs/58).
+CANONICAL_HW = (TARGET_SHAPE[1], TARGET_SHAPE[0])  # (256, 256)
 INPUT_IMG_SIZE = 518  # DINOv2 patch_embed expects 518×518 (37 × 14)
 
 
@@ -90,7 +100,6 @@ class MRIDataset(Dataset):
         target_size=INPUT_IMG_SIZE,
         mri_mode="axial",
         dvf_dirname="dvf_elastix",     # legacy — accepted but unused
-        gt_grid_shape=GRID_SHAPE_SPLAT,  # legacy override; must match preprocess.py
         t_target_fixed=None,
         t_target_phases=None,
         reference_slot=False,
@@ -108,7 +117,6 @@ class MRIDataset(Dataset):
                        Defaults to /tmp/vggt-mri_<USER>_monai_cache.
         Legacy args kept but no longer load anything:
             dvf_dirname: DVF supervision was removed; this is ignored.
-            gt_grid_shape: must equal `GRID_SHAPE_SPLAT` (canonical grid is fixed).
         """
         super().__init__()
         self.data_root = os.path.abspath(data_root)
@@ -145,15 +153,6 @@ class MRIDataset(Dataset):
         if self.t_target_phases is not None and len(self.t_target_phases) == 0:
             raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
 
-        if tuple(gt_grid_shape) != GRID_SHAPE_SPLAT:
-            raise ValueError(
-                f"gt_grid_shape must match canonical {GRID_SHAPE_SPLAT}; got {tuple(gt_grid_shape)}. "
-                "The canonical grid is fixed by training/data/preprocess.py."
-            )
-        # Stored for trainer diagnostics (identity baseline, cardiac filmstrip) that
-        # read mri_ds.gt_grid_shape. Always equals the canonical GRID_SHAPE_SPLAT.
-        self.gt_grid_shape = tuple(gt_grid_shape)
-
         # Legacy ignored arg — surface a warning so people don't think it does something.
         if dvf_dirname not in (None, "dvf_elastix"):
             logging.info(
@@ -164,7 +163,7 @@ class MRIDataset(Dataset):
         # ── Subject discovery (same split-file format as before) ──────────
         self.subjects = self._find_subjects()
         logging.info(f"MRIDataset [{split}]: {len(self.subjects)} subjects from {self.split_file}")
-        self.len_train = 1000
+        self.len_train = max(1000, len(self.subjects))
 
         # ── EF val sweep (opt-in, val-only): reconstruct each subject at its GT ED and ES ──
         # instead of the coupled seq_index%T phase. Builds an explicit (subj_idx, t_target) list
@@ -288,18 +287,20 @@ class MRIDataset(Dataset):
 
         # ── Cache lookup → splat-order tensors ────────────────────────────
         cached = self.cache[subj_idx]
-        # ConcatItemsd(dim=0) stacks 12 × (1, X, Y, Z) → (T=12, X=256, Y=256, Z=12)
-        # (the per-phase channel dim is absorbed into T). content_mask keeps its
-        # channel dim: (1, X=256, Y=256, Z=12).
+        # ConcatItemsd(dim=0) stacks 12 × (1, X, Y, Z) → (T=12, X=256, Y=256, Z=D)
+        # (the per-phase channel dim is absorbed into T; D = this subject's own native
+        # slice count under native-z). content_mask keeps its channel dim: (1, 256, 256, D).
         phases = cached["phases"]                # (T, X, Y, Z)  [or (T, 1, X, Y, Z) if shape ever changes]
         content_mask = cached["content_mask"]    # (1, X, Y, Z)
+        dz = float(cached["dz_mm"])               # this subject's own native z spacing (mm)
+        z_scale = Z_HALF_MM / dz
         if phases.ndim == 5:                     # defensive: tolerate a channel dim
             phases = phases.squeeze(1)
         # Axis-order conversion site (ONLY here). monai (X,Y,Z) → splat (D=Z,H=Y,W=X).
-        phases_splat = phases.permute(0, 3, 2, 1).contiguous()              # (T, D=12, H=256, W=256)
+        phases_splat = phases.permute(0, 3, 2, 1).contiguous()              # (T, D, H=256, W=256)
         mask_splat = content_mask.squeeze(0).permute(2, 1, 0).contiguous()  # (D, H, W)
         T_total, D, H_can, W_can = phases_splat.shape
-        assert (D, H_can, W_can) == GRID_SHAPE_SPLAT, (D, H_can, W_can)
+        assert (H_can, W_can) == CANONICAL_HW, (H_can, W_can)  # D varies per subject; H/W don't
 
         # ── Geometric anatomy bbox (computed BEFORE z sampling) ───────────
         # Used to restrict z sampling to canonical planes that carry real data
@@ -469,7 +470,15 @@ class MRIDataset(Dataset):
             images_list.append(img)
 
             # scanner_coords: per-pixel canonical (x_norm, y_norm, z_norm) for this z.
-            z_val = (z_i / max(1, D - 1)) * 2.0 - 1.0
+            # z_norm is PHYSICAL (z_mm / Z_HALF_MM), NOT a fraction of D — D varies per
+            # subject under native-z, but Z_HALF_MM is the same ruler for everyone (docs/58).
+            # z is measured from THIS subject's own mid-plane ((D-1)/2), at its own native
+            # spacing dz.
+            z_val = (z_i - (D - 1) / 2.0) * dz / Z_HALF_MM
+            assert abs(z_val) <= 1.0 + 1e-4, (
+                f"z_norm {z_val:.4f} exceeds Z_HALF_MM={Z_HALF_MM} half-span "
+                f"(dz={dz}, D={D}, z_i={z_i}) — raise Z_HALF_MM, do not crop the stack."
+            )
             sc = np.stack([x_norm, y_norm, np.full_like(x_norm, z_val)], axis=-1).astype(np.float32)
             scanner_coords_list.append(sc)
 
@@ -508,8 +517,20 @@ class MRIDataset(Dataset):
         heart_roi_np = None
         if os.path.exists(heart_roi_path):
             roi_xyz = np.asarray(nib.load(heart_roi_path).dataobj)          # (X, Y, Z)
-            heart_roi_np = np.ascontiguousarray(
+            roi_candidate = np.ascontiguousarray(
                 np.transpose(roi_xyz, (2, 1, 0)) > 0).astype(np.uint8)      # (D, H, W)
+            # heart_roi_canonical.nii.gz files predate native-z and may still be on the
+            # OLD fixed (256, 256, 12) grid — warn-and-skip rather than assert, so the ROI
+            # regeneration (workstream: extend assemble_whs.py to all 5 sources) can lag
+            # behind this code change without crashing every batch in the meantime.
+            if roi_candidate.shape == (D, H_can, W_can):
+                heart_roi_np = roi_candidate
+            else:
+                logging.warning(
+                    f"MRIDataset: heart_roi_canonical shape {roi_candidate.shape} != "
+                    f"expected ({D}, {H_can}, {W_can}) for {sub_dir} — likely a stale "
+                    f"pre-native-z ROI; skipping (heart_roi_canonical metric omitted this sample)."
+                )
 
         rel_path = os.path.relpath(sub_dir, self.data_root)
         seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
@@ -534,6 +555,11 @@ class MRIDataset(Dataset):
             "content_mask": content_mask_np,
             **({"heart_roi_canonical": heart_roi_np} if heart_roi_np is not None else {}),
             "phases": phases_full,
+            # This subject's own native z spacing (mm) and the derived voxel-index scale
+            # (z_scale = Z_HALF_MM / dz) — required by splat.py's push/pull, loss.py's direct
+            # splat/sample_volume call sites, and the respiratory mm->voxel conversion (docs/58).
+            "dz_mm": np.array([dz], dtype=np.float32),
+            "z_scale": np.array([z_scale], dtype=np.float32),
             # Stable per-sample id → deterministic val respiratory seeding (mirrors
             # the val `random.Random(seq_index)` z/t determinism). See gpu_aug.py.
             "seq_index": np.array([seq_index], dtype=np.int64),

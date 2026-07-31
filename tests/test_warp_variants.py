@@ -37,15 +37,16 @@ def _loss_inputs(B=2, S=4, H=32, W=32, D=12, Hv=256, Wv=256):
     pos = torch.rand(B, S, H, W, 3) * 2 - 1
     images = torch.rand(B, S, 3, H, W) * 255
     V_gt = torch.rand(B, D, Hv, Wv) * 0.5
-    batch = {"images": images, "gt_target_volume": V_gt, "scanner_coords": pos.clone()}
+    z_scale = torch.full((B,), (D - 1) / 2.0)
+    batch = {"images": images, "gt_target_volume": V_gt, "scanner_coords": pos.clone(), "z_scale": z_scale}
     return pos, batch, (D, Hv, Wv)
 
 
 def test_diffusion_weight_zero_is_noop():
     """diffusion_weight=0 ⇒ loss_diffusion is exactly 0 and the other terms are untouched."""
     pos, batch, grid = _loss_inputs()
-    base = compute_volume_intensity_loss({"world_points": pos}, batch, grid_shape=grid, tv_weight=0.1)
-    withd = compute_volume_intensity_loss({"world_points": pos}, batch, grid_shape=grid,
+    base = compute_volume_intensity_loss({"world_points": pos}, batch, tv_weight=0.1)
+    withd = compute_volume_intensity_loss({"world_points": pos}, batch,
                                           tv_weight=0.1, diffusion_weight=0.0)
     assert withd["loss_diffusion"].item() == 0.0
     assert torch.allclose(base["loss_volume"], withd["loss_volume"])
@@ -54,7 +55,7 @@ def test_diffusion_weight_zero_is_noop():
 
 def test_diffusion_weight_positive_adds_positive_term():
     pos, batch, grid = _loss_inputs()
-    out = compute_volume_intensity_loss({"world_points": pos}, batch, grid_shape=grid,
+    out = compute_volume_intensity_loss({"world_points": pos}, batch,
                                         tv_weight=0.0, diffusion_weight=10.0)
     assert out["loss_diffusion"].item() > 0.0
 
@@ -65,7 +66,7 @@ def test_diffusion_uses_dvfs_not_world_points_when_present():
     pos, batch, grid = _loss_inputs()
     smooth = torch.zeros_like(pos)                       # smooth dvf ⇒ ~0 diffusion
     preds = {"world_points": pos, "dvfs": smooth}
-    out = compute_volume_intensity_loss(preds, batch, grid_shape=grid, tv_weight=0.0, diffusion_weight=10.0)
+    out = compute_volume_intensity_loss(preds, batch, tv_weight=0.0, diffusion_weight=10.0)
     assert out["loss_diffusion"].item() == pytest.approx(0.0, abs=1e-6)  # used dvfs (smooth), not pos
 
 

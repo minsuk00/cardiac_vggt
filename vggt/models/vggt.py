@@ -11,14 +11,11 @@ from huggingface_hub import PyTorchModelHubMixin  # used for model hub
 from vggt.heads.dpt_head import DPTHead
 from vggt.heads.bspline_head import BSplineWarpHead
 from vggt.models.aggregator import Aggregator
-from vggt.models.refiner import VolumeRefiner
-from vggt.utils.splat import splat_predictions
 
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
         self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True, use_z_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
-        enable_refiner=False, grid_shape=(12, 256, 256), refiner_base_channels=16, refiner_levels=2, refiner_use_coverage=False,
         warp_head_type="dpt", bspline_grid_size=32, **kwargs
     ):
         super().__init__()
@@ -37,18 +34,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         else:
             raise ValueError(f"Unknown warp_head_type: {warp_head_type!r} (expected 'dpt' or 'bspline')")
 
-        # Optional 3D UNet refiner on the splatted volume (default OFF → pipeline unchanged).
-        # Runs INSIDE forward (so its params are used in the DDP-wrapped forward); the loss
-        # then consumes predictions["V_canon"/"V_refined"]. See vggt/models/refiner.py.
-        self.enable_refiner = enable_refiner
-        self.grid_shape = tuple(grid_shape)
-        self.refiner_use_coverage = refiner_use_coverage
-        self.refiner = VolumeRefiner(
-            in_channels=2 if refiner_use_coverage else 1,
-            base_channels=refiner_base_channels, levels=refiner_levels,
-            use_coverage=refiner_use_coverage,
-        ) if enable_refiner else None
-
     def forward(self, images: torch.Tensor, query_points: torch.Tensor = None, batch: dict = None):
         """
         Forward pass of the VGGT model.
@@ -59,7 +44,7 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             query_points (torch.Tensor, optional): Unused. Retained for signature compatibility with
                 callers from the original VGGT (tracking was removed). Default: None
             batch (dict, optional): Batch dictionary with the extra inputs the point head needs —
-                z_indices, scanner_coords, and (for the refiner) images.
+                z_indices, scanner_coords.
 
         Returns:
             dict: A dictionary containing the following predictions:
@@ -68,8 +53,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
                 - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W].
                 - dvfs (torch.Tensor): The predicted normalized T→0 DVF [B, S, H, W, 3]. Only when
                   train_on_residual_dvf is set.
-                - V_canon, coverage, V_refined (torch.Tensor): Splatted canonical volume, its coverage,
-                  and the refined volume. Only when the optional refiner is enabled (default off).
                 - images (torch.Tensor): Original input images, preserved for visualization. Only when
                   not self.training (i.e. inference).
         """
@@ -104,17 +87,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
                 predictions["world_points"] = world_points
                 predictions["world_points_conf"] = head_conf
-
-                # Optional refiner: splat HERE (so refiner params are used inside the
-                # DDP-wrapped forward) and refine. Loss consumes these keys. OFF ⇒ skipped
-                # ⇒ no V_canon/V_refined keys ⇒ loss splats as before (bitwise identical).
-                if self.refiner is not None:
-                    assert batch is not None and "images" in batch, "refiner requires batch['images']"
-                    V_canon, coverage = splat_predictions(predictions, batch, self.grid_shape)
-                    V_refined = self.refiner(V_canon, coverage if self.refiner_use_coverage else None)
-                    predictions["V_canon"] = V_canon
-                    predictions["coverage"] = coverage
-                    predictions["V_refined"] = V_refined
 
         if not self.training:
             predictions["images"] = images  # store the images for visualization during inference

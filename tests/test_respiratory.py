@@ -11,6 +11,7 @@ import torch
 
 from data.gpu_aug import extract_slices_from_phases
 from data.respiratory import (
+    SPACING_MM,
     RespiratoryConfig,
     extract_slices_with_respiratory,
     extract_slices_with_respiratory_vec,
@@ -46,7 +47,7 @@ def test_zero_displacement_matches_baseline_extractor():
     t_seq = torch.tensor([[0, 1, 0]], dtype=torch.int64)
     z_seq = torch.tensor([[2, 5, 7]], dtype=torch.int64)
     zero = torch.zeros(B, S)
-    a = extract_slices_with_respiratory(phases, t_seq, z_seq, zero, zero)
+    a = extract_slices_with_respiratory(phases, t_seq, z_seq, zero, zero, SPACING_MM)
     b = extract_slices_from_phases(phases, t_seq, z_seq)
     assert a.shape == b.shape == (B, S, 518, 518, 3)
     assert torch.allclose(a, b, atol=1e-3)
@@ -88,12 +89,12 @@ def test_batch_equals_loop():
     z_seq = torch.randint(0, D, (B, S))
     d_si = torch.rand(B, S) * 16 - 8
     d_ap = torch.rand(B, S) * 4 - 2
-    batched = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap)
+    batched = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap, SPACING_MM)
     for b in range(B):
         for s in range(S):
             one = extract_slices_with_respiratory(
                 phases[b:b + 1], t_seq[b:b + 1, s:s + 1], z_seq[b:b + 1, s:s + 1],
-                d_si[b:b + 1, s:s + 1], d_ap[b:b + 1, s:s + 1],
+                d_si[b:b + 1, s:s + 1], d_ap[b:b + 1, s:s + 1], SPACING_MM,
             )
             assert torch.allclose(batched[b, s], one[0, 0], atol=1e-4)
 
@@ -144,7 +145,7 @@ def test_fp16_phases_ok():
     z_seq = torch.tensor([[3, 4]], dtype=torch.int64)
     d_si = torch.tensor([[4.0, -4.0]])
     d_ap = torch.tensor([[1.0, -1.0]])
-    out = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap)
+    out = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap, SPACING_MM)
     assert torch.isfinite(out).all()
     assert float(out.min()) >= 0.0 and float(out.max()) <= 255.0
 
@@ -168,9 +169,9 @@ def test_zero_tilt_vec_matches_scalar_extractor():
     z_seq = torch.randint(0, D, (B, S))
     d_si = torch.rand(B, S) * 12 - 6
     d_ap = torch.rand(B, S) * 4 - 2
-    scalar = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap, ap_axis="H")
+    scalar = extract_slices_with_respiratory(phases, t_seq, z_seq, d_si, d_ap, SPACING_MM, ap_axis="H")
     disp = torch.stack([d_si, d_ap, torch.zeros_like(d_si)], dim=-1)
-    vec = extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp)
+    vec = extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp, SPACING_MM)
     assert torch.allclose(scalar, vec, atol=1e-4)
 
 

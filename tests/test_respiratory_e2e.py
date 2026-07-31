@@ -14,7 +14,7 @@ import pytest
 import torch
 
 from data.gpu_aug import extract_slices_from_phases, gpu_augment_batch
-from data.respiratory import RespiratoryConfig, extract_slices_with_respiratory_vec
+from data.respiratory import SPACING_MM, RespiratoryConfig, extract_slices_with_respiratory_vec
 
 DEVICE = "cpu"
 
@@ -31,6 +31,7 @@ def _batch_from_sample(s):
         "gt_target_volume": torch.from_numpy(s["gt_target_volume"].astype(np.float32)).unsqueeze(0),
         "content_mask": torch.from_numpy(s["content_mask"].astype(np.uint8)).unsqueeze(0),
         "scanner_coords": torch.from_numpy(np.stack(s["scanner_coords"]).astype(np.float32)).unsqueeze(0),
+        "dz_mm": torch.from_numpy(np.asarray(s["dz_mm"]).astype(np.float32)).unsqueeze(0),
     }
 
 
@@ -111,7 +112,7 @@ def test_resp_extraction_perf_is_reasonable():
 
     # Warmup.
     extract_slices_from_phases(phases, t_seq, z_seq)
-    extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp)
+    extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp, SPACING_MM)
 
     t0 = time.perf_counter()
     for _ in range(3):
@@ -120,7 +121,7 @@ def test_resp_extraction_perf_is_reasonable():
 
     t0 = time.perf_counter()
     for _ in range(3):
-        extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp)
+        extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp, SPACING_MM)
     t_resp = time.perf_counter() - t0
 
     # The respiratory path adds one grid_sample over D; should stay within a small

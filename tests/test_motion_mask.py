@@ -40,13 +40,14 @@ def _toy_batch(B=1, S=3, H=8, W=8, D=2, T=4, seed=0):
         "gt_target_volume": gt,
         "phases": phases,
         "scanner_coords": world_points,
+        "z_scale": torch.full((B,), (D - 1) / 2.0),
     }
     return batch, world_points, (D, H, W)
 
 
 def test_loss_emits_motion_metric_matching_manual():
     batch, wp, grid = _toy_batch()
-    out = compute_volume_intensity_loss({"world_points": wp}, batch, grid_shape=grid, tv_weight=0.0)
+    out = compute_volume_intensity_loss({"world_points": wp}, batch, tv_weight=0.0)
     assert "metric_psnr_3d_motion" in out
     assert "metric_motion_frac" in out
     assert torch.isfinite(out["metric_psnr_3d_motion"])
@@ -66,7 +67,7 @@ def test_loss_emits_motion_metric_matching_manual():
 def test_loss_skips_motion_metric_without_phases():
     batch, wp, grid = _toy_batch()
     del batch["phases"]
-    out = compute_volume_intensity_loss({"world_points": wp}, batch, grid_shape=grid, tv_weight=0.0)
+    out = compute_volume_intensity_loss({"world_points": wp}, batch, tv_weight=0.0)
     assert "metric_psnr_3d_motion" not in out
     # Full/bbox path unaffected.
     assert "metric_psnr_3d_full" in out
