@@ -122,7 +122,8 @@ optim:
 loss:
   volume:
     weight: 1.0
-    grid_shape: ${gt_grid_shape}  # (D, H, W); shared with MRIDataset.gt_grid_shape
+    # grid_shape is no longer a config param — compute_volume_intensity_loss derives it
+    # from batch["gt_target_volume"].shape[1:] (D varies per subject, native-z, docs/58).
     tv_weight: 0.1
     # L2 diffusion (Tikhonov) smoothness ‖∇u‖² on the DVF (VoxelMorph-style). 0.0 ⇒ no-op.
     # DVF is in normalized [-1,1] coords ⇒ gradients are tiny, so a nonzero weight is O(10–1000).
@@ -132,12 +133,11 @@ loss:
     # flattens. Same [0,1] intensity scale as the primary L1 ⇒ weight is a direct ratio; start
     # ~0.1–0.2, sweep toward ~0.5 (docs/38). 0.0 ⇒ no-op (bit-identical). Whole volume, no mask.
     gather_weight: 0.0
-    refiner_lambda: 1.0  # λ on the L1 part of L_post (only used when enable_refiner=true)
-    refiner_ssim_weight: 0.0  # w on the 2D-SSIM part of L_post: λ·L1 + w·(1−SSIM_2d). 0 ⇒ L1-only
 
 # ── GPU augmentation (batchaug) ─────────────────────────────────────────────
-# Off by default. Flip `enable: true` to opt in. Augmentation is applied to the
-# (B, T=12, D=12, H=256, W=256) canonical phases tensor in the trainer between
+# ON by default (2026-07-31). Set `enable: false` to opt out. Augmentation is applied to the
+# (B, T=12, D, H=256, W=256) canonical phases tensor in the trainer between
+# (`D` = this subject's own native slice count under native-z, NOT a fixed 12)
 # `copy_data_to_device` and forward — one affine per subject, shared across
 # all 12 T-phases so cardiac motion stays consistent. After aug:
 #   - `gt_target_volume` is re-derived as `phases_aug[b, t_target[b]]`
@@ -145,11 +145,17 @@ loss:
 #   - `anatomy_bbox` is recomputed from the augmented content mask
 # Val never augments regardless of this flag.
 #
-# `tier`:
-#   "conservative" — H-flip, ±5° in-plane rotate, small translate/scale,
-#                    light noise, gamma, mild bias field. No through-plane
-#                    rotation (Z is 8 mm anisotropic), no elastic.
-#   "moderate"     — reserved; not implemented yet.
+# `tier` — all three ARE implemented (`training/data/gpu_aug.py`). All are IN-PLANE ONLY:
+# no through-plane rotation and no elastic, because z is coarse and anisotropic relative
+# to the 1.4 mm in-plane grid (native-z: each subject keeps its own 5-12 mm pitch, docs/58).
+# Every tier applies a W-axis flip at p=0.5 (re-enabled 2026-07-31, docs/58 §10c) and has
+# Gaussian noise commented out (models i.i.d. noise; real degradation is structured).
+#   "conservative" — flip p=.5; affine p=.5 (rotate ±45° in-plane, translate ±6 px,
+#                    scale ±5%); gamma p=.4 (0.8-1.3); bias field p=.4 (±0.10).
+#   "moderate"     — flip p=.5; affine p=.6 (rotate ±180° FULL-CIRCLE, translate ±16 px,
+#                    scale ±5%); gamma p=.6 (0.7-1.5); bias field p=.5 (±0.5).
+#   "aggressive"   — flip p=.5; affine p=.9 (rotate ±180°, translate ±20 px, scale ±8%);
+#                    gamma p=.75 (0.6-1.7); bias field p=.7 (±0.6).
 #
 # `respiratory`: INDEPENDENT breathing-motion sim (separate toggle from affine).
 # A per-input-slice deform-then-reslice SI+AP shift (Lujan waveform), applied
@@ -163,7 +169,13 @@ loss:
 # PHASE varies per z-plane. 0 tilt → pure SI+AP.
 data:
   augmentation:
-    enable: false               # affine/photometric aug OFF (aggressive aug hurts in-dist; docs/05)
+    enable: true                # ON by default as of 2026-07-31 (user decision). Includes the
+                                # re-enabled W-axis flip (docs/58 §10c): the training objective is
+                                # exactly mirror-equivariant, and 29% of the pooled CMRx cohort is
+                                # mirrored on disk, so chirality-robustness is wanted, not avoided.
+                                # (docs/05's "aggressive aug hurts in-dist" was measured on the
+                                # AGGRESSIVE tier at 294 subjects; the default here is conservative
+                                # and the pooled cohort is 1343.)
     tier: "conservative"
     respiratory:
       enable: true              # breathing sim ON for all reference runs (the proven "resp, z-only" recipe; docs/05). Inherited by mri_volume_diffusion/bspline.

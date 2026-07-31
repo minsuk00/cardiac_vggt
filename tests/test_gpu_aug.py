@@ -21,20 +21,29 @@ DEVICE = "cpu"
 
 
 def _fake_batch(B=2, T=12, D=12, H=256, W=256, S=8):
+    """Synthetic batch. `D` is parametrizable because under native-z (docs/58) every
+    subject keeps its own slice count (5-21 across the pooled cohort) — the aug path must
+    be D-agnostic. The z-extent of the content mask/bbox is derived from `D`, and
+    `slice_indices` are wrapped into range, so the default D=12 reproduces the pre-native-z
+    values exactly (mask z 1:11, bbox z (1,11), slice_indices 0..S-1)."""
+    z0, z1 = 1, D - 1
     phases = torch.rand(B, T, D, H, W, dtype=torch.float16)
     content_mask = torch.zeros(B, D, H, W, dtype=torch.uint8)
-    content_mask[:, 1:11, 30:230, 5:251] = 1
+    content_mask[:, z0:z1, 30:230, 5:251] = 1
     return {
         "phases": phases,
         "content_mask": content_mask,
         "gt_target_volume": torch.rand(B, D, H, W),
-        "anatomy_bbox": torch.tensor([[1, 11, 30, 230, 5, 251]] * B, dtype=torch.int64),
+        "anatomy_bbox": torch.tensor([[z0, z1, 30, 230, 5, 251]] * B, dtype=torch.int64),
         "t_target": torch.tensor([[0], [5]][:B], dtype=torch.int64),
         "timesteps": torch.tensor([list(range(S))] * B, dtype=torch.int64),
-        "slice_indices": torch.tensor([list(range(S))] * B, dtype=torch.int64),
+        "slice_indices": torch.tensor([[i % D for i in range(S)]] * B, dtype=torch.int64),
         "images": torch.rand(B, S, 3, 518, 518),
         "scanner_coords": torch.rand(B, S, 518, 518, 3),
         "seq_index": torch.tensor([[7], [9]][:B], dtype=torch.int64),
+        # dz_mm = 12.0 matches SPACING_MM's D-axis default exactly, so respiratory
+        # numerics here are unchanged from before native-z (D=12 in this synthetic batch).
+        "dz_mm": torch.tensor([[12.0]] * B, dtype=torch.float32),
     }
 
 
@@ -53,11 +62,14 @@ def test_build_returns_compose_when_enabled():
     assert t is not None
 
 def test_build_moderate_tier_builds():
-    """Moderate tier: in-plane only, ±180° rotation. Flip + Gaussian noise are DISABLED
-    (chirality / wrong-artifact), so 3 active transforms: affine, contrast, bias-field."""
+    """Moderate tier: in-plane only, ±180° rotation. Gaussian noise is DISABLED
+    (wrong artifact model); flip is ENABLED as of 2026-07-31 (docs/58 §10c — the training
+    objective is exactly mirror-equivariant and 29% of pooled CMRx is mirrored on disk anyway),
+    so 4 active transforms: flip, affine, contrast, bias-field."""
     t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "moderate"}))
     assert t is not None
-    assert len(t.transforms) == 3
+    assert len(t.transforms) == 4
+    assert type(t.transforms[0]).__name__ == "RandFlipd"
 
 def test_build_unknown_tier_raises():
     with pytest.raises(ValueError):
@@ -88,6 +100,26 @@ def test_aug_preserves_shapes_and_ranges():
     assert out["content_mask"].shape == (B, 12, 256, 256)
     # Images re-extracted and normalized to [0, 1].
     assert float(out["images"].min()) >= 0.0 and float(out["images"].max()) <= 1.0
+
+@pytest.mark.parametrize("D", [5, 7, 12, 21])
+@pytest.mark.parametrize("tier", ["conservative", "moderate", "aggressive"])
+def test_aug_is_native_z_agnostic(D, tier):
+    """Under native-z every subject has its own D (5-21 across the pooled cohort, docs/58),
+    and augmentation is ON by default as of 2026-07-31 — so the aug path must carry D
+    through unchanged for every tier, not just the legacy D=12 cube."""
+    batch = _fake_batch(D=D)
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": tier}))
+    out = gpu_augment_batch(batch, t, DEVICE)
+    B, S = 2, 8
+    assert out["phases"].shape == (B, 12, D, 256, 256)
+    assert out["gt_target_volume"].shape == (B, D, 256, 256)
+    assert out["content_mask"].shape == (B, D, 256, 256)
+    assert out["images"].shape == (B, S, 3, 518, 518)
+    # Recomputed bbox must stay inside this subject's own depth, not a hardcoded 12.
+    for b in range(B):
+        z0, z1 = out["anatomy_bbox"][b][:2].tolist()
+        assert 0 <= z0 < z1 <= D, f"bbox z ({z0},{z1}) outside D={D}"
+
 
 def test_aug_recomputes_bbox_validly():
     batch = _fake_batch()

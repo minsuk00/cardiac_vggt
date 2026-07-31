@@ -58,9 +58,6 @@ from data.respiratory import (
 
 # Local constants (kept in sync with preprocess.py / mri_dataset.py).
 INPUT_IMG_SIZE = 518   # DINOv2 input — must match MRIDataset.target_size
-CANON_HW = 256         # canonical slice height/width
-CANON_D = 12           # canonical depth
-NUM_PHASES = 12        # cardiac phases per subject
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -98,7 +95,7 @@ def build_gpu_transforms(aug_cfg=None):
         # Conservative tier — IN-DISTRIBUTION-PRIORITY (mild). Broadens the natural orientation
         # spread (rotate ±45°) WITHOUT chasing OOD tails, gentle photometric, modest fire-probs.
         # NO through-plane rotation (slices are physically anisotropic 12 mm Z vs 1.4 mm X/Y),
-        # NO elastic. Flip + Gaussian noise are commented out for ALL tiers (rationale inline below).
+        # NO elastic. Gaussian noise is commented out for ALL tiers (rationale inline below).
         # batchaug is POSITIONAL, not semantic: each tuple slot i maps to tensor
         # spatial dim i+2 (our dims are D=0, H=1, W=2 after the channel). BUT
         # `rotate_range` is special — its slots are PLANES of rotation, not axes:
@@ -109,11 +106,19 @@ def build_gpu_transforms(aug_cfg=None):
         # (translate_range / scale_range ARE per-axis (D, H, W): slot 0 = D, so
         #  freezing slot 0 there correctly disables through-plane shift/scale.)
         transforms = [
-            # RandFlipd DISABLED (all tiers): a W-axis mirror creates situs-inversus chirality
-            # (RV on the wrong side), degrading the LPS-trained RV-location prior; and once
-            # rotation covers the full circle (moderate/aggressive) flip adds only anatomically
-            # impossible mirror hearts. See CLAUDE.md LPS note.
-            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd RE-ENABLED (all tiers, 2026-07-31; user decision, docs/58 §10c). The old
+            # rationale ("mirror hearts are anatomically impossible, so flip only degrades the
+            # LPS-trained RV-location prior") was overstated on two counts: (1) the training
+            # objective is EXACTLY mirror-equivariant — inputs, `gt_target_volume` and
+            # `scanner_coords` all derive from the same array, so a consistent W-mirror is a
+            # measured no-op (splat residual 1.25e-06); RV location is observable in every input
+            # slice, not prior knowledge. (2) 29% of the pooled CMRx cohort is mirrored on disk
+            # anyway (docs/58 §10c), so the cohort already contains both handednesses.
+            # Known cost, unmeasured: the head outputs a VECTOR field, so mirror-invariance needs
+            # a coupled spatial flip AND a Δx sign negation — a harder symmetry than nnU-Net's
+            # label-map mirroring, spent from a fixed capacity/step budget. Flip is otherwise the
+            # cleanest aug available (exact voxel permutation: no interpolation, no zero-padding).
+            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
                 prob=0.5,
@@ -136,12 +141,12 @@ def build_gpu_transforms(aug_cfg=None):
         # IN-PLANE ONLY. Headline = FULL-CIRCLE (±180°) rotation to cover the measured MIITT
         # orientation gap (MIITT clusters ~180° off CMRx's mode), at moderate prob (0.6) so
         # natural orientation is still anchored (~40% of samples). Gamma = the key contrast
-        # lever; bias-field models coil shading; scale kept small (near-isotropic); flip +
+        # lever; bias-field models coil shading; scale kept small (near-isotropic); flip ON,
         # Gaussian noise OFF (see conservative note). Plane semantics as in conservative:
         # rotate slot 0 = in-plane (H-W); translate/scale slots (D,H,W) with D frozen.
         transforms = [
-            # RandFlipd DISABLED — see conservative note (chirality / redundant with full rotation).
-            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd RE-ENABLED — see conservative note (docs/58 §10c).
+            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
                 prob=0.6,
@@ -161,11 +166,11 @@ def build_gpu_transforms(aug_cfg=None):
     if tier == "aggressive":
         # Aggressive tier — MAX OOD coverage. IN-PLANE ONLY. Full-circle rotation like moderate
         # but at higher prob + wider gamma/bias-field and larger translate; scale still capped
-        # (±8%) to bound ellipse distortion; flip + Gaussian noise OFF. Same plane semantics
+        # (±8%) to bound ellipse distortion; flip ON, Gaussian noise OFF. Same plane semantics
         # (rotate slot 0 = in-plane H-W; translate/scale (D,H,W) with D frozen).
         transforms = [
-            # RandFlipd DISABLED — see conservative note (chirality / redundant with full rotation).
-            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd RE-ENABLED — see conservative note (docs/58 §10c).
+            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
                 prob=0.9,
@@ -347,15 +352,19 @@ def gpu_augment_batch(batch, transforms, device,
                 "respiratory val augmentation requires batch['seq_index'] for determinism"
             )
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
+        D = phases_cur.shape[2]                    # this subject's own native slice count (native-z)
+        dz = float(batch["dz_mm"].reshape(-1)[0])   # this subject's own native z spacing (mm)
         # z-plane per slot — the burst-grouping key for group_by_burst (one breath per plane).
         # Ignored unless respiratory_cfg.group_by_burst is set (default → per-slot iid, unchanged).
         group_ids = batch["slice_indices"].round().long().to(device)
         disp, resp_r = sample_resp_disp(
             Bsize, S, respiratory_cfg, device,
             train=train, seq_index=seq_index, generator=resp_generator, group_ids=group_ids,
+            n_planes=D,
         )                                                       # (B,S,3) mm, (B,S) phase
         images = extract_slices_with_respiratory_vec(
             phases_cur, batch["timesteps"], batch["slice_indices"], disp,
+            spacing=(dz, 1.4, 1.4),
         )                                                       # (B, S, 518, 518, 3) [0,255]
         batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
         # Surface per-slot displacement (canonical D,H,W mm) + respiratory phase r for
