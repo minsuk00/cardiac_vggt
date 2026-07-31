@@ -187,3 +187,6 @@ _agent/
 
 # Validation data (1.4G) — lives in-tree but must NOT be committed (like scratch/, /data)
 /ChallengeData_validation
+_paper/
+
+GEMINI.md
