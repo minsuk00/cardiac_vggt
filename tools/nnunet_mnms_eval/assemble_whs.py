@@ -31,9 +31,25 @@ def is_gated(regime):
 
 
 def unit_id(dataset, regime, path):
+    """-> (unit, subj, out_dir).
+
+    `unit`    globally-unique work-unit id: names the per-unit manifest row and joins
+              whs_manifest.csv.
+    `subj`    lands in cardiac_phase.csv's `subject` column. It MUST equal the subject's
+              DIRECTORY name, because MRIDataset._build_val_targets looks up
+              basename(dirname(sax_dir)) against that column — a mismatch there is the
+              `ef_val_sweep` KeyError (the pre-rename `Test_P001` vs `CMRx24_Test_P001` bug).
+    `out_dir` where heart_seg / heart_roi siblings are written.
+    """
     if dataset == "cmrx":
         subj = os.path.basename(os.path.dirname(path))
         return f"cmrx_{subj}", subj, path                              # out dir = the sax dir
+    if dataset in ("acdc_sax", "mnms_sax"):
+        # Converted to the CMRx layout (docs/58); path = the subject's `sax/` dir. Directory
+        # names are already source-prefixed and globally unique (ACDC_patient001, MNMs_A0S9V9),
+        # so unit == subj — no second prefix needed.
+        subj = os.path.basename(os.path.dirname(path))
+        return subj, subj, path
     out = os.path.dirname(path)
     if dataset == "acdc":
         subj = os.path.basename(out)                                   # patientNNN dir
@@ -61,43 +77,54 @@ def _load_preprocess():
     return mod
 
 
-def _canon_tfm():
-    from monai.transforms import (Compose, LoadImaged, EnsureChannelFirstd,
-                                  Orientationd, Spacingd, ResizeWithPadOrCropd)
+def _canon_spatial_tfm():
+    """Orientation + Spacing(native-z, docs/58) + pad/crop to 256x256, D untouched. Operates on
+    in-memory MetaTensors (no LoadImaged) so it can run on an already-assembled seg4d array just as
+    well as on individual per-frame files."""
+    from monai.transforms import Compose, Orientationd, Spacingd, ResizeWithPadOrCropd
     pp = _load_preprocess()
-    TARGET_SPACING, TARGET_SHAPE = pp.TARGET_SPACING, pp.TARGET_SHAPE
-    k = ["seg"]
     return Compose([
-        LoadImaged(keys=k, image_only=True),
-        EnsureChannelFirstd(keys=k),
-        Orientationd(keys=k, axcodes="LPS"),
-        Spacingd(keys=k, pixdim=TARGET_SPACING, mode="nearest"),
-        ResizeWithPadOrCropd(keys=k, spatial_size=TARGET_SHAPE, mode="constant", value=0),
-    ]), TARGET_SPACING
-
-
-def _canon_fov(seg_file):
-    """Canonical native-FOV mask (256,256,12) bool: 1 = a voxel that came from real acquired data,
-    0 = zero-padding introduced by fitting the subject into the fixed canonical cube. Built by pushing
-    a ONES volume (the native acquired extent) through the SAME spatial transforms as the seg, so
-    ResizeWithPadOrCrop's constant-0 pad marks the padded region. Used to clamp the canonical ROI's
-    +-1 z dilation so it can't spill onto no-data planes (clamp_heart_roi_to_fov.py retro-fixed the
-    already-written ROIs; this keeps future rebuilds correct)."""
-    import torch
-    from monai.transforms import (Compose, LoadImaged, EnsureChannelFirstd, Lambdad,
-                                  Orientationd, Spacingd, ResizeWithPadOrCropd)
-    pp = _load_preprocess()
-    TARGET_SPACING, TARGET_SHAPE = pp.TARGET_SPACING, pp.TARGET_SHAPE
-    k = ["fov"]
-    tfm = Compose([
-        LoadImaged(keys=k, image_only=True),
-        EnsureChannelFirstd(keys=k),
-        Lambdad(keys=k, func=torch.ones_like),               # native FOV = ones over the acquired extent
-        Orientationd(keys=k, axcodes="LPS"),
-        Spacingd(keys=k, pixdim=TARGET_SPACING, mode="nearest"),
-        ResizeWithPadOrCropd(keys=k, spatial_size=TARGET_SHAPE, mode="constant", value=0),
+        Orientationd(keys=["seg"], axcodes="LPS"),
+        Spacingd(keys=["seg"], pixdim=pp.TARGET_SPACING, mode="nearest"),
+        ResizeWithPadOrCropd(keys=["seg"], spatial_size=pp.TARGET_SHAPE, mode="constant", value=0),
     ])
-    return np.asarray(tfm({"fov": seg_file})["fov"])[0] > 0.5
+
+
+def _to_metatensor(arr3d, affine):
+    import torch
+    from monai.data import MetaTensor
+    return MetaTensor(torch.as_tensor(arr3d[None].astype(np.float32)),
+                       affine=torch.as_tensor(np.asarray(affine, dtype=np.float64)))
+
+
+def build_canonical_siblings(seg4d, affine, in_mm=6.0):
+    """seg4d: native-space (X,Y,Z,T) 3-class seg; affine: its native affine (nnU-Net preserves the
+    prep_one.py input's affine, which for cmrx/acdc_sax/mnms_sax is the SAME file+affine
+    training/data/preprocess.py resamples -- so this reproduces the exact D that MRIDataset uses).
+
+    Resamples in-plane to the canonical 1.4mm/256x256 grid; z is left at native spacing (docs/58
+    native-z) -> (256,256,D,T) with D = this subject's own slice count. Returns (cseg uint8 (X,Y,Z,T),
+    croi uint8 (X,Y,Z), cspacing (sx,sy,dz)).
+    """
+    tfm = _canon_spatial_tfm()
+    T = seg4d.shape[-1]
+    frames, dz = [], None
+    for t in range(T):
+        out = tfm({"seg": _to_metatensor(seg4d[..., t], affine)})["seg"]
+        frames.append(np.asarray(out)[0].astype(np.uint8))
+        if dz is None:
+            # Spacingd's pixdim=(1.4,1.4,0.0) keeps native z spacing (0 = "don't resample this
+            # axis") -- read the REAL per-subject dz back off the transformed affine. Using the
+            # literal TARGET_SPACING tuple here instead (as the old code did) puts a 0.0 into the
+            # z spot of a saved affine -> degenerate matrix -> nibabel HeaderDataError.
+            dz = float(abs(np.asarray(out.affine)[2, 2]))
+    cseg = np.stack(frames, axis=-1)                                   # (256, 256, D, T)
+    cspacing = (1.4, 1.4, dz)
+    cunion = (cseg > 0).any(axis=-1).astype(np.uint8)
+    fov_out = tfm({"seg": _to_metatensor(np.ones_like(seg4d[..., 0], dtype=np.float32), affine)})["seg"]
+    cfov = np.asarray(fov_out)[0] > 0.5
+    croi = build_roi(cunion, cspacing, in_mm=in_mm, z_extend=1, fov_mask=cfov)
+    return cseg, croi, cspacing
 
 
 def main():
@@ -141,16 +168,13 @@ def main():
     nib.save(nib.Nifti1Image(roi.astype(np.uint8), affine), os.path.join(out_dir, "heart_roi.nii.gz"))
     roi_vox = int(roi.sum())
 
-    # --- CMRx canonical siblings ---
-    if args.dataset == "cmrx":
-        tfm, cspacing = _canon_tfm()
-        cseg = np.stack([np.asarray(tfm({"seg": f})["seg"])[0].astype(np.uint8) for f in seg_files],
-                        axis=-1)                                        # (256,256,12,T)
+    # --- canonical siblings (docs/58 A6) ---
+    # Only for the sources MRIDataset actually trains on (cmrx, acdc_sax, mnms_sax); raw acdc/miitt/
+    # ocmr/goettingen units have no canonical-grid counterpart in the training pool.
+    if args.dataset in ("cmrx", "acdc_sax", "mnms_sax"):
+        cseg, croi, cspacing = build_canonical_siblings(seg4d, affine, in_mm=args.in_mm)
         caffine = np.diag([*cspacing, 1.0])
         nib.save(nib.Nifti1Image(cseg, caffine), os.path.join(out_dir, "heart_seg_canonical.nii.gz"))
-        cunion = (cseg > 0).any(axis=-1).astype(np.uint8)
-        cfov = _canon_fov(seg_files[0])                       # native FOV on the canonical grid
-        croi = build_roi(cunion, cspacing, in_mm=args.in_mm, z_extend=1, fov_mask=cfov)  # clamp z-spill
         nib.save(nib.Nifti1Image(croi.astype(np.uint8), caffine),
                  os.path.join(out_dir, "heart_roi_canonical.nii.gz"))
 
