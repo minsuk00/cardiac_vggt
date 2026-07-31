@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training"))
 from data.gpu_aug import extract_slices_from_phases  # noqa: E402
 from data.preprocess import build_data_dicts, get_canonical_transforms  # noqa: E402
 from data.respiratory import (  # noqa: E402
+    SPACING_MM,
     RespiratoryConfig,
     extract_slices_with_respiratory,
     extract_slices_with_respiratory_vec,
@@ -200,7 +201,7 @@ def render_input_view(path, phases, center):
     t_seq = torch.full((1, S), T_FIXED, dtype=torch.int64)
     z_seq = torch.full((1, S), cz, dtype=torch.int64)
     imgs = extract_slices_with_respiratory(
-        phases.unsqueeze(0), t_seq, z_seq, d_si, d_ap, ap_axis=CFG.ap_axis,
+        phases.unsqueeze(0), t_seq, z_seq, d_si, d_ap, SPACING_MM, ap_axis=CFG.ap_axis,
     )[0, :, :, :, 0].numpy()                       # (S, 518, 518) in [0,255]
     ref = imgs[0]
     vlim = 0.6 * 255.0
@@ -234,7 +235,7 @@ def render_training_input(path, phases, mask, seed=7):
     ref = extract_slices_from_phases(phases.unsqueeze(0), t_seq, z_seq)[0, ..., 0].numpy()
     disp, _ = sample_resp_disp(1, S, CFG, "cpu", train=False, seq_index=torch.tensor([[seed]]))
     brt = extract_slices_with_respiratory_vec(
-        phases.unsqueeze(0), t_seq, z_seq, disp)[0, ..., 0].numpy()
+        phases.unsqueeze(0), t_seq, z_seq, disp, SPACING_MM)[0, ..., 0].numpy()
     dd = disp[0].numpy()                                  # (S, 3) canonical mm (D,H,W)
 
     vlim = 0.6 * 255.0
