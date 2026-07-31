@@ -21,7 +21,7 @@ Notes for follow-up work. None of these are in the current pipeline.
 
 - **Fully unsupervised — drop `gt_target_volume`.** Current loss still uses the per-phase NIfTI (itself a derived recon). True self-supervision: sample `V_canon` at input world coords, compare against the input slice intensities. Risk: degenerate `V_canon≈0` — needs a coverage/completeness or stronger smoothness term.
 
-- **UNet refiner on splat.** Small 3D UNet after the splat to inpaint low-coverage voxels + smooth seam artifacts. Drop-in; doubles as an ablation for splat-artifact vs. motion-prediction error.
+- **UNet refiner on splat.** Small 3D UNet after the splat to inpaint low-coverage voxels + smooth seam artifacts. Drop-in; doubles as an ablation for splat-artifact vs. motion-prediction error. **A first version was built** (`vggt/models/refiner.py`, `enable_refiner` config flag) but **deleted 2026-07-31** — never enabled in any config, no checkpoint ever trained it, and the native-z refactor (docs/58) made its `grid_shape` sourcing hard-require ground truth, which would have broken GT-free OOD inference had it ever been turned on. If revisiting: don't derive `grid_shape` from `batch["gt_target_volume"]` alone — accept an explicit override so inference (no GT) still works, falling back to GT-derivation only in training.
 
 - **UNet ablation — replace the splat.** Regress `V_canon` directly from features (no splat/coverage division). Loses splat interpretability for more capacity; run head-to-head to test whether explicit splatting helps.
 
