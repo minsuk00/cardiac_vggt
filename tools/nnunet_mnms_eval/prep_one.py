@@ -27,7 +27,11 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
-    if args.dataset == "cmrx":
+    # `acdc_sax` / `mnms_sax` are ACDC and M&Ms-1 converted into the CMRx on-disk layout by
+    # tools/convert_to_sax_layout.py (docs/58): 12 ED-anchored 3D frames under <ID>/sax/3d_recon/.
+    # Identical path convention => identical code path. The legacy `acdc` branch below still reads
+    # the raw 4D download and is kept for the native-T seg used as an independent QC reference.
+    if args.dataset in ("cmrx", "acdc_sax", "mnms_sax"):
         n = 0
         for tt in range(12):
             f = os.path.join(args.path, "3d_recon", f"sax_frame_{tt:02d}.nii.gz")

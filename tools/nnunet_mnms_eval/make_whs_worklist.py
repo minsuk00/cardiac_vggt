@@ -18,21 +18,36 @@ OUT = os.path.join(DATA, "whs/worklist.txt")
 def main():
     lines = []
 
-    # --- CMRx: all 301 subjects from the split file ---
-    split = os.path.join(ROOT, "training/splits/random_8_1_1.txt")
-    subs = []
-    with open(split) as f:
-        for line in f:
-            s = line.strip()
-            if not s or s.startswith("[") or s.startswith("#"):
-                continue
-            subs.append(s)
-    for s in subs:
-        saxdir = os.path.join(DATA, "CMRxRecon2024/Cine_combined", s, "sax")
-        if os.path.isdir(os.path.join(saxdir, "3d_recon")):
-            lines.append(f"cmrx gated {saxdir}")   # CMRx cine is ECG-gated (regime label unified to 'gated')
-        else:
-            print("WARN missing CMRx sax:", saxdir)
+    # --- The pooled training cohort: CMRx 2023/24/25 + converted ACDC + converted M&Ms-1 ---
+    # Enumerated by GLOBBING the directories, NOT from a split file. Two reasons: the seg should
+    # cover everything on disk regardless of how train/val/test is later partitioned, and the old
+    # code read `training/splits/random_8_1_1.txt`, which is deprecated, is CMRxRecon2024-only, and
+    # lists PRE-RENAME names (`Train_P140` vs the on-disk `CMRx24_Train_P140`) — the latter is what
+    # made cardiac_phase.csv un-joinable and `ef_val_sweep` raise KeyError.
+    #
+    # All five sources share the CMRx layout `<ID>/sax/3d_recon/sax_frame_{tt}.nii.gz` (ACDC and
+    # M&Ms via tools/convert_to_sax_layout.py, docs/58), so all five use the same path convention:
+    # path = the subject's `sax/` DIR. `acdc_sax`/`mnms_sax` are separate dataset tokens purely so
+    # the manifest keeps a real source label for per-source metric bucketing; prep_one.py and
+    # assemble_whs.py treat them exactly like `cmrx`.
+    POOL = [
+        ("cmrx",     os.path.join(DATA, "CMRxRecon2023/Cine_combined/*/sax")),
+        ("cmrx",     os.path.join(DATA, "CMRxRecon2024/Cine_combined/*/sax")),
+        ("cmrx",     os.path.join(DATA, "CMRxRecon2025/Cine_combined/*/sax")),
+        ("acdc_sax", os.path.join(DATA, "ACDC_sax/*/sax")),
+        ("mnms_sax", os.path.join(DATA, "MNMs_sax/*/sax")),
+    ]
+    for token, pattern in POOL:
+        found = sorted(glob.glob(pattern))
+        if not found:
+            print(f"WARN no subjects matched {pattern}")
+        for saxdir in found:
+            # Require all 12 frames — a partially-written subject must not enter the worklist.
+            n = len(glob.glob(os.path.join(saxdir, "3d_recon", "sax_frame_*.nii.gz")))
+            if n == 12:
+                lines.append(f"{token} gated {saxdir}")   # every pooled source is ECG-gated cine
+            else:
+                print(f"WARN skipping {saxdir}: {n} frames, expected 12")
 
     # --- MIITT: 13 subjects x {gated, rt} ---
     mroot = os.path.join(DATA, "MIITT/nifti")
@@ -51,7 +66,13 @@ def main():
     for r in sorted(glob.glob(os.path.join(DATA, "goettingen/recon", "vol*", "vol*.nii.gz"))):
         lines.append(f"goettingen rt {r}")
 
-    # --- ACDC: ECG-gated cine (SVR recon target); one 4D cine per patient, train+test ---
+    # --- ACDC, RAW download (native full T, 4D) ---
+    # NOT part of the training pool — that is `acdc_sax` above, on the 12-frame converted stacks.
+    # This segments the untouched download at its native T (13-35) and writes siblings inside the
+    # read-only ACDC/ tree. Kept because it is a genuinely different product: the native-T LV-volume
+    # curve is what made the "cost of 12-frame sampling" measurement possible (median EF error
+    # 0.24 pts; see scratch/data/ACDC/README.md), and it is the independent QC reference for the
+    # converted stacks. All 150 already exist, so these units SKIP on re-run.
     for split in ("training", "testing"):
         for p in sorted(glob.glob(os.path.join(DATA, "ACDC", split, "patient*"))):
             r = os.path.join(p, os.path.basename(p) + "_4d.nii.gz")

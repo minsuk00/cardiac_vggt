@@ -249,6 +249,153 @@ Masks land as `heart_seg.nii.gz` / `heart_roi.nii.gz` siblings next to each reco
 `_canonical`). Everything derived (manifest, cardiac CSV, plots) is a **regenerable cache** — the segs
 are the source of truth.
 
+## 11a. Update 2026-07-30 — rerun for the pooled multi-dataset cohort
+
+Everything below §11 describes the **first** run (421 units, CMRxRecon2024 only + eval datasets).
+The cohort has since grown to 1343 training subjects (docs/58), which required four changes and a
+full regeneration. **All prior products were archived, not deleted**, to
+`scratch/data/whs/_archive/2026-07-30/` (`cardiac_phase.csv`, `whs_manifest.csv`, `worklist.txt`,
+`rows/` — 571 files). The old CSV is worth keeping: diffing CMRx EF old-vs-new is a free check that
+the regenerated pipeline agrees with itself.
+
+**Why a rerun was forced, not just an extension.** Two live defects:
+
+1. `make_whs_worklist.py` enumerated CMRx from `training/splits/random_8_1_1.txt` — deprecated,
+   CMRxRecon2024-only, and listing **pre-rename** names (`Train_P140`, on disk `CMRx24_Train_P140`).
+2. Consequently `cardiac_phase.csv` was keyed `Test_P001` while `MRIDataset._build_val_targets`
+   looks up `basename(dirname(sax_dir))` = `CMRx24_Test_P001` → **`ef_val_sweep: true` raises
+   `KeyError` today**. Independently confirmed: CMRx currently has **0** `heart_seg.nii.gz` and
+   **0** `heart_roi_canonical.nii.gz` on disk, so `metric_psnr_3d_heartseg` is silently inert too.
+
+**Changes made:**
+
+| file | change |
+|---|---|
+| `make_whs_worklist.py` | enumerate the pool by **globbing directories**, not from a split file — the seg should cover everything on disk regardless of how train/val/test is later partitioned. Covers CMRx 2023/24/25 + `ACDC_sax` + `MNMs_sax`; requires all 12 frames present so a half-written subject cannot enter. |
+| `prep_one.py` | `acdc_sax` / `mnms_sax` route through the existing **cmrx** branch (12 3D frames per subject) |
+| `assemble_whs.py:unit_id()` | branches for the new tokens returning `subj` = the **directory name** (`ACDC_patient001`, `MNMs_A0S9V9`). Without this they fell through to the legacy `acdc` branch, which assumes a 4D-file path and would have recreated defect (2) for 495 subjects. Docstring now states the invariant explicitly. |
+| `build_heart_roi.py` | **no change needed** — it keys on `regime`, so the new gated sources get the union-over-phases recipe automatically |
+| `compute_cardiac_phase.py` | new `converted_labels()`. The `group` column was populated only `if ds == "acdc"`, so the 150 **converted** ACDC subjects would have silently written a blank pathology label — losing the NOR/DCM/HCM/MINF/RV split the ACDC val carve ("3 per group", docs/58 §2.1) depends on — and M&Ms pathology/vendor were never captured at all. The converted sources have no `Info.cfg`/CSV beside them, so the labels are read from the `convert_meta.json` the converter writes. Added `vendor` + `centre` columns (vendor matters: Canon appears only in M&Ms' Validation and Testing). Note ED/ES for `acdc_sax` correctly falls through to argmax/argmin on the LV curve rather than `Info.cfg`, whose indices are in native T and would be wrong on the 12-frame grid. |
+
+**Deliberately NOT changed:** the canonical-siblings block in `assemble_whs.py` stays CMRx-only. It
+writes `(256,256,12)`, but under the native-z design (docs/58) the canonical grid becomes
+`(256,256,D)` with `D` = the subject's slice count. Extending it now would emit wrong-shaped ROIs
+that `MRIDataset` then has to skip. Do all five sources — **including regenerating the CMRx ones,
+which are also on the old grid** — in one pass after native-z lands (docs/58 A6).
+
+**Resulting worklist: 1613 units.**
+
+```
+cmrx        848  |                                    ACDC and M&Ms are the 12-frame
+acdc_sax    150  |  1343 = the training pool          ED-anchored stacks produced by
+mnms_sax    345  |                                    tools/convert_to_sax_layout.py
+acdc        150  ]  raw ACDC download at native T (13-35) — the QC reference, NOT the
+goettingen   69  ]  training path; plus the eval datasets. All 270 already have
+miitt        26  ]  heart_seg.nii.gz, so they SKIP (the job is idempotent).
+ocmr         25  ]
+```
+
+**Runtime — measured, and a lesson about how to estimate it.**
+
+| measurement | conditions | s/unit |
+|---|---|---|
+| job 55577444 (**the real number**) | 3 × L40S, spgpu2, in situ | **54** |
+| interactive smoke run | A40, another job on the node, cgroup-limited to 1 CPU | 116 |
+| job 53298619 (previous full run) | A40, batch, 140 units in 4h15m | 109 |
+
+⇒ `1343 × 54 s ≈ **20 GPU-hours** ≈ **8 h per worker** on a 3-way array`. `--time` raised 12 h → 20 h:
+all three array tasks can land on one node, and the rate may degrade on the larger M&Ms volumes.
+The job is idempotent regardless, so an overrun costs one free resubmit.
+
+⚠️ **Do not estimate this from slice counts.** I first modelled cost as ∝ 2D slices
+(~28,000 slices/worker-hour from job 53298619) and predicted ~6 GPU-hours — **7× wrong**. Per-unit
+time is near-**constant** (96–139 s) across units whose volumes differ substantially (320×320×10 vs
+216×256×10), because each unit spawns a fresh `nnUNet_predict` that loads **all 5 fold checkpoints**
+plus three micromamba env switches, against only ~126 2D slices of actual inference. Fixed overhead
+dominates. The corollary optimisation, not taken: `nnUNet_predict` accepts a *directory* of cases,
+so batching N subjects per call would amortise the 5-fold load and could cut this several-fold — it
+changes the unit/idempotency structure, so it was left alone.
+
+Also note the interactive 116 s/unit was an **upper bound**, not a representative figure — the node
+was shared and this shell had 1 CPU. Measuring in situ from the running job's manifest-row mtimes is
+what gave the trustworthy number, and it is free.
+
+### 11b. Output validation of the pooled rerun (2026-07-31, n=298 units, job ~35% through CMRx)
+
+Checked while the job ran, so the numbers cover **292 CMRx + 3 acdc_sax + 3 mnms_sax** — the new
+sources are barely represented and this says little about them yet.
+
+| check | result |
+|---|---|
+| job failures / tracebacks | **0** |
+| `seg_flag` | 297 ok / 1 low |
+| units missing LV, MYO or RV entirely | **0** |
+| LV cavity, mean over cycle | median **87 mL** (p5 57, p95 125) |
+| MYO/LV ratio · RV/LV ratio | 1.08 · 1.23 |
+| volume outliers (<15 or >400 mL) | **0** |
+| z-gaps (unlabeled plane between labeled) | 0 of 80 sampled |
+| fragmented (>1 component, largest <95%) | 0 of 80 sampled |
+
+**Dice vs the shipped ACDC expert GT at ED** — the strongest available check, because it validates
+the entire chain at once (frame 0 really being ED, the affine re-frame, and the label remap: ACDC
+`_gt` is 1=RV/2=MYO/3=LV, the *reverse* of Task114). Any of those being wrong collapses Dice rather
+than landing here:
+
+```
+ACDC_patient001   LV 0.971  MYO 0.870  RV 0.935
+ACDC_patient002   LV 0.936  MYO 0.839  RV 0.944
+ACDC_patient003   LV 0.962  MYO 0.890  RV 0.936     (Task114 reference band ~0.94 / 0.81 / 0.93)
+```
+
+**The one `low` unit is a data limitation, not a seg failure.** `CMRx24_Test_P044` has D=6 with only
+z3–z5 labeled; z0–z2 are visibly above the heart — the stack was prescribed high and catches only
+the basal half. `LOW_LABELED` did its job.
+
+Visual overlay (all z-planes, LV/MYO/RV): `result/whs_pooled_check/seg_overlay.png`. Chirality looks
+**consistent** across all three sources there (RV on the same side of the LV in 9/9 rows) — visual
+and under-powered, but the first evidence on that question; the quantitative LV→RV centroid check
+still wants the full segs.
+
+⚠️ Chasing an apparent false positive in that overlay (it was not one — the unit is a single
+connected component, the "blob" is the apical tip) surfaced a real finding instead: **slice order
+differs between sources.** See **docs/58 §10a** — measured, under-powered, nothing changed yet.
+
+### 11c. Incident — native-z broke the canonical block mid-run, silently (job 55577444, 2026-07-31)
+
+**What happened.** ~4 h into the run, `preprocess.py` was switched to the native-z values
+(`TARGET_SPACING = (1.4, 1.4, 0.0)`, docs/58 §8.1 C1) while the seg job was still going.
+`assemble_whs.py` reads that constant **live** to build the canonical affine, so
+`np.diag([1.4, 1.4, 0.0, 1])` became degenerate and nibabel raised
+`HeaderDataError: Could not decompose affine`. Every subsequent CMRx unit died.
+
+**Why it was dangerous rather than merely noisy.** The crash lands **after** `heart_seg.nii.gz` and
+`heart_roi.nii.gz` are written but **before** the manifest row. The job's skip test is
+`-f heart_seg.nii.gz`, so those units look **finished** on resubmit — they would have skipped and
+stayed out of `cardiac_phase.csv` permanently, with no error anywhere. **75 units** were affected
+before it was caught; they are listed in `scratch/data/whs/orphans_no_manifest_row.txt`.
+
+**Fix applied (live, safe — each unit spawns a fresh interpreter):** the canonical block is now
+guarded on `all(s > 0 for s in TARGET_SPACING)` and **skips loudly** with a printed reason instead
+of crashing. This is also correct on its own terms: under native-z the canonical grid is
+`(256,256,D)`, so writing `(256,256,12)` files was pointless — all of them get regenerated for every
+source in one pass (A6). Verified: failures froze at 75 and subsequent units complete with
+`canonical siblings SKIPPED`.
+
+**Still to do, AFTER this job ends** (editing a *running* bash script is hazardous — bash re-reads
+from a byte offset — so this was deliberately not done live):
+
+1. In `sbatch/whs_segment.sh`, make the skip test require **both** `heart_seg.nii.gz` **and** the
+   manifest row. A unit is not done until its row exists; that is the general fix, not a patch for
+   this one incident.
+2. Resubmit to pick up the 75. They need a full re-run — assemble cannot be replayed alone because
+   the per-frame nnU-Net output lived on node-local `$TMPDIR` and is gone.
+
+**Lessons.** (a) A long-running job that reads a mutable module constant is coupled to edits made
+during the run — `assemble_whs.py` importing `preprocess.TARGET_SPACING` at runtime was the coupling,
+and it was not obvious from either file. (b) An idempotency test that checks a **partial** output
+converts a crash into silent permanent data loss; the test must key on the **last** artifact written,
+or on all of them.
+
 ## 12. Open items
 
 - **ACDC completion:** seg job 53338428 running (150 patients); once done, add a `source` column

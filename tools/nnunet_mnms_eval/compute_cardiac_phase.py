@@ -41,6 +41,32 @@ def acdc_group(out_dir):
     return _acdc_cfg(out_dir).get("Group", "")
 
 
+def converted_labels(ds, out_dir):
+    """Cohort labels for one unit: {group, vendor, centre}.
+
+    Raw `acdc` reads Info.cfg in place. The CONVERTED sources (`acdc_sax`, `mnms_sax`,
+    tools/convert_to_sax_layout.py) have no Info.cfg / CSV next to them, so the labels come from
+    the `convert_meta.json` the converter wrote — which is exactly why it carries them.
+
+    Without this, `group` silently came out empty for all 150 converted ACDC subjects, losing the
+    NOR/DCM/HCM/MINF/RV labels the ACDC val split ("3 per pathology group", docs/58 §2.1) is built
+    from, and M&Ms pathology/vendor were never captured at all. Vendor matters for M&Ms because
+    Canon appears only in its Validation and Testing splits.
+    """
+    if ds == "acdc":
+        return {"group": acdc_group(out_dir), "vendor": "", "centre": ""}
+    if ds in ("acdc_sax", "mnms_sax"):
+        p = os.path.join(out_dir, "convert_meta.json")
+        if os.path.exists(p):
+            import json
+            m = json.load(open(p))
+            # ACDC calls it `group`, M&Ms `pathology` — normalise onto one column.
+            return {"group": m.get("group") or m.get("pathology", ""),
+                    "vendor": m.get("vendor", ""), "centre": str(m.get("centre", ""))}
+        print(f"WARN no convert_meta.json for {out_dir} — cohort labels will be blank")
+    return {"group": "", "vendor": "", "centre": ""}
+
+
 def acdc_ed_es(out_dir):
     """ACDC ground-truth ED/ES as 0-indexed frame numbers from Info.cfg (Info.cfg is 1-indexed).
     Preferred over argmax/argmin for ACDC: its cine starts AND ends at ED, so argmax is ambiguous."""
@@ -115,11 +141,12 @@ def main():
                              unimodal_ok=int(mono >= MONO_OK and edv > 0),
                              seg_flag=flag.get(uid, ""),
                              source=("acdc_task114" if ds == "acdc" else "task114_3d"),
-                             group=(acdc_group(out_dir) if ds == "acdc" else "")))
+                             **converted_labels(ds, out_dir)))
 
     rows.sort(key=lambda r: (r["dataset"], r["subject"]))
     cols = ["unit", "dataset", "regime", "subject", "T", "ED", "ES", "EDV_mL", "ESV_mL",
-            "EF_pct", "curve_mono_frac", "unimodal_ok", "seg_flag", "source", "group"]
+            "EF_pct", "curve_mono_frac", "unimodal_ok", "seg_flag", "source", "group",
+            "vendor", "centre"]
     with open(OUT, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
