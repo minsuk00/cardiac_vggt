@@ -22,6 +22,7 @@ from typing import Mapping
 import torch
 
 from data.gpu_aug import gpu_augment_batch
+from data.preprocess import NUM_PHASES, Z_HALF_MM
 from train_utils.general import safe_makedirs
 
 
@@ -42,7 +43,6 @@ class TrainerVizMixin:
             import numpy as np
             from loss import compute_volume_intensity_loss
 
-            grid_shape = tuple(mri_ds.gt_grid_shape)
             num_slices = mri_ds.num_slices
 
             # Bucket PSNR by t_target — TWO parallel namespaces (`_full` over the
@@ -79,6 +79,10 @@ class TrainerVizMixin:
                         data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
                 else:
                     continue  # no GT to compare against; skip
+                batch["z_scale"] = torch.from_numpy(
+                    np.asarray(data["z_scale"]).astype(np.float32)).unsqueeze(0).to(self.device)
+                batch["dz_mm"] = torch.from_numpy(
+                    np.asarray(data["dz_mm"]).astype(np.float32)).unsqueeze(0).to(self.device)
                 if "anatomy_bbox" in data:
                     batch["anatomy_bbox"] = torch.from_numpy(
                         np.asarray(data["anatomy_bbox"]).astype(np.int64)).unsqueeze(0).to(self.device)
@@ -99,7 +103,7 @@ class TrainerVizMixin:
                     respiratory_cfg=self.respiratory_cfg, train=False)
                 # Identity world_points = scanner_coords (Δ = 0).
                 preds = {"world_points": batch["scanner_coords"]}
-                out = compute_volume_intensity_loss(preds, batch, grid_shape=grid_shape, tv_weight=0.0)
+                out = compute_volume_intensity_loss(preds, batch, tv_weight=0.0)
                 t = int(data["t_target"].item() if data["t_target"].ndim == 0 else data["t_target"].flatten()[0].item())
                 if "metric_psnr_3d_full" in out:
                     per_phase_full[t].append(out["metric_psnr_3d_full"].item())
@@ -247,14 +251,12 @@ class TrainerVizMixin:
         if mri_ds is None:
             return
 
-        T_total = mri_ds.gt_grid_shape[0]
+        T_total = NUM_PHASES
         subj_idx = 0
-        grid_shape = tuple(mri_ds.gt_grid_shape)
         num_slices = mri_ds.num_slices
 
         canon_frames = []
         gt_frames = []
-        refined_frames = []  # populated only when the refiner ran (additive gif)
         try:
             self.model.eval()
             amp_dtype = torch.bfloat16
@@ -273,6 +275,8 @@ class TrainerVizMixin:
                 "scanner_coords": st("scanner_coords"),
                 "z_indices": st("z_indices"),
                 "t_indices": st("t_indices"),
+                "z_scale": torch.from_numpy(np.asarray(data["z_scale"]).astype(np.float32)).unsqueeze(0).to(self.device),
+                "dz_mm": torch.from_numpy(np.asarray(data["dz_mm"]).astype(np.float32)).unsqueeze(0).to(self.device),
             }
             # Full canonical phase bundle → per-phase V_gt without re-sampling inputs.
             phases_bundle = torch.from_numpy(
@@ -328,7 +332,7 @@ class TrainerVizMixin:
                     preds = model(batch["images"], batch=batch)
                     out = compute_volume_intensity_loss(
                         {"world_points": preds["world_points"].float()},
-                        batch, grid_shape=grid_shape, tv_weight=0.0,
+                        batch, tv_weight=0.0,
                     )
                 V_canon = out["V_canon"][0].float().cpu().numpy()
                 V_gt = out["V_gt"][0].float().cpu().numpy()
@@ -339,9 +343,6 @@ class TrainerVizMixin:
                 window = [min(max(mid_d + off, 0), D - 1) for off in (-2, -1, 0, 1, 2)]
                 canon_frames.append(np.concatenate([V_canon[c] for c in window], axis=0))
                 gt_frames.append(np.concatenate([V_gt[c] for c in window], axis=0))
-                if "V_refined" in preds:
-                    Vr = preds["V_refined"][0].float().cpu().numpy()
-                    refined_frames.append(np.concatenate([Vr[c] for c in window], axis=0))
         except Exception as e:
             logging.warning(f"cardiac filmstrip render failed (ignored): {e}")
             return
@@ -412,23 +413,6 @@ class TrainerVizMixin:
             )
         except Exception as e:
             logging.warning(f"cardiac cycle gif log failed (ignored): {e}")
-
-        # Refiner gif — additive, only when the refiner ran. Same 2×5 (V_gt top / V_refined bottom).
-        if len(refined_frames) == len(gt_frames) and refined_frames:
-            try:
-                rmax = float(max(max(f.max() for f in refined_frames),
-                                 max(f.max() for f in gt_frames), 1e-3))
-                frames = np.stack([_tile_2x5(gt_frames[t], refined_frames[t], rmax)
-                                   for t in range(len(gt_frames))], axis=0)
-                self.wandb_writer.log(
-                    "media_others/refiner_cardiac_cycle_gif",
-                    wandb.Video(frames, fps=4, format="gif",
-                                caption=f"step={log_step} — rows: V_gt (top) / V_refined (bottom); "
-                                        f"cols: z = mid-2 .. mid+2{mode_note}"),
-                    log_step,
-                )
-            except Exception as e:
-                logging.warning(f"refiner cardiac gif log failed (ignored): {e}")
 
     def _save_val_volumes(self, batch: Mapping, loss_dict: Mapping) -> None:
         """Dump predicted + GT volumes to ${log_dir}/val_volumes/, one pair per (subject, phase).
@@ -715,7 +699,8 @@ class TrainerVizMixin:
             # through-plane (12 vox @12mm) have very different mm/norm, so the colorbars
             # are per-axis (a single norm range would make Δz look ~4x bigger than it is).
             IN_PLANE_MM = (256 - 1) / 2.0 * 1.4      # ≈178.5 mm per norm unit (Δx, Δy)
-            THROUGH_MM = (12 - 1) / 2.0 * 12.0       # ≈66.0 mm per norm unit (Δz); 12mm true pitch
+            THROUGH_MM = Z_HALF_MM                   # z_norm = z_mm / Z_HALF_MM (docs/58) — a fixed
+                                                      # ruler, same for every subject regardless of D/dz
             IN_PLANE_R = 15.0                         # in-plane colorbar half-range (mm)
             THROUGH_R = 25.0                          # through-plane colorbar half-range (mm)
 
@@ -853,57 +838,6 @@ class TrainerVizMixin:
                 if fig is not None:
                     plt.close(fig)                                    # never leak a figure on the error path
 
-    def _log_refiner_viz_to_wandb(self, batch: dict, name: str, step: int, caption: str,
-                                  group: str = "media_others"):
-        """Log one figure `{group}/refiner_{name}_Volume` (4 rows × D cols): V_gt, V_canon (raw
-        splat), V_refined (refiner output), and the refined signed-diff (V_refined - V_gt) per z.
-        Purely additive: returns immediately unless the refiner ran (`V_refined` present), so it
-        NEVER fires — and never touches the existing panels — when the refiner is off.
-        """
-        if not self.wandb_writer or "V_refined" not in batch or "V_gt" not in batch:
-            return
-        try:
-            import wandb
-            import matplotlib.pyplot as plt
-            from matplotlib import gridspec as _gs
-        except ImportError:
-            return
-
-        V_refined = batch["V_refined"][0].detach().float().cpu().numpy()  # (D, H, W)
-        V_gt = batch["V_gt"][0].detach().float().cpu().numpy()
-        V_canon = (batch["V_canon"][0].detach().float().cpu().numpy()
-                   if "V_canon" in batch else V_refined)
-        D, _, _ = V_refined.shape
-        v_vmax = float(max(V_refined.max(), V_canon.max(), V_gt.max(), 1e-3))
-        ERR = 0.1
-        diff = V_refined - V_gt
-
-        fig = plt.figure(figsize=(1.6 * D + 1.6, 7.5), dpi=90)
-        try:
-            gs = _gs.GridSpec(4, D + 1, width_ratios=[1.0] * D + [0.05], wspace=0.04, hspace=0.18)
-            fig.suptitle(f"Refiner — {caption}", fontsize=8)
-
-            def _row(r, vol, cmap, vmin, vmax, ylabel, titles=False):
-                last_im = None
-                for d in range(D):
-                    ax = fig.add_subplot(gs[r, d])
-                    last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
-                    ax.set_xticks([]); ax.set_yticks([])
-                    if titles:
-                        ax.set_title(f"z={d}", fontsize=7)
-                    if d == 0:
-                        ax.set_ylabel(ylabel, fontsize=8)
-                plt.colorbar(last_im, cax=fig.add_subplot(gs[r, D]))
-
-            _row(0, V_gt,      "gray",   0,    v_vmax, "V_gt", titles=True)
-            _row(1, V_canon,   "gray",   0,    v_vmax, "V_canon (splat)")
-            _row(2, V_refined, "gray",   0,    v_vmax, "V_refined")
-            _row(3, diff,      "RdBu_r", -ERR, ERR,    f"V_refined-V_gt\n(±{ERR})")
-
-            self.wandb_writer.log(f"{group}/refiner_{name}_Volume", wandb.Image(fig, caption=caption), step)
-        finally:
-            plt.close(fig)
-
     def _log_lookup_to_wandb(self, batch: dict, name: str, step: int, caption: str,
                              group: str = "media_others"):
         """Round-trip / analysis-by-synthesis panel (val-only, GT-referenced).
@@ -961,6 +895,7 @@ class TrainerVizMixin:
         vmax = float(max(V_canon.max().item(), V_gt.max().item(), 1e-3))
         ERR = 0.1
         dev = V_canon.device
+        z_scale = float(batch["z_scale"].reshape(-1)[0])
 
         fig = plt.figure(figsize=(4 * 2.6, len(slots) * 2.6 + 0.6), dpi=110)
         try:
@@ -970,8 +905,8 @@ class TrainerVizMixin:
 
             for r, s in enumerate(slots):
                 pos = wp[s].reshape(1, -1, 3).to(dev)                      # (1, Hs*Ws, 3)
-                rc = sample_volume(V_canon.unsqueeze(0), pos).reshape(Hs, Ws).cpu().numpy()
-                rg = sample_volume(V_gt.unsqueeze(0), pos).reshape(Hs, Ws).cpu().numpy()
+                rc = sample_volume(V_canon.unsqueeze(0), pos, z_scale).reshape(Hs, Ws).cpu().numpy()
+                rg = sample_volume(V_gt.unsqueeze(0), pos, z_scale).reshape(Hs, Ws).cpu().numpy()
                 err = np.abs(rc - rg)
                 zt = int(z_picks[s]); tt = int(t_picks[s]) if t_picks is not None else -1
                 is_ref = (ref_slot is not None and s == ref_slot)
@@ -1095,13 +1030,6 @@ class TrainerVizMixin:
                 self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption, group=group)
             except Exception as e:
                 logging.warning(f"volume/DVF visual log failed (ignored): {e}")
-
-            # Refiner panel — additive, only when the refiner ran (key present). Logs to the same
-            # per-subject section (group/refiner_*), never touches the existing panels.
-            try:
-                self._log_refiner_viz_to_wandb(batch, name, log_step, caption, group=group)
-            except Exception as e:
-                logging.warning(f"refiner visual log failed (ignored): {e}")
 
             # Round-trip lookup panel — val-only (GT-referenced, in-distribution).
             if phase != "train":

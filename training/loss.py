@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 
 import torch
+from data.preprocess import Z_HALF_MM
 from vggt.utils.splat import sample_volume, splat_to_volume, splat_predictions
 
 
@@ -78,10 +79,6 @@ class MultitaskLoss(torch.nn.Module):
             vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]
                         + vol_loss_dict.get("loss_diffusion", 0.0)
                         + vol_loss_dict.get("loss_gather", 0.0)) * self.volume["weight"]
-            # Deep-supervised refiner term (present only when enable_refiner=true; λ already
-            # folded into loss_refiner). OFF ⇒ key absent ⇒ vol_loss unchanged (bitwise).
-            if "loss_refiner" in vol_loss_dict:
-                vol_loss = vol_loss + vol_loss_dict["loss_refiner"] * self.volume["weight"]
             total_loss = total_loss + vol_loss
             loss_dict.update(vol_loss_dict)
 
@@ -107,9 +104,8 @@ def diffusion_loss_l2(field):
         )
 
 
-def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256), tv_weight=0.1,
-                                  diffusion_weight=0.0, gather_weight=0.0,
-                                  refiner_lambda=1.0, refiner_ssim_weight=0.0, **kwargs):
+def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
+                                  diffusion_weight=0.0, gather_weight=0.0, **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -122,24 +118,22 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
 
     Args:
         predictions: dict with "world_points" (B, S, H, W, 3) — per-pixel canonical position in [-1, 1].
-        batch: dict with "images" (B, S, 3, H, W), "gt_target_volume" (B, D, H, W).
-        grid_shape: (D, H_v, W_v) canonical volume resolution; must match gt_target_volume.
+        batch: dict with "images" (B, S, 3, H, W), "gt_target_volume" (B, D, H, W), "z_scale" (B,).
+            grid_shape is DERIVED from gt_target_volume's own shape (docs/58, native-z) — D varies
+            per subject, so it can no longer be a fixed config constant.
         tv_weight: weight for the spatial smoothness regularizer on pos_pred.
     """
     if "gt_target_volume" not in batch:
         raise RuntimeError("compute_volume_intensity_loss requires batch['gt_target_volume'].")
+    if "z_scale" not in batch:
+        raise RuntimeError("compute_volume_intensity_loss requires batch['z_scale'] (docs/58).")
 
     pos_pred = predictions["world_points"]
     V_gt = batch["gt_target_volume"]
+    grid_shape = tuple(V_gt.shape[1:])
+    z_scale = float(batch["z_scale"].reshape(-1)[0])  # batch_size is always 1 in this pipeline
 
-    # Refiner path: VGGT.forward already splatted (so the refiner could run inside the
-    # DDP-wrapped forward). Reuse those exact tensors. Otherwise splat here — the SAME
-    # `splat_predictions` helper the forward uses, so V_canon is byte-identical either way.
-    if "V_canon" in predictions:
-        V_canon = predictions["V_canon"]
-        coverage = predictions["coverage"]
-    else:
-        V_canon, coverage = splat_predictions(predictions, batch, grid_shape)
+    V_canon, coverage = splat_predictions(predictions, batch, grid_shape, z_scale)
 
     if V_gt.shape != V_canon.shape:
         raise RuntimeError(f"gt_target_volume {tuple(V_gt.shape)} must match V_canon {tuple(V_canon.shape)}")
@@ -193,7 +187,7 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
             inv_scale_gi = torch.where((batch["images"] > 2.0).any(), 1.0 / 255.0, 1.0)
             gi = batch["images"].float().mean(dim=2) * inv_scale_gi   # (B, S, H, W) input intensity
             gi = gi.reshape(gi.shape[0], -1)                  # (B, S*H*W)
-            gs = sample_volume(V_gt.float(), pos_pred.float().reshape(gi.shape[0], -1, 3))  # (B, S*H*W)
+            gs = sample_volume(V_gt.float(), pos_pred.float().reshape(gi.shape[0], -1, 3), z_scale)  # (B, S*H*W)
             gmask = (gi > 1e-3).float()                       # only real acquired (non-padded) pixels
             loss_gather = ((gs - gi).abs() * gmask).sum() / gmask.sum().clamp(min=1.0) * gather_weight
     else:
@@ -208,39 +202,6 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
         "V_gt": V_gt,
         "coverage": coverage,
     }
-
-    # ── Refiner (optional): deep-supervised L_post on the refined volume ──────────
-    # Present ONLY when VGGT.forward ran the refiner (enable_refiner=true). L_pre above
-    # (loss_volume on the raw splat) keeps the point head honest; this L_post trains the
-    # refiner. λ (refiner_lambda) is folded in here; MultitaskLoss adds loss_refiner to the
-    # objective.
-    #
-    # L_post = λ·L1 + w_ssim·(1 − SSIM_2d). L1 is mean-seeking and caps high-frequency
-    # detail; the optional SSIM term (Zhao 2017, "Loss Functions for Image Restoration")
-    # rewards matching GT's local structure/contrast ⇒ pushes sharpness while still
-    # penalising hallucinated/misplaced edges (it's reference-based, two-sided). SSIM is
-    # contrast-normalised so it's blind to a uniform intensity offset — L1 covers that.
-    # 2D per-slice, NOT 3D: the cube is anisotropic (12 mm Z over 12 slices vs 1.4 mm
-    # in-plane), so SSIM runs on each axial (H,W) slice independently. w_ssim=0 ⇒ no-op
-    # (L1-only, bit-identical to the pre-SSIM refiner).
-    V_refined = predictions.get("V_refined")
-    if V_refined is not None:
-        out["V_refined"] = V_refined
-        loss_refiner = refiner_lambda * (V_refined - V_gt).abs().mean()
-        if refiner_ssim_weight > 0.0 and V_refined.is_cuda:
-            from fused_ssim import fused_ssim
-            # (B, D, H, W) → (B·D, 1, H, W): D folds into the batch dim, each in-plane
-            # (H,W)=(Y,X) slice is one single-channel SSIM image. Contiguous fp32 (fused_ssim
-            # is CUDA-only, assumes [0,1] data range — our normalised intensity is ~[0,1]).
-            # Only the first arg (prediction) carries gradient; V_gt is the reference.
-            Bv, Dv, Hv, Wv = V_refined.shape
-            pred_s = V_refined.float().reshape(Bv * Dv, 1, Hv, Wv).contiguous()
-            targ_s = V_gt.float().reshape(Bv * Dv, 1, Hv, Wv).contiguous()
-            ssim_2d = fused_ssim(pred_s, targ_s, train=True)
-            out["loss_refiner_ssim"] = refiner_ssim_weight * (1.0 - ssim_2d)
-            out["metric_ssim_2d_refined"] = ssim_2d.detach()
-            loss_refiner = loss_refiner + out["loss_refiner_ssim"]
-        out["loss_refiner"] = loss_refiner
 
     with torch.no_grad():
         # ── Full-volume metrics (over all D*H*W voxels of the canonical cube) ──
@@ -388,14 +349,14 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
             try:
                 heart = compute_motion_mask(batch["phases"])            # (B,D,H,W) bool
                 # identity splat (Δ=0, real corrupted input content) — exact forward path
-                V_id, _ = splat_predictions({"world_points": batch["scanner_coords"]}, batch, grid_shape)
+                V_id, _ = splat_predictions({"world_points": batch["scanner_coords"]}, batch, grid_shape, z_scale)
                 # oracle splat (Δ=0, TRUE target-phase content sampled at each pixel's home) —
                 # the recoverable ceiling; the model→oracle gap is the appearance wall (docs 19-21).
                 inv_scale = torch.where((batch["images"] > 2.0).any(), 1.0 / 255.0, 1.0)
                 intensity = batch["images"].float().mean(dim=2) * inv_scale
                 scan_flat = batch["scanner_coords"].reshape(B, -1, 3)
                 w = (intensity.reshape(B, -1) > 1e-3).float()
-                V_or, _ = splat_to_volume(scan_flat, sample_volume(V_gt, scan_flat), grid_shape, weight=w)
+                V_or, _ = splat_to_volume(scan_flat, sample_volume(V_gt, scan_flat, z_scale), grid_shape, z_scale, weight=w)
                 recov, mse_id_l, mse_mo_l, mse_or_l, holes, static_psnr = [], [], [], [], [], []
                 for b in range(B):
                     m = heart[b]
@@ -435,7 +396,13 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
             # offline abs-corr in exp_4wok_analysis.py — see docs/38).
             if "resp_disp_mm" in batch:
                 try:
-                    through_mm = (V_canon.shape[1] - 1) / 2.0 * 12.0    # (D-1)/2*12 = 66 mm / norm z-unit
+                    # Z_HALF_MM, NOT a per-subject (D-1)/2*dz: z_norm is now PHYSICAL
+                    # (z_mm / Z_HALF_MM, docs/58), so one normalized z-unit is always exactly
+                    # Z_HALF_MM mm for every subject by construction — unlike the old
+                    # index-based scheme where it was each subject's own half-span (which
+                    # only looked constant because D/dz never varied). Using the per-subject
+                    # half-span here would systematically understate Δz in mm.
+                    through_mm = Z_HALF_MM
                     dvf = pos_pred - batch["scanner_coords"]           # (B,S,H,W,3) normalized residual
                     img_int = batch["images"].float().mean(dim=2)      # (B,S,H,W)
                     disp = batch["resp_disp_mm"].float()               # (B,S,3) = (d_D,d_H,d_W) mm
@@ -465,40 +432,6 @@ def compute_volume_intensity_loss(predictions, batch, grid_shape=(12, 256, 256),
                         out["metric_resp_frac_deep_ignored"] = torch.stack(deep_ign).mean()
                 except Exception as e:
                     logging.warning(f"docs/38 breathing val metric failed (ignored): {e}")
-
-        # ── Refined-volume metrics (only when the refiner ran) ───────────────────
-        # Mirror full/bbox/motion PSNR on V_refined so we can see, per phase, whether
-        # the refiner beats the raw splat. Separate block (existing V_canon metrics
-        # untouched ⇒ OFF path bitwise-identical).
-        if V_refined is not None:
-            mse_rf = ((V_refined - V_gt) ** 2).mean()
-            out["metric_psnr_3d_full_refined"] = 10.0 * torch.log10(
-                torch.tensor(1.0, device=mse_rf.device) / mse_rf.clamp(min=1e-10))
-            if "anatomy_bbox" in batch:
-                bboxes = batch["anatomy_bbox"]
-                psnr_rf_bbox = []
-                for b in range(B):
-                    z0, z1, y0, y1, x0, x1 = [int(v) for v in bboxes[b].tolist()]
-                    if (z1 <= z0) or (y1 <= y0) or (x1 <= x0):
-                        Vc, Vg = V_refined[b], V_gt[b]
-                    else:
-                        Vc = V_refined[b, z0:z1, y0:y1, x0:x1]
-                        Vg = V_gt[b, z0:z1, y0:y1, x0:x1]
-                    mse_b = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
-                    psnr_rf_bbox.append(10.0 * torch.log10(1.0 / mse_b))
-                out["metric_psnr_3d_bbox_refined"] = torch.stack(psnr_rf_bbox).mean()
-            if "phases" in batch:
-                # Reuse the motion_mask already computed for the V_canon metrics above
-                # (same batch["phases"]); recomputing would be redundant.
-                psnr_rf_motion = []
-                for b in range(B):
-                    m = motion_mask[b]
-                    if not bool(m.any()):
-                        continue
-                    mse_m = ((V_refined[b][m] - V_gt[b][m]) ** 2).mean().clamp(min=1e-10)
-                    psnr_rf_motion.append(10.0 * torch.log10(1.0 / mse_m))
-                if psnr_rf_motion:
-                    out["metric_psnr_3d_motion_refined"] = torch.stack(psnr_rf_motion).mean()
 
     return out
 

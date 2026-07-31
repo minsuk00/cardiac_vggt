@@ -24,13 +24,14 @@ def test_tv_term_dtype_invariant():
     images = torch.rand(B, S, 3, H, W)
     V_gt = torch.rand(B, D, H, W)
     scanner = pos_pred.clone()
-    batch = {"images": images, "gt_target_volume": V_gt, "scanner_coords": scanner}
+    z_scale = torch.tensor([(D - 1) / 2.0])
+    batch = {"images": images, "gt_target_volume": V_gt, "scanner_coords": scanner, "z_scale": z_scale}
 
     out_fp32 = compute_volume_intensity_loss(
-        {"world_points": pos_pred}, batch, grid_shape=(D, H, W), tv_weight=0.1
+        {"world_points": pos_pred}, batch, tv_weight=0.1
     )
     out_bf16 = compute_volume_intensity_loss(
-        {"world_points": pos_pred.bfloat16()}, batch, grid_shape=(D, H, W), tv_weight=0.1
+        {"world_points": pos_pred.bfloat16()}, batch, tv_weight=0.1
     )
 
     diff = (out_fp32["loss_pos_tv"] - out_bf16["loss_pos_tv"]).abs().item()

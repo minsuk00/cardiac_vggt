@@ -119,6 +119,10 @@ class ComposedDataset(Dataset, ABC):
             sample["t_target"] = torch.from_numpy(batch["t_target"].astype(np.int64))
         if "seq_index" in batch:
             sample["seq_index"] = torch.from_numpy(batch["seq_index"].astype(np.int64))
+        if "dz_mm" in batch:
+            sample["dz_mm"] = torch.from_numpy(batch["dz_mm"].astype(np.float32))
+        if "z_scale" in batch:
+            sample["z_scale"] = torch.from_numpy(batch["z_scale"].astype(np.float32))
         if "anatomy_bbox" in batch:
             sample["anatomy_bbox"] = torch.from_numpy(batch["anatomy_bbox"].astype(np.int64))
         if "content_mask" in batch:

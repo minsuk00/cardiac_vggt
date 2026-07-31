@@ -3,10 +3,12 @@ Tests for MRIDataset — canonical-grid edition (CMRxRecon2024 / Cine_combined).
 
 All tests use a synthetic in-memory dataset (conftest.py) — no real data needed.
 
-Canonical contract (post-resample refactor):
-  - Every subject resampled to (1.4, 1.4, 12.0) mm, cropped/padded to (256, 256, 12).
+Canonical contract (native-z, docs/58):
+  - In-plane resampled to 1.4 mm, cropped/padded to 256×256. Z is NEVER resampled —
+    D = this subject's own native slice count (SYN_Z for the synthetic dataset).
   - Input slices: canonical 256×256 → bilinear-resize to 518×518 (NO letterbox/pad).
-  - scanner_coords: purely geometric, in [-1, +1], same formula for every subject.
+  - scanner_coords: x/y purely geometric in [-1, +1] (same formula for every subject);
+    z is PHYSICAL (z_mm / Z_HALF_MM), also comparable across subjects despite D varying.
   - world_points == scanner_coords (DVF supervision removed).
   - z sampled from within the geometric anatomy bbox (in-FOV planes only).
 """
@@ -17,10 +19,10 @@ import os
 import numpy as np
 import pytest
 
-from conftest import SYN_T  # 12 phases
+from conftest import SYN_T, SYN_Z  # 12 phases, 8 native z-planes
 
 TARGET_SIZE = 518
-CANON_D = 12  # canonical depth
+CANON_D = SYN_Z  # native-z: D = this (synthetic) subject's own native slice count, not a fixed 12
 
 
 # ── 1. Subject discovery via split file ──────────────────────────────────────

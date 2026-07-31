@@ -32,8 +32,6 @@ import torch
 import torch.nn.functional as F
 
 INPUT_IMG_SIZE = 518          # DINOv2 input — must match MRIDataset.target_size
-CANON_HW = 256
-CANON_D = 12
 SPACING_MM = (12.0, 1.4, 1.4)  # (D=Z, H=Y, W=X) mm — canonical cube (Z=true CMRx pitch, was thickness 8.0)
 
 
@@ -129,10 +127,16 @@ class RespiratoryConfig:
         )
 
 
-N_CANON_PLANES = 12   # canonical grid depth (D); the burst-grouping key is the z-plane index
+N_CANON_PLANES = 12   # FALLBACK canonical grid depth (D); used only when a caller doesn't pass
+                       # n_planes explicitly. Correct for the legacy fixed-12 grid; callers on the
+                       # native-z pipeline (docs/58) should pass n_planes = this subject's real D.
+                       # Kept as a default (not removed) because this function is shared with
+                       # evaluation/ callers not yet migrated to native-z — see gpu_aug.py for the
+                       # migrated call site.
 
 
-def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None):
+def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None,
+                         n_planes=None):
     """Sample per-slot SI and AP displacement (mm).
 
     Returns (d_si_mm, d_ap_mm, r), each `(B, S)` float32 on `device` (r is the
@@ -145,6 +149,10 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, g
 
     Determinism: pass a `generator`, or set `cfg.seed` (a generator is then built
     on `device`). Train leaves both unset → global RNG.
+
+    n_planes: this subject's actual D (native-z, docs/58), used ONLY by the
+        group_by_burst path to bound the z-plane group index. None → falls back to
+        N_CANON_PLANES (legacy fixed-12 assumption).
     """
     if generator is None and cfg.seed is not None:
         generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
@@ -155,7 +163,7 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, g
     if cfg.group_by_burst and group_ids is not None:
         # Realistic: one breath per z-plane burst. Respiratory PHASE r is shared within a plane and
         # INDEPENDENT across planes (different slices = different breath MOMENTS). Draw per-plane, gather.
-        P = N_CANON_PLANES
+        P = n_planes if n_planes is not None else N_CANON_PLANES
         gid = group_ids.clamp(0, P - 1).long()                        # (B,S) z-plane per slot
         r = torch.gather(rand((B, P)), 1, gid)                        # (B,S) shared within plane
         # Amplitude SCALE is a per-SUBJECT property (one lung capacity): ONE baseline per subject, NOT
@@ -212,7 +220,8 @@ def _rotate_disp(v, theta, phi):
     return v * cos + kxv * sin + k * kdotv * (1.0 - cos)
 
 
-def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None):
+def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None,
+                                n_planes=None):
     """Sample per-slot canonical displacement vectors. Returns `(v, r)` where
     `v` is `(B, S, 3)` = (d_D, d_H, d_W) mm and `r` is `(B, S)` respiratory phase.
 
@@ -220,6 +229,8 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
     > 0) tilts the vector by θ~U(tilt_min, tilt_max) about azimuth φ~U(0, 2π), drawn
     ONCE PER SUBJECT (broadcast to all its slices — one breathing direction per scan,
     not per z-plane). All draws share ONE generator so determinism (val/report) is exact.
+
+    n_planes: see `sample_displacements`.
     """
     # Resolve the generator ONCE so SI/AP and θ/φ draw from the same stream
     # (otherwise a cfg.seed would only seed the SI/AP draw, breaking determinism).
@@ -227,7 +238,7 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
         generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
 
     d_si, d_ap, r = sample_displacements(B, S, cfg, device, generator=generator,
-                                         group_ids=group_ids)                      # (B,S) each
+                                         group_ids=group_ids, n_planes=n_planes)   # (B,S) each
     v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                   # (B,S,3)
 
     # Tilt range: prefer explicit tilt_min/max_deg; else fall back to legacy U(0, direction_jitter_deg).
@@ -251,7 +262,7 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
 
 
 def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
-                     seq_index=None, generator=None, group_ids=None):
+                     seq_index=None, generator=None, group_ids=None, n_planes=None):
     """Determinism wrapper used by the trainer GPU path. Returns `(B, S, 3)` mm.
 
     Returns `(disp, r)`: `disp` is `(B, S, 3)` mm, `r` is `(B, S)` respiratory phase.
@@ -262,10 +273,13 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
       reproducible across epochs/runs regardless of how rows are grouped into batches
       (mirrors the dataset's `random.Random(seq_index)` z/t determinism). Per-ROW (not
       per-batch) because `DynamicBatchSampler` groups variable rows per batch.
+
+    n_planes: see `sample_displacements`. None (default) preserves old behavior for
+        callers not yet migrated to native-z (docs/58) — e.g. evaluation/.
     """
     if train:
         return sample_displacement_vectors(B, S, cfg, device, generator=generator,
-                                           group_ids=group_ids)
+                                           group_ids=group_ids, n_planes=n_planes)
 
     if seq_index is None:
         raise ValueError(
@@ -276,7 +290,8 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
     for b in range(B):
         g = torch.Generator(device=device).manual_seed(int(seq[b]))
         gid_b = None if group_ids is None else group_ids[b:b + 1]
-        v_b, r_b = sample_displacement_vectors(1, S, cfg, device, generator=g, group_ids=gid_b)
+        v_b, r_b = sample_displacement_vectors(1, S, cfg, device, generator=g, group_ids=gid_b,
+                                               n_planes=n_planes)
         v_rows.append(v_b[0]); r_rows.append(r_b[0])
     return torch.stack(v_rows, dim=0), torch.stack(r_rows, dim=0)  # (B,S,3), (B,S)
 
@@ -290,7 +305,7 @@ def _norm_delta(d_mm, spacing_mm, size):
     return (d_mm / spacing_mm) * (2.0 / (size - 1))
 
 
-def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing=SPACING_MM):
+def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing):
     """Reslice S input slices per batch element with a per-slot CANONICAL 3-vector
     displacement (the general, rotation-aware core). Drop-in for
     `gpu_aug.extract_slices_from_phases` (identical output contract).
@@ -300,7 +315,11 @@ def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing=
         t_seq:    (B, S) int64 — cardiac t per slot
         z_seq:    (B, S) int64 — canonical z plane per slot
         disp_dhw: (B, S, 3) float — per-slot (d_D, d_H, d_W) mm (canonical axes)
-        spacing:  (D, H, W) mm
+        spacing:  (D, H, W) mm. REQUIRED, no default — under native-z, D-axis spacing is
+            this subject's own dz, which varies per subject (docs/58). The old fixed
+            SPACING_MM=(12.0, 1.4, 1.4) default silently understated displacement for
+            any non-12mm subject (e.g. 8mm -> 33% too small); a missed call site must
+            now raise instead of silently corrupting the applied breathing shift.
 
     Returns:
         (B, S, 518, 518, 3) float in [0, 255] — RGB-replicated (ready for
@@ -353,14 +372,15 @@ def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing=
 
 
 def extract_slices_with_respiratory(
-    phases, t_seq, z_seq, d_si_mm, d_ap_mm,
-    ap_axis: str = "H", spacing=SPACING_MM,
+    phases, t_seq, z_seq, d_si_mm, d_ap_mm, spacing,
+    ap_axis: str = "H",
 ):
     """Scalar (SI + AP, no tilt) convenience shim over
     `extract_slices_with_respiratory_vec`. Kept for the renderer + existing tests.
 
     `d_si_mm` / `d_ap_mm` are `(B, S)`; builds the canonical 3-vector with zero tilt
     (SI→D, AP→ap_axis, other in-plane→0) and delegates to the vector core.
+    `spacing` required, no default — see `extract_slices_with_respiratory_vec`.
     """
     if not torch.is_tensor(d_si_mm):
         d_si_mm = torch.as_tensor(d_si_mm, dtype=torch.float32)

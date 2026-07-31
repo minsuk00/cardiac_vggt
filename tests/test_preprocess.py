@@ -66,14 +66,18 @@ def test_t0_percentile_norm_uses_phase0_stats_for_all():
 # ── get_canonical_transforms (end-to-end on synthetic NIfTIs) ─────────────────
 
 def test_canonical_transform_output_shape(synthetic_root):
+    from conftest import SYN_Z
     sax_dir = f"{synthetic_root}/Train_P001/sax"
     data_dict = build_data_dicts([sax_dir])[0]
     out = get_canonical_transforms()(data_dict)
     # ConcatItemsd(dim=0) absorbs the per-phase channel dim → (T, X, Y, Z) in monai order.
-    assert out["phases"].shape == (12, TARGET_SHAPE[0], TARGET_SHAPE[1], TARGET_SHAPE[2])
-    assert out["content_mask"].shape == (1, TARGET_SHAPE[0], TARGET_SHAPE[1], TARGET_SHAPE[2])
+    # X/Y are resampled to the fixed TARGET_SHAPE; Z is native-z (never resampled, docs/58) —
+    # TARGET_SHAPE[2] is -1 ("keep native"), so the real Z is the synthetic subject's own SYN_Z.
+    assert out["phases"].shape == (12, TARGET_SHAPE[0], TARGET_SHAPE[1], SYN_Z)
+    assert out["content_mask"].shape == (1, TARGET_SHAPE[0], TARGET_SHAPE[1], SYN_Z)
     assert out["phases"].dtype == torch.float16
     assert out["content_mask"].dtype == torch.uint8
+    assert "dz_mm" in out and isinstance(out["dz_mm"], float)
 
 def test_canonical_content_mask_is_binary_and_nonempty(synthetic_root):
     sax_dir = f"{synthetic_root}/Train_P001/sax"

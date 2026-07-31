@@ -1,16 +1,19 @@
 """Canonical-grid monai preprocess pipeline for VGGT-MRI.
 
-Produces a cached `(T=12, 1, X=256, Y=256, Z=12)` float16 tensor per subject in
-monai (X, Y, Z) axis order. The downstream consumer (`mri_dataset.get_data`)
-permutes to splat-order `(T, D=12, H=256, W=256)` once at cache-load time.
+Produces a cached `(T=12, 1, X=256, Y=256, Z=D)` float16 tensor per subject in
+monai (X, Y, Z) axis order, where `D` is THAT SUBJECT'S OWN native slice count
+(native-z, docs/58 — z is never resampled). The downstream consumer
+(`mri_dataset.get_data`) permutes to splat-order `(T, D, H=256, W=256)` once at
+cache-load time. `dz_mm` (that subject's real slice pitch) is also cached.
 
 Key invariants this pipeline preserves:
-- All subjects map to the same physical cube: 358.4 mm × 358.4 mm × 144 mm.
+- In-plane, all subjects map to the same physical extent: 358.4 mm × 358.4 mm.
+  Z is NOT resampled — each subject keeps its own native pitch/plane count.
 - Intensity is normalized against phase_00's percentiles for ALL 12 phases,
   so the unsupervised |V_canon - V_gt| loss isn't biased by per-phase drift
   (matches the legacy contract at mri_dataset.py:155-169).
 - No interpolation of input slices at training time — Spacingd does the
-  resample once, results are cached on /tmp.
+  in-plane resample once, results are cached on /tmp.
 """
 
 from __future__ import annotations
@@ -31,14 +34,21 @@ from monai.transforms import (
     Spacingd,
 )
 
-TARGET_SPACING = (1.4, 1.4, 12.0)       # mm per voxel; ~4% X-downsample for most subjects, Y near-identity.
-                                        # Z=12mm = CMRx TRUE slice pitch (8mm thickness + 4mm gap, CMRxRecon2024
-                                        # protocol). Source NIfTI affines were relabeled 8→12 on disk (the 8mm was
-                                        # slice thickness) so this Spacingd is a Z-identity — see docs/27 +
-                                        # tools/relabel_slice_spacing.py.
-TARGET_SHAPE = (256, 256, 12)           # (X, Y, Z) in monai order
+TARGET_SPACING = (1.4, 1.4, 0.0)        # mm per voxel; ~4% X-downsample for most subjects, Y near-identity.
+                                        # Z=0.0 → monai's Spacingd keeps each subject's own NATIVE z spacing
+                                        # (non-positive pixdim = "use the original", see monai Spacing docs).
+                                        # Forcing a fixed z pitch onto a foreign grid destroys planes that
+                                        # don't coincide with it (push/pull mismatch, ≤25dB even with a
+                                        # perfect model) — see docs/58 §6.
+TARGET_SHAPE = (256, 256, -1)           # (X, Y, Z) in monai order. Z=-1 → ResizeWithPadOrCropd leaves the
+                                        # (unresampled) z slice count alone — D varies per subject, native-z.
 NUM_PHASES = 12
-HALF_EXTENT_MM_SPLAT = (72.0, 179.2, 179.2)   # (D=Z, H=Y, W=X) — splat-order. 12/2*12.0, 256/2*1.4, 256/2*1.4
+
+# Half-range (mm) of the physical z-coordinate: z_norm = z_mm / Z_HALF_MM, used everywhere z is
+# normalized to [-1, 1] (mri_dataset.py scanner_coords/z_indices, splat.py z_scale). 90, not the
+# geometric half-extent 72, because ZIndexEmbedder's sinusoids have period 2 in z_norm and would
+# alias within one subject's own stack above ~168mm span (measured pool max: 170mm) — see docs/58 §6.3.
+Z_HALF_MM = 90.0
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -131,6 +141,31 @@ class AddOnesMaskD(MapTransform):
         return d
 
 
+class RecordSpacingD(MapTransform):
+    """Record the actual Z voxel spacing (mm) of `ref_key` into `output_key`, as a
+    plain float, before spatial meta is stripped.
+
+    Under native-z (no z resampling), this is each subject's own acquired slice
+    pitch — needed downstream (`z_scale = Z_HALF_MM / dz`) to convert between the
+    physical z coordinate and this subject's own voxel index (`splat.py`,
+    `mri_dataset.py`). Must run after Spacingd/ResizeWithPadOrCropd (spacing is
+    fixed by then; crop/pad doesn't change it) and before StripMetaD removes it.
+    """
+
+    def __init__(self, ref_key: str, output_key: str = "dz_mm"):
+        super().__init__([ref_key], allow_missing_keys=False)
+        self.ref_key = ref_key
+        self.output_key = output_key
+
+    def __call__(self, data):
+        d = dict(data)
+        ref = d[self.ref_key]
+        if not hasattr(ref, "pixdim"):
+            raise RuntimeError(f"RecordSpacingD: {self.ref_key} has no MetaTensor .pixdim")
+        d[self.output_key] = float(ref.pixdim[2])   # monai (X,Y,Z) order → Z spacing
+        return d
+
+
 class StripMetaD(MapTransform):
     """Drop the MetaTensor subclass on `keys` (returns plain `torch.Tensor`).
 
@@ -208,9 +243,10 @@ def get_canonical_transforms(
 ):
     """Build the deterministic monai pipeline for `PersistentDataset`.
 
-    Output dict has one key, `phases`, of shape `(T=num_phases, 1, X, Y, Z)` in
-    monai axis order. `mri_dataset.get_data` is responsible for permuting to
-    splat-order at load time.
+    Output dict has `phases`, of shape `(T=num_phases, 1, X, Y, Z)` in monai axis
+    order (Z = this subject's own native slice count, native-z), plus `dz_mm`
+    (that subject's native z spacing, a plain float). `mri_dataset.get_data` is
+    responsible for permuting `phases` to splat-order at load time.
     """
     phase_keys = [f"phase_{t:02d}" for t in range(num_phases)]
     # Mask propagates through the spatial transforms alongside the phases so its
@@ -232,6 +268,7 @@ def get_canonical_transforms(
                 mode="constant",   # zero-pad small subjects
                 value=0,
             ),
+            RecordSpacingD(ref_key=phase_keys[0], output_key="dz_mm"),
             ScaleIntensityByT0PercentilesD(
                 keys=phase_keys, ref_key=phase_keys[0], lower=lower, upper=upper
             ),
@@ -279,7 +316,11 @@ def cache_signature() -> str:
     """
     import hashlib
 
-    sig = repr((TARGET_SPACING, TARGET_SHAPE, NUM_PHASES, "nonzero", 0.5, 99.9))
+    # `slice_order_apex_at_z0` bumps the signature for the docs/58 §10a on-disk slice-order fix
+    # (893 base-first subjects flipped to apex-at-z0 by tools/fix_slice_order.py). The file PATHS
+    # are unchanged, so without this the cache would silently serve pre-flip volumes.
+    sig = repr((TARGET_SPACING, TARGET_SHAPE, NUM_PHASES, "nonzero", 0.5, 99.9,
+                "slice_order_apex_at_z0"))
     return hashlib.md5(sig.encode()).hexdigest()[:10]
 
 
