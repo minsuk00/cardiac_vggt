@@ -13,8 +13,15 @@ split: "train"
 mode: "train"
 
 # --- Main Controls ---
-data_root: "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
-split_file: "training/splits/random_8_1_1.txt"
+# Pooled multi-dataset cohort (docs/58 §13): 1343 subjects across CMRxRecon2023/2024/2025 +
+# ACDC + M&Ms-1, split 940/134/269 (70:10:20). data_root is the shared parent, and split-file
+# lines are relative paths under it (e.g. `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`) —
+# MRIDataset._find_subjects joins them directly, so no loader change was needed.
+# The old CMRxRecon2024-only pair was:
+#   data_root: ".../scratch/data/CMRxRecon2024/Cine_combined"
+#   split_file: "training/splits/random_8_1_1.txt"   (deprecated)
+data_root: "/home/minsukc/vggt/scratch/data"
+split_file: "training/splits/pooled.txt"
 mri_mode: "axial"
 mri_data_mode: "dynamic" # "static" or "dynamic"
 
@@ -35,18 +42,16 @@ continuous_z: false
 z_jitter: 0.5
 # One-frame-per-slice (sparse-acquisition extreme): when true, S is forced per subject to the
 # in-FOV plane count so every in-bbox z plane appears EXACTLY once (no multi-frame extras).
-# Overrides the fixed img_nums/num_slices budget. Default false ⇒ fixed-S multi-frame sampler.
-one_frame_per_slice: false
-# Optional 3D UNet refiner on the splat (default OFF ⇒ bit-identical to today).
-enable_refiner: false
-refiner_use_coverage: true   # feed coverage as a 2nd input channel (only used when enabled)
+# Overrides the fixed img_nums/num_slices budget. Default true ⇒ this is the actual intended
+# usage mode (research goal is the one-frame-per-slice extreme); set false for fixed-S multi-frame.
+one_frame_per_slice: true
 limit_train_batches: 1000
-limit_val_batches: 200
+# 134 pooled val subjects x {ED, ES} = 268 entries under ef_val_sweep — one full deterministic
+# pass. Was 200, sized for the 100-val-subject plan; at 200 the last ~68 ES entries would
+# never be evaluated.
+limit_val_batches: 268
 max_epochs: 200
 val_epoch_freq: 1
-# Canonical-grid shape (D, H, W). Single source of truth — referenced by both
-# MRIDataset.gt_grid_shape and loss.volume.grid_shape so they can't drift.
-gt_grid_shape: [12, 256, 256]
 # Target-phase control. null = uniform sampling per call (new pipeline, multi-phase).
 # Set to an int (e.g., 0) to force every sample to use that phase as the target —
 # 0 reproduces the original ED-only pipeline.
@@ -62,9 +67,14 @@ t_target_phases: null
 # `ef_eval_every_n_val_epochs` and logs predicted-vs-GT EF slope/Spearman. Setting ef_eval_enable
 # false keeps the cheap sweep but skips the heavy segmentation. Both no-op unless ef_val_sweep is on.
 ef_val_sweep: false
+# ED/ES table for the sweep. Must be set explicitly now that data_root is the shared parent:
+# MRIDataset's fallback is `${data_root}/../../whs/cardiac_phase.csv`, which was only correct
+# when data_root pointed two levels deeper (CMRxRecon2024/Cine_combined).
+cardiac_phase_csv: "/home/minsukc/vggt/scratch/data/whs/cardiac_phase.csv"
 # ---------------------
 
-dataset_name: "${basename:${data_root}}"
+# Not `${basename:${data_root}}` anymore — that would resolve to the useless "data".
+dataset_name: "pooled1343"
 exp_name: "${rev_ts:}_mri_${mri_data_mode}_${mri_mode}_${dataset_name}"
 num_workers: 4
 max_img_per_gpu: 20
@@ -161,7 +171,6 @@ data:
           mri_mode: ${mri_mode}
           num_slices: 20
           target_size: ${img_size}
-          gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
@@ -194,7 +203,6 @@ data:
           mri_mode: ${mri_mode}
           num_slices: 20
           target_size: ${img_size}
-          gt_grid_shape: ${gt_grid_shape}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
@@ -202,6 +210,7 @@ data:
           one_frame_per_slice: ${one_frame_per_slice}
           z_jitter: ${z_jitter}
           ef_val_sweep: ${ef_val_sweep}
+          cardiac_phase_csv: ${cardiac_phase_csv}
 
 # Enable Point Head, disable others
 model:
@@ -209,12 +218,6 @@ model:
   use_z_pose_embedding: ${use_z_pose_embedding}
   use_reference_token: ${use_reference_token}
   train_on_residual_dvf: ${train_on_residual_dvf}
-  # Optional 3D UNet refiner on the splatted volume (default OFF ⇒ pipeline unchanged).
-  enable_refiner: ${enable_refiner}
-  grid_shape: ${gt_grid_shape}
-  refiner_base_channels: 16
-  refiner_levels: 2
-  refiner_use_coverage: ${refiner_use_coverage}
   # Warp head: "dpt" (default per-pixel DPT) or "bspline" (coarse control grid + B-spline
   # upsample, smooth-by-construction). bspline_grid_size = control points per side.
   warp_head_type: "dpt"
@@ -250,10 +253,5 @@ optim:
         max_norm: 1.0
         norm_type: 2
       - module_name: ["point"]
-        max_norm: 1.0
-        norm_type: 2
-      # Refiner params (only exist when enable_refiner=true). Empty group ⇒ skipped
-      # by the clipper when off (see gradient_clip.py:95), so this is a no-op then.
-      - module_name: ["refiner"]
         max_norm: 1.0
         norm_type: 2
