@@ -208,7 +208,6 @@ def map_scheduler_cfgs_to_param_groups(all_scheduler_cfgs: Iterable[List[dict]],
 def construct_optimizer(model: nn.Module,
                         optimizer_conf: Any,
                         options_conf: Union[Mapping[str, List], None] = None,
-                        param_group_modifiers_conf: Union[List, None] = None,
                         validate_param_groups: bool = True) -> OptimizerWrapper:
     """Build an OptimizerWrapper from hydra configs.
 
@@ -240,12 +239,6 @@ def construct_optimizer(model: nn.Module,
             )
         set_default_parameters(cfg_list, all_parameter_names)
         all_scheduler_cfgs.append(cfg_list)
-
-    # User-provided modifiers (rare)
-    if param_group_modifiers_conf:
-        for modifier in param_group_modifiers_conf:
-            modifier = hydra.utils.instantiate(modifier)
-            all_scheduler_cfgs = modifier(scheduler_cfgs=all_scheduler_cfgs, model=model)
 
     # Map scheduler cfg combos to optimizer param groups
     schedulers, param_groups = map_scheduler_cfgs_to_param_groups(

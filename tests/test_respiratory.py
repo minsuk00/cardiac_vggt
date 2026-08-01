@@ -57,7 +57,7 @@ def test_zero_displacement_matches_baseline_extractor():
 def test_known_si_shift_one_voxel():
     D, H, W = 8, 4, 4
     V = torch.arange(D, dtype=torch.float32).view(D, 1, 1).expand(D, H, W).contiguous()  # V[z]=z
-    out = reslice_volume(V, d_si_mm=12.0, d_ap_mm=0.0)  # +1 voxel along D (12mm Z pitch)
+    out = reslice_volume(V, d_si_mm=12.0, d_ap_mm=0.0, spacing=SPACING_MM)  # +1 voxel along D (12mm Z pitch)
     for z in range(D - 1):
         assert float(out[z, 0, 0]) == pytest.approx(z + 1, abs=1e-4)  # samples plane z+1
     assert float(out[D - 1, 0, 0]) == pytest.approx(0.0, abs=1e-4)    # off-stack → padding 0
@@ -65,7 +65,7 @@ def test_known_si_shift_one_voxel():
 def test_known_ap_shift_one_voxel():
     D, H, W = 4, 8, 8
     V = torch.arange(H, dtype=torch.float32).view(1, H, 1).expand(D, H, W).contiguous()  # V[:,h,:]=h
-    out = reslice_volume(V, d_si_mm=0.0, d_ap_mm=1.4, ap_axis="H")    # +1 voxel along H (1.4mm)
+    out = reslice_volume(V, d_si_mm=0.0, d_ap_mm=1.4, ap_axis="H", spacing=SPACING_MM)    # +1 voxel along H (1.4mm)
     for h in range(H - 1):
         assert float(out[0, h, 0]) == pytest.approx(h + 1, abs=1e-4)
 
@@ -75,8 +75,8 @@ def test_ap_axis_selects_correct_inplane_axis():
     D, H, W = 4, 8, 8
     ramp_h = torch.arange(H, dtype=torch.float32).view(1, H, 1).expand(D, H, W).contiguous()
     # AP along H shifts the H-ramp; AP along W leaves the H-ramp unchanged.
-    out_h = reslice_volume(ramp_h, 0.0, 1.4, ap_axis="H")
-    out_w = reslice_volume(ramp_h, 0.0, 1.4, ap_axis="W")
+    out_h = reslice_volume(ramp_h, 0.0, 1.4, ap_axis="H", spacing=SPACING_MM)
+    out_w = reslice_volume(ramp_h, 0.0, 1.4, ap_axis="W", spacing=SPACING_MM)
     assert float(out_h[0, 3, 0]) == pytest.approx(4.0, abs=1e-4)   # h=3 → 4 (shifted)
     assert float(out_w[0, 3, 0]) == pytest.approx(3.0, abs=1e-4)   # unchanged
 
@@ -103,7 +103,7 @@ def test_batch_equals_loop():
 def test_offstack_shift_reads_zero():
     D, H, W = 8, 8, 8
     V = torch.rand(D, H, W) + 1.0                # strictly positive content
-    out = reslice_volume(V, d_si_mm=12.0 * 20, d_ap_mm=0.0)  # 20 voxels → fully off-stack
+    out = reslice_volume(V, d_si_mm=12.0 * 20, d_ap_mm=0.0, spacing=SPACING_MM)  # 20 voxels → fully off-stack
     assert float(out.abs().max()) < 1e-4
 
 

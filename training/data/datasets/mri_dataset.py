@@ -99,7 +99,6 @@ class MRIDataset(Dataset):
         num_slices=12,
         target_size=INPUT_IMG_SIZE,
         mri_mode="axial",
-        dvf_dirname="dvf_elastix",     # legacy — accepted but unused
         t_target_fixed=None,
         t_target_phases=None,
         reference_slot=False,
@@ -109,14 +108,13 @@ class MRIDataset(Dataset):
         cache_dir=None,
         ef_val_sweep=False,
         cardiac_phase_csv=None,
+        defer_input_images=False,
     ):
         """
         Args mirrors the legacy MRIDataset for Hydra-config compatibility.
         New args:
             cache_dir: where monai PersistentDataset stores cached tensors.
                        Defaults to /tmp/vggt-mri_<USER>_monai_cache.
-        Legacy args kept but no longer load anything:
-            dvf_dirname: DVF supervision was removed; this is ignored.
         """
         super().__init__()
         self.data_root = os.path.abspath(data_root)
@@ -124,7 +122,18 @@ class MRIDataset(Dataset):
         self.split_file = os.path.abspath(split_file) if split_file else None
         self.mode = mode
         self.num_slices = num_slices
-        self.target_size = target_size
+        # Input-image resolution R. Really honoured now (2026-08-01): the slice upsample and
+        # the `scanner_coords` normalization both read it, so changing it changes the model
+        # input. It was previously stored and ignored — every site hardcoded INPUT_IMG_SIZE.
+        # ⚠️ Must stay a multiple of the DINOv2 patch size (14): 518 = 37×14. A non-multiple
+        # fails inside patch_embed, and the pretrained position embeddings are interpolated
+        # for any R != 518, so a change starts a fresh numeric series.
+        self.target_size = int(target_size)
+        # See the block in get_data: skip building `images` because the trainer's
+        # gpu_augment_batch re-extracts them on GPU regardless. Training sets this true;
+        # anything that calls get_data WITHOUT going through gpu_augment_batch must leave
+        # it false (the default) or it will get a batch with no `images` key.
+        self.defer_input_images = bool(defer_input_images)
         self.mri_mode = mri_mode
         self.t_target_fixed = t_target_fixed
         self.t_target_phases = list(t_target_phases) if t_target_phases is not None else None
@@ -152,13 +161,6 @@ class MRIDataset(Dataset):
         self.z_jitter = float(z_jitter)
         if self.t_target_phases is not None and len(self.t_target_phases) == 0:
             raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
-
-        # Legacy ignored arg — surface a warning so people don't think it does something.
-        if dvf_dirname not in (None, "dvf_elastix"):
-            logging.info(
-                f"MRIDataset [{split}]: dvf_dirname={dvf_dirname!r} ignored "
-                f"(DVF supervision was removed from the live data path)."
-            )
 
         # ── Subject discovery (same split-file format as before) ──────────
         self.subjects = self._find_subjects()
@@ -292,15 +294,17 @@ class MRIDataset(Dataset):
         Get an item from the dataset.
 
         Args:
-            idx_N: Tuple containing (seq_index, img_per_seq, aspect_ratio)
+            idx_N: Tuple containing (seq_index, img_per_seq). `img_per_seq` is the slot
+                BUDGET (the docs/59 F19 cap), not the slot count — under
+                `one_frame_per_slice` the count is this subject's own plane count D.
+                (A third `aspect_ratio` element was dropped 2026-08-01: it was always 1.0
+                and landed unread in `get_data(**kwargs)`.)
 
         Returns:
             Dataset item as returned by get_data()
         """
-        seq_index, img_per_seq, aspect_ratio = idx_N
-        return self.get_data(
-            seq_index=seq_index, img_per_seq=img_per_seq, aspect_ratio=aspect_ratio
-        )
+        seq_index, img_per_seq = idx_N
+        return self.get_data(seq_index=seq_index, img_per_seq=img_per_seq)
 
     # ── Main get_data ────────────────────────────────────────────────────
     def get_data(self, seq_index=0, img_per_seq=None, **kwargs):
@@ -478,20 +482,18 @@ class MRIDataset(Dataset):
         z_indices_list = []
         t_indices_list = []
         target_t_indices_list = []
-        rotations_list = []
-        frame_ids_list = []
         timesteps_list = []
         slice_indices_list = []
-        original_sizes_list = []
 
         # Per-pixel canonical (x, y, z) coords for a 518×518 input image.
-        # Bilinear resize 256→518 with align_corners semantics: pixel (py, px) of
-        # 518×518 corresponds to source 256×256 voxel index (py·255/517, px·255/517).
-        # Normalized [-1, +1]: y_norm = py/517·2 - 1; same for x. Constant across
-        # subjects → compute once.
-        py_grid, px_grid = np.meshgrid(np.arange(INPUT_IMG_SIZE), np.arange(INPUT_IMG_SIZE), indexing="ij")
-        x_norm = (px_grid.astype(np.float32) / (INPUT_IMG_SIZE - 1)) * 2.0 - 1.0
-        y_norm = (py_grid.astype(np.float32) / (INPUT_IMG_SIZE - 1)) * 2.0 - 1.0
+        # Bilinear resize 256→`self.target_size` with align_corners semantics: pixel
+        # (py, px) of the R×R input corresponds to source 256×256 voxel index
+        # (py·255/(R-1), px·255/(R-1)). Normalized [-1, +1]: y_norm = py/(R-1)·2 - 1;
+        # same for x. Constant across subjects → compute once.
+        R = int(self.target_size)
+        py_grid, px_grid = np.meshgrid(np.arange(R), np.arange(R), indexing="ij")
+        x_norm = (px_grid.astype(np.float32) / (R - 1)) * 2.0 - 1.0
+        y_norm = (py_grid.astype(np.float32) / (R - 1)) * 2.0 - 1.0
 
         # Pre-resize ALL S canonical slices in one batched F.interpolate call.
         # `to_resize` shape (S, 1, 256, 256) float32; output (S, 1, 518, 518).
@@ -510,20 +512,31 @@ class MRIDataset(Dataset):
         else:
             slot_indices = torch.tensor(z_sequence, dtype=torch.long)
             canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
-        canon_slices = canon_slices.unsqueeze(1)                    # (S, 1, 256, 256)
-        upsampled = F.interpolate(
-            canon_slices, size=(INPUT_IMG_SIZE, INPUT_IMG_SIZE),
-            mode="bilinear", align_corners=True,
-        )                                                            # (S, 1, 518, 518)
-        # Match ComposedDataset's `/255` contract — keep images in [0, 255].
-        upsampled = (upsampled.squeeze(1) * 255.0).clamp(0, 255).cpu().numpy()  # (S, 518, 518)
+        # `defer_input_images` (training default): the trainer re-extracts every input slice
+        # on GPU anyway — respiratory needs the breathing-displaced reslice, affine needs the
+        # warped volume — and `gpu_augment_batch` overwrites `images` wholesale. Building it
+        # here first costs S·R·R·3 float32 (≈64 MB at S=20, R=518) of worker CPU, collate, and
+        # host→device transfer per sample, every step, for a tensor that is immediately
+        # discarded. So skip it and let the trainer produce it. `gpu_augment_batch` treats a
+        # MISSING `images` key as "extract unconditionally", including on the no-augmentation
+        # path, so this can never silently yield a stale/placeholder tensor.
+        # Default False ⇒ standalone callers (tools/, tests, baselines) still get images.
+        if not self.defer_input_images:
+            canon_slices = canon_slices.unsqueeze(1)                # (S, 1, 256, 256)
+            upsampled = F.interpolate(
+                canon_slices, size=(R, R),
+                mode="bilinear", align_corners=True,
+            )                                                        # (S, 1, R, R)
+            # Match ComposedDataset's `/255` contract — keep images in [0, 255].
+            upsampled = (upsampled.squeeze(1) * 255.0).clamp(0, 255).cpu().numpy()  # (S, R, R)
 
         for i in range(S):
             t_idx = t_sequence[i]
             z_i = z_sequence[i]
-            # RGB-replicate to match VGGT model contract (3-channel input).
-            img = np.repeat(upsampled[i, ..., None], 3, axis=-1).astype(np.float32)
-            images_list.append(img)
+            if not self.defer_input_images:
+                # RGB-replicate to match VGGT model contract (3-channel input).
+                img = np.repeat(upsampled[i, ..., None], 3, axis=-1).astype(np.float32)
+                images_list.append(img)
 
             # scanner_coords: per-pixel canonical (x_norm, y_norm, z_norm) for this z.
             # z_norm is PHYSICAL (z_mm / Z_HALF_MM), NOT a fraction of D — D varies per
@@ -555,12 +568,8 @@ class MRIDataset(Dataset):
             target_t_val = (t_target / max(1, T_total)) * 2.0 - 1.0
             target_t_indices_list.append(np.array([target_t_val], dtype=np.float32))
 
-            rotations_list.append(np.zeros(3, dtype=np.float32))
-            frame_ids_list.append(i)
             timesteps_list.append(t_idx)
             slice_indices_list.append(z_i)
-
-            original_sizes_list.append(np.array([H_can, W_can], np.float32))
 
         # ── V_gt + full phases bundle (for Phase 4 aug) ───────────────────
         # `anatomy_bbox` was already computed above (used to constrain z sampling).
@@ -599,19 +608,16 @@ class MRIDataset(Dataset):
         seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
 
         return {
-            "images": images_list,
+            # Omitted entirely when `defer_input_images` — an absent key is the signal
+            # gpu_augment_batch keys off, so a stale tensor can never masquerade as input.
+            **({} if self.defer_input_images else {"images": images_list}),
             "scanner_coords": scanner_coords_list,
-            "original_sizes": original_sizes_list,
-            "frame_ids": frame_ids_list,
             "timesteps": timesteps_list,
             "slice_indices": slice_indices_list,
             "z_indices": z_indices_list,
             "t_indices": t_indices_list,
             "target_t_indices": target_t_indices_list,
-            "rotations": rotations_list,
             "seq_name": seq_name,
-            "ids": np.array(frame_ids_list, np.int64),
-            "frame_num": S,
             "gt_target_volume": gt_target_volume,
             "t_target": np.array([t_target], dtype=np.int64),
             "anatomy_bbox": anatomy_bbox,

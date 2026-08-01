@@ -13,48 +13,14 @@ import numpy as np
 from typing import Union, Optional
 import logging
 from iopath.common.file_io import g_pathmgr
-import torch.distributed as dist
 from pathlib import Path
 from typing import Dict, Iterable, List
 
 
 
-from collections import defaultdict
-from dataclasses import fields, is_dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping
 
 
-
-
-def check_and_fix_inf_nan(input_tensor, loss_name="default", hard_max=100):
-    """
-    Checks if 'input_tensor' contains inf or nan values and clamps extreme values.
-    
-    Args:
-        input_tensor (torch.Tensor): The loss tensor to check and fix.
-        loss_name (str): Name of the loss (for diagnostic prints).
-        hard_max (float, optional): Maximum absolute value allowed. Values outside 
-                                  [-hard_max, hard_max] will be clamped. If None, 
-                                  no clamping is performed. Defaults to 100.
-    """
-    if input_tensor is None:
-        return input_tensor
-    
-    # Check for inf/nan values
-    has_inf_nan = torch.isnan(input_tensor).any() or torch.isinf(input_tensor).any()
-    if has_inf_nan:
-        logging.warning(f"Tensor {loss_name} contains inf or nan values. Replacing with zeros.")
-        input_tensor = torch.where(
-            torch.isnan(input_tensor) | torch.isinf(input_tensor),
-            torch.zeros_like(input_tensor),
-            input_tensor
-        )
-
-    # Apply hard clamping if specified
-    if hard_max is not None:
-        input_tensor = torch.clamp(input_tensor, min=-hard_max, max=hard_max)
-
-    return input_tensor
 
 
 def get_resume_checkpoint(checkpoint_save_dir):
@@ -92,14 +58,8 @@ class DurationMeter:
         self.fmt = fmt
         self.val = 0
 
-    def reset(self):
-        self.val = 0
-
     def update(self, val):
         self.val = val
-
-    def add(self, val):
-        self.val += val
 
     def __str__(self):
         return f"{self.name}: {human_readable_time(self.val)}"
@@ -115,24 +75,14 @@ def human_readable_time(time_seconds):
 
 
 class ProgressMeter:
-    def __init__(self, num_batches, meters, real_meters, prefix=""):
+    def __init__(self, num_batches, meters, prefix=""):
         self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
         self.meters = meters
-        self.real_meters = real_meters
         self.prefix = prefix
 
     def display(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        entries += [
-            " | ".join(
-                [
-                    f"{os.path.join(name, subname)}: {val:.4f}"
-                    for subname, val in meter.compute().items()
-                ]
-            )
-            for name, meter in self.real_meters.items()
-        ]
         logging.info(" | ".join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
@@ -142,73 +92,21 @@ class ProgressMeter:
 
 
 
-@runtime_checkable
-class _CopyableData(Protocol):
-    def to(self, device: torch.device, *args: Any, **kwargs: Any):
-        """Copy data to the specified device"""
-        ...
-
-
-def _is_named_tuple(x) -> bool:
-    return isinstance(x, tuple) and hasattr(x, "_asdict") and hasattr(x, "_fields")
-
-
 def copy_data_to_device(data, device: torch.device, *args: Any, **kwargs: Any):
-    """Function that recursively copies data to a torch.device.
+    """Recursively move a batch to `device`. Non-tensors pass through unchanged.
 
-    Args:
-        data: The data to copy to device
-        device: The device to which the data should be copied
-        args: positional arguments that will be passed to the `to` call
-        kwargs: keyword arguments that will be passed to the `to` call
-
-    Returns:
-        The data on the correct device
+    Simplified 2026-08-01. The upstream VGGT version also handled named tuples,
+    defaultdicts (preserving default_factory), dataclasses (with a second pass for
+    non-`init` fields) and a `_CopyableData` Protocol — that generality existed for
+    upstream's `FrameData` dataclass batches. Ours is a plain dict of tensors built by
+    `MRIDataset.get_data` + `ComposedDataset`, so only the dict/tensor paths ever ran.
     """
-
-    if _is_named_tuple(data):
-        return type(data)(
-            **copy_data_to_device(data._asdict(), device, *args, **kwargs)
-        )
-    elif isinstance(data, (list, tuple)):
-        return type(data)(copy_data_to_device(e, device, *args, **kwargs) for e in data)
-    elif isinstance(data, defaultdict):
-        return type(data)(
-            data.default_factory,
-            {
-                k: copy_data_to_device(v, device, *args, **kwargs)
-                for k, v in data.items()
-            },
-        )
-    elif isinstance(data, Mapping) and not is_dataclass(data):  # handing FrameData-like things
-        return type(data)(
-            {
-                k: copy_data_to_device(v, device, *args, **kwargs)
-                for k, v in data.items()
-            }
-        )
-    elif is_dataclass(data) and not isinstance(data, type):
-        new_data_class = type(data)(
-            **{
-                field.name: copy_data_to_device(
-                    getattr(data, field.name), device, *args, **kwargs
-                )
-                for field in fields(data)
-                if field.init
-            }
-        )
-        for field in fields(data):
-            if not field.init:
-                setattr(
-                    new_data_class,
-                    field.name,
-                    copy_data_to_device(
-                        getattr(data, field.name), device, *args, **kwargs
-                    ),
-                )
-        return new_data_class
-    elif isinstance(data, _CopyableData):
+    if torch.is_tensor(data):
         return data.to(device, *args, **kwargs)
+    if isinstance(data, Mapping):
+        return {k: copy_data_to_device(v, device, *args, **kwargs) for k, v in data.items()}
+    if isinstance(data, (list, tuple)):
+        return type(data)(copy_data_to_device(e, device, *args, **kwargs) for e in data)
     return data
 
 
@@ -249,15 +147,6 @@ def set_seeds(seed_value, max_epochs, dist_rank):
 
 
 
-def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
-    if not dist.is_initialized():
-        return False
-    return True
-
-
-
 class AverageMeter:
     """Computes and stores the average and current value.
     Args:
@@ -277,7 +166,6 @@ class AverageMeter:
         self.avg = 0
         self.sum = 0
         self.count = 0
-        self._allow_updates = True
 
     def update(self, val, n=1):
         if n <= 0:
@@ -292,16 +180,6 @@ class AverageMeter:
         """String representation showing current and average values."""
         fmtstr = "{name}: {val" + self.fmt + "} ({avg" + self.fmt + "})"
         return fmtstr.format(**self.__dict__)
-
-    @property
-    def value(self) -> float:
-        """Get the current value."""
-        return self.val
-
-    @property
-    def average(self) -> float:
-        """Get the running average."""
-        return self.avg
 
 #################
 
@@ -336,9 +214,6 @@ def model_summary(model: torch.nn.Module,
                  (handy when several models share the same stdout).
     logging_func: Optional logging function (e.g. logging.info)
     """
-    if get_rank():          # only rank-0 prints
-        return
-
     # --- counts -------------------------------------------------------------
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total     = sum(p.numel() for p in model.parameters())
@@ -378,9 +253,5 @@ def model_summary(model: torch.nn.Module,
     _dump([n for n,p in named.items() if not p.requires_grad], 'frozen.txt')
 
 
-def get_rank():
-    if not is_dist_avail_and_initialized():
-        return 0
-    return dist.get_rank()
 
 

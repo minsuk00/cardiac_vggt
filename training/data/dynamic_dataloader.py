@@ -24,7 +24,6 @@ class DynamicTorchDataset(ABC):
         pin_memory: bool,
         drop_last: bool = True,
         collate_fn: Optional[Callable] = None,
-        worker_init_fn: Optional[Callable] = None,
         persistent_workers: bool = False,
         seed: int = 42,
     ) -> None:
@@ -35,20 +34,19 @@ class DynamicTorchDataset(ABC):
         self.pin_memory = pin_memory
         self.drop_last = drop_last
         self.collate_fn = collate_fn
-        self.worker_init_fn = worker_init_fn
         self.persistent_workers = persistent_workers
         self.seed = seed
 
         # Instantiate the dataset
         self.dataset = instantiate(dataset, common_config=common_config, _recursive_=False)
 
-        # Extract aspect ratio and image number ranges from the configuration
-        self.aspect_ratio_range = common_config.augs.aspects  # e.g., [0.5, 1.0]
-        self.image_num_range = common_config.img_nums    # e.g., [2, 24]
-
-        # Validate the aspect ratio and image number ranges
-        if len(self.aspect_ratio_range) != 2 or self.aspect_ratio_range[0] > self.aspect_ratio_range[1]:
-            raise ValueError(f"aspect_ratio_range must be [min, max] with min <= max, got {self.aspect_ratio_range}")
+        # Per-sample slot BUDGET (`img_nums`). Under `one_frame_per_slice` (the default) the
+        # dataset sets S = this subject's own in-FOV plane count == D, so this is no longer a
+        # sample count — it is the CAP that `mri_dataset` enforces (docs/59 F19), which is why
+        # it must still reach `get_data`. The upstream per-batch aspect-ratio draw was removed
+        # (2026-08-01): it was fixed at [1.0, 1.0], and the value died unread in
+        # `get_data(**kwargs)` — cardiac slices are square 256x256 by construction.
+        self.image_num_range = common_config.img_nums    # e.g., [20, 20]
         if len(self.image_num_range) != 2 or self.image_num_range[0] < 1 or self.image_num_range[0] > self.image_num_range[1]:
             raise ValueError(f"image_num_range must be [min, max] with 1 <= min <= max, got {self.image_num_range}")
 
@@ -59,7 +57,6 @@ class DynamicTorchDataset(ABC):
         self.sampler = DynamicDistributedSampler(self.dataset, num_replicas=1, rank=0, seed=seed, shuffle=shuffle)
         self.batch_sampler = DynamicBatchSampler(
             self.sampler,
-            self.aspect_ratio_range,
             self.image_num_range,
             seed=seed,
         )
@@ -86,7 +83,6 @@ class DynamicTorchDataset(ABC):
                 seed=self.seed,
                 num_workers=self.num_workers,
                 epoch=epoch,
-                worker_init_fn=self.worker_init_fn,
             ),
         )
         
@@ -98,7 +94,6 @@ class DynamicBatchSampler(Sampler):
     """
     def __init__(self,
                  sampler,
-                 aspect_ratio_range,
                  image_num_range,
                  epoch=0,
                  seed=42,
@@ -108,27 +103,13 @@ class DynamicBatchSampler(Sampler):
 
         Args:
             sampler: Instance of DynamicDistributedSampler.
-            aspect_ratio_range: List containing [min_aspect_ratio, max_aspect_ratio].
             image_num_range: List containing [min_images, max_images] per sample.
             epoch: Current epoch number.
             seed: Random seed for reproducibility.
         """
         self.sampler = sampler
-        self.aspect_ratio_range = aspect_ratio_range
         self.image_num_range = image_num_range
         self.rng = random.Random()
-
-        # Uniformly sample from the range of possible image numbers
-        # For any image number, the weight is 1.0 (uniform sampling). You can set any different weights here.
-        self.image_num_weights = {num_images: 1.0 for num_images in range(image_num_range[0], image_num_range[1]+1)}
-
-        # Possible image numbers, e.g., [2, 3, 4, ..., 24]
-        self.possible_nums = np.array([n for n in self.image_num_weights.keys()
-                                       if self.image_num_range[0] <= n <= self.image_num_range[1]])
-
-        # Normalize weights for sampling
-        weights = [self.image_num_weights[n] for n in self.possible_nums]
-        self.normalized_weights = np.array(weights) / sum(weights)
 
         # Set the epoch for the sampler
         self.set_epoch(epoch + seed)
@@ -155,15 +136,13 @@ class DynamicBatchSampler(Sampler):
 
         while True:
             try:
-                # Sample random image number and aspect ratio
-                random_image_num = int(np.random.choice(self.possible_nums, p=self.normalized_weights))
-                random_aspect_ratio = round(self.rng.uniform(self.aspect_ratio_range[0], self.aspect_ratio_range[1]), 2)
-
-                # Update sampler parameters
-                self.sampler.update_parameters(
-                    aspect_ratio=random_aspect_ratio,
-                    image_num=random_image_num
-                )
+                # Slot budget for this sample. Uniform over [lo, hi]; at the shipped
+                # `img_nums: [20, 20]` this is the constant 20. (Was a weighted np.random
+                # draw over a dict of all-1.0 weights — same result, more machinery, and it
+                # advanced the global numpy RNG for nothing.)
+                random_image_num = self.rng.randint(
+                    int(self.image_num_range[0]), int(self.image_num_range[1]))
+                self.sampler.update_parameters(image_num=random_image_num)
 
                 # BATCH SIZE IS PINNED TO 1 (docs/59 F9/F19).
                 #
@@ -191,7 +170,7 @@ class DynamicBatchSampler(Sampler):
                 current_batch = []
                 for _ in range(batch_size):
                     try:
-                        item = next(sampler_iterator)  # item is (idx, aspect_ratio, image_num)
+                        item = next(sampler_iterator)  # item is (idx, image_num)
                         current_batch.append(item)
                     except StopIteration:
                         break  # No more samples
@@ -211,8 +190,9 @@ class DynamicBatchSampler(Sampler):
 
 class DynamicDistributedSampler(DistributedSampler):
     """
-    Extends PyTorch's DistributedSampler to include dynamic aspect_ratio and image_num
-    parameters, which can be passed into the dataset's __getitem__ method.
+    Extends PyTorch's DistributedSampler to attach the per-sample slot budget
+    (`image_num`) to each index, so it reaches the dataset's __getitem__.
+    (The companion `aspect_ratio` was dropped 2026-08-01 — always 1.0, never read.)
     """
     def __init__(
         self,
@@ -231,27 +211,24 @@ class DynamicDistributedSampler(DistributedSampler):
             seed=seed,
             drop_last=drop_last
         )
-        self.aspect_ratio = None
         self.image_num = None
 
     def __iter__(self):
         """
-        Yields a sequence of (index, image_num, aspect_ratio).
+        Yields a sequence of (index, image_num).
         Relies on the parent class's logic for shuffling/distributing
-        the indices across replicas, then attaches extra parameters.
+        the indices across replicas, then attaches the slot budget.
         """
         indices_iter = super().__iter__()
 
         for idx in indices_iter:
-            yield (idx, self.image_num, self.aspect_ratio,)
+            yield (idx, self.image_num)
 
-    def update_parameters(self, aspect_ratio, image_num):
+    def update_parameters(self, image_num):
         """
-        Updates dynamic parameters for each new epoch or iteration.
+        Updates the per-sample slot budget.
 
         Args:
-            aspect_ratio: The aspect ratio to set.
             image_num: The number of images to set.
         """
-        self.aspect_ratio = aspect_ratio
         self.image_num = image_num

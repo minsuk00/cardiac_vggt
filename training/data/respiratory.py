@@ -393,10 +393,16 @@ def extract_slices_with_respiratory(
     return extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp, spacing)
 
 
-def reslice_volume_vec(V, disp_dhw, spacing=SPACING_MM):
+def reslice_volume_vec(V, disp_dhw, spacing):
     """Shift a whole single-phase volume `V` (D,H,W) by a constant canonical 3-vector
     `disp_dhw` = (d_D, d_H, d_W) mm and resample onto the canonical grid (one
-    grid_sample, D_out=D). Returns (D, H, W) float32."""
+    grid_sample, D_out=D). Returns (D, H, W) float32.
+
+    `spacing` is (D, H, W) mm and is REQUIRED — no default (2026-08-01). It used to default
+    to `SPACING_MM`, whose D-axis 12.0 was correct only for the pre-native-z shared cube.
+    Under native-z every subject keeps its own pitch (5-12 mm, docs/58), so a missed
+    `spacing=` silently breathes that subject at 12 mm: plausible output, wrong physics, no
+    error. `baselines/export_resp_stack.py` was relying on exactly that."""
     D, H, W = V.shape
     device = V.device
     inp = V.float().view(1, 1, D, H, W)
@@ -422,9 +428,11 @@ def reslice_volume_vec(V, disp_dhw, spacing=SPACING_MM):
     return out.view(D, H, W)
 
 
-def reslice_volume(V, d_si_mm, d_ap_mm, ap_axis: str = "H", spacing=SPACING_MM):
+def reslice_volume(V, d_si_mm, d_ap_mm, ap_axis: str = "H", *, spacing):
     """Scalar (SI + AP, no tilt) shim over `reslice_volume_vec`. Used by the example
-    renderer for coronal/sagittal/axial views. Returns (D, H, W) float32."""
+    renderer for coronal/sagittal/axial views. Returns (D, H, W) float32.
+
+    `spacing` is required and keyword-only — see `reslice_volume_vec`."""
     disp = _build_disp_dhw(
         torch.as_tensor(float(d_si_mm)), torch.as_tensor(float(d_ap_mm)), ap_axis)
     return reslice_volume_vec(V, disp, spacing)

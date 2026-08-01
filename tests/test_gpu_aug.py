@@ -62,14 +62,25 @@ def test_build_returns_compose_when_enabled():
     assert t is not None
 
 def test_build_moderate_tier_builds():
-    """Moderate tier: in-plane only, ±180° rotation. Gaussian noise is DISABLED
-    (wrong artifact model); flip is ENABLED as of 2026-07-31 (docs/58 §10c — the training
-    objective is exactly mirror-equivariant and 29% of pooled CMRx is mirrored on disk anyway),
-    so 4 active transforms: flip, affine, contrast, bias-field."""
+    """Moderate tier: in-plane only, ±180° rotation. Gaussian noise is DISABLED (wrong artifact
+    model) and flip is AGGRESSIVE-ONLY as of 2026-08-01 (it was briefly on in every tier,
+    2026-07-31; moderate is the arm docs/46 §3 C2 measured and shipped, which had no flip), so
+    3 active transforms: affine, contrast, bias-field."""
     t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "moderate"}))
     assert t is not None
-    assert len(t.transforms) == 4
-    assert type(t.transforms[0]).__name__ == "RandFlipd"
+    assert len(t.transforms) == 3
+    assert type(t.transforms[0]).__name__ == "RandAffined"
+
+
+def test_flip_is_aggressive_only():
+    """Flip is a vector-field symmetry (needs a coupled Δx sign negation), so it is confined to
+    the aggressive tier; conservative/moderate must stay flip-free."""
+    for tier in ("conservative", "moderate"):
+        t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": tier}))
+        names = [type(x).__name__ for x in t.transforms]
+        assert "RandFlipd" not in names, f"{tier} tier must not flip"
+    agg = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
+    assert type(agg.transforms[0]).__name__ == "RandFlipd"
 
 def test_build_unknown_tier_raises():
     with pytest.raises(ValueError):
@@ -298,3 +309,43 @@ def test_affine_plus_resp_single_extraction(monkeypatch):
     assert calls["resp"] == 1 and calls["plain"] == 0
     # gt/bbox were re-derived by affine; images carry breathing.
     assert out["images"].shape == (2, 8, 3, 518, 518)
+
+
+# ── defer_input_images contract ───────────────────────────────────────────────
+# The dataset may omit `images` entirely (`defer_input_images`, the training default)
+# because gpu_augment_batch re-extracts every slice on GPU anyway. The contract is that a
+# MISSING key means "extract unconditionally" — on EVERY path, including no-augmentation.
+# If this ever regresses, a batch reaches the model with no input at all.
+
+def _deferred_batch(**kw):
+    b = _fake_batch(**kw)
+    del b["images"]
+    return b
+
+
+@pytest.mark.parametrize("aug,resp", [(False, False), (False, True), (True, False), (True, True)])
+def test_missing_images_is_always_rebuilt(aug, resp):
+    """All four augmentation combinations must yield a usable `images` tensor."""
+    batch = _deferred_batch()
+    transforms = build_gpu_transforms(
+        OmegaConf.create({"enable": True, "tier": "conservative"})) if aug else None
+    out = gpu_augment_batch(batch, transforms, DEVICE,
+                            respiratory_cfg=_resp_cfg(enable=resp), train=True)
+    assert "images" in out, f"images missing with aug={aug} resp={resp}"
+    B, S = out["timesteps"].shape
+    assert out["images"].shape == (B, S, 3, 518, 518)
+    assert torch.isfinite(out["images"]).all()
+    assert float(out["images"].max()) <= 1.0 + 1e-5, "images must be normalized to [0,1]"
+
+
+def test_deferred_matches_nondeferred_when_no_aug():
+    """With every augmentation off, the GPU-rebuilt images must equal what the dataset
+    would have produced — i.e. deferring changes nothing about the model's input."""
+    ref = _fake_batch()          # ONE batch — building two would compare different volumes
+    built = extract_slices_from_phases(
+        ref["phases"].float(), ref["timesteps"], ref["slice_indices"],
+    ).permute(0, 1, 4, 2, 3).contiguous() / 255.0
+    deferred = {k: v for k, v in ref.items() if k != "images"}
+    out = gpu_augment_batch(deferred, None, DEVICE,
+                            respiratory_cfg=_resp_cfg(enable=False), train=True)
+    assert torch.allclose(out["images"], built, atol=1e-6)

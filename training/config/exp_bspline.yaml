@@ -1,14 +1,14 @@
 # Variant 2: B-spline control-grid warp head instead of the per-pixel DPT head.
 # Predicts a coarse (bspline_grid_size per side) grid of 3-vectors and bicubic-upsamples to
 # the dense Δ — smooth by construction (no 14-px patch ripple ⇒ no splat lattice).
-# Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config mri_volume_bspline
+# Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config exp_bspline
 #
 # NOTE: the B-spline head's params differ from the DPT head, so the 4-day-baseline warm-start
 # (CKPT_ONLY, DPT head) will NOT load into it (strict=false ⇒ head trains from scratch; it's
 # small/fast). Sweet-spot grid ≈ 32 (toy: control spacing ~12–16 px ≈ 8–11 mm).
 
 defaults:
-  - mri_volume
+  - default
   - _self_
 
 exp_name: "${rev_ts:}_mri_volume_bspline_${mri_data_mode}_${mri_mode}_${dataset_name}"
@@ -18,4 +18,13 @@ model:
   warp_head_type: "bspline"
   bspline_grid_size: 32
 
-# aggft (freeze only patch_embed) is inherited from mri_volume.
+# Keep this variant's ORIGINAL regularizer (L1 TV), so the only thing it changes vs the
+# baseline it was designed against is the warp head. Pinned explicitly on 2026-08-01, when
+# default.yaml switched to L2 diffusion (the arm the docs/46 series actually ran) — without
+# these two lines this config would silently have changed BOTH the head and the regularizer.
+loss:
+  volume:
+    tv_weight: 0.1
+    diffusion_weight: 0.0
+
+# aggft (freeze only patch_embed) is inherited from default.yaml.

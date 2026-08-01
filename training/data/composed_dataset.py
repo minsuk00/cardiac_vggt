@@ -4,14 +4,12 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import bisect
-import random
 from abc import ABC
 
 import numpy as np
 import torch
 from hydra.utils import instantiate
-from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data import Dataset
 
 
 class ComposedDataset(Dataset, ABC):
@@ -39,14 +37,7 @@ class ComposedDataset(Dataset, ABC):
             baseset = instantiate(baseset_dict, common_conf=common_config)
             base_dataset_list.append(baseset)
 
-        # Use custom concatenation class that supports tuple indexing
-        self.base_dataset = TupleConcatDataset(base_dataset_list, common_config)
-
-        # --- Optional Fixed Settings (useful for debugging) ---
-        # Force each sequence to have exactly this many images (if > 0)
-        self.fixed_num_images = common_config.fix_img_num
-        # Force a specific aspect ratio for all images
-        self.fixed_aspect_ratio = common_config.fix_aspect_ratio
+        self.base_dataset = TupleIndexedDataset(base_dataset_list, common_config)
 
         self.common_config = common_config
 
@@ -64,36 +55,28 @@ class ComposedDataset(Dataset, ABC):
         and prepares tracks if enabled.
 
         Args:
-            idx_tuple (tuple): a tuple of (seq_idx, num_images, aspect_ratio)
+            idx_tuple (tuple): a tuple of (seq_idx, num_images)
 
         Returns:
             dict: A dictionary containing the sequence data (images, poses, tracks, etc.).
         """
-        # If fixed settings are provided, override the tuple values
-        if self.fixed_num_images > 0:
-            seq_idx = idx_tuple[0] if isinstance(idx_tuple, tuple) else idx_tuple
-            idx_tuple = (seq_idx, self.fixed_num_images, self.fixed_aspect_ratio)
-
         # Retrieve the raw data batch from the appropriate base dataset
         batch = self.base_dataset[idx_tuple]
         seq_name = batch["seq_name"]
 
         # --- Data Conversion and Preparation ---
-        # Convert numpy arrays to tensors
-        images = torch.from_numpy(np.stack(batch["images"]).astype(np.float32)).contiguous()
-        # Normalize images from [0, 255] to [0, 1]
-        images = images.permute(0, 3, 1, 2).to(torch.get_default_dtype()).div(255)
+        # `images` is absent when the dataset ran with `defer_input_images` — the trainer's
+        # gpu_augment_batch builds it on GPU instead (it re-extracts every slice anyway).
+        # Pass the absence straight through; that missing key IS the signal.
+        sample = {"seq_name": seq_name}
+        if "images" in batch:
+            images = torch.from_numpy(np.stack(batch["images"]).astype(np.float32)).contiguous()
+            # Normalize images from [0, 255] to [0, 1]
+            sample["images"] = images.permute(0, 3, 1, 2).to(torch.get_default_dtype()).div(255)
 
         # Convert other data to tensors with appropriate types
         scanner_coords = torch.from_numpy(np.stack(batch["scanner_coords"]).astype(np.float32)) if "scanner_coords" in batch else None
-        ids = torch.from_numpy(batch["ids"])  # Frame indices sampled from the original sequence
 
-        # --- Prepare Final Sample Dictionary ---
-        sample = {
-            "seq_name": seq_name,
-            "ids": ids,
-            "images": images,
-        }
         if scanner_coords is not None:
             sample["scanner_coords"] = scanner_coords
 
@@ -111,8 +94,6 @@ class ComposedDataset(Dataset, ABC):
             # is exact, so the discrete-grid pipeline is numerically unchanged. timesteps stays
             # int64 — cardiac phase is always discrete.
             sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.float32))
-        if "rotations" in batch:
-            sample["rotations"] = torch.from_numpy(np.stack(batch["rotations"]).astype(np.float32))
         if "gt_target_volume" in batch:
             sample["gt_target_volume"] = torch.from_numpy(batch["gt_target_volume"].astype(np.float32))
         if "t_target" in batch:
@@ -138,77 +119,45 @@ class ComposedDataset(Dataset, ABC):
         return sample
 
 
-class TupleConcatDataset(ConcatDataset):
-    """
-    A custom ConcatDataset that supports indexing with a tuple.
+class TupleIndexedDataset:
+    """Indexes the base dataset with a `(seq_idx, num_images)` tuple.
 
-    Standard PyTorch ConcatDataset only accepts an integer index. This class extends
-    that functionality to allow passing a tuple like (sample_idx, num_images, aspect_ratio),
-    where the first element is used to determine which sample to fetch, and the full
-    tuple is passed down to the selected dataset's __getitem__ method.
-
-    It also supports an option to randomly sample across all datasets, ignoring the
-    provided index. This is useful during training when shuffling the entire dataset
-    might cause memory issues due to duplicating dictionaries. If doing this, you can
-    set pytorch's dataloader shuffle to False.
+    Replaced `TupleConcatDataset(ConcatDataset)` on 2026-08-01. That class carried
+    `cumulative_sizes` + a `bisect` lookup to route a global index to one of SEVERAL
+    concatenated datasets (upstream VGGT trains on Co3D/ScanNet/MegaDepth together). This
+    pipeline configures exactly ONE dataset, so every lookup ran the bisect and returned
+    `datasets[0]`. `.datasets` is kept as a list because the trainer, inference and tools
+    all reach the MRIDataset via `...base_dataset.datasets[0]`.
     """
 
     def __init__(self, datasets, common_config):
-        """
-        Initialize the TupleConcatDataset.
+        datasets = list(datasets)
+        if len(datasets) != 1:
+            raise ValueError(
+                f"Exactly one base dataset is supported, got {len(datasets)}. Multi-dataset "
+                "concatenation was removed with TupleConcatDataset; the pooled cohort is a "
+                "single MRIDataset driven by one split file."
+            )
+        self.datasets = datasets
 
-        Args:
-            datasets (iterable): An iterable of PyTorch Dataset objects to concatenate.
-            common_config (dict): Common configuration dict, used to check for random sampling.
-        """
-        super().__init__(datasets)
-        # If True, ignores the input index and samples randomly across all datasets
-        # This provides an alternative to dataloader shuffling for large datasets
-        self.inside_random = common_config.inside_random
+    def __len__(self):
+        return len(self.datasets[0])
 
     def __getitem__(self, idx):
-        """
-        Retrieves an item using either an integer index or a tuple index.
+        # The sampler's index is HONOURED. `inside_random` was removed 2026-08-01: it
+        # discarded the index and drew a subject uniformly at random instead, so a train
+        # "epoch" was `limit_train_batches` draws WITH REPLACEMENT — ~37% of subjects unseen
+        # per epoch (a different 37% each time), which is not what the config's "one exact
+        # pass per epoch" claimed. Training now does the ML default: DistributedSampler's
+        # seeded permutation, reshuffled every epoch via set_epoch, each subject exactly once.
+        # (Upstream VGGT used it to avoid materialising a shuffled index list for very large
+        # multi-dataset training — irrelevant at 935 paths.)
+        idx_tuple = idx if isinstance(idx, tuple) else (idx,)
+        idx = idx_tuple[0]
 
-        Args:
-            idx (int or tuple): The index. If tuple, the first element is the sequence
-                               index across the concatenated datasets, and the rest are
-                               passed down. If int, it's treated as the sequence index.
-
-        Returns:
-            The item returned by the underlying dataset's __getitem__ method.
-
-        Raises:
-            ValueError: If the index is out of range or the tuple doesn't have exactly 3 elements.
-        """
-        idx_tuple = None
-        if isinstance(idx, tuple):
-            idx_tuple = idx
-            idx = idx_tuple[0]  # Extract the sequence index
-
-        # Override index with random value if inside_random is enabled
-        if self.inside_random:
-            total_len = self.cumulative_sizes[-1]
-            idx = random.randint(0, total_len - 1)
-
-        # Handle negative indices
         if idx < 0:
             if -idx > len(self):
                 raise ValueError("absolute value of index should not exceed dataset length")
             idx = len(self) + idx
 
-        # Find which dataset the index belongs to
-        dataset_idx = bisect.bisect_right(self.cumulative_sizes, idx)
-        if dataset_idx == 0:
-            sample_idx = idx
-        else:
-            sample_idx = idx - self.cumulative_sizes[dataset_idx - 1]
-
-        # Create the tuple to pass to the underlying dataset
-        if len(idx_tuple) == 3:
-            idx_tuple = (sample_idx,) + idx_tuple[1:]
-        else:
-            raise ValueError("Tuple index must have exactly three elements")
-
-        # Pass the modified tuple to the appropriate dataset
-        return self.datasets[dataset_idx][idx_tuple]
+        return self.datasets[0][(idx,) + tuple(idx_tuple[1:])]
