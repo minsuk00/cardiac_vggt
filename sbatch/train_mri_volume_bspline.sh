@@ -101,7 +101,7 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_bspline_dynamic_axial_pooled1343"
+        EXP_NAME="${REV_TS}_mri_volume_bspline_dynamic_axial_pooled1337"
         EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run, max_epochs=200)"
@@ -109,7 +109,7 @@ else
         # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
         # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_bspline_dynamic_axial_pooled1343"
+        EXP_NAME="${REV_TS}_mri_volume_bspline_dynamic_axial_pooled1337"
         EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
         echo "Fresh-from-base bspline run: exp_name=${EXP_NAME}, max_epochs=200"

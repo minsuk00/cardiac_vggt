@@ -901,7 +901,7 @@ ACDC_patient051,ACDC,ACDC_sax/ACDC_patient051,training,10,10.0,90.0,30,12,Siemen
 ACDC_patient052,ACDC,ACDC_sax/ACDC_patient052,training,8,10.0,70.0,20,12,Siemens,,,Dijon,diseased,MINF,,,161.0,85.0,0,5,train,ACDC/training/patient052/patient052_4d.nii.gz
 ACDC_patient053,ACDC,ACDC_sax/ACDC_patient053,training,7,10.0,60.0,30,12,Siemens,,,Dijon,diseased,MINF,,,176.0,77.0,0,4,train,ACDC/training/patient053/patient053_4d.nii.gz
 ACDC_patient054,ACDC,ACDC_sax/ACDC_patient054,training,8,10.0,70.0,30,12,Siemens,,,Dijon,diseased,MINF,,,176.0,94.0,0,4,train,ACDC/training/patient054/patient054_4d.nii.gz
-ACDC_patient055,ACDC,ACDC_sax/ACDC_patient055,training,9,10.0,80.0,25,12,Siemens,,,Dijon,diseased,MINF,,,180.0,82.0,0,4,train,ACDC/training/patient055/patient055_4d.nii.gz
+ACDC_patient055,ACDC,ACDC_sax/ACDC_patient055,training,9,10.0,80.0,25,12,Siemens,,,Dijon,diseased,MINF,,,180.0,82.0,0,4,excluded_duplicate,ACDC/training/patient055/patient055_4d.nii.gz
 ACDC_patient056,ACDC,ACDC_sax/ACDC_patient056,training,9,10.0,80.0,30,12,Siemens,,,Dijon,diseased,MINF,,,170,62,0,4,train,ACDC/training/patient056/patient056_4d.nii.gz
 ACDC_patient057,ACDC,ACDC_sax/ACDC_patient057,training,8,10.0,70.0,25,12,Siemens,,,Dijon,diseased,MINF,,,175,80,0,4,train,ACDC/training/patient057/patient057_4d.nii.gz
 ACDC_patient058,ACDC,ACDC_sax/ACDC_patient058,training,9,10.0,80.0,30,12,Siemens,,,Dijon,diseased,MINF,,,168,68,0,5,train,ACDC/training/patient058/patient058_4d.nii.gz
@@ -922,7 +922,7 @@ ACDC_patient072,ACDC,ACDC_sax/ACDC_patient072,training,8,10.0,70.0,30,12,Siemens
 ACDC_patient073,ACDC,ACDC_sax/ACDC_patient073,training,7,10.0,60.0,35,12,Siemens,,,Dijon,healthy,NOR,,,185.0,96.0,0,3,train,ACDC/training/patient073/patient073_4d.nii.gz
 ACDC_patient074,ACDC,ACDC_sax/ACDC_patient074,training,8,10.0,70.0,30,12,Siemens,,,Dijon,healthy,NOR,,,175.0,87.0,0,4,train,ACDC/training/patient074/patient074_4d.nii.gz
 ACDC_patient075,ACDC,ACDC_sax/ACDC_patient075,training,14,5.0,65.0,14,12,Siemens,,,Dijon,healthy,NOR,,,179.0,93.0,0,4,val,ACDC/training/patient075/patient075_4d.nii.gz
-ACDC_patient076,ACDC,ACDC_sax/ACDC_patient076,training,8,10.0,70.0,30,12,Siemens,,,Dijon,healthy,NOR,,,175,87,0,4,train,ACDC/training/patient076/patient076_4d.nii.gz
+ACDC_patient076,ACDC,ACDC_sax/ACDC_patient076,training,8,10.0,70.0,30,12,Siemens,,,Dijon,healthy,NOR,,,175,87,0,4,excluded_duplicate,ACDC/training/patient076/patient076_4d.nii.gz
 ACDC_patient077,ACDC,ACDC_sax/ACDC_patient077,training,8,10.0,70.0,25,12,Siemens,,,Dijon,healthy,NOR,,,180,75,0,4,train,ACDC/training/patient077/patient077_4d.nii.gz
 ACDC_patient078,ACDC,ACDC_sax/ACDC_patient078,training,8,10.0,70.0,30,12,Siemens,,,Dijon,healthy,NOR,,,185,84,0,3,train,ACDC/training/patient078/patient078_4d.nii.gz
 ACDC_patient079,ACDC,ACDC_sax/ACDC_patient079,training,9,10.0,80.0,30,12,Siemens,,,Dijon,healthy,NOR,,,178,80,0,4,train,ACDC/training/patient079/patient079_4d.nii.gz
@@ -1034,7 +1034,7 @@ MNMs_A6M1Q7,MNMs,MNMs_sax/MNMs_A6M1Q7,Labeled,10,10.0,90.0,30,12,Philips,,,2,dis
 MNMs_A7D9L8,MNMs,MNMs_sax/MNMs_A7D9L8,Labeled,8,8.0,56.0,25,12,Siemens,,,1,diseased,HCM,67,F,160,65,0,5,train,MNMs/MNMs1/Training/Labeled/A7D9L8/A7D9L8_sa.nii.gz
 MNMs_A7E4J0,MNMs,MNMs_sax/MNMs_A7E4J0,Testing,13,8.0,96.0,30,12,Philips,,,3,diseased,DCM,44,M,,88,0,4,test,MNMs/MNMs1/Testing/A7E4J0/A7E4J0_sa.nii.gz
 MNMs_A7F4G2,MNMs,MNMs_sax/MNMs_A7F4G2,Testing,14,10.0,130.0,26,12,Canon,,,5,diseased,DCM,65,M,167,71,0,5,test,MNMs/MNMs1/Testing/A7F4G2/A7F4G2_sa.nii.gz
-MNMs_A7G0P5,MNMs,MNMs_sax/MNMs_A7G0P5,Labeled,10,10.0,90.0,30,12,Philips,,,2,diseased,HCM,33,M,,65,0,4,train,MNMs/MNMs1/Training/Labeled/A7G0P5/A7G0P5_sa.nii.gz
+MNMs_A7G0P5,MNMs,MNMs_sax/MNMs_A7G0P5,Labeled,10,10.0,90.0,30,12,Philips,,,2,diseased,HCM,33,M,,65,0,4,excluded_duplicate,MNMs/MNMs1/Training/Labeled/A7G0P5/A7G0P5_sa.nii.gz
 MNMs_A7M7P8,MNMs,MNMs_sax/MNMs_A7M7P8,Labeled,12,8.0,88.0,25,12,Siemens,,,1,diseased,HCM,49,M,183,110,0,4,train,MNMs/MNMs1/Training/Labeled/A7M7P8/A7M7P8_sa.nii.gz
 MNMs_A7O4T6,MNMs,MNMs_sax/MNMs_A7O4T6,Labeled,12,9.600000381469727,105.60000419616699,25,12,Siemens,,,1,diseased,ARV,82,M,178,74,0,5,train,MNMs/MNMs1/Training/Labeled/A7O4T6/A7O4T6_sa.nii.gz
 MNMs_A8C5E9,MNMs,MNMs_sax/MNMs_A8C5E9,Testing,13,10.0,120.0,25,12,GE,,,4,diseased,Other,38,F,,68,0,5,test,MNMs/MNMs1/Testing/A8C5E9/A8C5E9_sa.nii.gz
@@ -1107,7 +1107,7 @@ MNMs_C6U4W8,MNMs,MNMs_sax/MNMs_C6U4W8,Testing,12,9.600000381469727,105.600004196
 MNMs_C7L8Z8,MNMs,MNMs_sax/MNMs_C7L8Z8,Testing,12,10.0,110.0,30,12,Philips,,,2,diseased,HCM,51,M,,80,0,4,test,MNMs/MNMs1/Testing/C7L8Z8/C7L8Z8_sa.nii.gz
 MNMs_C7M6W0,MNMs,MNMs_sax/MNMs_C7M6W0,Testing,12,10.0,110.0,25,12,GE,,,4,diseased,Other,53,M,,71,0,4,test,MNMs/MNMs1/Testing/C7M6W0/C7M6W0_sa.nii.gz
 MNMs_C8I7P7,MNMs,MNMs_sax/MNMs_C8I7P7,Validation,10,10.0,90.0,30,12,Philips,,,2,diseased,HCM,74,F,,70,0,5,val,MNMs/MNMs1/Validation/C8I7P7/C8I7P7_sa.nii.gz
-MNMs_C8J7L5,MNMs,MNMs_sax/MNMs_C8J7L5,Validation,10,10.0,90.0,25,12,GE,,,4,diseased,HCM,73,F,,60,0,4,val,MNMs/MNMs1/Validation/C8J7L5/C8J7L5_sa.nii.gz
+MNMs_C8J7L5,MNMs,MNMs_sax/MNMs_C8J7L5,Validation,10,10.0,90.0,25,12,GE,,,4,diseased,HCM,73,F,,60,0,4,excluded_duplicate,MNMs/MNMs1/Validation/C8J7L5/C8J7L5_sa.nii.gz
 MNMs_C8O0P2,MNMs,MNMs_sax/MNMs_C8O0P2,Testing,10,10.0,90.0,25,12,GE,,,4,diseased,IHD,73,M,,60,0,4,test,MNMs/MNMs1/Testing/C8O0P2/C8O0P2_sa.nii.gz
 MNMs_C8P3S7,MNMs,MNMs_sax/MNMs_C8P3S7,Labeled,12,9.600000381469727,105.60000419616699,25,12,Siemens,,,1,diseased,HCM,72,F,152,73,0,4,train,MNMs/MNMs1/Training/Labeled/C8P3S7/C8P3S7_sa.nii.gz
 MNMs_C8V5W8,MNMs,MNMs_sax/MNMs_C8V5W8,Unlabeled,12,10.0,110.0,25,12,GE,,,4,diseased,HHD,76,F,,58,0,0,train,MNMs/MNMs1/Training/Unlabeled/C8V5W8/C8V5W8_sa.nii.gz
@@ -1169,7 +1169,7 @@ MNMs_E7L0N6,MNMs,MNMs_sax/MNMs_E7L0N6,Testing,11,10.0,100.0,25,12,GE,,,4,healthy
 MNMs_E9H1U4,MNMs,MNMs_sax/MNMs_E9H1U4,Labeled,11,9.600000381469727,96.00000381469727,25,12,Siemens,,,1,healthy,NOR,23,F,152,50,0,5,train,MNMs/MNMs1/Training/Labeled/E9H1U4/E9H1U4_sa.nii.gz
 MNMs_E9H2K7,MNMs,MNMs_sax/MNMs_E9H2K7,Labeled,10,10.0,90.0,30,12,Philips,,,2,healthy,NOR,47,F,,68,0,5,train,MNMs/MNMs1/Training/Labeled/E9H2K7/E9H2K7_sa.nii.gz
 MNMs_E9L1W5,MNMs,MNMs_sax/MNMs_E9L1W5,Labeled,10,10.0,90.0,25,12,Philips,,,3,diseased,DCM,47,F,,57,0,5,train,MNMs/MNMs1/Training/Labeled/E9L1W5/E9L1W5_sa.nii.gz
-MNMs_E9L4N2,MNMs,MNMs_sax/MNMs_E9L4N2,Unlabeled,10,10.0,90.0,25,12,GE,,,4,healthy,NOR,70,F,,55,0,0,train,MNMs/MNMs1/Training/Unlabeled/E9L4N2/E9L4N2_sa.nii.gz
+MNMs_E9L4N2,MNMs,MNMs_sax/MNMs_E9L4N2,Unlabeled,10,10.0,90.0,25,12,GE,,,4,healthy,NOR,70,F,,55,0,0,excluded_duplicate,MNMs/MNMs1/Training/Unlabeled/E9L4N2/E9L4N2_sa.nii.gz
 MNMs_E9V4Z8,MNMs,MNMs_sax/MNMs_E9V4Z8,Labeled,13,9.600000381469727,115.20000457763672,25,12,Siemens,,,1,healthy,NOR,21,F,,66,0,4,train,MNMs/MNMs1/Training/Labeled/E9V4Z8/E9V4Z8_sa.nii.gz
 MNMs_E9V9Z2,MNMs,MNMs_sax/MNMs_E9V9Z2,Testing,11,10.0,100.0,30,12,GE,,,4,diseased,HCM,56,F,,85,0,5,test,MNMs/MNMs1/Testing/E9V9Z2/E9V9Z2_sa.nii.gz
 MNMs_F0I6U8,MNMs,MNMs_sax/MNMs_F0I6U8,Testing,15,10.0,140.0,25,12,GE,,,4,diseased,ARV,50,F,,66,0,6,test,MNMs/MNMs1/Testing/F0I6U8/F0I6U8_sa.nii.gz
@@ -1321,7 +1321,7 @@ MNMs_P6U0Y0,MNMs,MNMs_sax/MNMs_P6U0Y0,Labeled,10,10.0,90.0,30,12,Philips,,,2,dis
 MNMs_P8V0Y7,MNMs,MNMs_sax/MNMs_P8V0Y7,Validation,14,10.0,130.0,28,12,Canon,,,5,diseased,HCM,73,M,164,64,0,4,val,MNMs/MNMs1/Validation/P8V0Y7/P8V0Y7_sa.nii.gz
 MNMs_P8W4Z0,MNMs,MNMs_sax/MNMs_P8W4Z0,Testing,10,10.0,90.0,30,12,Philips,,,3,diseased,DCM,47,M,,67,0,5,test,MNMs/MNMs1/Testing/P8W4Z0/P8W4Z0_sa.nii.gz
 MNMs_P9S7W2,MNMs,MNMs_sax/MNMs_P9S7W2,Labeled,11,10.0,100.0,25,12,Philips,,,3,diseased,DCM,39,M,,82,0,6,train,MNMs/MNMs1/Training/Labeled/P9S7W2/P9S7W2_sa.nii.gz
-MNMs_Q0Q1Y4,MNMs,MNMs_sax/MNMs_Q0Q1Y4,Unlabeled,10,10.0,90.0,25,12,GE,,,4,healthy,NOR,33,F,,55,0,0,train,MNMs/MNMs1/Training/Unlabeled/Q0Q1Y4/Q0Q1Y4_sa.nii.gz
+MNMs_Q0Q1Y4,MNMs,MNMs_sax/MNMs_Q0Q1Y4,Unlabeled,10,10.0,90.0,25,12,GE,,,4,healthy,NOR,33,F,,55,0,0,excluded_duplicate,MNMs/MNMs1/Training/Unlabeled/Q0Q1Y4/Q0Q1Y4_sa.nii.gz
 MNMs_Q0U0V5,MNMs,MNMs_sax/MNMs_Q0U0V5,Labeled,12,9.600000381469727,105.60000419616699,25,12,Siemens,,,1,diseased,DCM,71,M,168,64,0,5,train,MNMs/MNMs1/Training/Labeled/Q0U0V5/Q0U0V5_sa.nii.gz
 MNMs_Q1Q3T1,MNMs,MNMs_sax/MNMs_Q1Q3T1,Testing,11,10.0,100.0,30,12,GE,,,4,healthy,NOR,20,F,,55,0,5,test,MNMs/MNMs1/Testing/Q1Q3T1/Q1Q3T1_sa.nii.gz
 MNMs_Q3Q6R8,MNMs,MNMs_sax/MNMs_Q3Q6R8,Testing,11,10.0,100.0,25,12,Philips,,,3,diseased,DCM,46,M,,100,0,5,test,MNMs/MNMs1/Testing/Q3Q6R8/Q3Q6R8_sa.nii.gz
