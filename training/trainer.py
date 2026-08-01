@@ -718,9 +718,10 @@ class Trainer(TrainerVizMixin):
         # ── Per-phase val PSNR (only when t_target is varying) ──
         # Metric name bakes in n and the identity baseline:
         #   val_psnr/t{k}_n{n}_base{b:.1f}
-        # With deterministic stratified val, n is constant (3 for t=0..5, 2 for t=6..11)
-        # so each phase keeps one stable panel. If val ever loses determinism, n drifts
-        # and new panels appear — that drift is the smoke alarm.
+        # With deterministic stratified val, n is constant per phase, so each phase keeps
+        # one stable panel. If val ever loses determinism, n drifts and new panels appear —
+        # that drift is the smoke alarm. (The old '3 for t=0..5, 2 for t=6..11' no longer
+        # holds under ef_val_sweep, which visits each subject at its own ED/ES — docs/59 F20.)
         # Multi-phase mode logs TWO parallel namespaces:
         #   val/psnr/full/t{k}_n{n}_base{b:.1f}   averages over the whole cube
         #   val/psnr/bbox/t{k}_n{n}_base{b:.1f}   averages over the subject's geometric content region only

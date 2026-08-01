@@ -163,7 +163,14 @@ class MRIDataset(Dataset):
         # ── Subject discovery (same split-file format as before) ──────────
         self.subjects = self._find_subjects()
         logging.info(f"MRIDataset [{split}]: {len(self.subjects)} subjects from {self.split_file}")
-        self.len_train = max(1000, len(self.subjects))
+        # Exactly one pass over the cohort per epoch. NOT `max(1000, N)` (docs/59 F6): with
+        # N=940 that gave 1000 draws indexed `seq_index % 940`, so the 60-subject residual
+        # `subj_idx ∈ 0..59` was drawn TWICE every epoch — a set that is invariant to seed and
+        # epoch, so it never averages out. Since the split file is written `sorted()` and
+        # `ACDC_sax/…` sorts first, those 60 were all ACDC, oversampling the finest-pitch,
+        # pathology-labelled source 1.60× (14.5% of samples on 9.0% of subjects) — precisely
+        # the imbalance pooling was meant to remove.
+        self.len_train = len(self.subjects)
 
         # ── EF val sweep (opt-in, val-only): reconstruct each subject at its GT ED and ES ──
         # instead of the coupled seq_index%T phase. Builds an explicit (subj_idx, t_target) list
@@ -178,6 +185,17 @@ class MRIDataset(Dataset):
             self.cardiac_phase_csv = csv_path
             logging.info(f"MRIDataset [val]: ef_val_sweep ON — {len(self.val_targets)} "
                          f"(subject, t_target) pairs from {csv_path}")
+            # An epoch must enumerate SWEEP ENTRIES, not subjects. `val_targets` is
+            # `[(i, ED) for every subject] + [(i, ES) for every subject]`, i.e. 2N long, and
+            # `get_data` indexes it by `seq_index % len(val_targets)`. Leaving len_train at N
+            # caps `__len__` (and therefore the dataloader) at N, so `seq_index` only ever
+            # reaches 0..N-1 — the ED half — and EVERY ES entry is silently unreachable.
+            # EF = (EDV - ESV)/EDV, so that leaves the predicted-EF metric with no ES volume
+            # and nothing to compute from; `trainer.py`'s `limit_val_batches = len(val_targets)`
+            # cannot rescue it, because a dataloader cannot yield more samples than the dataset
+            # declares. Measured before this line existed: ES half reached 0/133, and only 133
+            # of the expected 266 volumes were written to `ef_tmp/pred/`.
+            self.len_train = len(self.val_targets)
 
         # ── monai PersistentDataset cache ─────────────────────────────────
         if PersistentDataset is None:
@@ -210,6 +228,7 @@ class MRIDataset(Dataset):
             logging.warning(f"MRIDataset: split_file not found: {self.split_file}. No subjects loaded.")
             return []
         subjects = []
+        missing = []
         current_split = None
         with open(self.split_file) as f:
             for line in f:
@@ -223,7 +242,19 @@ class MRIDataset(Dataset):
                     if os.path.isdir(path):
                         subjects.append(path)
                     else:
+                        missing.append(path)
                         logging.warning(f"MRIDataset: subject path not found, skipping: {path}")
+        # Post-condition (docs/59 F17): the split file is the contract for how many subjects
+        # this run trains/evaluates on. Warn-and-skip alone means a rename or a GPFS mount
+        # hiccup silently shrinks the cohort, with only a startup warning that is easy to lose
+        # — and every downstream number (epoch length, val means) would quietly change.
+        if missing:
+            raise FileNotFoundError(
+                f"MRIDataset [{self.split}]: {len(missing)} of "
+                f"{len(subjects) + len(missing)} subjects listed in {self.split_file} are "
+                f"missing on disk (data_root={self.data_root}). First few: {missing[:5]}. "
+                "Fix the paths or edit the split file — do not train on a silently smaller cohort."
+            )
         return subjects
 
     def _build_val_targets(self, csv_path):
@@ -369,7 +400,32 @@ class MRIDataset(Dataset):
         if self.one_frame_per_slice:
             # Force S to the in-FOV plane count → every plane covered exactly once, n_extra=0
             # (the sparse one-frame-per-slice extreme). Ignores the incoming budget S.
+            #
+            # ⚠️ CONSEQUENCE (docs/59 F9): under native-z, z is never zero-padded, so
+            # `anatomy_bbox` z-range is always [0, D) ⇒ **S == D exactly**. That makes
+            # `num_slices` / `img_nums` stale as descriptions of the slot budget, and — the
+            # operationally important part — the memory budget is no longer a knob at all:
+            # `max_img_per_gpu` was DELETED (docs/59 F9) and batch size is pinned to 1 in
+            # dynamic_dataloader, because under native-z two subjects with the same D but
+            # different pitch collate SILENTLY and would share one z_scale. To cut memory, cut
+            # D (or the model). `img_nums` survives as the S cap enforced just below.
+            budget = S
             S = len(z_sequence) + len(coverage)
+            # docs/59 F19: S is now set by the DATA, so nothing else bounds it. Max D in the
+            # current train/val split is 18, but the pool holds D=19/20/21 subjects (all in
+            # test today) — a re-seeded split would silently request more slots than the
+            # memory budget was sized for. Fail loudly instead of OOM-ing mysteriously.
+            #
+            # Gated on `img_per_seq is not None`, i.e. only when the REAL dataloader supplied
+            # the budget (from img_nums). Standalone construction — tools, tests, the identity
+            # gate — falls back to `self.num_slices`, whose default (12) is NOT the training
+            # budget (20), so enforcing it there would reject perfectly valid D>12 subjects.
+            if img_per_seq is not None and S > budget:
+                raise ValueError(
+                    f"one_frame_per_slice needs S={S} slots for this subject (D={S}), "
+                    f"exceeding the configured budget of {budget} (img_nums). Raise img_nums, "
+                    f"or exclude the subject."
+                )
 
         room = S - len(z_sequence)
         if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < bbox_z_size)
@@ -475,10 +531,17 @@ class MRIDataset(Dataset):
             # z is measured from THIS subject's own mid-plane ((D-1)/2), at its own native
             # spacing dz.
             z_val = (z_i - (D - 1) / 2.0) * dz / Z_HALF_MM
-            assert abs(z_val) <= 1.0 + 1e-4, (
-                f"z_norm {z_val:.4f} exceeds Z_HALF_MM={Z_HALF_MM} half-span "
-                f"(dz={dz}, D={D}, z_i={z_i}) — raise Z_HALF_MM, do not crop the stack."
-            )
+            # A real `raise`, NOT an `assert` (docs/59 F18): asserts are stripped under
+            # `python -O`, and there is only 5.9% headroom here (max half-span over the
+            # pooled cohort is 85.0 mm of 90). If this were skipped, |z_norm| > 1 would flow
+            # silently into ZIndexEmbedder, whose sinusoids have period 2 — two planes of one
+            # subject would alias to the SAME embedding with no crash. One protocol step away:
+            # D=20 @10mm = 190mm, or D=17 @12mm = 192mm.
+            if abs(z_val) > 1.0 + 1e-4:
+                raise ValueError(
+                    f"z_norm {z_val:.4f} exceeds Z_HALF_MM={Z_HALF_MM} half-span "
+                    f"(dz={dz}, D={D}, z_i={z_i}) — raise Z_HALF_MM, do not crop the stack."
+                )
             sc = np.stack([x_norm, y_norm, np.full_like(x_norm, z_val)], axis=-1).astype(np.float32)
             scanner_coords_list.append(sc)
 

@@ -408,7 +408,7 @@ class TrainerVizMixin:
                 "media_val_ED_ES/Val_Visuals_cardiac_cycle_gif",
                 wandb.Video(frames, fps=4, format="gif",
                             caption=f"step={log_step} — rows: V_gt (top) / V_canon (bottom); "
-                                    f"cols: z = mid-2 .. mid+2 (planes 4-8){mode_note}"),
+                                    f"cols: z = mid-2 .. mid+2{mode_note}"),
                 log_step,
             )
         except Exception as e:
@@ -484,7 +484,10 @@ class TrainerVizMixin:
                 si = int(seqs[b].flatten()[0].item())
                 subj_idx, t = vt[si % len(vt)]
                 subject = os.path.basename(os.path.dirname(mri_ds.subjects[subj_idx]))
-                ef_eval.save_pred_volume(V_canon[b], self._ef_pred_dir, subject, int(t))
+                # This subject's own native pitch (docs/59 F14) — batch_size is pinned to 1, but
+                # index by b anyway so this stays correct if that ever changes.
+                dz = float(batch["dz_mm"].reshape(-1)[b])
+                ef_eval.save_pred_volume(V_canon[b], self._ef_pred_dir, subject, int(t), dz_mm=dz)
         except Exception as e:
             logging.warning(f"[ef] save pred volume failed (ignored): {e}")
 
@@ -749,7 +752,7 @@ class TrainerVizMixin:
             vt = getattr(mri_ds, "val_targets", None)
             # Index by the SAMPLE's own seq_index (as _save_ef_volume does), not the
             # per-BATCH counter _val_iter. They coincide only while the val batch size is
-            # 1 (max_img_per_gpu // img_nums == 1); raising max_img_per_gpu would other-
+            # 1 (pinned in dynamic_dataloader; docs/59 F9) — a larger batch would other-
             # wise silently mislabel which subject/phase each stashed panel belongs to.
             seqs = batch.get("seq_index")
             i = int(seqs[0].flatten()[0].item()) if seqs is not None else int(self._val_iter)

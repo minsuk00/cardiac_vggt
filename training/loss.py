@@ -131,7 +131,18 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
     pos_pred = predictions["world_points"]
     V_gt = batch["gt_target_volume"]
     grid_shape = tuple(V_gt.shape[1:])
-    z_scale = float(batch["z_scale"].reshape(-1)[0])  # batch_size is always 1 in this pipeline
+    # batch_size is always 1 in this pipeline, so a single scalar z_scale describes the whole
+    # batch. Guard it (docs/59 F7): under native-z, two subjects with the same D but different
+    # dz collate SUCCESSFULLY, and row 1 would then be splatted at row 0's scale — a silent
+    # 20%+ through-plane geometry error. Different-D pairs already crash loudly on collate.
+    _zs = batch["z_scale"].reshape(-1)
+    if not bool((_zs == _zs[0]).all()):
+        raise RuntimeError(
+            f"z_scale is not uniform across the batch: {_zs.tolist()}. One scalar z_scale is "
+            "applied to every row, so mixing slice pitches would splat rows 1..B-1 at row 0's "
+            "scale — a silent through-plane geometry error (docs/59 F7)."
+        )
+    z_scale = float(batch["z_scale"].reshape(-1)[0])
 
     V_canon, coverage = splat_predictions(predictions, batch, grid_shape, z_scale)
 
@@ -220,12 +231,25 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
             out["metric_mean_disp_norm"] = (pos_pred - batch["scanner_coords"]).abs().sum(-1).mean()
         if V_canon.is_cuda:
             try:
-                # RATIONALE: Import torch.compile-traceable fused_ssim3d (from MRI2CT fused_ssim_compat)
-                # which registers dispatcher custom ops with fake kernels, eliminating all pybind graph breaks.
-                from vggt.utils.fused_ssim_compat import fused_ssim3d
-                pred_m = V_canon.unsqueeze(1).float().contiguous()
-                targ_m = V_gt.unsqueeze(1).float().contiguous()
-                out["metric_ssim_3d_full"] = fused_ssim3d(pred_m, targ_m, train=False)
+                # PER-SLICE 2D SSIM. REPLACES the old `metric_ssim_3d_full` (docs/59 F11):
+                # `fused_ssim3d` slides an 11-tap (radius-5) window in ALL three dims with zero
+                # padding, so the fraction of z-planes contaminated by the padded edge depends on
+                # D — which under native-z varies 5-21 ACROSS SUBJECTS. Measured on one structured
+                # volume cropped to different depths (same content, same error field, so only D
+                # changes): 3D reads 0.9929@D=5 -> 0.9939@D=32, while this per-slice form reads
+                # 0.9947 -> 0.9946 (~10x flatter). Reshaping (B,D,H,W) -> (B*D,1,H,W) treats z as
+                # a batch dim, removing the z-padding entirely: the window is only ever in-plane
+                # and D just sets how many slices are averaged.
+                #
+                # The 3D metric was DROPPED rather than kept alongside: its only argument was
+                # continuity with pre-native-z runs, but those are not comparable anyway (V_gt
+                # frame, normalization and grid all changed), so logging both would just be two
+                # numbers where one is knowingly wrong.
+                from fused_ssim import fused_ssim
+                # (B, D, H, W) -> (B*D, 1, H, W): every slice is an independent 2D image.
+                pred_s = V_canon.reshape(-1, 1, *V_canon.shape[-2:]).float().contiguous()
+                targ_s = V_gt.reshape(-1, 1, *V_gt.shape[-2:]).float().contiguous()
+                out["metric_ssim_2d_full"] = fused_ssim(pred_s, targ_s, train=False)
             except Exception:
                 pass
 

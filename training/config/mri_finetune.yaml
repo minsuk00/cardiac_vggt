@@ -13,8 +13,9 @@ split: "train"
 mode: "train"
 
 # --- Main Controls ---
-# Pooled multi-dataset cohort (docs/58 §13): 1343 subjects across CMRxRecon2023/2024/2025 +
-# ACDC + M&Ms-1, split 940/134/269 (70:10:20). data_root is the shared parent, and split-file
+# Pooled multi-dataset cohort (docs/58 §13): 1337 subjects across CMRxRecon2023/2024/2025 +
+# ACDC + M&Ms-1, split 935/133/269 (69.9:9.9:20.1). 6 source-shipped duplicate subjects are
+# excluded (docs/59 F3), which is why this is 1337 and not 1343.  data_root is the shared parent, and split-file
 # lines are relative paths under it (e.g. `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`) —
 # MRIDataset._find_subjects joins them directly, so no loader change was needed.
 # The old CMRxRecon2024-only pair was:
@@ -45,11 +46,14 @@ z_jitter: 0.5
 # Overrides the fixed img_nums/num_slices budget. Default true ⇒ this is the actual intended
 # usage mode (research goal is the one-frame-per-slice extreme); set false for fixed-S multi-frame.
 one_frame_per_slice: true
-limit_train_batches: 1000
-# 134 pooled val subjects x {ED, ES} = 268 entries under ef_val_sweep — one full deterministic
+# 935 pooled train subjects = one exact pass per epoch (docs/59 F6). Keep this equal to the
+# train-split size: a value above it re-draws a fixed, seed-invariant prefix of the (sorted,
+# so ACDC-first) split every epoch, silently oversampling one source.
+limit_train_batches: 935
+# 133 pooled val subjects x {ED, ES} = 266 entries under ef_val_sweep — one full deterministic
 # pass. Was 200, sized for the 100-val-subject plan; at 200 the last ~68 ES entries would
 # never be evaluated.
-limit_val_batches: 268
+limit_val_batches: 266
 max_epochs: 200
 val_epoch_freq: 1
 # Target-phase control. null = uniform sampling per call (new pipeline, multi-phase).
@@ -74,10 +78,9 @@ cardiac_phase_csv: "/home/minsukc/vggt/scratch/data/whs/cardiac_phase.csv"
 # ---------------------
 
 # Not `${basename:${data_root}}` anymore — that would resolve to the useless "data".
-dataset_name: "pooled1343"
+dataset_name: "pooled1337"
 exp_name: "${rev_ts:}_mri_${mri_data_mode}_${mri_mode}_${dataset_name}"
 num_workers: 4
-max_img_per_gpu: 20
 accum_steps: 1
 
 # Redirect Logging and Checkpoints to Scratch
@@ -148,7 +151,6 @@ data:
   train:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
-    max_img_per_gpu: ${max_img_per_gpu}
     shuffle: True
     pin_memory: False
     common_config:
@@ -157,7 +159,6 @@ data:
       training: True
       inside_random: True
       img_nums: [20, 20]  # fixed S=20 slot budget (multi-frame: full z-coverage + uniform-random extras)
-      max_img_per_gpu: ${max_img_per_gpu}
       augs:
         aspects: [1.0, 1.0]
     dataset:
@@ -180,7 +181,6 @@ data:
   val:
     _target_: data.dynamic_dataloader.DynamicTorchDataset
     num_workers: ${num_workers}
-    max_img_per_gpu: ${max_img_per_gpu}
     shuffle: False
     pin_memory: False
     common_config:
@@ -189,7 +189,6 @@ data:
       training: False
       inside_random: False
       img_nums: [20, 20]  # fixed S=20 slot budget (multi-frame: full z-coverage + uniform-random extras)
-      max_img_per_gpu: ${max_img_per_gpu}
       augs:
         aspects: [1.0, 1.0]
     dataset:
@@ -224,6 +223,13 @@ model:
   bspline_grid_size: 32
 
 # Configure Optim — entire aggregator frozen (incl. z/t Fourier embedders); only point_head trains.
+#
+# ⚠️ STALE NAMES (docs/59 F20): `t_embedder` / `target_t_embedder` NO LONGER EXIST — the legacy
+# target_t conditioning was removed (docs/25, reference-slice conditioning). Only `z_embedder`
+# remains. The throughput argument below still holds for it; read `t_embedder` as historical.
+# Also note mri_volume.yaml (the config you actually run) OVERRIDES this to aggft
+# (`frozen_module_names: ["*patch_embed*"]`), so this whole rationale describes the
+# legacy head-only regime, not the active one.
 #
 # Why z_embedder + t_embedder are ALSO frozen (despite living "in" the aggregator):
 #   In an earlier iteration we enumerated the heavy aggregator subparts so the embedders

@@ -26,6 +26,7 @@ from monai.transforms import (
     CastToTyped,
     Compose,
     ConcatItemsd,
+    DeleteItemsd,
     EnsureChannelFirstd,
     LoadImaged,
     MapTransform,
@@ -90,7 +91,8 @@ class ScaleIntensityByT0PercentilesD(MapTransform):
         if nz.numel() > 0:
             ref_f = nz
         # torch.quantile is exact but slow on big tensors; use it because the volumes
-        # are small (256·256·12 ≈ 786k voxels), well under the kernel-launch cost.
+        # are small (256·256·D, D=5..21 → at most ~1.5M voxels), well under the kernel-launch
+        # cost and 11x under torch.quantile's 2**24-element hard limit.
         vmin = torch.quantile(ref_f, self.lower / 100.0).item()
         vmax = torch.quantile(ref_f, self.upper / 100.0).item()
         denom = max(vmax - vmin, self.eps)
@@ -250,7 +252,8 @@ def get_canonical_transforms(
     """
     phase_keys = [f"phase_{t:02d}" for t in range(num_phases)]
     # Mask propagates through the spatial transforms alongside the phases so its
-    # final shape is canonically (1, 256, 256, 12) in monai (X, Y, Z) order and
+    # final shape is canonically (1, 256, 256, D) in monai (X, Y, Z) order — Z is this
+    # subject's own native slice count under native-z (docs/58), never resampled — and
     # marks which voxels came from native data vs zero-pad.
     spatial_keys = phase_keys + ["content_mask"]
     # Per-key interpolation mode: phases bilinear (smooth), mask nearest (binary).
@@ -273,6 +276,14 @@ def get_canonical_transforms(
                 keys=phase_keys, ref_key=phase_keys[0], lower=lower, upper=upper
             ),
             ConcatItemsd(keys=phase_keys, name="phases", dim=0),
+            # Drop the per-phase sources once they are stacked (docs/59 F5). ConcatItemsd
+            # COPIES into `phases` but leaves the 12 float32 originals in the dict, and
+            # PersistentDataset pickles the whole dict — so every cache entry stored the same
+            # data twice (measured: 47.8 MB/subject, of which only the 15.7 MB float16 `phases`
+            # + 0.7 MB mask are ever read by get_data). That is ~3x the per-sample read volume
+            # on EVERY epoch and ~51 GB of /tmp at 1074 subjects instead of ~18 GB.
+            # Backward-compatible: pre-existing "fat" cache entries still load fine.
+            DeleteItemsd(keys=phase_keys),
             CastToTyped(keys=["phases"], dtype=storage_dtype),
             CastToTyped(keys=["content_mask"], dtype=torch.uint8),
             StripMetaD(keys=["phases", "content_mask"]),
