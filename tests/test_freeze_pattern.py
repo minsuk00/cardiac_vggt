@@ -32,7 +32,7 @@ def _load_cfg():
 
     cfg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):
-        return compose(config_name="mri_volume")
+        return compose(config_name="default")
 
 
 def _build_from_cfg(cfg, warp_head_type=None):

@@ -23,11 +23,64 @@ import torch
 
 from data.gpu_aug import gpu_augment_batch
 from data.preprocess import NUM_PHASES, Z_HALF_MM
+from ef_eval import IN_PLANE_MM
 from train_utils.general import safe_makedirs
+from train_utils.val_logging import (
+    N_FILM_PLANES, load_subject_groups, pick_one_index_per_source, pick_planes,
+    seq_index_to_subject, subject_id, subject_source, to_float,
+)
 
 
 class TrainerVizMixin:
     """Visualisation / diagnostic logging methods mixed into :class:`Trainer`."""
+
+    def _subject_device_batch(self, data, seq_index):
+        """The `get_data(...) numpy dict` → batched GPU tensors conversion, ONE copy.
+
+        Returns only the core every caller needs identically; each caller adds its own
+        extras (`gt_target_volume`/`anatomy_bbox` for the identity baseline, `z_indices`/
+        `t_indices`/`phases` for the filmstrip). Extracted 2026-08-01: this block was
+        duplicated verbatim in `_compute_identity_baseline` and `_log_cardiac_cycle_filmstrip`,
+        including two copies of the nested `st()` helper. The duplication is what makes a
+        batch-contract change dangerous — when native-z added `dz_mm`/`z_scale`, a site that
+        missed them would not crash, it would splat at the wrong z-scale and silently move
+        the identity floor every val metric is measured against (the docs/59 F14 pattern).
+        """
+        import numpy as np
+
+        def st(k, dt=np.float32):
+            return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
+
+        def scalar(k, dt=np.float32):
+            return torch.from_numpy(np.asarray(data[k]).astype(dt)).unsqueeze(0).to(self.device)
+
+        timesteps = st("timesteps", np.int64)
+        slice_indices = st("slice_indices", np.float32)     # may be continuous z
+
+        # These callers hit `get_data` DIRECTLY, so they bypass the trainer loop where
+        # `gpu_augment_batch` would materialise a deferred `images`. Under
+        # `defer_input_images` (the training default) the key is simply absent, so build it
+        # here — in float32, matching the dataset's own extraction exactly. Reading
+        # `data["images"]` unconditionally is what silently emptied the identity baseline
+        # and killed the filmstrip when deferral landed.
+        if "images" in data:
+            images = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
+        else:
+            from data.gpu_aug import extract_slices_from_phases
+            phases = torch.from_numpy(
+                np.asarray(data["phases"]).astype(np.float32)).unsqueeze(0).to(self.device)
+            images = extract_slices_from_phases(
+                phases, timesteps, slice_indices).permute(0, 1, 4, 2, 3).contiguous() / 255.0
+
+        return {
+            "images": images,
+            "scanner_coords": st("scanner_coords"),
+            "z_scale": scalar("z_scale"),
+            "dz_mm": scalar("dz_mm"),
+            "timesteps": timesteps,
+            "slice_indices": slice_indices,
+            "seq_index": torch.tensor([[seq_index]], dtype=torch.int64, device=self.device),
+        }
 
     def _compute_identity_baseline(self):
         """Run identity-Δ (no motion correction) on the val set and log PSNR as constants.
@@ -50,6 +103,14 @@ class TrainerVizMixin:
             per_phase_full = defaultdict(list)
             per_phase_bbox = defaultdict(list)
             per_phase_motion = defaultdict(list)
+            # Per-subject rows (docs/60). The cohort mean alone is not enough to judge a
+            # per-subject val PSNR later: the achievable ceiling varies enormously with
+            # D, dz and FOV across the pooled cohort, so raw per-subject PSNR is NOT
+            # comparable between subjects. Dividing by each subject's OWN identity floor
+            # is what makes any post-hoc slicing honest. It also surfaces an F1-class
+            # geometry bug at epoch 0 for free — one subject sitting 5-10 dB below its
+            # cohort is visible here before a single gradient step.
+            per_subject = []
 
             # Iterate the SAME seq_index range the val loop uses. Val calls
             # get_data(seq_index = 0..N-1) with N = effective limit_val_batches, and val
@@ -65,24 +126,21 @@ class TrainerVizMixin:
                 N = len(mri_ds.val_targets)   # mirror val's EF-sweep length (30×{ED,ES})
             N = max(int(N), 1)
             for i in range(N):
+              # Per-subject isolation (docs/59 F5-adjacent). The whole loop used to sit
+              # under ONE try, so a single bad subject aborted every remaining one and
+              # left the baseline unset — which silently changes every val metric NAME
+              # (the `_base{b}` suffix disappears) mid-series. The realistic trigger is
+              # the docs/59 F19 budget guard: `get_data` RAISES when S=D exceeds
+              # img_nums, and the pool holds D=19/20/21 subjects (currently all in test),
+              # so a re-seeded split would wipe the baseline. Skip the subject instead.
+              try:
                 data = mri_ds.get_data(seq_index=i, img_per_seq=num_slices)
-                # Build a minimal batch dict on device (no model forward; identity Δ).
-                def st(k, dt=np.float32):
-                    return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
-                imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
-                batch = {
-                    "images": imgs,
-                    "scanner_coords": st("scanner_coords"),
-                }
-                if "gt_target_volume" in data:
-                    batch["gt_target_volume"] = torch.from_numpy(
-                        data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
-                else:
+                if "gt_target_volume" not in data:
                     continue  # no GT to compare against; skip
-                batch["z_scale"] = torch.from_numpy(
-                    np.asarray(data["z_scale"]).astype(np.float32)).unsqueeze(0).to(self.device)
-                batch["dz_mm"] = torch.from_numpy(
-                    np.asarray(data["dz_mm"]).astype(np.float32)).unsqueeze(0).to(self.device)
+                # Build a minimal batch dict on device (no model forward; identity Δ).
+                batch = self._subject_device_batch(data, i)
+                batch["gt_target_volume"] = torch.from_numpy(
+                    data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(self.device)
                 if "anatomy_bbox" in data:
                     batch["anatomy_bbox"] = torch.from_numpy(
                         np.asarray(data["anatomy_bbox"]).astype(np.int64)).unsqueeze(0).to(self.device)
@@ -95,9 +153,7 @@ class TrainerVizMixin:
                 # Otherwise "Δ vs identity" compares a clean-input splat against a
                 # corrupted-input model and understates motion correction. No-op when
                 # respiratory is disabled (gpu_augment_batch early-returns unchanged).
-                batch["timesteps"] = st("timesteps", np.int64)
-                batch["slice_indices"] = st("slice_indices", np.float32)  # may be continuous z
-                batch["seq_index"] = torch.tensor([[i]], dtype=torch.int64, device=self.device)
+                # (timesteps / slice_indices / seq_index come from _subject_device_batch.)
                 batch = gpu_augment_batch(
                     batch, None, self.device,
                     respiratory_cfg=self.respiratory_cfg, train=False)
@@ -109,12 +165,28 @@ class TrainerVizMixin:
                     per_phase_full[t].append(out["metric_psnr_3d_full"].item())
                 if "metric_psnr_3d_bbox" in out:
                     per_phase_bbox[t].append(out["metric_psnr_3d_bbox"].item())
+                # Per-subject row — the per-subject FLOOR each val PSNR should be read against.
+                subject, source = seq_index_to_subject(mri_ds, i)
+                per_subject.append({
+                    "seq_index": i,
+                    "subject": subject,
+                    "source": source,
+                    "t_target": t,
+                    "D": int(batch["gt_target_volume"].shape[-3]),
+                    "dz_mm": float(np.asarray(data["dz_mm"]).reshape(-1)[0]),
+                    "psnr_full": to_float(out.get("metric_psnr_3d_full")),
+                    "psnr_bbox": to_float(out.get("metric_psnr_3d_bbox")),
+                    "psnr_motion": to_float(out.get("metric_psnr_3d_motion")),
+                })
                 # Skip subjects with no moving voxels: the loss reports 0.0 dB for them rather
                 # than omitting the key (it stays branchless — see compute_volume_intensity_loss),
                 # and a 0.0 would drag this identity baseline down. Unreachable for real cardiac
                 # data; the guard just keeps baseline_identity.json honest if it ever happens.
                 if "metric_psnr_3d_motion" in out and float(out.get("metric_motion_frac", 1.0)) > 0:
                     per_phase_motion[t].append(out["metric_psnr_3d_motion"].item())
+              except Exception as e:
+                logging.warning(f"identity baseline: subject seq_index={i} failed, "
+                                f"skipping it (ignored): {e}")
 
             # Aggregate.
             all_full = [p for ps in per_phase_full.values() for p in ps]
@@ -140,6 +212,9 @@ class TrainerVizMixin:
                         "motion": {"mean_psnr": mean_motion, "per_phase_mean": per_phase_mean_motion},
                         "per_phase_counts": {t: len(ps) for t, ps in per_phase_full.items()},
                         "t_target_fixed": self.t_target_fixed,
+                        # Per-subject floors (docs/60) — join on `subject` to normalise
+                        # any later per-subject val metric by its own achievable ceiling.
+                        "per_subject": per_subject,
                     }, f, indent=2)
             except Exception as e:
                 logging.warning(f"baseline JSON write failed: {e}")
@@ -186,13 +261,15 @@ class TrainerVizMixin:
         try:
             # Distinct val subjects; drop any out-of-range / duplicate after wraparound
             # so tiny val sets (e.g. synthetic test data) don't render the same subject twice.
-            n_subj = len(mri_ds.subjects)
-            subj_indices = [i for i in (0, 7, 15) if i < n_subj]
+            # One subject per source dataset, same picks as every other visual panel
+            # (was a hardcoded (0, 7, 15) = three ACDC subjects under the pooled split).
+            subj_indices = [i for i in self._ED_ES_SUBJECTS if i < len(mri_ds.subjects)]
             if not subj_indices:
                 return
             n_rows = len(subj_indices)
 
-            fig, axes = plt.subplots(n_rows, 3, figsize=(9.0, 3.2 * n_rows), dpi=90)
+            # 3x wider per cell: each panel is now 3 z-planes side by side, not 1.
+            fig, axes = plt.subplots(n_rows, 3, figsize=(18.0, 2.4 * n_rows), dpi=90)
             try:
                 axes = np.atleast_2d(axes)  # (n_rows, 3) even when n_rows == 1
                 for row, subj_idx in enumerate(subj_indices):
@@ -205,24 +282,32 @@ class TrainerVizMixin:
                     )[0].cpu().numpy()                                      # (D, H, W) bool
                     bbox = np.asarray(data["anatomy_bbox"]).astype(int)
                     z0, z1 = int(bbox[0]), int(bbox[1])
-                    z = (z0 + z1) // 2
+                    # 3 planes spanning the stack, NOT the mid-bbox plane — which is
+                    # provably the reference slot (see pick_planes). Apex/mid/base tells
+                    # you whether the mask degenerates away from the centre; one mid
+                    # plane cannot.
+                    zs = pick_planes(ed.shape[0], 3)
                     frac = float(mask[z0:z1].mean())
                     vmax = max(float(ed.max()), 1e-3)
                     mmax = max(float(motion_mag.max()), 1e-3)
 
                     ax = axes[row]
-                    ax[0].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
-                    ax[0].set_title(f"subj {subj_idx}: V_gt ED (z={z})", fontsize=9)
-                    ax[1].imshow(motion_mag[z], cmap="magma", vmin=0, vmax=mmax)
+                    ax[0].imshow(np.concatenate([ed[z] for z in zs], axis=1),
+                                 cmap="gray", vmin=0, vmax=vmax)
+                    ax[0].set_title(f"subj {subj_idx}: V_gt ED (z={list(zs)})", fontsize=9)
+                    ax[1].imshow(np.concatenate([motion_mag[z] for z in zs], axis=1),
+                                 cmap="magma", vmin=0, vmax=mmax)
                     ax[1].set_title("motion = max-min", fontsize=9)
-                    ax[2].imshow(ed[z], cmap="gray", vmin=0, vmax=vmax)
-                    overlay = np.zeros((*mask[z].shape, 4))
-                    overlay[mask[z]] = [1, 0, 0, 0.45]
+                    ax[2].imshow(np.concatenate([ed[z] for z in zs], axis=1),
+                                 cmap="gray", vmin=0, vmax=vmax)
+                    m3 = np.concatenate([mask[z] for z in zs], axis=1)
+                    overlay = np.zeros((*m3.shape, 4))
+                    overlay[m3] = [1, 0, 0, 0.45]
                     ax[2].imshow(overlay)
                     ax[2].set_title(f"mask tau={MOTION_MASK_TAU} ({frac*100:.1f}% of bbox)", fontsize=9)
                     for a in ax:
                         a.set_xticks([]); a.set_yticks([])
-                fig.suptitle("Motion mask (val subjects, mid-bbox z)", fontsize=10)
+                fig.suptitle("Motion mask (val subjects; apex | mid | base)", fontsize=10)
                 fig.tight_layout(rect=[0, 0, 1, 0.97])
                 self.wandb_writer.log("media_others/val_motion_mask_example", wandb.Image(fig), log_step)
             finally:
@@ -231,8 +316,10 @@ class TrainerVizMixin:
             logging.warning(f"motion mask example log failed (ignored): {e}")
 
     def _log_cardiac_cycle_filmstrip(self, log_step: int):
-        """Reconstruct one fixed val subject (idx 0) at all 12 phases and log a 2×12 strip
-        (V_gt top / V_canon bot, mid-z slice). Builds ONE input batch and sweeps the global
+        """Reconstruct one fixed val subject (idx 0) at all 12 phases and log an animated GIF
+        (V_gt top / V_canon bottom; N_FILM_PLANES z-planes evenly spanning the stack).
+        The static 2×T still image is intentionally disabled — see the commented block below.
+        Builds ONE input batch and sweeps the global
         target_t query over all phases (decoupled-target design) — faithful 4D cine from a
         single acquisition. Read-only over model + dataset state (no t_target_fixed mutation).
         """
@@ -268,16 +355,10 @@ class TrainerVizMixin:
             data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=num_slices)
             def st(k, dt=np.float32):
                 return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
-            imgs = st("images").permute(0, 1, 4, 2, 3).contiguous() / 255.0
-            S = imgs.shape[1]
-            batch = {
-                "images": imgs,
-                "scanner_coords": st("scanner_coords"),
-                "z_indices": st("z_indices"),
-                "t_indices": st("t_indices"),
-                "z_scale": torch.from_numpy(np.asarray(data["z_scale"]).astype(np.float32)).unsqueeze(0).to(self.device),
-                "dz_mm": torch.from_numpy(np.asarray(data["dz_mm"]).astype(np.float32)).unsqueeze(0).to(self.device),
-            }
+            batch = self._subject_device_batch(data, subj_idx)
+            batch["z_indices"] = st("z_indices")
+            batch["t_indices"] = st("t_indices")
+            S = batch["images"].shape[1]
             # Full canonical phase bundle → per-phase V_gt without re-sampling inputs.
             phases_bundle = torch.from_numpy(
                 np.asarray(data["phases"]).astype(np.float32)).to(self.device)  # (T, D, H, W)
@@ -287,9 +368,7 @@ class TrainerVizMixin:
             # breathing ONCE and reuse. Reference-slot mode: slot 0 changes per phase → breathing
             # is (re-)applied INSIDE the loop instead. No-op when respiratory is disabled.
             batch["phases"] = phases_bundle.unsqueeze(0)
-            batch["timesteps"] = st("timesteps", np.int64)
-            batch["slice_indices"] = st("slice_indices", np.float32)  # may be continuous z
-            batch["seq_index"] = torch.tensor([[subj_idx]], dtype=torch.int64, device=self.device)
+            # (timesteps / slice_indices / seq_index come from _subject_device_batch.)
             do_resp = (self.respiratory_cfg is not None
                        and getattr(self.respiratory_cfg, "enable", False))
             if not self.reference_slot:
@@ -336,11 +415,11 @@ class TrainerVizMixin:
                     )
                 V_canon = out["V_canon"][0].float().cpu().numpy()
                 V_gt = out["V_gt"][0].float().cpu().numpy()
-                # Render 5 planes (mid-2 .. mid+2, clamped) stacked vertically into (5H, W) so
-                # the strip/gif shows off-reference planes, not just the mid/reference plane.
+                # Render N_FILM_PLANES planes EVENLY SPACED over the whole stack, stacked
+                # vertically into (N*H, W). Was `mid±2`, which is centred on the reference
+                # slot and covers a D-dependent fraction of the stack — see pick_planes.
                 D = V_canon.shape[0]
-                mid_d = D // 2
-                window = [min(max(mid_d + off, 0), D - 1) for off in (-2, -1, 0, 1, 2)]
+                window = pick_planes(D, N_FILM_PLANES)
                 canon_frames.append(np.concatenate([V_canon[c] for c in window], axis=0))
                 gt_frames.append(np.concatenate([V_gt[c] for c in window], axis=0))
         except Exception as e:
@@ -392,23 +471,24 @@ class TrainerVizMixin:
         # laid out horizontally, bottom row = the model's same 5 planes. Cycled over t so the
         # heart beats. (Each stored frame is (5h, W) = 5 planes stacked vertically; we reshape
         # back to the 5 planes and re-tile as 2×5.) wandb.Video → moviepy needs 3-channel RGB.
-        def _tile_2x5(gt5, model5, vmax):
-            n = 5; h = gt5.shape[0] // n; W = gt5.shape[1]
-            def _row(stack5):                                   # (5h, W) -> (h, 5W)
-                planes = stack5.reshape(n, h, W)
+        def _tile_2xn(gt_stack, model_stack, vmax, n=N_FILM_PLANES):
+            h = gt_stack.shape[0] // n; W = gt_stack.shape[1]
+            def _row(stack):                                    # (n·h, W) -> (h, n·W)
+                planes = stack.reshape(n, h, W)
                 return np.concatenate([planes[i] for i in range(n)], axis=1)
-            grid = np.concatenate([_row(gt5), _row(model5)], axis=0)   # (2h, 5W)
+            grid = np.concatenate([_row(gt_stack), _row(model_stack)], axis=0)   # (2h, n·W)
             g = np.clip(grid / vmax * 255.0, 0, 255).astype(np.uint8)
             return np.stack([g, g, g], axis=0)                  # (3, 2h, 5W)
 
         try:
-            frames = np.stack([_tile_2x5(gt_frames[t], canon_frames[t], v_vmax)
-                               for t in range(len(gt_frames))], axis=0)   # (T, 3, 2h, 5W)
+            frames = np.stack([_tile_2xn(gt_frames[t], canon_frames[t], v_vmax)
+                               for t in range(len(gt_frames))], axis=0)   # (T, 3, 2h, n·W)
             self.wandb_writer.log(
                 "media_val_ED_ES/Val_Visuals_cardiac_cycle_gif",
                 wandb.Video(frames, fps=4, format="gif",
                             caption=f"step={log_step} — rows: V_gt (top) / V_canon (bottom); "
-                                    f"cols: z = mid-2 .. mid+2{mode_note}"),
+                                    f"cols: {N_FILM_PLANES} planes evenly spanning z=0..D-1"
+                                    f"{mode_note}"),
                 log_step,
             )
         except Exception as e:
@@ -422,8 +502,15 @@ class TrainerVizMixin:
         this epoch. Because val is deterministic (shuffle=False), the first-seen order and phases
         are identical every epoch, so the same filenames are overwritten in place (a couple hundred
         MB, NOT limit_val_batches × 2). Under the EF sweep this yields ED + ES per subject.
-        Affine is identity — V_canon lives in the dimensionless canonical [-1, 1] grid, not the
-        source NIfTI's physical frame, so a physical affine would be misleading.
+        Affine carries the real voxel SIZES (docs/60). It used to be `np.eye(4)`, defended as
+        "V_canon lives in a dimensionless canonical grid". That was fair when every subject
+        shared (1.4, 1.4, 12) mm — the identity was then a uniform rescale of one common grid.
+        Under native-z it is not: in-plane is still 1.4 mm for everyone but z is this subject's
+        own 5-12 mm, so an identity affine renders these dumps ANISOTROPICALLY wrong by a
+        per-subject factor, and two subjects' dumps are no longer comparable in a viewer.
+        `ef_eval.save_pred_volume` was fixed for exactly this reason (docs/59 F14); this is the
+        same fix for the debug dumps. Note the array is stored in splat order (D,H,W)=(Z,Y,X),
+        so the diagonal is (dz, 1.4, 1.4) — the axes are NOT permuted to radiological (X,Y,Z).
         """
         if not getattr(self.logging_conf, "save_val_volumes", False):
             return
@@ -441,7 +528,9 @@ class TrainerVizMixin:
             t_targets = batch.get("t_target")
             seq_names = batch.get("seq_name", [])
             B = V_canon.shape[0]
-            affine = np.eye(4, dtype=np.float32)
+            # Per-subject z spacing; in-plane is the fixed canonical 1.4 mm. Array axis
+            # order is (D,H,W) = (Z,Y,X), hence dz first. See the docstring.
+            dz_all = batch.get("dz_mm")
             saved = self._val_volumes_saved  # per-epoch set of already-dumped keys
             # Additivity: only the EF sweep dedups by (subject, phase) so both ED+ES are kept;
             # every other config keeps the original subject-only dedup (byte-identical behavior).
@@ -461,6 +550,8 @@ class TrainerVizMixin:
                 subj_idx = len(saved)  # deterministic first-seen order
                 saved.add(key)
                 stem = f"subj{subj_idx:02d}_t{t_val:02d}_{subject}"
+                dz = float(dz_all.reshape(-1)[b]) if dz_all is not None else 1.0
+                affine = np.diag([dz, IN_PLANE_MM, IN_PLANE_MM, 1.0]).astype(np.float32)
                 nib.save(nib.Nifti1Image(V_canon[b], affine), os.path.join(out_dir, f"{stem}_pred.nii.gz"))
                 nib.save(nib.Nifti1Image(V_gt[b], affine), os.path.join(out_dir, f"{stem}_gt.nii.gz"))
         except Exception as e:
@@ -468,7 +559,8 @@ class TrainerVizMixin:
 
     def _save_ef_volume(self, batch: Mapping, loss_dict: Mapping) -> None:
         """On EF-epochs, dump each reconstructed val volume to ef_tmp/pred/ in nnU-Net input
-        format (X,Y,Z / 1.4,1.4,12 / _0000). The EF-sweep visits each subject at ED and ES, so
+        format (X,Y,Z / (1.4, 1.4, this subject's own dz) / _0000 — docs/59 F14; the z spacing
+        is NOT a constant 12). The EF-sweep visits each subject at ED and ES, so
         both phases land here (no dedup). Filenames use the clean subject id (matches the CSV)."""
         if "V_canon" not in loss_dict:
             return
@@ -510,8 +602,9 @@ class TrainerVizMixin:
                 return
             seg_dir = os.path.join(self.logging_conf.log_dir, "ef_tmp", "seg_pred")
             shutil.rmtree(seg_dir, ignore_errors=True)
-            torch.cuda.empty_cache()  # release cached GPU mem so nnU-Net coexists with the model
-            ef_eval.run_nnunet(self._ef_pred_dir, seg_dir)
+            torch.cuda.empty_cache()  # release cached GPU mem so the segmenter has room
+            backend = getattr(self.logging_conf, "ef_seg_backend", "corseg")
+            lv_label = ef_eval.segment(self._ef_pred_dir, seg_dir, backend=backend)
             # (subject_id, ed, es) per val subject. vt = [all ED] + [all ES], so vt[i] and vt[i+N]
             # are the SAME subject's ED and ES (N = half the sweep length — self-consistent with vt).
             N = len(vt) // 2
@@ -519,16 +612,23 @@ class TrainerVizMixin:
                 (os.path.basename(os.path.dirname(mri_ds.subjects[vt[i][0]])), vt[i][1], vt[i + N][1])
                 for i in range(N)
             ]
-            m = ef_eval.compute_ef_metrics(seg_dir, subjects_ed_es, csv_path)
+            groups = load_subject_groups(getattr(mri_ds, "split_file", None), "pathology_label")
+            m = ef_eval.compute_ef_metrics(seg_dir, subjects_ed_es, csv_path,
+                                           groups=groups, lv_label=lv_label)
             if m is None:
                 logging.warning("[ef] too few valid subjects for EF correlation; skipping")
                 return
             for k in ("slope", "spearman", "mae_pct"):
                 self._log_scalar(f"val/ef/{k}", m[k], step)
             self._log_scalar("val/ef/n", m["n"], step)
+            for name, g in (m.get("by_group") or {}).items():
+                for k in ("slope", "spearman", "mae_pct", "n"):
+                    self._log_scalar(f"val/ef/{name}/{k}", g[k], step)
             logging.info(f"[ef] epoch {self.epoch}: slope={m['slope']:.3f} "
                          f"spearman={m['spearman']:.3f} mae={m['mae_pct']:.2f}% "
-                         f"n={m['n']} (skipped {m['n_skipped']})")
+                         f"n={m['n']} (skipped {m['n_skipped']})"
+                         + "".join(f" | {name}: slope={g['slope']:.3f} n={g['n']}"
+                                   for name, g in sorted((m.get("by_group") or {}).items())))
         except Exception as e:
             logging.warning(f"[ef] compute/log EF failed (ignored): {e}")
 
@@ -739,8 +839,41 @@ class TrainerVizMixin:
             finally:
                 plt.close(fig)
 
-    # Subjects shown in the ED-vs-ES panel (the EF sweep reconstructs each at its ED and ES).
-    _ED_ES_SUBJECTS = (0, 7, 14, 21)
+    @property
+    def _ED_ES_SUBJECTS(self):
+        """Val indices shown in every visual panel — ONE PER SOURCE DATASET.
+
+        Was a hardcoded `(0, 7, 14, 21)`. Under the pooled cohort the val split is written
+        `sorted()`, so those four indices are ACDC/ACDC/ACDC/CMRx2023: every ED/ES panel,
+        filmstrip and DVF panel for a whole run showed only the two smallest sources, with
+        ZERO M&Ms (33 val subjects, the largest group), zero CMRx2024 and zero CMRx2025.
+        Picking one subject per source keeps the panel count the same while making it
+        representative, and it is the cheapest possible tripwire for a source-specific
+        geometry regression — a broken affine on one source is visible at a glance.
+
+        Computed once and cached; falls back to the old fixed indices if the dataset is
+        unavailable (tools/tests that construct the mixin without a real val set).
+        """
+        cached = getattr(self, "_ed_es_subjects_cache", None)
+        if cached is not None:
+            return cached
+        picks = None
+        try:
+            mri_ds = self._get_mri_dataset()
+            if mri_ds is not None and getattr(mri_ds, "subjects", None):
+                picks = pick_one_index_per_source(mri_ds.subjects)
+        except Exception as e:
+            logging.warning(f"per-source viz subject pick failed (ignored): {e}")
+        if not picks:
+            n = 0
+            try:
+                n = len(self._get_mri_dataset().subjects)
+            except Exception:
+                pass
+            picks = tuple(i for i in (0, 7, 14, 21) if n == 0 or i < n)
+        self._ed_es_subjects_cache = picks
+        logging.info(f"Visual panel val subjects (one per source): {picks}")
+        return picks
 
     def _stash_ed_es(self, batch: Mapping, loss_dict: Mapping) -> None:
         """During val, capture per-z ED and ES reconstructions for the chosen subjects, keyed by
@@ -791,6 +924,7 @@ class TrainerVizMixin:
             from matplotlib import gridspec as _gs
         except ImportError:
             return
+        mri_ds = self._get_mri_dataset()
         for subj_idx in self._ED_ES_SUBJECTS:
             rec = self._ed_es_stash.get(subj_idx)
             if not rec or "ED" not in rec or "ES" not in rec:
@@ -833,8 +967,10 @@ class TrainerVizMixin:
                             ax.set_title(f"z{c}", fontsize=6)
                     for c in range(ncol, n_cols):
                         fig.add_subplot(gs[r, c]).axis("off")
-                self.wandb_writer.log(f"media_val_ED_ES/Val_Visuals_subj{subj_idx}_ED_ES",
-                                      wandb.Image(fig, caption=f"per-z (mid plane = reference slot)"), step)
+                sid = subject_id(mri_ds.subjects[subj_idx]) if mri_ds is not None else None
+                self.wandb_writer.log(
+                    f"media_val_ED_ES/Val_Visuals_subj{subj_idx}_{sid or 'unknown'}_ED_ES",
+                    wandb.Image(fig, caption=f"{sid} — per-z (mid plane = reference slot)"), step)
             except Exception as e:
                 logging.warning(f"[ed/es] panel subj {subj_idx} failed (ignored): {e}")
             finally:
@@ -936,10 +1072,7 @@ class TrainerVizMixin:
     def _log_visuals_to_wandb(self, batch: Mapping, phase: str, step: int) -> None:
         """Dispatches the per-step image/video visualizations to wandb."""
 
-        # Scale frequency by accum_steps to prevent redundant logging of chunks
         freq = self.logging_conf.log_visual_frequency.get(phase, 0)
-        if phase == "train":
-            freq *= self.accum_steps
 
         # For validation, we use the training step to keep WandB monotonic
         log_step = step if phase == "train" else self.steps["train"]
@@ -975,7 +1108,14 @@ class TrainerVizMixin:
                 val_idx = int(_seqs[0].flatten()[0].item()) if _seqs is not None else int(self._val_iter)
             except Exception:
                 val_idx = int(self._val_iter)
-            should_log = val_idx in VAL_VISUAL_SUBJECT_INDICES
+            # Compare the sample's SUBJECT index, not its seq_index. Under ef_val_sweep the
+            # sweep is [all ED] + [all ES], so the two coincide only in the ED half — and
+            # matching on the raw seq_index meant the ES half NEVER rendered these panels.
+            _ds = self._get_mri_dataset()
+            _vt = getattr(_ds, "val_targets", None) if _ds is not None else None
+            subj_idx = _vt[val_idx % len(_vt)][0] if _vt else val_idx
+            val_sid, _ = seq_index_to_subject(_ds, val_idx)
+            should_log = subj_idx in VAL_VISUAL_SUBJECT_INDICES
         if not (self.logging_conf.log_visuals and should_log and (self.logging_conf.visuals_keys_to_log is not None)):
             return
 
@@ -1024,7 +1164,9 @@ class TrainerVizMixin:
             if phase == "train":
                 name, group = "Train_Visuals", "media_others"
             else:
-                name, group = "Val_Visuals", f"media_val_subj{val_idx}"
+                # Patient id APPENDED to the index (not replacing it) so the section is
+                # both stable to sort and identifiable without a lookup.
+                name, group = "Val_Visuals", f"media_val_subj{subj_idx}_{val_sid or 'unknown'}"
 
             # Render both figures and log. Diagnostic only — a render error (e.g. a
             # shape regression in the per-slot r/|d| titles, or a matplotlib/wandb

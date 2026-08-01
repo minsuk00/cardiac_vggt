@@ -107,19 +107,13 @@ def build_gpu_transforms(aug_cfg=None):
         # (translate_range / scale_range ARE per-axis (D, H, W): slot 0 = D, so
         #  freezing slot 0 there correctly disables through-plane shift/scale.)
         transforms = [
-            # RandFlipd RE-ENABLED (all tiers, 2026-07-31; user decision, docs/58 §10c). The old
-            # rationale ("mirror hearts are anatomically impossible, so flip only degrades the
-            # LPS-trained RV-location prior") was overstated on two counts: (1) the training
-            # objective is EXACTLY mirror-equivariant — inputs, `gt_target_volume` and
-            # `scanner_coords` all derive from the same array, so a consistent W-mirror is a
-            # measured no-op (splat residual 1.25e-06); RV location is observable in every input
-            # slice, not prior knowledge. (2) 29% of the pooled CMRx cohort is mirrored on disk
-            # anyway (docs/58 §10c), so the cohort already contains both handednesses.
-            # Known cost, unmeasured: the head outputs a VECTOR field, so mirror-invariance needs
-            # a coupled spatial flip AND a Δx sign negation — a harder symmetry than nnU-Net's
-            # label-map mirroring, spent from a fixed capacity/step budget. Flip is otherwise the
-            # cleanest aug available (exact voxel permutation: no interpolation, no zero-padding).
-            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd DISABLED here — flip lives in the AGGRESSIVE tier only (2026-08-01, user
+            # decision). It is the newest addition (re-enabled 2026-07-31, docs/58 §10c) and was
+            # NOT part of the moderate arm that docs/46 §3 C2 measured and shipped, so keeping
+            # conservative/moderate flip-free preserves the validated configuration. Rationale
+            # for having it at all (mirror-equivariant objective; 29% of the pooled CMRx cohort
+            # is mirrored on disk) is recorded at the aggressive tier below.
+            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
                 prob=0.5,
@@ -142,12 +136,13 @@ def build_gpu_transforms(aug_cfg=None):
         # IN-PLANE ONLY. Headline = FULL-CIRCLE (±180°) rotation to cover the measured MIITT
         # orientation gap (MIITT clusters ~180° off CMRx's mode), at moderate prob (0.6) so
         # natural orientation is still anchored (~40% of samples). Gamma = the key contrast
-        # lever; bias-field models coil shading; scale kept small (near-isotropic); flip ON,
+        # lever; bias-field models coil shading; scale kept small (near-isotropic); flip OFF,
         # Gaussian noise OFF (see conservative note). Plane semantics as in conservative:
         # rotate slot 0 = in-plane (H-W); translate/scale slots (D,H,W) with D frozen.
         transforms = [
-            # RandFlipd RE-ENABLED — see conservative note (docs/58 §10c).
-            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+            # RandFlipd DISABLED — see conservative note. This tier is the shipped docs/46 §3 C2
+            # arm, which was measured WITHOUT flip; flip is aggressive-only.
+            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
                 prob=0.6,
@@ -167,10 +162,19 @@ def build_gpu_transforms(aug_cfg=None):
     if tier == "aggressive":
         # Aggressive tier — MAX OOD coverage. IN-PLANE ONLY. Full-circle rotation like moderate
         # but at higher prob + wider gamma/bias-field and larger translate; scale still capped
-        # (±8%) to bound ellipse distortion; flip ON, Gaussian noise OFF. Same plane semantics
-        # (rotate slot 0 = in-plane H-W; translate/scale (D,H,W) with D frozen).
+        # (±8%) to bound ellipse distortion; flip ON (this tier ONLY), Gaussian noise OFF. Same
+        # plane semantics (rotate slot 0 = in-plane H-W; translate/scale (D,H,W) with D frozen).
         transforms = [
-            # RandFlipd RE-ENABLED — see conservative note (docs/58 §10c).
+            # RandFlipd — AGGRESSIVE-ONLY as of 2026-08-01 (it was briefly on in all tiers,
+            # 2026-07-31, docs/58 §10c). Why it is justified at all: (1) the training objective
+            # is EXACTLY mirror-equivariant — inputs, `gt_target_volume` and `scanner_coords`
+            # all derive from the same array, so a consistent W-mirror is a measured no-op
+            # (splat residual 1.25e-06); RV location is observable in every input slice, not
+            # prior knowledge. (2) 29% of the pooled CMRx cohort is mirrored on disk anyway, so
+            # the cohort already contains both handednesses. Known cost, unmeasured: the head
+            # outputs a VECTOR field, so mirror-invariance needs a coupled spatial flip AND a Δx
+            # sign negation — a harder symmetry than nnU-Net's label-map mirroring, spent from a
+            # fixed capacity/step budget. That cost is why it is confined to this tier.
             _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
             _B.RandAffined(
                 keys=keys,
@@ -194,29 +198,10 @@ def build_gpu_transforms(aug_cfg=None):
 # ──────────────────────────────────────────────────────────────────────────────
 # Helper: bbox of a 3D mask (GPU-friendly, no python loop over voxels)
 # ──────────────────────────────────────────────────────────────────────────────
-def recompute_bbox_gpu(content_mask) -> torch.Tensor:
-    """Geometric bbox of `content_mask > 0` in splat order.
-
-    Args:
-        content_mask: `(D, H, W)` tensor. Any dtype; tested as `> 0`.
-
-    Returns:
-        `(z0, z1, y0, y1, x0, x1)` int64 tensor on the same device. Falls back
-        to the full cube if the mask is empty (post-aug edge case).
-    """
-    if content_mask.ndim != 3:
-        raise ValueError(f"expected (D, H, W), got {tuple(content_mask.shape)}")
-    D, H, W = content_mask.shape
-    mask = content_mask > 0
-    if not mask.any():
-        return torch.tensor([0, D, 0, H, 0, W], dtype=torch.int64, device=content_mask.device)
-    nz = mask.nonzero()
-    z0, y0, x0 = nz.min(dim=0).values.tolist()
-    z_max, y_max, x_max = nz.max(dim=0).values.tolist()
-    return torch.tensor(
-        [z0, z_max + 1, y0, y_max + 1, x0, x_max + 1],
-        dtype=torch.int64, device=content_mask.device,
-    )
+# The post-aug bbox is the SAME computation the dataset runs pre-aug — one implementation,
+# two call sites: `preprocess.compute_geometric_bbox` at cache-read time (mri_dataset.py),
+# and here after an affine has moved the content mask. It used to be duplicated verbatim.
+from data.preprocess import compute_geometric_bbox as recompute_bbox_gpu
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -298,6 +283,17 @@ def gpu_augment_batch(batch, transforms, device,
     do_affine = transforms is not None
     do_resp = respiratory_cfg is not None and getattr(respiratory_cfg, "enable", False)
     if not do_affine and not do_resp:
+        # A missing `images` means the dataset deferred it to us (`defer_input_images`), so
+        # we must still produce it even with every augmentation off — otherwise the batch
+        # would reach the model with no input. This is the guarantee that makes deferral safe.
+        if "images" not in batch:
+            # float32, matching the dataset's own extraction exactly — with no augmentation
+            # in play, deferring must be a numeric no-op. (The augmented branches below
+            # extract from the fp16 `phases` as they always have.)
+            phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
+            images = extract_slices_from_phases(
+                phases_cur, batch["timesteps"], batch["slice_indices"])
+            batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
         return batch
 
     phases = batch["phases"]                 # (B, T, D, H, W) any float
@@ -382,7 +378,10 @@ def gpu_augment_batch(batch, transforms, device,
         # diagnostics only — captions + the resp scalar. Inert for model/loss (read-only).
         batch["resp_disp_mm"] = disp
         batch["resp_r"] = resp_r
-    elif affine_applied:
+    elif affine_applied or "images" not in batch:
+        # `"images" not in batch` covers the deferred case where the affine BUILD failed
+        # (caught above, affine_applied stays False) and respiratory is off — without it the
+        # batch would reach the model with no input at all.
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
         images = extract_slices_from_phases(
             phases_cur, batch["timesteps"], batch["slice_indices"],

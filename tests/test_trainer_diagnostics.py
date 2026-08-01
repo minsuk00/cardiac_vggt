@@ -57,6 +57,16 @@ def _make_stub_trainer(t_target_fixed=None):
     # Mock scalar log to a list we can assert against.
     stub._logged = []
     stub._log_scalar = lambda key, val, step: stub._logged.append((key, float(val), step))
+    # State the per-subject val record needs (docs/60). Without these the call raises
+    # AttributeError from inside the per-sample loop, which the outer try/except swallows —
+    # silently truncating the per-phase accumulation for the rest of the batch.
+    stub._val_strata = defaultdict(list)
+    stub.epoch = 0
+    stub.steps = {"train": 0, "val": 0}
+    stub.run_log = SimpleNamespace(subject_row=lambda row: None)
+    stub._get_mri_dataset = lambda: None
+    stub._pitch_bucket = Trainer._pitch_bucket
+    stub._record_val_subject = Trainer._record_val_subject.__get__(stub)
     # Bind only the methods we test.
     stub._update_and_log_scalars = Trainer._update_and_log_scalars.__get__(stub)
     stub._get_scalar_log_keys = lambda phase: []  # no scalar meters needed for these tests
@@ -190,7 +200,12 @@ def test_motion_mask_example_logs_under_val_motion():
     # With wandb + a mock dataset → logs exactly the media_others/val_motion_mask_example key.
     class MockDS:
         num_slices = 12
-        subjects = list(range(16))  # ≥16 so subj indices 0/7/15 all render
+        # Distinct source prefixes so the per-source subject picker (docs/60) has
+        # something to spread over, instead of the old hardcoded 0/7/15.
+        # NOTE the trailing "/sax": _find_subjects builds `<root>/<line>/sax`, so the id
+        # is the PARENT dir. Getting this wrong made every subject read as "sax".
+        subjects = [f"/data/{src}_sax/{src}_subj{i:02d}/sax"
+                    for src in ("ACDC", "MNMs", "CMRx24") for i in range(6)]
 
         def get_data(self, seq_index, img_per_seq):
             T, D, H, W = 4, 3, 16, 16
@@ -202,6 +217,9 @@ def test_motion_mask_example_logs_under_val_motion():
     stub2 = SimpleNamespace()
     stub2.wandb_writer = SimpleNamespace(log=lambda key, val, step: logged.append((key, step)))
     stub2._get_mri_dataset = lambda: MockDS()
+    # `_ED_ES_SUBJECTS` is a property on the real class; a SimpleNamespace stub needs the
+    # resolved value. One index per source, matching what the property would compute.
+    stub2._ED_ES_SUBJECTS = (0, 6, 12)
     stub2._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub2)
     stub2._log_motion_mask_example(99)
     assert ("media_others/val_motion_mask_example", 99) in logged, f"image not logged: {logged}"

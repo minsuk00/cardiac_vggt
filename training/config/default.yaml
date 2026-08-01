@@ -1,57 +1,420 @@
-exp_name: exp001
+# THE config. Complete and runnable on its own:
+#
+#   PYTHONPATH=training:. python training/launch.py --config default
+#
+# Experiment variants live in `exp_*.yaml` and inherit this file, overriding only what they
+# change (see exp_bspline.yaml / exp_diffusion.yaml — ~20 lines each).
+#
+# Flattened 2026-08-01 from the old three-layer chain `default -> mri_finetune -> mri_volume`.
+# That chain was a trap: `mri_finetune` was a HALF config (no `loss.volume` ⇒
+# MultitaskLoss(volume=None) ⇒ objective=0 ⇒ a silent zero-loss run), and the upstream
+# `default` layer advertised values that were immediately overridden — a placeholder
+# `/YOUR/PATH/TO/CKPT`, `frozen_module_names: ["*aggregator*"]  # example`,
+# `enable_point: False`, `compile_attention_blocks: False`. Reading it gave you the WRONG
+# answer about the freeze pattern and the head. One file, one truth.
+#
+# ── PIPELINE = TARGET-PHASE REFERENCE-SLICE CONDITIONING (docs/24, docs/25) ───────────────
+# Unsupervised slice-to-volume: no GT-DVF supervision, a splat+resample intensity loss.
+# The query is NOT a content-free target_t INDEX (that regressed every patient's EF to the
+# cohort mean, ~48%); slot 0 is a real target-phase reference slice at the mid-ventricular
+# plane, marked via VGGT's native camera_token anchor, so the model reads the target phase
+# from slot-0's image content. This fixes BOTH the flat-EF amplitude regression and the
+# target_t=k/12 phase-timing ambiguity. Requires the aggregator finetune (aggft) below so the
+# camera_token / z_embedder can specialize. `target_t_indices` is still emitted by the dataset
+# but is INERT (the legacy target_t conditioning was removed → the model ignores it).
+
+defaults:
+  - _self_
+
+# ── Identity ──────────────────────────────────────────────────────────────────────────────
+# `exp_name` keeps the "mri_volume" family name (it names log dirs / wandb runs and is the
+# continuity link to the existing run series) even though the FILE is now default.yaml.
+exp_name: "${rev_ts:}_mri_volume_${mri_data_mode}_${mri_mode}_${dataset_name}"
+config_name: "mri_volume"
+
+split: "train"
+mode: "train"
 img_size: 518
-num_workers: 8
 seed_value: 42
-accum_steps: 2    # We did not use gradient accumulation in our training, while if you suffer from OOM, you can try to use it.
-val_epoch_freq: 5
+num_workers: 4
 
-limit_train_batches: 800
-limit_val_batches: 400
+# ── Cohort ────────────────────────────────────────────────────────────────────────────────
+# Pooled multi-dataset cohort (docs/58 §13): 1337 subjects across CMRxRecon2023/2024/2025 +
+# ACDC + M&Ms-1, split 935/133/269 (69.9:9.9:20.1). 6 source-shipped duplicate subjects are
+# excluded (docs/59 F3), which is why this is 1337 and not 1343. data_root is the shared
+# parent, and split-file lines are relative paths under it (e.g.
+# `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`) — MRIDataset._find_subjects joins them
+# directly. The old CMRxRecon2024-only pair was:
+#   data_root: ".../scratch/data/CMRxRecon2024/Cine_combined"
+#   split_file: "training/splits/random_8_1_1.txt"   (deprecated)
+data_root: "/home/minsukc/vggt/scratch/data"
+split_file: "training/splits/pooled.txt"
+dataset_name: "pooled1337"
+# NATIVE SAX z-slicing (not anatomical axial). Only decorates `seq_name`.
+mri_mode: "axial"
+mri_data_mode: "dynamic"   # "static" or "dynamic"
 
+# ── Main controls ─────────────────────────────────────────────────────────────────────────
+train_on_residual_dvf: true
+use_z_pose_embedding: true
+# Reference-slice conditioning (docs/25). `reference_slot` is the DATASET half (slot-0
+# sampling); `use_reference_token` is the MODEL half (camera_token anchor). Move together.
+use_reference_token: true
+reference_slot: true
+# Continuous physical z (docs/28): when true, non-reference slots are sampled at a CONTINUOUS
+# z (nominal plane + jitter ∈ [-z_jitter, +z_jitter]) and extracted by interpolation, teaching
+# z as a continuous physical coordinate. false ⇒ integer planes (numerically identical to the
+# discrete-grid pipeline).
+continuous_z: false
+z_jitter: 0.5
+# One-frame-per-slice (the sparse-acquisition extreme this project targets): S is forced per
+# subject to the in-FOV plane count, so every in-bbox z plane appears EXACTLY once. Under
+# native-z the bbox spans the whole stack ⇒ S == D (5-21 per subject). Set false for the
+# legacy fixed-S multi-frame sampler (full coverage + random extras up to the img_nums budget).
+one_frame_per_slice: true
+# 935 pooled train subjects = one exact pass per epoch. TRUE as of 2026-08-01, when
+# `inside_random` was removed: the sampler's seeded permutation is now honoured, so an epoch
+# visits each subject EXACTLY once (verified: 935 draws, 935 unique, reshuffled per epoch).
+# Previously the index was discarded and a subject drawn at random, i.e. draws WITH
+# replacement (~37% of subjects unseen per epoch), so this line did not mean what it said.
+# Keep it equal to the train-split size: LOWER truncates the pass (a seed-dependent subset
+# each epoch); HIGHER is harmless but pointless — the sampler is exhausted at 935 and the
+# epoch simply ends there.
+limit_train_batches: 935
+# 133 pooled val subjects x {ED, ES} = 266 entries under ef_val_sweep — one full deterministic
+# pass. Was 200, sized for the 100-val-subject plan; at 200 the last ~68 ES entries would
+# never be evaluated.
+limit_val_batches: 266
+max_epochs: 200
+val_epoch_freq: 1
+# Target-phase control. null = uniform sampling per call (multi-phase). Set to an int (e.g. 0)
+# to force every sample to use that phase as the target — 0 reproduces the ED-only pipeline.
+t_target_fixed: null
+# Restrict the multi-phase target pool to a subset (e.g. [0, 7]). null → all phases. Train
+# picks uniformly; val cycles deterministically. Mutually exclusive with t_target_fixed.
+t_target_phases: null
+# EF-aware validation. `ef_val_sweep` replaces the coupled val sampler with a targeted
+# {ED, ES} sweep (each subject reconstructed at its GT ED + ES phase from cardiac_phase.csv),
+# so per-phase panels are honest AND we get the ED/ES volumes EF needs.
+ef_val_sweep: true
+# ED/ES table for the sweep. Must be set explicitly now that data_root is the shared parent:
+# MRIDataset's fallback is `${data_root}/../../whs/cardiac_phase.csv`, only correct when
+# data_root pointed two levels deeper (CMRxRecon2024/Cine_combined).
+cardiac_phase_csv: "/home/minsukc/vggt/scratch/data/whs/cardiac_phase.csv"
 
+# ── Logging ───────────────────────────────────────────────────────────────────────────────
+# Every scalar is ALSO mirrored to `${log_dir}/metrics.jsonl`, plus `run_meta.jsonl` and
+# `val_per_subject.csv` (docs/60) — analyse a finished run from disk, no wandb needed.
 logging:
-  log_dir: logs
-  log_visuals: False
-  log_freq: 1
+  log_dir: "./scratch/logs/${exp_name}"
+  log_freq: 5
+  log_visuals: True
   log_level_primary: DEBUG
   log_level_secondary: WARNING
   all_ranks: False
-  wandb_writer: null
+  log_visual_frequency:
+    train: 935  # once per epoch (matches limit_train_batches = train-split size)
+    val: 200    # once per val epoch
+  # Cardiac filmstrip/GIF + ED/ES panels every N val epochs. At 1 the filmstrip does 12 subj-0
+  # model forwards per epoch (~4 h over 200 epochs); 3 gives finer cadence for shorter runs.
+  filmstrip_every_n_val_epochs: 3
+  # Predicted-EF metric (val-only; requires ef_val_sweep). false keeps the ED/ES sweep but
+  # skips the segmentation.
+  ef_eval_enable: true
+  # Every val epoch as of 2026-08-01: with the CorSeg backend the whole EF block — writing 266
+  # pred NIfTIs + segmenting + metrics — measures ~1.75 min on top of a ~4.2 min val loop
+  # (L40S, 133 subjects x {ED,ES}). The old `5` was sized for the slower nnU-Net hop.
+  ef_eval_every_n_val_epochs: 1
+  # Segmenter for the EF metric. "corseg" (default, docs/57) runs IN `svr` and is clearly
+  # better at what this metric reports — EF MAE 2.51 vs 4.67 pp, LV volume MAE 4.4 vs 8.9 mL —
+  # at ~8.5x the speed, and it removes the flaky `micromamba run -n nnunet` subprocess hop.
+  # Valid here ONLY because we feed the full canonical cube; CorSeg collapses on ROI-cropped
+  # input (docs/57). Set "nnunet" to fall back to the Task114 operator that made the GT labels.
+  ef_seg_backend: "corseg"
+  # Dump per-subject predicted + GT volumes to ${log_dir}/val_volumes/ each val epoch.
+  # Overwrites in place (constant ~360 MB disk). Identity affine (canonical voxel space).
+  save_val_volumes: true
+  wandb_writer:
+    _target_: train_utils.wandb_writer.WandbLogger
+    project: "vggt-mri"
+    name: ${exp_name}
+    dir: ${logging.log_dir}/wandb
+    tags:
+      - ${oc.select:config_name,mri}
+      - ${phase_mode:${t_target_fixed}}
+  scalar_keys_to_log:
+    train:
+      keys_to_log:
+        - loss_objective
+        - loss_volume
+        - loss_pos_tv
+        - loss_diffusion
+        - loss_gather
+        # Full-volume metrics (averaged over all D·H·W voxels; D is this subject's own
+        # native slice count under native-z, so the voxel count VARIES per subject).
+        - metric_mae_3d_full
+        - metric_mse_3d_full
+        - metric_psnr_3d_full
+        - metric_ssim_2d_full   # per-slice SSIM; replaced the D-dependent 3D one (docs/59 F11)
+        # Bbox-cropped metrics (only voxels inside the subject's geometric native-FOV region,
+        # derived from a content mask propagated through the canonical transforms — NOT an
+        # intensity threshold). For small-FOV subjects this excludes the padded zeros that
+        # inflate full-volume PSNR. For full-FOV subjects bbox == full.
+        - metric_mae_3d_bbox
+        - metric_mse_3d_bbox
+        - metric_psnr_3d_bbox
+        - metric_gt_coverage_frac
+        - metric_mean_disp_norm
+        - metric_coverage_frac
+        - metric_coverage_mean
+    val:
+      keys_to_log:
+        - loss_objective
+        - loss_volume
+        - loss_pos_tv
+        - loss_diffusion
+        - loss_gather
+        - metric_mae_3d_full
+        - metric_mse_3d_full
+        - metric_psnr_3d_full
+        - metric_ssim_2d_full
+        - metric_mae_3d_bbox
+        - metric_mse_3d_bbox
+        - metric_psnr_3d_bbox
+        - metric_gt_coverage_frac
+        - metric_mean_disp_norm
+        - metric_coverage_frac
+        - metric_coverage_mean
+        # GT-referenced ship-decision + breathing metrics (val-only; docs/38). Produced by
+        # compute_volume_intensity_loss ONLY in val (requires_grad gate), so listing them
+        # here (not under train:) is what makes them appear.
+        - metric_recov_frac_heart
+        - metric_mse_heart_identity
+        - metric_mse_heart_model
+        - metric_mse_heart_oracle
+        - metric_hole_frac_heart
+        - metric_psnr_3d_static
+        # Anatomy whole-heart-ROI PSNR (seg union+dilation; val-only). Shared ROI with the
+        # SVR baselines; complements the intensity-derived motion PSNR.
+        - metric_psnr_3d_heartseg
+        - metric_mae_3d_heartseg
+        - metric_heartseg_frac
+        # Same seg ROI, referenced to each subject's OWN identity floor / oracle ceiling
+        # (docs/60). `psnr_seg_gain_db` is the headline: raw psnr_heartseg is fine per subject
+        # but 79% of its BETWEEN-subject spread is scan difficulty, not model quality, so only
+        # the gain is safe to average over this mixed cohort.
+        - metric_psnr_seg_gain_db
+        - metric_recov_frac_seg
+        - metric_mse_seg_identity
+        - metric_mse_seg_model
+        - metric_mse_seg_oracle
+        - metric_resp_slope_dz
+        - metric_resp_corr_dz
+        - metric_resp_epe_dz_mm
+        - metric_resp_frac_deep_ignored
+  # Per-phase ON/OFF switch for the image panels, nothing more: the trainer only tests
+  # `is not None` and `phase in ...` (trainer_viz.py). The old payload (modality / images /
+  # world_points / pred_world_points) was never read — WHICH panels get logged is decided in
+  # code, not here.
+  visuals_keys_to_log:
+    train: {}
+    val: {}
 
-
-
+# ── Checkpointing ─────────────────────────────────────────────────────────────────────────
 checkpoint:
-  save_dir: logs/${exp_name}/ckpts
-  save_freq: 5
-  resume_checkpoint_path: /YOUR/PATH/TO/CKPT
-  strict: False
+  save_dir: "${logging.log_dir}/ckpts"
+  save_freq: 50  # 3 numbered archives over 200 epochs (50/100/150) + checkpoint_last each epoch
+  resume_checkpoint_path: "./scratch/base_weights/vggt1b_base.pt"
+  strict: false
 
+# ── Data ──────────────────────────────────────────────────────────────────────────────────
+data:
+  train:
+    _target_: data.dynamic_dataloader.DynamicTorchDataset
+    num_workers: ${num_workers}
+    shuffle: True
+    pin_memory: False
+    common_config:
+      training: True
+      # Slot BUDGET / cap, not a slot count: `one_frame_per_slice` sets S = this subject's
+      # own plane count D (5-21 under native-z), and mri_dataset raises if D exceeds this
+      # (docs/59 F19). Raise it only alongside the memory it implies.
+      img_nums: [20, 20]
+    dataset:
+      _target_: data.composed_dataset.ComposedDataset
+      dataset_configs:
+        - _target_: data.MRIDataset
+          data_root: ${data_root}
+          split: ${split}
+          split_file: ${split_file}
+          mode: ${mri_data_mode}
+          mri_mode: ${mri_mode}
+          num_slices: 20
+          target_size: ${img_size}
+          t_target_fixed: ${t_target_fixed}
+          t_target_phases: ${t_target_phases}
+          reference_slot: ${reference_slot}
+          continuous_z: ${continuous_z}
+          one_frame_per_slice: ${one_frame_per_slice}
+          z_jitter: ${z_jitter}
+          # The trainer's gpu_augment_batch re-extracts every input slice on GPU, so building
+          # them on the CPU worker first is ~64 MB/sample of pure waste. Only safe because the
+          # trainer ALWAYS calls gpu_augment_batch, which treats a missing `images` key as
+          # "extract unconditionally". Leave false anywhere else.
+          defer_input_images: true
+  val:
+    _target_: data.dynamic_dataloader.DynamicTorchDataset
+    num_workers: ${num_workers}
+    shuffle: False
+    pin_memory: False
+    common_config:
+      training: False
+      img_nums: [20, 20]     # slot BUDGET/cap; see the train block above
+    dataset:
+      _target_: data.composed_dataset.ComposedDataset
+      dataset_configs:
+        - _target_: data.MRIDataset
+          data_root: ${data_root}
+          split: "val"
+          split_file: ${split_file}
+          mode: ${mri_data_mode}
+          mri_mode: ${mri_mode}
+          num_slices: 20
+          target_size: ${img_size}
+          t_target_fixed: ${t_target_fixed}
+          t_target_phases: ${t_target_phases}
+          reference_slot: ${reference_slot}
+          continuous_z: ${continuous_z}
+          one_frame_per_slice: ${one_frame_per_slice}
+          z_jitter: ${z_jitter}
+          # NOT deferred on val (deliberately — see the train block). 12 scripts across
+          # inference/ and tools/ instantiate THIS `data.val` node and then read
+          # `get_data()["images"]` directly, bypassing gpu_augment_batch; deferring here
+          # would break every one of them. Train is 935 of the 1201 steps per epoch, so
+          # train-only deferral captures the bulk of the saving at zero blast radius.
+          defer_input_images: false
+          ef_val_sweep: ${ef_val_sweep}
+          cardiac_phase_csv: ${cardiac_phase_csv}
 
+  # ── GPU augmentation (batchaug) ────────────────────────────────────────────────────────
+  # Applied to the (B, T=12, D, H=256, W=256) canonical phases tensor in the trainer between
+  # `copy_data_to_device` and forward — one affine per subject, shared across all 12 T-phases
+  # so cardiac motion stays consistent. After aug: `gt_target_volume` is re-derived as
+  # `phases_aug[b, t_target[b]]`, input slices are re-extracted at the original (t, z) pairs,
+  # and `anatomy_bbox` is recomputed from the augmented content mask. Val never affine-augments.
+  #
+  # `tier` — all three IN-PLANE ONLY: no through-plane rotation, no elastic, because z is
+  # coarse and anisotropic vs the 1.4 mm in-plane grid (each subject keeps its own 5-12 mm
+  # pitch, docs/58). The W-axis flip is AGGRESSIVE-ONLY (2026-08-01; briefly on in all tiers
+  # 2026-07-31, docs/58 §10c — but moderate is the arm docs/46 §3 C2 measured and shipped, and
+  # that arm had no flip). Gaussian noise is commented out in all tiers (i.i.d. noise is the
+  # wrong artifact model; real degradation is structured).
+  #   "conservative" — no flip; affine p=.5 (rotate ±45° in-plane, translate ±6 px,
+  #                    scale ±5%); gamma p=.4 (0.8-1.3); bias field p=.4 (±0.10).
+  #   "moderate"     — no flip; affine p=.6 (rotate ±180° FULL-CIRCLE, translate ±16 px,
+  #                    scale ±5%); gamma p=.6 (0.7-1.5); bias field p=.5 (±0.5).
+  #   "aggressive"   — flip p=.5; affine p=.9 (rotate ±180°, translate ±20 px, scale ±8%);
+  #                    gamma p=.75 (0.6-1.7); bias field p=.7 (±0.6).
+  #
+  # `respiratory`: INDEPENDENT breathing sim (separate toggle from affine). A per-input-slice
+  # deform-then-reslice SI+AP shift (Lujan waveform), applied AFTER affine and overwriting ONLY
+  # the input slices — target/scanner_coords stay at the end-expiration reference, so the model
+  # learns to CORRECT breathing (blind to r). Unlike affine it applies in BOTH train (iid per
+  # epoch, private RNG) AND val (deterministic per seq_index), so val measures the real
+  # corrupted->clean task.
+  augmentation:
+    enable: true                # ON by default as of 2026-07-31 (user decision). The W-axis
+                                # flip is NOT part of this default — aggressive-tier-only as of
+                                # 2026-08-01. (docs/05's "aggressive aug hurts in-dist" was
+                                # measured on the AGGRESSIVE tier at 294 subjects; the default
+                                # here is moderate and the cohort is 1337.)
+    tier: "moderate"            # DEFAULT as of 2026-08-01: docs/46 §3 C2 is the shipped arm —
+                                # a robust OOD winner (+0.41 dB pooled OOD, p<0.001; MIITT
+                                # +0.48, ACDC +0.47) at a small in-dist cost (−0.13 dB).
+    respiratory:
+      enable: true              # the proven "resp, z-only" recipe (docs/05)
+      # SI breath-depth mean/jitter from Burger & Meintjes, "Elliptical Subject-Specific
+      # Model of Respiratory Motion for Cardiac MRI," Magn. Reson. Med. 70:722-731 (2013).
+      amplitude_mm: 18.8        # mean SI breath depth (mm)
+      amplitude_jitter: 7.35    # +/- jitter → ~11.45-26.15mm (tidal → deep)
+      cos2n: 3                  # Lujan sin^{2n} exhale-dwell knob
+      ap_ratio: 0.35            # AP displacement = ap_ratio * SI
+      ap_axis: "H"              # in-plane axis carrying AP ("H" or "W")
+      # (`per_slot` deliberately NOT set: it is only read on the non-burst branch
+      #  (respiratory.py:182), and group_by_burst below takes the other one. The
+      #  RespiratoryConfig field still exists — evaluation/ adapters and tools/ set it.)
+      group_by_burst: true      # REALISTIC: all frames of one z-plane share ONE breath PHASE,
+                                # independent across planes — a fast per-slice burst sits at ~one
+                                # respiratory position, different slices = different breaths.
+                                # false → legacy per-slot-iid (lets the splat average breathing
+                                # away). docs/01.
+      tilt_min_deg: 0.0         # tilt θ ~ U(tilt_min,tilt_max) deg, ONE direction per SUBJECT
+      tilt_max_deg: 45.0        # (not per plane); 0-45 keeps near-axial + fixes the old U(0,30)
+      amplitude_breath_jitter: 0.0  # per-subject amplitude scale; >0 adds per-breath tidal jitter
+
+# ── Model ─────────────────────────────────────────────────────────────────────────────────
+model:
+  _target_: vggt.models.vggt.VGGT
+  enable_point: true
+  use_z_pose_embedding: ${use_z_pose_embedding}
+  use_reference_token: ${use_reference_token}
+  train_on_residual_dvf: ${train_on_residual_dvf}
+  # Warp head: "dpt" (per-pixel DPT) or "bspline" (coarse control grid + B-spline upsample,
+  # smooth by construction). bspline_grid_size = control points per side.
+  warp_head_type: "dpt"
+  bspline_grid_size: 32
+
+# ── Loss ──────────────────────────────────────────────────────────────────────────────────
 loss:
   _target_: loss.MultitaskLoss
+  volume:
+    weight: 1.0
+    # grid_shape is not a config param — compute_volume_intensity_loss derives it from
+    # batch["gt_target_volume"].shape[1:] (D varies per subject, native-z, docs/58).
+    #
+    # WARP REGULARIZER = L2 DIFFUSION, not L1 TV (default as of 2026-08-01). Every recent
+    # experiment — the whole docs/46 series of 100-epoch arms (control0/nogather, gather05,
+    # contz, s20, s20contz, dino_ft, aug_moderate, lowdiff100, ftgather/ftctrl) — ran with
+    # tv_weight=0 + diffusion_weight=1000 via the old mri_volume_diffusion.yaml (verified from
+    # those runs' own wandb configs). Making it the default means the shipped config IS the
+    # arm the evidence was collected on, instead of an L1-TV variant nothing was measured under.
+    # That also made the old exp_diffusion.yaml a no-op, so it was deleted.
+    tv_weight: 0.0
+    # L2 diffusion (Tikhonov) smoothness ‖∇u‖² on the DVF (VoxelMorph-style). 0.0 ⇒ no-op.
+    # DVF is in normalized [-1,1] coords ⇒ gradients are tiny, so a meaningful penalty is
+    # O(10-1000). At 1000 a 1e-2 14-px ripple contributes ~1e-2 vs loss_volume ~0.25 (~4%).
+    diffusion_weight: 1000.0
+    # Coverage-free gather-placement AUXILIARY (docs/37, docs/38): |sample_volume(V_gt, p) −
+    # input_I|, a "pull" term restoring the sharp through-plane placement gradient the splat
+    # ÷coverage flattens. Same [0,1] intensity scale as the primary L1 ⇒ a direct ratio.
+    # 0.5 is the DEFAULT as of 2026-08-01: docs/46 §3 C1 kept the gather arm (no_gather −0.15 dB
+    # in-dist p=0.013, −0.12 pooled OOD) and docs/45 found it decisive for breathing quality.
+    gather_weight: 0.5
 
-
-
-
+# ── Optimizer ─────────────────────────────────────────────────────────────────────────────
+# AGGREGATOR FINETUNE (aggft) — required for reference-slice conditioning. Reference
+# conditioning needs the camera_token (the slot-0 anchor) + z_embedder to specialize, so we
+# train the attention blocks + embedders + camera_token and freeze ONLY patch_embed. ~2.8×
+# slower than head-only, ~27 GB/A40.
 optim:
-  param_group_modifiers: False
-
+  frozen_module_names: ["*patch_embed*"]
   optimizer:
     _target_: torch.optim.AdamW
     lr: 5e-5
     weight_decay: 0.05
-
-  frozen_module_names:
-      - "*aggregator*"  # example, freeze the aggregator
-
+    # Fused AdamW: one multi-tensor CUDA kernel for the 941M-param update (docs/40 E8/E9).
+    fused: True
   amp:
-    enabled: True
+    enabled: true
     amp_dtype: bfloat16
   gradient_clip:
     _target_: train_utils.gradient_clip.GradientClipper
     configs:
       - module_name: ["aggregator"]
-        max_norm: 1.0   # feel free to reduce this if you see instabilities
+        max_norm: 1.0
+        norm_type: 2
+      - module_name: ["point"]
+        max_norm: 1.0
         norm_type: 2
   options:
     lr:
@@ -71,24 +434,17 @@ optim:
           _target_: fvcore.common.param_scheduler.ConstantParamScheduler
           value: 0.05
 
-
-
-
-max_epochs: 20
-
-model:
-  _target_: vggt.models.vggt.VGGT
-  enable_point: False
-
-
+# ── CUDA ──────────────────────────────────────────────────────────────────────────────────
+# compile_attention_blocks: torch.compile the 48 aggregator attention blocks in place
+# (docs/40) — the ONLY worthwhile compile target measured: 1.28x on the full train step
+# (L40S 2255 → 1761 ms/step; A40 3940 → 3092 ms) and -1.1 GB VRAM, for ~15-22 s of one-time
+# compile. Whole-model compile OOMs (it inlines through the per-block gradient checkpointing
+# and keeps all 48 blocks' activations live); compiling point_head is 3% SLOWER.
+# NOT bit-identical to eager: compile matches to ~4e-6 (bf16 reassociation) and fused AdamW
+# reorders its update, so these two start a fresh numeric series. Set both False to reproduce
+# a pre-2026-07-27 run exactly.
 cuda:
-    cudnn_deterministic: False
-    cudnn_benchmark: False
-    allow_tf32: True
-    # torch.compile the 48 aggregator attention blocks in place (docs/40). The blocks are the
-    # ONLY worthwhile compile target measured: 1.28x on the full train step and -1.1 GB VRAM,
-    # ~15-22 s one-time compile. Whole-model compile OOMs (it inlines through the per-block
-    # gradient checkpointing and keeps all 48 blocks' activations live); compiling point_head
-    # is 3% SLOWER and patch_embed / the loss / max-autotune are all ~0 gain. Off here so
-    # legacy configs stay eager; the active mri_volume* configs turn it on.
-    compile_attention_blocks: False
+  cudnn_deterministic: False
+  cudnn_benchmark: False
+  allow_tf32: True
+  compile_attention_blocks: True

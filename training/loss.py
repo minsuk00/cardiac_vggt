@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
-from dataclasses import dataclass
 
 import torch
 from data.preprocess import Z_HALF_MM
@@ -41,17 +40,13 @@ def compute_motion_mask(phases, tau=MOTION_MASK_TAU):
     return swing.float() > tau
 
 
-@dataclass(eq=False)
 class MultitaskLoss(torch.nn.Module):
-    """
-    Multi-task loss module that combines different loss types for VGGT.
+    """The training objective. Despite the inherited name there is exactly ONE task left:
+    the unsupervised volume-intensity loss (`compute_volume_intensity_loss`).
 
-    Supports:
-    - Camera loss
-    - Depth loss
-    - Point loss
-    - Volume intensity loss (unsupervised slice-to-volume)
-    - Tracking loss (not cleaned yet, dirty code is at the bottom of this file)
+    Upstream VGGT's camera / depth / point / tracking losses were removed along with the
+    supervised-DVF pipeline — the name and the `_target_: loss.MultitaskLoss` config key are
+    kept only so existing configs and checkpoints keep resolving.
     """
 
     def __init__(self, volume=None, **kwargs):
@@ -102,6 +97,42 @@ def diffusion_loss_l2(field):
             (f[:, :, 1:, :, :] - f[:, :, :-1, :, :]).pow(2).mean()
             + (f[:, :, :, 1:, :] - f[:, :, :, :-1, :]).pow(2).mean()
         )
+
+
+def _psnr_from_mse(mse):
+    """PSNR (dB) for signals in [0, 1]. The 1e-10 floor caps a perfect match at 100 dB —
+    pinned by tests/test_loss_masked_metrics_golden.py::test_psnr_clamp_floor_is_pinned."""
+    return 10.0 * torch.log10(1.0 / mse.clamp(min=1e-10))
+
+
+def _masked_stats_vec(err, mask):
+    """Per-sample masked MSE / MAE / voxel-count — VECTORIZED and BRANCHLESS.
+
+    For the TRAIN-PATH metrics (bbox, motion), which run every step. Branchless is
+    load-bearing: a Python-level decision here costs 4 graph breaks (measured), and the
+    `torch.where` (rather than `err * mask.float()`) is what keeps a single non-finite voxel
+    ANYWHERE in the cube from poisoning the metric — NaN * 0.0 == NaN.
+
+    Returns (mse, mae, count), each (B,). Count is returned unclamped so callers can decide
+    what an empty mask means; the division uses a clamped denominator.
+    """
+    zero = torch.zeros((), device=err.device, dtype=err.dtype)
+    count = mask.float().sum(dim=(1, 2, 3))
+    denom = count.clamp(min=1.0)
+    mse = torch.where(mask, err ** 2, zero).sum(dim=(1, 2, 3)) / denom
+    mae = torch.where(mask, err.abs(), zero).sum(dim=(1, 2, 3)) / denom
+    return mse, mae, count
+
+
+def _masked_mse(a, b, mask):
+    """Masked MSE for ONE sample, via boolean indexing.
+
+    For the VAL-ONLY metrics (heartseg, docs/38 heart + seg), which already run inside a
+    `for b in range(B)` loop. Boolean indexing never reads outside the mask, so it is
+    NaN-safe by construction, and the host syncs it costs are free off the train path.
+    Callers must guard `mask.any()` themselves — `a[empty].mean()` is NaN.
+    """
+    return ((a[mask] - b[mask]) ** 2).mean()
 
 
 def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
@@ -279,20 +310,8 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
             valid_bbox = (z1 > z0) & (y1 > y0) & (x1 > x0)
             bbox_mask = torch.where(valid_bbox, bbox_mask, torch.ones_like(bbox_mask))
 
-            # `torch.where(mask, diff, 0)` rather than `diff * mask.float()`: NaN * 0.0 == NaN,
-            # so multiplying lets a single non-finite voxel ANYWHERE in the cube (a diverged
-            # step, bad aug) turn this whole metric into NaN. The pre-vectorization loop read
-            # only in-ROI voxels via boolean indexing and so was immune. The trainer's
-            # non-finite guard skips backward but logs scalars first, and val has no guard.
-            err = V_canon - V_gt
-            zero = torch.zeros((), device=V_canon.device, dtype=err.dtype)
-            diff_sq = torch.where(bbox_mask, err ** 2, zero)
-            diff_abs = torch.where(bbox_mask, err.abs(), zero)
-            mask_sum = bbox_mask.float().sum(dim=(1, 2, 3)).clamp(min=1.0)
-
-            mse_bbox = diff_sq.sum(dim=(1, 2, 3)) / mask_sum
-            mae_bbox = diff_abs.sum(dim=(1, 2, 3)) / mask_sum
-            psnr_bbox = 10.0 * torch.log10(torch.tensor(1.0, device=V_canon.device) / mse_bbox.clamp(min=1e-10))
+            mse_bbox, mae_bbox, _ = _masked_stats_vec(V_canon - V_gt, bbox_mask)
+            psnr_bbox = _psnr_from_mse(mse_bbox)
 
             out["metric_mae_3d_bbox"] = mae_bbox.mean()
             out["metric_mse_3d_bbox"] = mse_bbox.mean()
@@ -303,15 +322,8 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
             # Vectorized (no per-sample `bool(m.any())` host sync). Masked with torch.where,
             # not a float multiply — see the bbox block above for why (NaN * 0.0 == NaN).
             motion_mask = compute_motion_mask(batch["phases"])  # (B, D, H, W) bool
-            motion_cnt = motion_mask.float().sum(dim=(1, 2, 3))
-            err = V_canon - V_gt
-            zero = torch.zeros((), device=V_canon.device, dtype=err.dtype)
-            diff_sq = torch.where(motion_mask, err ** 2, zero)
-            diff_abs = torch.where(motion_mask, err.abs(), zero)
-
-            mse_m = diff_sq.sum(dim=(1, 2, 3)) / motion_cnt.clamp(min=1.0)
-            mae_m = diff_abs.sum(dim=(1, 2, 3)) / motion_cnt.clamp(min=1.0)
-            psnr_m = 10.0 * torch.log10(torch.tensor(1.0, device=V_canon.device) / mse_m.clamp(min=1e-10))
+            mse_m, mae_m, motion_cnt = _masked_stats_vec(V_canon - V_gt, motion_mask)
+            psnr_m = _psnr_from_mse(mse_m)
 
             # A sample with zero moving voxels has mse_m == 0 ⇒ psnr_m == 100 dB (the clamp
             # floor), which would silently inflate the batch mean, so average over valid
@@ -344,11 +356,8 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                 m = seg_roi[b]
                 if not bool(m.any()):
                     continue
-                Vc = V_canon[b][m]
-                Vg = V_gt[b][m]
-                mse_s = ((Vc - Vg) ** 2).mean().clamp(min=1e-10)
-                psnr_seg_list.append(10.0 * torch.log10(1.0 / mse_s))
-                mae_seg_list.append((Vc - Vg).abs().mean())
+                psnr_seg_list.append(_psnr_from_mse(_masked_mse(V_canon[b], V_gt[b], m)))
+                mae_seg_list.append((V_canon[b][m] - V_gt[b][m]).abs().mean())
             if psnr_seg_list:
                 out["metric_psnr_3d_heartseg"] = torch.stack(psnr_seg_list).mean()
                 out["metric_mae_3d_heartseg"] = torch.stack(mae_seg_list).mean()
@@ -385,19 +394,24 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                 for b in range(B):
                     m = heart[b]
                     if bool(m.any()):
-                        g = V_gt[b][m]
-                        mse_id = ((V_id[b][m] - g) ** 2).mean()
-                        mse_mo = ((V_canon[b][m] - g) ** 2).mean()
-                        mse_or = ((V_or[b][m] - g) ** 2).mean()
+                        mse_id = _masked_mse(V_id[b], V_gt[b], m)
+                        mse_mo = _masked_mse(V_canon[b], V_gt[b], m)
+                        mse_or = _masked_mse(V_or[b], V_gt[b], m)
                         mse_id_l.append(mse_id); mse_mo_l.append(mse_mo); mse_or_l.append(mse_or)
                         holes.append((coverage[b][m] < 0.5).float().mean())
                         span = mse_id - mse_or                          # recoverable span (identity → ceiling)
                         if float(span) > 1e-6:                          # skip if oracle ≯ identity (recov undefined;
-                            recov.append(((mse_id - mse_mo) / span).clamp(-0.5, 1.5))  # signed clamp on a signed denom is wrong)
+                                                                        # signed clamp on a signed denom is wrong)
+                            # UNCLAMPED as of 2026-08-01, matching recov_frac_seg. The old
+                            # `.clamp(-0.5, 1.5)` censored 98.9% of rows to -0.5 early in
+                            # training — it destroyed data, and the only reason it survived
+                            # was continuity with wandb curves that native-z had already
+                            # invalidated. The `span > 1e-6` guard above keeps the
+                            # denominator positive, which is the part that actually matters.
+                            recov.append((mse_id - mse_mo) / span)
                     st = (V_gt[b] > 1e-3) & (~heart[b])                 # content that does NOT beat (control)
                     if bool(st.any()):
-                        mse_s = ((V_canon[b][st] - V_gt[b][st]) ** 2).mean().clamp(min=1e-10)
-                        static_psnr.append(10.0 * torch.log10(1.0 / mse_s))
+                        static_psnr.append(_psnr_from_mse(_masked_mse(V_canon[b], V_gt[b], st)))
                 if mse_id_l:
                     out["metric_mse_heart_identity"] = torch.stack(mse_id_l).mean()
                     out["metric_mse_heart_model"] = torch.stack(mse_mo_l).mean()
@@ -407,6 +421,47 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                     out["metric_recov_frac_heart"] = torch.stack(recov).mean()
                 if static_psnr:
                     out["metric_psnr_3d_static"] = torch.stack(static_psnr).mean()
+
+                # Same floor/ceiling on the SEGMENTATION ROI (docs/60). Two reasons:
+                #  1. `metric_psnr_3d_heartseg` is a fine per-subject number but is NOT
+                #     comparable ACROSS subjects — measured, 79% of its between-subject
+                #     spread is shared with the whole-volume PSNR, i.e. intrinsic scan
+                #     difficulty rather than model quality. Referencing it to each
+                #     subject's OWN identity floor removes that shared term, so
+                #     `psnr_seg_gain_db` can be averaged over a heterogeneous cohort.
+                #  2. `recov_frac_heart` uses the motion mask while `psnr_heartseg` uses
+                #     the segmentation — two different "heart"s. This puts a recovered
+                #     fraction on the SAME mask as the PSNR.
+                # V_id/V_or are already computed above, so this is just two more masks.
+                seg = batch.get("heart_roi_canonical")
+                if seg is not None:
+                    seg = seg.bool()
+                    gain, recov_s, sid, smo, sor = [], [], [], [], []
+                    for b in range(B):
+                        m = seg[b]
+                        if not bool(m.any()):
+                            continue
+                        # id/model clamped (they divide each other for the dB gain below);
+                        # oracle unclamped (it only ever appears in a difference).
+                        mse_id = _masked_mse(V_id[b], V_gt[b], m).clamp(min=1e-10)
+                        mse_mo = _masked_mse(V_canon[b], V_gt[b], m).clamp(min=1e-10)
+                        mse_or = _masked_mse(V_or[b], V_gt[b], m)
+                        sid.append(mse_id); smo.append(mse_mo); sor.append(mse_or)
+                        # dB the model gains over doing nothing, on this subject's own ROI.
+                        gain.append(10.0 * torch.log10(mse_id / mse_mo))
+                        span = mse_id - mse_or
+                        if float(span) > 1e-6:
+                            # NOT clamped, unlike recov_frac_heart: the `span > 0` guard
+                            # already makes the denominator positive, and the clamp there
+                            # censors 98.9% of rows to -0.5 early in training.
+                            recov_s.append((mse_id - mse_mo) / span)
+                    if gain:
+                        out["metric_psnr_seg_gain_db"] = torch.stack(gain).mean()
+                        out["metric_mse_seg_identity"] = torch.stack(sid).mean()
+                        out["metric_mse_seg_model"] = torch.stack(smo).mean()
+                        out["metric_mse_seg_oracle"] = torch.stack(sor).mean()
+                    if recov_s:
+                        out["metric_recov_frac_seg"] = torch.stack(recov_s).mean()
             except Exception as e:
                 logging.warning(f"docs/38 recov/static val metric failed (ignored): {e}")
 

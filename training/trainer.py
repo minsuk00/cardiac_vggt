@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
+import socket
 
 # --- Environment Variable Setup for Performance and Debugging ---
 # Helps with memory fragmentation in PyTorch's memory allocator.
@@ -17,14 +18,13 @@ os.environ["HYDRA_FULL_ERROR"] = "1"
 os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
 
-import contextlib
 import gc
 import json
 import logging
 import math
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional
 
 import torch
 import torch.nn as nn
@@ -38,7 +38,24 @@ from train_utils.freeze import freeze_modules
 from train_utils.general import *
 from train_utils.logging import setup_logging
 from train_utils.optimizer import construct_optimizers
+from train_utils.run_log import RunLog, file_md5
+from train_utils.val_logging import resp_offslab_stats, seq_index_to_subject
 from trainer_viz import TrainerVizMixin
+
+
+# Metrics sliced per source / per pitch each val epoch (docs/60). Heart-ROI first: it is
+# the headline, and `hole_frac` is docs/38's VETO — stratifying the electors without it
+# lets a per-source coverage regression pass the gate. `psnr_bbox` is kept last, demoted,
+# as the continuity link to the pre-docs/60 series.
+STRATA_METRICS = (
+    "metric_psnr_seg_gain_db",     # dB above each subject's OWN floor — the only heart
+                                   # number that is comparable across a mixed cohort
+    "metric_recov_frac_seg",       # recovered fraction on the SAME mask, unclamped
+    "metric_psnr_3d_heartseg",     # raw; fine per subject, cohort-composition-sensitive
+    "metric_mae_3d_heartseg",
+    "metric_hole_frac_heart",      # docs/38 VETO — must be stratified alongside the electors
+    "metric_psnr_3d_bbox",         # demoted, kept as continuity with the pre-docs/60 series
+)
 
 
 class Trainer(TrainerVizMixin):
@@ -67,14 +84,12 @@ class Trainer(TrainerVizMixin):
         device: str = "cuda",
         seed_value: int = 123,
         val_epoch_freq: int = 1,
-        distributed: Dict[str, bool] = None,
         cuda: Dict[str, bool] = None,
         limit_train_batches: Optional[int] = None,
         limit_val_batches: Optional[int] = None,
         optim: Optional[Dict[str, Any]] = None,
         loss: Optional[Dict[str, Any]] = None,
         env_variables: Optional[Dict[str, Any]] = None,
-        accum_steps: int = 1,
         **kwargs,
     ):
         """
@@ -90,14 +105,12 @@ class Trainer(TrainerVizMixin):
             device: "cuda" or "cpu".
             seed_value: A random seed for reproducibility.
             val_epoch_freq: Frequency (in epochs) to run validation.
-            distributed: Unused (kept so older configs still instantiate); DDP was removed.
             cuda: Hydra config for CUDA-specific settings (e.g., cuDNN).
             limit_train_batches: Limit the number of training batches per epoch (for debugging).
             limit_val_batches: Limit the number of validation batches per epoch (for debugging).
             optim: Hydra config for optimizers and schedulers.
             loss: Hydra config for the loss function.
             env_variables: Dictionary of environment variables to set.
-            accum_steps: Number of steps to accumulate gradients before an optimizer step.
         """
         self._setup_env_variables(env_variables)
         self._setup_timers()
@@ -113,7 +126,6 @@ class Trainer(TrainerVizMixin):
         self._wandb_config = kwargs.get("_wandb_config", None)
 
         # Store hyperparameters
-        self.accum_steps = accum_steps
         self.max_epochs = max_epochs
         self.mode = mode
         self.val_epoch_freq = val_epoch_freq
@@ -138,6 +150,11 @@ class Trainer(TrainerVizMixin):
             all_ranks=self.logging_conf.all_ranks,
         )
         set_seeds(seed_value, self.max_epochs, 0)
+
+        # On-disk run log (docs/60): wandb scalars mirrored to metrics.jsonl, plus the
+        # per-subject val rows wandb never sees. Built first so _log_scalar can mirror
+        # from the very first call.
+        self.run_log = RunLog(self.logging_conf.log_dir)
 
         # Instantiate components (model, loss, etc.)
         self._setup_components()
@@ -184,6 +201,9 @@ class Trainer(TrainerVizMixin):
         # this PSNR vs its identity baseline tells you whether the model actually
         # corrects motion where it matters. Logged under the `val/psnr/motion/` panel.
         self._per_phase_val_psnr_motion = defaultdict(list)
+        # Stratified val accumulator, keyed (axis, group, metric) → [per-subject values].
+        # Cleared each val epoch by _log_val_strata. See _record_val_subject.
+        self._val_strata = defaultdict(list)
         # Identity baseline per phase + aggregate mean, populated by _compute_identity_baseline
         # and baked into val_psnr metric names so each panel shows n and baseline in its title.
         self._identity_baseline_full_per_phase = None
@@ -196,6 +216,11 @@ class Trainer(TrainerVizMixin):
         # NaN/Inf chunks get swallowed by the early-return in _run_steps_on_batch_chunks and
         # loss_meters silently undercount, making the wandb loss curve look healthier than it is.
         self._nan_batch_count = 0
+        # Per-phase count of batches whose objective was non-finite when logging was
+        # attempted. Distinct from _nan_batch_count (train-only, incremented later, and
+        # about skipping the BACKWARD): this one is about keeping the meters clean, and it
+        # covers val too. See _log_if_finite.
+        self._nonfinite_logged = defaultdict(int)
         # ── GPU augmentation pipeline (off by default) ─────────────────────
         # Built from `data.augmentation` (see mri_volume.yaml). `None` → identity
         # passthrough in the trainer hook. Val ALWAYS uses identity — augmentation
@@ -222,6 +247,11 @@ class Trainer(TrainerVizMixin):
         self.resp_generator = torch.Generator(device=self.device).manual_seed(
             int(self.seed_value))
 
+        # One `run_meta.jsonl` line per PROCESS LAUNCH (docs/60). Written here, after the
+        # checkpoint load, so `resumed_from_epoch` is known — a requeued run therefore
+        # leaves one line per segment and a mid-run code edit shows as a changed git sha.
+        self._write_run_meta()
+
         # Compute identity-Δ baseline once at startup.
         if self.mode in ["train", "val"]:
             self._compute_identity_baseline()
@@ -229,8 +259,72 @@ class Trainer(TrainerVizMixin):
             # training, so logged once here rather than every val epoch.
             self._log_motion_mask_example(self.steps.get("train", 0))
 
+    def _write_run_meta(self):
+        """Identify WHICH code and cohort produced this run's numbers. The git sha and the
+        split md5 are the load-bearing fields, and neither is recoverable from wandb."""
+        try:
+            def _subjects(ds_attr):
+                try:
+                    inner = getattr(self, ds_attr).dataset.base_dataset.datasets[0]
+                    return len(inner.subjects), getattr(inner, "split_file", None)
+                except (AttributeError, IndexError, TypeError):
+                    return None, None
+
+            n_train, split_file = _subjects("train_dataset")
+            n_val, val_split_file = _subjects("val_dataset")
+            split_file = split_file or val_split_file
+            manifest = os.path.join(
+                os.path.dirname(split_file), "manifest.csv") if split_file else None
+
+            # The val PROTOCOL, not just the cohort: cardiac_phase.csv decides which
+            # (subject, t_target) pairs every val number is averaged over, so editing it
+            # moves every metric and the identity floor with it.
+            mri_ds = self._get_mri_dataset()
+            ef_csv = getattr(mri_ds, "cardiac_phase_csv", None) if mri_ds else None
+            # Bumped whenever the on-disk VOXELS change (slice-order flips, roll fixes,
+            # ROI regeneration). split_md5 only hashes subject NAMES, so without this two
+            # runs on different pixels look identical.
+            try:
+                from data.preprocess import cache_signature
+                cache_sig = cache_signature()
+            except Exception:
+                cache_sig = None
+
+            wb = getattr(self.wandb_writer, "run", None)
+            self.run_log.meta({
+                "event": "launch",
+                "log_dir": self.logging_conf.log_dir,
+                "mode": self.mode,
+                # `is not None`, not truthiness — epoch 0 is falsy, and a resume at epoch 0
+                # would otherwise be indistinguishable from a cold start.
+                "resumed_from_epoch": int(self.epoch) if self.epoch is not None else None,
+                "steps_at_launch": dict(self.steps),
+                "max_epochs": self.max_epochs,
+                "seed": self.seed_value,
+                "limit_train_batches": self.limit_train_batches,
+                "limit_val_batches": self.limit_val_batches,
+                "n_train_subjects": n_train,
+                "n_val_subjects": n_val,
+                "split_file": split_file,
+                "split_md5": file_md5(split_file) if split_file else None,
+                "manifest_md5": file_md5(manifest) if manifest else None,
+                "cardiac_phase_csv": ef_csv,
+                "cardiac_phase_md5": file_md5(ef_csv) if ef_csv else None,
+                "data_cache_signature": cache_sig,
+                "wandb_id": getattr(wb, "id", None),
+                "wandb_url": getattr(wb, "url", None),
+                "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
+                "slurm_node": os.environ.get("SLURMD_NODENAME") or socket.gethostname(),
+                "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+                "torch_version": torch.__version__,
+                "cuda_version": torch.version.cuda,
+                "config": self._wandb_config,
+            })
+        except Exception as e:
+            logging.warning(f"run_meta write failed (ignored): {e}")
+
     def _get_mri_dataset(self):
-        """Walk the wrapper chain (DynamicTorchDataset → ComposedDataset → TupleConcatDataset)
+        """Walk the wrapper chain (DynamicTorchDataset → ComposedDataset → TupleIndexedDataset)
         to retrieve the underlying MRIDataset instance. Returns None if val_dataset is unset
         or the chain doesn't match (e.g., non-MRI datasets)."""
         try:
@@ -363,7 +457,6 @@ class Trainer(TrainerVizMixin):
         logging.info("Setting up components: Model, Loss, Logger, etc.")
         self.epoch = 0
         self.steps = {"train": 0, "val": 0}
-        self._point_cloud_logged_epoch = {"train": -1, "val": -1}
 
         # Instantiate components from configs
         self.wandb_writer = None
@@ -468,9 +561,14 @@ class Trainer(TrainerVizMixin):
         return ["loss_objective"] if phase == "val" else []
 
     def _log_scalar(self, name: str, value: Any, step: int):
-        """Logs a scalar value to WandB."""
+        """Log a scalar to wandb AND mirror it to `metrics.jsonl` (docs/60). This is the
+        only scalar chokepoint, so nothing can reach wandb without reaching disk. The
+        mirror is not gated on `wandb_writer` — offline runs still get a full record."""
         if self.wandb_writer:
             self.wandb_writer.log(name, value, step)
+        run_log = getattr(self, "run_log", None)
+        if run_log is not None:
+            run_log.scalar(name, value, step, epoch=getattr(self, "epoch", None))
 
     @staticmethod
     def _scalar_name(phase: str, key: str) -> str:
@@ -492,9 +590,12 @@ class Trainer(TrainerVizMixin):
     def _log_resp_disp_scalar(self, batch, step: int, prefix: str):
         """Log the per-slot respiratory displacement magnitude (mm) as scalars under
         `{prefix}/resp/disp_mm_{mean,max}`. No-op when breathing is off (key absent).
-        Read-only diagnostic — never affects training."""
-        if not self.wandb_writer:
-            return
+        Read-only diagnostic — never affects training.
+
+        NOT gated on `self.wandb_writer`: `_log_scalar` mirrors to disk too, and the
+        off-slab numbers below are the one family that cannot be recovered after the fact
+        (the corruption is applied on GPU and never persisted), so an offline run must
+        still record them."""
         disp = batch.get("resp_disp_mm")
         if disp is None:
             return
@@ -502,20 +603,40 @@ class Trainer(TrainerVizMixin):
             mag = disp.float().norm(dim=-1)  # (B, S) per-slot |d| in mm
             self._log_scalar(f"{prefix}/resp/disp_mm_mean", float(mag.mean().item()), step)
             self._log_scalar(f"{prefix}/resp/disp_mm_max", float(mag.max().item()), step)
+            for k, v in resp_offslab_stats(batch, 0).items():
+                self._log_scalar(f"{prefix}/resp/{k}", v, step)
         except Exception as e:
             logging.warning(f"resp_disp scalar log failed (ignored): {e}")
 
     def run(self):
-        """Main entry point to start the training or validation process."""
+        """Main entry point to start the training or validation process.
+
+        Records how the run ENDED (docs/60). Without this, `run_meta.jsonl` has a launch
+        line and nothing else, so a crashed run and a completed one are indistinguishable
+        from the files — you have to guess from whether a `.tmp` checkpoint was left behind.
+        A SIGUSR1 requeue calls `os._exit(0)` and so bypasses this; that segment is
+        identified instead by the NEXT launch line carrying `resumed_from_epoch`.
+        """
         assert self.mode in ["train", "val"], f"Invalid mode: {self.mode}"
-        if self.mode == "train":
-            self.run_train()
-            # Optionally run a final validation after all training is done
-            self.run_val()
-        elif self.mode == "val":
-            self.run_val()
-        else:
-            raise ValueError(f"Invalid mode: {self.mode}")
+        try:
+            if self.mode == "train":
+                self.run_train()
+                # Optionally run a final validation after all training is done
+                self.run_val()
+            else:
+                self.run_val()
+        except BaseException as e:               # BaseException: also record KeyboardInterrupt
+            self._log_exit("error", f"{type(e).__name__}: {e}")
+            raise
+        self._log_exit("completed")
+
+    def _log_exit(self, status, error=None):
+        try:
+            self.run_log.meta({"event": "exit", "status": status, "error": error,
+                               "final_epoch": int(self.epoch),
+                               "steps": dict(self.steps)})
+        except Exception as e:
+            logging.warning(f"exit record failed (ignored): {e}")
 
     def run_train(self):
         """Runs the main training loop over all epochs."""
@@ -595,7 +716,6 @@ class Trainer(TrainerVizMixin):
                 self.time_elapsed_meter,
                 *loss_meters.values(),
             ],
-            real_meters={},
             prefix="Val Epoch: [{}]".format(self.epoch),
         )
 
@@ -657,8 +777,6 @@ class Trainer(TrainerVizMixin):
             # measure data loading time
             data_time.update(time.time() - end)
 
-            with torch.amp.autocast("cuda", enabled=False):
-                batch = self._process_batch(batch)
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
             # Val never AFFINE-augments, but respiratory (if enabled) applies
             # deterministically per seq_index so val measures the real corrupted->clean task.
@@ -668,12 +786,7 @@ class Trainer(TrainerVizMixin):
             if data_iter == 0:
                 self._log_resp_disp_scalar(batch, self.steps["train"], "val")
 
-            amp_type = self.optim_conf.amp.amp_dtype
-            assert amp_type in ["bfloat16", "float16"], f"Invalid Amp type: {amp_type}"
-            if amp_type == "bfloat16":
-                amp_type = torch.bfloat16
-            else:
-                amp_type = torch.float16
+            amp_type = self._amp_dtype()
 
             # compute output
             with torch.no_grad():
@@ -713,7 +826,12 @@ class Trainer(TrainerVizMixin):
         prefix = f"Loss/{phase}_"
         for name, meter in loss_meters.items():
             raw_name = name[len(prefix):] if name.startswith(prefix) else name
-            self._log_scalar(self._scalar_name("val", raw_name), meter.avg, current_train_step)
+            # count==0 means EVERY val batch was non-finite and got skipped by
+            # _log_if_finite. AverageMeter.avg is initialised to 0, so publishing it
+            # would report a perfect 0.0 for a catastrophically broken epoch. Report NaN
+            # instead — that is what this logged before the guard existed.
+            value = meter.avg if meter.count else float("nan")
+            self._log_scalar(self._scalar_name("val", raw_name), value, current_train_step)
 
         # ── Per-phase val PSNR (only when t_target is varying) ──
         # Metric name bakes in n and the identity baseline:
@@ -779,6 +897,9 @@ class Trainer(TrainerVizMixin):
             except Exception as e:
                 logging.warning(f"per-phase {namespace} log failed (ignored): {e}")
 
+        # ── Stratified val means (per source / per pitch bucket) ──
+        self._log_val_strata(current_train_step)
+
         # ── Cardiac-cycle filmstrip (every N val epochs) ──
         # Useful in BOTH modes: in multi-phase it's the qualitative proof of
         # cross-phase reconstruction; in fixed-ED it shows what the model does at
@@ -822,7 +943,6 @@ class Trainer(TrainerVizMixin):
                 self.time_elapsed_meter,
                 *loss_meters.values(),
             ],
-            real_meters={},
             prefix="Train Epoch: [{}]".format(self.epoch),
         )
 
@@ -842,9 +962,6 @@ class Trainer(TrainerVizMixin):
 
             # measure data loading time
             data_time.update(time.time() - end)
-
-            with torch.amp.autocast("cuda", enabled=False):
-                batch = self._process_batch(batch)
 
             batch = copy_data_to_device(batch, self.device, non_blocking=True)
             # GPU augmentation (train only; identity passthrough when self.gpu_transforms is None).
@@ -866,14 +983,7 @@ class Trainer(TrainerVizMixin):
             if data_iter == 0:
                 self._log_resp_disp_scalar(batch, self.steps["train"], "train")
 
-            accum_steps = self.accum_steps
-
-            if accum_steps == 1:
-                chunked_batches = [batch]
-            else:
-                chunked_batches = chunk_batch_for_accum_steps(batch, accum_steps)
-
-            self._run_steps_on_batch_chunks(chunked_batches, phase, loss_meters)
+            self._run_step_and_backward(batch, phase, loss_meters)
 
             # compute gradient and do SGD step
             assert data_iter <= limit_train_batches  # allow for off by one errors
@@ -942,66 +1052,44 @@ class Trainer(TrainerVizMixin):
 
         return True
 
-    def _run_steps_on_batch_chunks(
-        self,
-        chunked_batches: List[Any],
-        phase: str,
-        loss_meters: Dict[str, AverageMeter],
-    ):
-        """
-        Run the forward / backward as many times as there are chunks in the batch,
-        accumulating the gradients on each backward
-        """
-
+    def _run_step_and_backward(self, batch: Mapping, phase: str,
+                               loss_meters: Dict[str, AverageMeter]):
+        """One forward + backward. Gradient accumulation was removed (2026-08-01): every
+        config sets `accum_steps: 1`, and B is hardcoded to 1 in the loader (the only
+        collation that is safe under native-z), so chunking a batch into N>1 pieces would
+        have produced EMPTY tensors — the feature was dead and unusable, not just unused."""
         for optim in self.optims:
             optim.zero_grad(set_to_none=True)
 
-        accum_steps = len(chunked_batches)
+        amp_type = self._amp_dtype()
 
+        with torch.amp.autocast("cuda", enabled=self.optim_conf.amp.enabled, dtype=amp_type):
+            loss_dict = self._step(batch, self.model, phase, loss_meters)
+
+        loss = loss_dict["objective"]
+
+        if not math.isfinite(loss.item()):
+            self._nan_batch_count += 1
+            logging.error(
+                f"Loss is {loss.item()} (phase={phase}, step={self.steps[phase]}, "
+                f"cumulative_nan_batches={self._nan_batch_count}); skipping backward."
+            )
+            self._log_scalar(
+                "train/optim/nan_batches_cumulative",
+                float(self._nan_batch_count),
+                self.steps[phase],
+            )
+            return
+
+        self.scaler.scale(loss).backward()
+        loss_meters[f"Loss/{phase}_loss_objective"].update(
+            loss.item(), batch["images"].shape[0])
+
+    def _amp_dtype(self):
+        """Resolve `optim.amp.amp_dtype` once (was open-coded identically in two places)."""
         amp_type = self.optim_conf.amp.amp_dtype
         assert amp_type in ["bfloat16", "float16"], f"Invalid Amp type: {amp_type}"
-        if amp_type == "bfloat16":
-            amp_type = torch.bfloat16
-        else:
-            amp_type = torch.float16
-
-        for i, chunked_batch in enumerate(chunked_batches):
-            # Single-GPU: no DDP, so no gradient sync to defer — no_sync() was a no-op anyway.
-            grad_accum_context = contextlib.nullcontext()
-
-            with grad_accum_context:
-                with torch.amp.autocast("cuda",
-                    enabled=self.optim_conf.amp.enabled,
-                    dtype=amp_type,
-                ):
-                    loss_dict = self._step(chunked_batch, self.model, phase, loss_meters)
-
-                loss = loss_dict["objective"]
-                loss_key = f"Loss/{phase}_loss_objective"
-                batch_size = chunked_batch["images"].shape[0]
-
-                if not math.isfinite(loss.item()):
-                    self._nan_batch_count += 1
-                    logging.error(
-                        f"Loss is {loss.item()} (phase={phase}, step={self.steps[phase]}, "
-                        f"cumulative_nan_batches={self._nan_batch_count}); skipping backward."
-                    )
-                    self._log_scalar(
-                        "train/optim/nan_batches_cumulative",
-                        float(self._nan_batch_count),
-                        self.steps[phase],
-                    )
-                    return
-
-                loss /= accum_steps
-                self.scaler.scale(loss).backward()
-                loss_meters[loss_key].update(loss.item(), batch_size)
-
-    def _process_batch(self, batch: Mapping):
-        # Passthrough hook. The legacy SfM batch-repetition (repeat_batch) and camera/point
-        # normalization (normalize_points) were removed — both were gated off for the MRI
-        # pipeline, so this returns the batch unchanged.
-        return batch
+        return torch.bfloat16 if amp_type == "bfloat16" else torch.float16
 
     def _step(self, batch, model: nn.Module, phase: str, loss_meters: dict):
         """
@@ -1020,11 +1108,137 @@ class Trainer(TrainerVizMixin):
         # Combine all data for logging
         log_data = {**{f"pred_{k}": v for k, v in y_hat.items()}, **loss_dict, **batch}
 
+        # Skip logging (only) for a non-finite batch, so one NaN can't poison the epoch's
+        # AverageMeters. The backward-skip logic in _run_steps_on_batch_chunks runs later
+        # and is unchanged; val had no check at all. docs/60.
+        if not self._log_if_finite(log_data, phase):
+            self.steps[phase] += 1
+            return loss_dict
+
         self._update_and_log_scalars(log_data, phase, self.steps[phase], loss_meters)
         self._log_visuals_to_wandb(log_data, phase, self.steps[phase])
 
         self.steps[phase] += 1
         return loss_dict
+
+    @staticmethod
+    def _pitch_bucket(dz):
+        """Coarse (>=10 mm) vs fine (<10 mm) pitch. Two buckets, not the 6 raw val pitches
+        (n = 72/52/4/2/2/1) — a per-pitch curve would be one subject dressed as a statistic.
+        docs/59 F8."""
+        if dz is None:
+            return None
+        return "coarse_ge10mm" if float(dz) >= 10.0 else "fine_lt10mm"
+
+    def _record_val_subject(self, data: Mapping, b: int, t: int,
+                            psnr_full, psnr_bbox, psnr_motion):
+        """One per-subject val row to disk, plus the live stratified means.
+
+        Batch size is pinned to 1, so these values ARE per-subject — the AverageMeter just
+        averages them away. Writing the raw row is free and makes every later slice
+        (vendor, pathology, D, ...) a groupby against manifest.csv. docs/60.
+        """
+        try:
+            mri_ds = self._get_mri_dataset()
+            seqs = data.get("seq_index")
+            seq_index = int(seqs[b].flatten()[0].item()) if seqs is not None else None
+            subject, source = (seq_index_to_subject(mri_ds, seq_index)
+                               if (mri_ds is not None and seq_index is not None)
+                               else (None, None))
+            dz = data.get("dz_mm")
+            dz = float(dz.reshape(-1)[b]) if dz is not None else None
+
+            row = {
+                "epoch": int(self.epoch),
+                "step": int(self.steps["train"]),
+                "seq_name": subject,
+                "source": source,
+                "t_target": t,
+                "dz_mm": dz,
+                "D": int(data["V_gt"].shape[-3]),
+                "S": int(data["images"].shape[1]),
+                "seq_index": seq_index,
+                "metric_psnr_3d_full": psnr_full,
+                "metric_psnr_3d_bbox": psnr_bbox,
+                "metric_psnr_3d_motion": psnr_motion,
+            }
+            # Every metric the loss already computed for this sample. B==1, so these
+            # batch-level scalars are per-subject values.
+            for k, v in data.items():
+                if k.startswith("metric_") and k not in row:
+                    try:
+                        row[k] = float(v.item() if torch.is_tensor(v) else v)
+                    except (TypeError, ValueError, RuntimeError):
+                        pass
+            # Breathing damage is not a `metric_*` key, so the sweep above misses it — and
+            # it is the one quantity that cannot be recovered after the run.
+            row.update(resp_offslab_stats(data, b))
+            self.run_log.subject_row(row)
+
+            # Live strata (emitted at end of val epoch by _log_val_strata).
+            for axis, group in (("source", source),
+                                ("pitch", self._pitch_bucket(dz))):
+                if group is None:
+                    continue
+                for metric in STRATA_METRICS:
+                    val = row.get(metric)
+                    if val is not None:
+                        self._val_strata[(axis, group, metric)].append(val)
+        except Exception as e:
+            logging.warning(f"per-subject val record failed (ignored): {e}")
+
+    def _log_val_strata(self, step: int):
+        """Per-source and per-pitch val means, then clear. Two axes only: the pooled mean
+        hides a one-source collapse (15 of 133 subjects moving 5 dB shifts it 0.6 dB), and
+        pitch is the native-z tripwire. `n` is a separate scalar, not baked into the metric
+        name — baking it would orphan the curve on any split edit. docs/60."""
+        if not self._val_strata:
+            return
+        try:
+            for (axis, group, metric), values in sorted(self._val_strata.items()):
+                if not values:
+                    continue
+                short = metric.replace("metric_psnr_3d_", "psnr_").replace("metric_", "")
+                self._log_scalar(f"val/strata/{axis}/{group}/{short}",
+                                 float(sum(values) / len(values)), step)
+                # `n` per METRIC, not per group: the heart-ROI metrics are conditional
+                # (they need a valid heart_roi_canonical), so a group's metrics can have
+                # different counts. One shared `n` name meant last-write-wins, i.e. the
+                # count shown belonged to whichever metric sorted last.
+                self._log_scalar(f"val/strata/{axis}/{group}/{short}_n", float(len(values)), step)
+            groups = sorted({(a, g) for (a, g, _) in self._val_strata})
+            logging.info(f"[val strata @ step {step}] " + " | ".join(
+                f"{a}:{g}" for a, g in groups))
+        except Exception as e:
+            logging.warning(f"val strata log failed (ignored): {e}")
+        finally:
+            self._val_strata.clear()
+
+    def _log_if_finite(self, log_data: Mapping, phase: str) -> bool:
+        """True when the objective is finite; otherwise name the offending subject and
+        return False. Turns "everything after epoch 40 is NaN" into "subject X did it"."""
+        try:
+            obj = log_data.get("objective")
+            value = obj.item() if torch.is_tensor(obj) else obj
+            if value is None or math.isfinite(value):
+                return True
+            names = log_data.get("seq_name") or ["<unknown>"]
+            self._nonfinite_logged[phase] += 1
+            logging.error(
+                f"Non-finite objective ({value}) in phase={phase} at step "
+                f"{self.steps[phase]}; subject(s)={list(names)[:4]}. Skipping the metric "
+                f"update for this batch so the epoch's AverageMeters stay finite "
+                f"(cumulative {phase}: {self._nonfinite_logged[phase]})."
+            )
+            # Logged at the TRAIN step like every other val scalar: wandb drops
+            # non-monotonic steps, and steps["val"] lags badly, so at steps[phase] this
+            # alarm could be discarded exactly when it matters.
+            self._log_scalar(f"{phase}/optim/nonfinite_logged_cumulative",
+                             float(self._nonfinite_logged[phase]), self.steps["train"])
+            return False
+        except Exception as e:
+            logging.warning(f"finiteness guard failed (ignored, logging anyway): {e}")
+            return True
 
     def _update_and_log_scalars(self, data: Mapping, phase: str, step: int, loss_meters: dict):
         """Updates average meters and logs scalar values to wandb."""
@@ -1078,6 +1292,7 @@ class Trainer(TrainerVizMixin):
                         mse_bbox = (Vc_bb - Vg_bb).pow(2).mean().clamp(min=1e-10)
                         psnr_bbox = (10.0 * torch.log10(1.0 / mse_bbox)).item()
                         self._per_phase_val_psnr_bbox[t].append(psnr_bbox)
+                    psnr_motion = None
                     if motion_masks is not None:
                         m = motion_masks[b]
                         if bool(m.any()):
@@ -1086,6 +1301,9 @@ class Trainer(TrainerVizMixin):
                             mse_motion = (Vc_m - Vg_m).pow(2).mean().clamp(min=1e-10)
                             psnr_motion = (10.0 * torch.log10(1.0 / mse_motion)).item()
                             self._per_phase_val_psnr_motion[t].append(psnr_motion)
+                    self._record_val_subject(
+                        data, b, t, psnr_full,
+                        psnr_bbox if bboxes is not None else None, psnr_motion)
             except Exception as e:
                 logging.warning(f"per-phase PSNR accumulation failed (ignored): {e}")
 
@@ -1128,42 +1346,3 @@ class Trainer(TrainerVizMixin):
                         logging.warning(f"n_slots_at_target log failed (ignored): {e}")
 
 
-def chunk_batch_for_accum_steps(batch: Mapping, accum_steps: int) -> List[Mapping]:
-    """Splits a batch into smaller chunks for gradient accumulation."""
-    if accum_steps == 1:
-        return [batch]
-    return [get_chunk_from_data(batch, i, accum_steps) for i in range(accum_steps)]
-
-
-def is_sequence_of_primitives(data: Any) -> bool:
-    """Checks if data is a sequence of primitive types (str, int, float, bool)."""
-    return isinstance(data, Sequence) and not isinstance(data, str) and len(data) > 0 and isinstance(data[0], (str, int, float, bool))
-
-
-def get_chunk_from_data(data: Any, chunk_id: int, num_chunks: int) -> Any:
-    """
-    Recursively splits tensors and sequences within a data structure into chunks.
-
-    Args:
-        data: The data structure to split (e.g., a dictionary of tensors).
-        chunk_id: The index of the chunk to retrieve.
-        num_chunks: The total number of chunks to split the data into.
-
-    Returns:
-        A chunk of the original data structure.
-    """
-    if isinstance(data, torch.Tensor) or is_sequence_of_primitives(data):
-        # either a tensor or a list of primitive objects
-        # assert len(data) % num_chunks == 0
-        start = (len(data) // num_chunks) * chunk_id
-        end = (len(data) // num_chunks) * (chunk_id + 1)
-        return data[start:end]
-    elif isinstance(data, Mapping):
-        return {key: get_chunk_from_data(value, chunk_id, num_chunks) for key, value in data.items()}
-    elif isinstance(data, str):
-        # NOTE: this is a hack to support string keys in the batch
-        return data
-    elif isinstance(data, Sequence):
-        return [get_chunk_from_data(value, chunk_id, num_chunks) for value in data]
-    else:
-        return data

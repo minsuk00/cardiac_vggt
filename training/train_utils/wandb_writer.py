@@ -6,10 +6,7 @@
 
 import logging
 import os
-from typing import Any, Dict, Optional, Union
-
-import numpy as np
-import torch
+from typing import Any, Dict, Optional
 
 try:
     import wandb
@@ -17,7 +14,7 @@ except ImportError:
     wandb = None
 
 class WandbLogger:
-    """A wrapper around Weights & Biases with distributed training support."""
+    """A thin wrapper around Weights & Biases."""
 
     def __init__(
         self,
@@ -28,9 +25,10 @@ class WandbLogger:
         resume_id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
-        self._rank = 0  # single-GPU only
-
-        if self._rank == 0 and wandb is not None:
+        # The live wandb run. Read back by the trainer (`run_meta.jsonl`'s wandb_id/url) —
+        # keep it an attribute, not a local, or that link back to the dashboard is silently null.
+        self.run = None
+        if wandb is not None:
             # Using print AND logging.info to ensure visibility everywhere
             msg = f"Initializing WandB: project={project}, name={name}"
             print(msg)
@@ -58,7 +56,7 @@ class WandbLogger:
                     except Exception as e:
                         logging.warning(f"wandb config resolve failed, logging unresolved (ignored): {e}")
                         wandb_config = OmegaConf.to_container(wandb_config, resolve=False)
-            run = wandb.init(project=project, name=name, config=wandb_config, dir=dir, **kwargs)
+            run = self.run = wandb.init(project=project, name=name, config=wandb_config, dir=dir, **kwargs)
             if run is not None:
                 logging.info(f"WandB Run URL: {run.get_url()}")
                 # Exclude large directories and specifically include .py and .yaml files
@@ -66,24 +64,13 @@ class WandbLogger:
                     include_fn=lambda path: path.endswith(".py") or path.endswith(".yaml"),
                     exclude_fn=lambda path: "scratch" in path or "logs" in path or ".git" in path
                 )
-        elif wandb is None and self._rank == 0:
+        else:
             logging.warning("WandB is not installed. Skipping initialization.")
 
     def log(self, name: str, data: Any, step: int) -> None:
-        if self._rank == 0 and wandb is not None and wandb.run is not None:
+        if wandb is not None and wandb.run is not None:
             wandb.log({name: data}, step=step)
 
-    def log_dict(self, payload: Dict[str, Any], step: int) -> None:
-        if self._rank == 0 and wandb is not None and wandb.run is not None:
-            wandb.log(payload, step=step)
-
-    def log_3d_point_cloud(self, name: str, cloud_data: np.ndarray, step: int) -> None:
-        """Logs an interactive 3D point cloud to WandB.
-        cloud_data: (N, 3) or (N, 6) array. If (N, 6), format is [x, y, z, r, g, b].
-        """
-        if self._rank == 0 and wandb is not None and wandb.run is not None:
-            wandb.log({name: wandb.Object3D.from_numpy(cloud_data)}, step=step)
-
     def close(self) -> None:
-        if self._rank == 0 and wandb is not None and wandb.run is not None:
+        if wandb is not None and wandb.run is not None:
             wandb.finish()
