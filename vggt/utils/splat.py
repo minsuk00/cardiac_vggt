@@ -3,6 +3,11 @@
 import torch
 import torch.nn.functional as F
 
+# Sub-voxel tolerance on the in-bounds test, in voxel units. Absorbs the float32
+# round-trip residual of the physical-z encode/decode (~5e-7 voxels); see the comment
+# at the in-bounds mask below and docs/59 F1.
+EPS = 1e-3
+
 
 def splat_to_volume(pos, intensity, grid_shape, z_scale, weight=None):
     """Trilinear scatter of (position, intensity) pairs into a 3D grid.
@@ -42,18 +47,6 @@ def splat_to_volume(pos, intensity, grid_shape, z_scale, weight=None):
     py = (pos[..., 1] + 1) * 0.5 * (H - 1)
     pz = pos[..., 2] * z_scale + (D - 1) * 0.5
 
-    # Floor for indices; keep raw floats for weight computation.
-    x0f = torch.floor(px)
-    y0f = torch.floor(py)
-    z0f = torch.floor(pz)
-
-    wx1 = px - x0f
-    wy1 = py - y0f
-    wz1 = pz - z0f
-    wx0 = 1.0 - wx1
-    wy0 = 1.0 - wy1
-    wz0 = 1.0 - wz1
-
     # In-bounds mask: check the CONTINUOUS position against the true valid domain
     # [0, size-1] (NOT the floored index against [0, size-2]). A point sitting EXACTLY
     # on the last voxel (e.g. px == W-1) is fully valid and needs no "next" neighbor to
@@ -63,13 +56,57 @@ def splat_to_volume(pos, intensity, grid_shape, z_scale, weight=None):
     # z-grid (the top plane was often zero-padding), but under native-z D is each
     # subject's own real slice count, so the top z-plane is real anatomy for every
     # subject. Points genuinely beyond the domain are still correctly dropped.
-    in_bounds = (
-        (px >= 0) & (px <= W - 1)
-        & (py >= 0) & (py <= H - 1)
-        & (pz >= 0) & (pz <= D - 1)
-    ).to(dtype)
+    #
+    # The test carries a sub-voxel EPS, and the continuous position is then CLAMPED into
+    # the domain. Reason (docs/59 F1): z_norm = (k-(D-1)/2)*dz/Z_HALF_MM and z_scale =
+    # Z_HALF_MM/dz round INDEPENDENTLY in float32, so the round trip does not cancel
+    # exactly at plane 0 — e.g. D=11, dz=9.6 gives pz = -4.77e-07. Every pixel of an input
+    # slot shares one z_val, so a bare `pz >= 0` discards the ENTIRE apex slice (measured:
+    # -9.6 dB identity PSNR), not a fractional weight. EPS=1e-3 voxels is ~2000x the
+    # observed residual and far below any real geometric offset. The clamp is what makes
+    # this symmetric: widening the test alone would let a point at pz = D-1+eps floor to
+    # z0 = D-1 with wz1 > 0 on a clamped z1 == z0, double-counting the top plane. Note a
+    # naive `+eps` nudge on z_val is NOT a fix — it trades the apex plane for the basal one.
+    #
+    # The mask is applied with `torch.where`, NOT by multiplying (docs/59 F15). In IEEE
+    # floating point `0.0 * NaN = NaN`, so a multiplied gate does NOT reject a non-finite
+    # coordinate: one NaN/+Inf among ~5.4M points yields 8 NaN voxels, and `V.mean()` — hence
+    # `loss_volume` and every full-volume metric — goes NaN for the whole batch instead of that
+    # point simply contributing zero weight. `where` selects a branch, so non-finite points are
+    # genuinely dropped. (Non-finite coords also fail every comparison above, so they are
+    # already outside `in_bounds_bool` — the only thing missing was a gate that survives them.)
+    # `loss.py` already uses this exact form for the same reason.
+    in_bounds_bool = (
+        (px >= -EPS) & (px <= W - 1 + EPS)
+        & (py >= -EPS) & (py <= H - 1 + EPS)
+        & (pz >= -EPS) & (pz <= D - 1 + EPS)
+    )
+    zero = torch.zeros((), device=device, dtype=dtype)
     if weight is not None:
-        in_bounds = in_bounds * weight.to(dtype)
+        in_bounds = torch.where(in_bounds_bool, weight.to(dtype), zero)
+    else:
+        in_bounds = torch.where(in_bounds_bool, torch.ones((), device=device, dtype=dtype), zero)
+
+    # Clamp the CONTINUOUS positions (and recompute the interpolation weights) so the 8
+    # corner weights remain a valid partition of unity for the epsilon-admitted points.
+    #
+    # The `where` is the SECOND half of the F15 fix, and it is required: `clamp` propagates
+    # NaN (torch returns NaN for clamp(NaN)), so a NaN coordinate would still give NaN
+    # interpolation weights, and `in_bounds * NaN` re-poisons the scatter even though
+    # in_bounds is 0 there. Substituting a dummy in-range position for every rejected point
+    # makes the weights finite; those points contribute nothing because in_bounds == 0.
+    px = torch.where(in_bounds_bool, px, torch.zeros_like(px)).clamp(0, W - 1)
+    py = torch.where(in_bounds_bool, py, torch.zeros_like(py)).clamp(0, H - 1)
+    pz = torch.where(in_bounds_bool, pz, torch.zeros_like(pz)).clamp(0, D - 1)
+    x0f = torch.floor(px)
+    y0f = torch.floor(py)
+    z0f = torch.floor(pz)
+    wx1 = px - x0f
+    wy1 = py - y0f
+    wz1 = pz - z0f
+    wx0 = 1.0 - wx1
+    wy0 = 1.0 - wy1
+    wz0 = 1.0 - wz1
 
     # Clamp BOTH corner indices into range. At an exact boundary x0 == x1, but the
     # weight on the "x1" corner (wx1 = px - x0f) is exactly 0 there, so this never

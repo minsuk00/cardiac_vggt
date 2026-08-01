@@ -49,8 +49,10 @@ SUBJECTS = [
     [1, 2, 3, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150]
 ] + [
     ("scratch/data/MNMs_sax", sid) for sid in
+    # MNMs_E9L4N2 was here until 2026-07-31; it is now excluded from the pool as a
+    # duplicate of MNMs_C5Q2Y5 (docs/59 F3), so the surviving twin is listed instead.
     ["MNMs_A9C5P4", "MNMs_D4N6W6", "MNMs_E4I9O7", "MNMs_E6H0V9", "MNMs_J9L4S2",
-     "MNMs_E9L4N2", "MNMs_M2P1R1", "MNMs_G7S6V0"]
+     "MNMs_C5Q2Y5", "MNMs_M2P1R1", "MNMs_G7S6V0"]
 ]
 
 
@@ -91,11 +93,22 @@ def _identity_psnr(item, z_scale_override=None):
     weight = (inten > 1e-3).float()
 
     V, cov = splat_to_volume(pos, inten, (D, H, W), z_scale, weight=weight)
-    m = (cov[0] > 0.5) & (gt > 1e-3)
+    # Mask on the GT only — NOT on coverage (docs/59 F2). Masking on `cov > 0.5` made this
+    # gate structurally blind to the exact failure it exists to catch: a plane the splat
+    # DROPS has coverage 0, so it was excluded from the metric by construction and the gate
+    # reported 120.00 dB PASS on a subject whose plane 0 was entirely missing. With the GT
+    # mask, an uncovered voxel counts as full error and the gate fires.
+    m = gt > 1e-3
     if not bool(m.any()):
         return None
     mse = ((V[0] - gt) ** 2)[m].mean().item()
-    return 10 * np.log10(1.0 / max(mse, 1e-12))
+    psnr = 10 * np.log10(1.0 / max(mse, 1e-12))
+    # Independent structural check: every z-plane that holds anatomy must receive coverage.
+    # This catches a wholly-dropped plane even if it were somehow PSNR-invisible.
+    has_gt = m.reshape(D, -1).any(dim=1)
+    covered = (cov[0].reshape(D, -1).sum(dim=1) > 0)
+    empty_planes = torch.nonzero(has_gt & ~covered).flatten().tolist()
+    return psnr, empty_planes
 
 
 def run(fault_inject: bool) -> bool:
@@ -113,15 +126,17 @@ def run(fault_inject: bool) -> bool:
             dz = float(item["dz_mm"][0])
             D = item["gt_target_volume"].shape[0]
             override = (float(item["z_scale"][0]) * 0.4) if fault_inject else None
-            psnr = _identity_psnr(item, z_scale_override=override)
-            if psnr is None:
-                print(f"  {subj_id:55s} SKIP (no covered anatomy)")
+            res = _identity_psnr(item, z_scale_override=override)
+            if res is None:
+                print(f"  {subj_id:55s} SKIP (no anatomy)")
                 continue
-            ok = psnr >= PASS_THRESHOLD_DB
+            psnr, empty_planes = res
+            ok = (psnr >= PASS_THRESHOLD_DB) and not empty_planes
             all_pass &= ok
             n_ok += int(ok)
             status = "PASS" if ok else "FAIL"
-            print(f"  {subj_id:55s} dz={dz:5.2f}mm D={D:3d}  identity={psnr:7.2f} dB  [{status}]")
+            note = f"  DROPPED PLANES {empty_planes}" if empty_planes else ""
+            print(f"  {subj_id:55s} dz={dz:5.2f}mm D={D:3d}  identity={psnr:7.2f} dB  [{status}]{note}")
         except Exception as e:
             print(f"  {subj_id:55s} ERROR: {e}")
             all_pass = False
