@@ -28,8 +28,10 @@ from data.respiratory import RespiratoryConfig, sample_resp_disp, reslice_volume
 DATA_ROOT = f"{VGGT}/scratch/data/CMRxRecon2024/Cine_combined"
 SPLIT_FILE = f"{VGGT}/training/splits/random_8_1_1.txt"
 OUT_ROOT = f"{VGGT}/scratch/eval/cmrxrecon/out"
-SPACING_XYZ = (1.4, 1.4, 12.0)   # mm, canonical grid (must match preprocess.py)
-N_CANON_Z = 12
+SPACING_XYZ = (1.4, 1.4, 12.0)   # IN-PLANE mm (must match preprocess.py). The z entry is a
+                                 # LEGACY placeholder only — under native-z (docs/58) each subject
+                                 # keeps its own dz, read per subject from data["dz_mm"].
+N_CANON_Z = 12                   # legacy; no longer asserted (D is now per-subject)
 DATASET = "cmrxrecon"
 
 
@@ -82,15 +84,19 @@ def main():
     phases = torch.from_numpy(np.asarray(data["phases"]).astype(np.float32))  # (T,D,H,W) splat order
     content_mask = np.asarray(data["content_mask"]).astype(np.uint8)          # (D,H,W)
     T, D, H, W = phases.shape
-    assert D == N_CANON_Z, (D, N_CANON_Z)
-    affine = _affine(SPACING_XYZ)
+    # native-z (docs/58): D is this subject's own slice count and dz its own pitch — NOT a fixed 12.
+    # The old `assert D == N_CANON_Z` and the fixed (1.4,1.4,12.0) affine both predate that.
+    dz = float(np.asarray(data["dz_mm"]).reshape(-1)[0])
+    spacing_dhw = (dz, SPACING_XYZ[1], SPACING_XYZ[0])       # (D,H,W) mm, for the respiratory code
+    affine = _affine((SPACING_XYZ[0], SPACING_XYZ[1], dz))
 
     # Deterministic breathing (one realization per subject; name-hash seed).
     seed = name_seed(DATASET, name)
     seq_index = torch.tensor([[seed]], dtype=torch.int64)
-    disp, r = sample_resp_disp(1, N_CANON_Z, rcfg, "cpu", train=False, seq_index=seq_index)
-    disp0 = disp[0]        # (12,3) mm (d_D,d_H,d_W) per z-plane
-    r0 = r[0]              # (12,)
+    # n_planes=D so burst grouping uses this subject's real plane count, not the legacy 12.
+    disp, r = sample_resp_disp(1, D, rcfg, "cpu", train=False, seq_index=seq_index, n_planes=D)
+    disp0 = disp[0]        # (D,3) mm (d_D,d_H,d_W) per z-plane
+    r0 = r[0]              # (D,)
     mean_abs = disp0.norm(dim=-1).mean().item()
     print(f"[{idx}] {name}  T={T} D={D} H={H} W={W}  seed={seed}  mean|disp|={mean_abs:.3f}mm  "
           f"max|disp|={disp0.norm(dim=-1).max().item():.3f}mm", flush=True)
@@ -120,13 +126,17 @@ def main():
         # clean stack == GT planes (the SVR upper-bound: nothing to correct)
         save_xyz(np.asarray(Vt), os.path.join(subj_dir, "clean", f"stack_t{t:02d}.nii.gz"))
         # breathing stack: each plane z resliced by its own disp[z], keep that plane
+        # `spacing=` is REQUIRED here: reslice_volume_vec still defaults to SPACING_MM=(12.0,…)
+        # for un-migrated callers, so omitting it silently understates the shift on any non-12mm
+        # subject (10mm -> 17% too small) while `resp_disp_mm` records the requested value — the
+        # silent, pitch-keyed mis-grading of docs/58 §8.1a. acdc.py/ocmr.py already pass it.
         breathed = torch.stack(
-            [reslice_volume_vec(Vt, disp0[z])[z] for z in range(D)], dim=0)  # (D,H,W)
+            [reslice_volume_vec(Vt, disp0[z], spacing=spacing_dhw)[z] for z in range(D)], dim=0)
         save_xyz(breathed.numpy(), os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz"))
 
     manifest = {
         "dataset": DATASET, "subject": name, "subject_idx": idx, "seed": seed,
-        "T": T, "D": D, "H": H, "W": W, "spacing_xyz_mm": list(SPACING_XYZ),
+        "T": T, "D": D, "H": H, "W": W, "spacing_xyz_mm": [SPACING_XYZ[0], SPACING_XYZ[1], dz],
         "content_mask_frac": float(content_mask.mean()),
         "breath": {
             "mean_abs_disp_mm": mean_abs,
