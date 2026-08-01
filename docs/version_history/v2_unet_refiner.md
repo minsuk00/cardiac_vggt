@@ -158,7 +158,7 @@ bash sbatch/train_refiner_frozen.sh   # run A (only refiner trains)
 bash sbatch/train_refiner_joint.sh    # run B (joint)
 
 # Local override (any existing run can flip it on):
-PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config mri_volume \
+PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default \
   enable_refiner=true refiner_use_coverage=true distributed.find_unused_parameters=true
 ```
 

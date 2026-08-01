@@ -164,13 +164,13 @@ Diagnostic metrics that supplement the 3D PSNR:
 
 ```bash
 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
-    training/launch.py --config mri_volume max_epochs=1 limit_train_batches=200
+    training/launch.py --config default max_epochs=1 limit_train_batches=200
 ```
 
 For overfit-on-one-subject sanity check, override `split_file`:
 ```bash
 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
-    training/launch.py --config mri_volume \
+    training/launch.py --config default \
     split_file=training/splits/overfit_p001.txt \
     max_epochs=5
 ```
