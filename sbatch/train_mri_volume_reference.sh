@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=jjparkcv98
+#SBATCH --account=jjparkcv0
 #SBATCH --partition=spgpu
 #SBATCH --gres=gpu:a40:1
 #SBATCH --nodes=1
@@ -26,8 +26,7 @@
 # and CKPT_ONLY empty for that. aggft (aggregator unfrozen): ~2.8×
 # slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via mri_volume.yaml
 # (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe), affine aug off.
-CONFIG="mri_volume"
-
+CONFIG="default"
 # --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
 # RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
 RESUME_FROM=""

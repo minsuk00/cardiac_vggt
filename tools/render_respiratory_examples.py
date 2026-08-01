@@ -77,7 +77,10 @@ def title_for(d_mm):
 
 
 def shifted(V, d):
-    return reslice_volume(V, d, CFG.ap_ratio * d, ap_axis=CFG.ap_axis).numpy()
+    # SPACING_MM is right for this script's CMRxRecon2024 subjects (uniformly 12 mm);
+    # passed explicitly now that reslice_volume has no default (native-z, docs/58).
+    return reslice_volume(V, d, CFG.ap_ratio * d, ap_axis=CFG.ap_axis,
+                          spacing=SPACING_MM).numpy()
 
 
 def show(ax, img, vmax, title=None, aspect="equal"):

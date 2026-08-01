@@ -57,7 +57,7 @@ def build_respiratory_config():
         "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True)
     cfgdir = os.path.join(VGGT, "training", "config")
     with initialize_config_dir(version_base=None, config_dir=cfgdir):
-        cfg = compose(config_name="mri_volume")
+        cfg = compose(config_name="default")
     return RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory), cfg
 
 

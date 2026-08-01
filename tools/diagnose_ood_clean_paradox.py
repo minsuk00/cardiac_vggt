@@ -84,7 +84,7 @@ def build_val_dataset():
     OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p), replace=True)
     OmegaConf.register_new_resolver("phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True)
     with initialize_config_dir(version_base=None, config_dir=os.path.join(_ROOT, "training", "config")):
-        cfg = compose(config_name="mri_volume", overrides=["data.augmentation.respiratory.enable=true"])
+        cfg = compose(config_name="default", overrides=["data.augmentation.respiratory.enable=true"])
     from training.data.respiratory import RespiratoryConfig
     rcfg = RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory)
     val = instantiate(cfg.data.val, _recursive_=False)

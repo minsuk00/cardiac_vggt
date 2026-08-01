@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=jjparkcv98
+#SBATCH --account=jjparkcv0
 #SBATCH --partition=spgpu
 #SBATCH --gres=gpu:a40:1
 #SBATCH --nodes=1
@@ -26,8 +26,7 @@
 # ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM and
 # CKPT_ONLY empty. aggft: ~2.8× slower, ~27 GB/A40. (The B-spline head's params differ from DPT, so
 # it always trains from scratch regardless of warm-start — it's small/fast.)
-CONFIG="mri_volume_bspline"
-
+CONFIG="exp_bspline"
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
 RESUME_FROM=""
 CKPT_ONLY=""

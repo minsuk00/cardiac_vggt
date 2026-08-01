@@ -82,7 +82,7 @@ def build_respiratory_config():
     OmegaConf.register_new_resolver(
         "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True)
     with initialize_config_dir(version_base=None, config_dir=os.path.join(VGGT, "training", "config")):
-        cfg = compose(config_name="mri_volume")
+        cfg = compose(config_name="default")
     return RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory)
 
 

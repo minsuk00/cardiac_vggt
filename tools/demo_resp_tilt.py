@@ -25,7 +25,9 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "training"))
 from data.preprocess import build_data_dicts, get_canonical_transforms  # noqa: E402
-from data.respiratory import _build_disp_dhw, _rotate_disp, reslice_volume_vec  # noqa: E402
+from data.respiratory import (  # noqa: E402
+    SPACING_MM, _build_disp_dhw, _rotate_disp, reslice_volume_vec,
+)
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 OUT = Path("/home/minsukc/vggt/result/respiratory_tilt_demo.png")
@@ -86,9 +88,11 @@ def main():
              *[(f"tilt draw {i+1}", torch.tensor(v[i])) for i in (0, 1, 2)]]
     n = len(picks)
     gs = fig.add_gridspec(n, 2, left=0.56, right=0.99, wspace=0.05, hspace=0.12)
-    rest = reslice_volume_vec(V, torch.zeros(3))[:, H_mid, :].numpy()
+    # CMRxRecon2024 is uniformly 12 mm, so SPACING_MM is correct here — but pass it
+    # explicitly now that reslice_volume_vec has no default (native-z, docs/58).
+    rest = reslice_volume_vec(V, torch.zeros(3), spacing=SPACING_MM)[:, H_mid, :].numpy()
     for r, (lbl, disp) in enumerate(picks):
-        sl = reslice_volume_vec(V, disp.float())[:, H_mid, :].numpy()
+        sl = reslice_volume_vec(V, disp.float(), spacing=SPACING_MM)[:, H_mid, :].numpy()
         axL = fig.add_subplot(gs[r, 0])
         axL.imshow(sl, cmap="gray", vmin=0, vmax=vmax, origin="lower",
                    interpolation="nearest", aspect="auto")

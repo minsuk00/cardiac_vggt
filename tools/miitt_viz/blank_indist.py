@@ -16,7 +16,7 @@ for r, fn in [("rev_ts", lambda: "0"), ("basename", lambda p: os.path.basename(p
     try: OmegaConf.register_new_resolver(r, fn)
     except Exception: pass
 with initialize_config_dir(config_dir=os.path.abspath("training/config"), version_base=None):
-    cfg = compose(config_name="mri_volume")
+    cfg = compose(config_name="default")
 mri_ds = instantiate(cfg.data.val, _recursive_=False).dataset.base_dataset.datasets[0]
 data = mri_ds.get_data(seq_index=0, img_per_seq=mri_ds.num_slices)
 slice_z = np.asarray(data["slice_indices"]).astype(np.float32)   # (S,) per-slot canonical z

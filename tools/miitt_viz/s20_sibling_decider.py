@@ -64,7 +64,7 @@ def load_bundles():
         try: OmegaConf.register_new_resolver(r, fn)
         except Exception: pass
     with initialize_config_dir(config_dir=os.path.abspath("training/config"), version_base=None):
-        cfg = compose(config_name="mri_volume")
+        cfg = compose(config_name="default")
     val_wrap = instantiate(cfg.data.val, _recursive_=False)
     mri_ds = val_wrap.dataset.base_dataset.datasets[0]
     rcfg = RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory)

@@ -19,7 +19,7 @@
 # ep100 one-frame ablation (docs/46 §3), carried over verbatim except for the cohort:
 #   C1 keep gather (0.5)        C2 SHIP aug tier=moderate     C3 no-ship continuous_z (off)
 #   C4 DINO stays FROZEN        C5 null -> keep diffusion_weight=1000
-# CONFIG=mri_volume_diffusion is the series hub: tv_weight=0, VoxelMorph L2 diffusion 1000
+# CONFIG=exp_diffusion is the series hub: tv_weight=0, VoxelMorph L2 diffusion 1000
 # (NOT mri_volume, which is the older tv=0.1 / diffusion=0 baseline).
 #
 # aug tier=moderate (C2) and gather_weight=0.5 (C1) are NOT overridden here — as of 2026-08-01 they
@@ -31,8 +31,7 @@
 # WARM-START: FRESH FROM BASE VGGT-1B (config default resume path, strict=false). Native-z made
 # z_norm physical (z_mm/90) instead of grid-relative, so the old cardiac ckpts' z codes are stale;
 # docs/58 already treats post-native-z as a fresh series. Leave RESUME_FROM/CKPT_ONLY empty.
-CONFIG="mri_volume_diffusion"
-
+CONFIG="default"
 RECIPE_OVERRIDES="max_epochs=200 one_frame_per_slice=true checkpoint.save_freq=50 logging.wandb_writer.tags=[mri_volume_diffusion,multiphase,1frame_series,pooled1337,nativez,aug_moderate,gather05]"
 
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
