@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=selfgate_recon
-#SBATCH --account=jjparkcv98
+#SBATCH --account=jjparkcv0
 #SBATCH --partition=standard
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

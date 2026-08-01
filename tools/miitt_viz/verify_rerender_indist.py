@@ -20,7 +20,7 @@ for r, fn in [("rev_ts", lambda: "0"), ("basename", lambda p: os.path.basename(p
     except Exception: pass
 
 with initialize_config_dir(config_dir=os.path.abspath("training/config"), version_base=None):
-    cfg = compose(config_name="mri_volume")
+    cfg = compose(config_name="default")
 mri_ds = instantiate(cfg.data.val, _recursive_=False).dataset.base_dataset.datasets[0]
 resp_cfg = RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory)
 

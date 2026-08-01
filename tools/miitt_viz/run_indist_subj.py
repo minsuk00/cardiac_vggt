@@ -24,7 +24,7 @@ NAME = sys.argv[1]; SUBJ = int(sys.argv[2]); dev = "cuda"
 CKPTS = {"control0": "216539845_*ftctrl_gather0*1frame*", "gather05": "216539845_*ftgather05*1frame*",
          "s20contz": "216949414_*s20contz*"}
 with initialize_config_dir(config_dir=os.path.abspath("training/config"), version_base=None):
-    cfg = compose(config_name="mri_volume")
+    cfg = compose(config_name="default")
 mri_ds = instantiate(cfg.data.val, _recursive_=False).dataset.base_dataset.datasets[0]
 resp_cfg = RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory)
 import dataclasses

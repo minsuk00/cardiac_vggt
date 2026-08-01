@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=jjparkcv98
+#SBATCH --account=jjparkcv0
 #SBATCH --partition=spgpu
 #SBATCH --gres=gpu:a40:1
 #SBATCH --nodes=1
@@ -24,8 +24,7 @@
 # WARM-START: FRESH FROM BASE VGGT-1B (config default resume path,
 # ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM and
 # CKPT_ONLY empty. aggft: ~2.8× slower, ~27 GB/A40.
-CONFIG="mri_volume_diffusion"
-
+CONFIG="default"
 # --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
 RESUME_FROM=""
 CKPT_ONLY=""

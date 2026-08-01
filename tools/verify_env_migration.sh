@@ -85,7 +85,7 @@ echo "=============================================================="
 # what actually caps it.
 ef_log="$OUT/ef_eval.log"
 WANDB_MODE=offline PYTHONPATH=training:. micromamba run -n svr \
-  timeout 2400 python training/launch.py --config mri_volume max_epochs=1 \
+  timeout 2400 python training/launch.py --config default max_epochs=1 \
   limit_train_batches=2 t_target_fixed=0 logging.ef_eval_enable=true \
   checkpoint.resume_checkpoint_path=$CKPT logging.log_dir="$OUT/ef_eval" \
   > "$ef_log" 2>&1

@@ -113,7 +113,7 @@ def render_io(Vin, Vout, title, path):
 def main():
     os.makedirs(OUT, exist_ok=True)
     with initialize(version_base=None, config_path=os.path.join("..", "training", "config")):
-        cfg = compose(config_name="mri_volume")
+        cfg = compose(config_name="default")
     reference_slot = bool(cfg.get("reference_slot", False))
     resp_cfg = RespiratoryConfig.from_cfg(cfg.data.augmentation.get("respiratory", None))
     val = cfg.data.val

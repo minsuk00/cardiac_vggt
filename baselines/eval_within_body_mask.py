@@ -46,8 +46,7 @@ def _build_batch(seq_idx):
         "augs": {"scales": [1.0, 1.0]},
     })
     ds = MRIDataset(common_conf, DATA_ROOT, split="val", split_file=SPLIT_FILE,
-                    mode="dynamic", mri_mode="axial", num_slices=12, target_size=518,
-                    dvf_dirname="dvf_elastix")
+                    mode="dynamic", mri_mode="axial", num_slices=12, target_size=518)
     subject_path = ds.subjects[seq_idx]
     orig_class, orig_shuffle = random.Random, random.shuffle
     random.Random = IdentityRandom

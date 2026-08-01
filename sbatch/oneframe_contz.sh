@@ -25,7 +25,7 @@
 # strict=false) -> epoch 0 + fresh optimizer + fresh warmup->cosine over max_epochs=100. Part of
 # the 1-frame ablation series (wandb tag 1frame_series). NOTE: with a 14-day walltime >> ~10-day
 # run, the requeue branch below is effectively unused (kept only as node-failure insurance).
-CONFIG="mri_volume_diffusion"
+CONFIG="default"
 NGPU=1
 MASTER_PORT=29544
 

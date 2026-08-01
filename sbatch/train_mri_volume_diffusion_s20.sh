@@ -28,7 +28,7 @@
 # WARM-START: FRESH FROM BASE VGGT-1B (config default resume path,
 # ./scratch/base_weights/vggt1b_base.pt, strict=false). Leave RESUME_FROM and CKPT_ONLY empty.
 # aggft: ~2.8× slower, ~27 GB/A40.
-CONFIG="mri_volume_diffusion"
+CONFIG="default"
 VARIANT_TAG="s20"                       # exp_name/dir suffix (avoids collision with the contz partner)
 VARIANT_OVERRIDES=""                    # continuous_z=false is the config default
 

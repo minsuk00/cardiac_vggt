@@ -58,7 +58,7 @@ def _build_respiratory_config():
         "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True)
     config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=config_dir):
-        cfg = compose(config_name="mri_volume")
+        cfg = compose(config_name="default")
     return RespiratoryConfig.from_cfg(cfg.data.augmentation.respiratory)
 
 
@@ -96,9 +96,13 @@ def main():
         disp, r = sample_resp_disp(1, N_CANON_Z, rcfg, device, train=False, seq_index=seq_index)
         # disp: (1, 12, 3) mm (d_D, d_H, d_W) per z-plane; r: (1, 12) respiratory phase
 
+        # THIS subject's own slice pitch (native-z, docs/58) — 5-12 mm across the pooled
+        # cohort. Was relying on reslice_volume_vec's old SPACING_MM default of 12 mm, which
+        # silently breathed every non-12mm subject at the wrong scale.
+        dz_mm = float(np.asarray(data["dz_mm"]).reshape(-1)[0])
         corrupted_planes = []
         for z in range(N_CANON_Z):
-            shifted_vol = reslice_volume_vec(V, disp[0, z])  # (D,H,W), default canonical spacing
+            shifted_vol = reslice_volume_vec(V, disp[0, z], spacing=(dz_mm, 1.4, 1.4))
             corrupted_planes.append(shifted_vol[z])          # take THIS plane's own resliced content
         corrupted_dhw = torch.stack(corrupted_planes, dim=0).numpy().astype(np.float32)  # (D,H,W)
 
