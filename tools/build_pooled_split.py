@@ -23,6 +23,18 @@ Per-source rule (decided with the user 2026-07-31):
 Writes the `split` column back into training/splits/manifest.csv and generates
 training/splits/pooled.txt in the [train]/[val]/[test] format MRIDataset._find_subjects
 parses (data_root=scratch/data, one rel_path per line).
+
+DUPLICATE EXCLUSION (docs/59 F3, added 2026-07-31): ACDC and M&Ms each ship a handful of
+subjects TWICE under different ids — including across their own official split boundaries.
+Verified at the raw source: identical voxel arrays AND identical affines over the full
+native 4D. `DROP_IDS` below removes one member of each pair. The exclusion is applied
+AFTER assignment, deliberately: the assigners' RNG draws depend on list lengths, so
+filtering the manifest up front would reshuffle every subject in the pool and invalidate
+comparisons with runs already done. Excluded rows keep their manifest entry with
+`split=excluded_duplicate` (provenance), and are simply not emitted into pooled.txt.
+
+Run with --check-duplicates to re-derive the duplicate set from pixel content rather than
+trusting the hardcoded list.
 """
 
 import argparse
@@ -35,6 +47,77 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(REPO, "training", "splits", "manifest.csv")
 LEGACY_2024_SPLIT = os.path.join(REPO, "training", "splits", "random_8_1_1.txt")
 SEED = 42
+
+# Byte-identical duplicate pairs shipped by the SOURCE datasets (docs/59 F3). Each entry is
+# (keep_id, drop_id, rationale). Rule for choosing: never delete from an evaluation split
+# when a train member exists (train has ~940 subjects to spare, eval sets are scarce); for a
+# val<->test pair keep test; for a train<->train pair the choice is arbitrary, so drop the
+# lexicographically later id for reproducibility.
+DUPLICATE_PAIRS = [
+    ("ACDC_patient118", "ACDC_patient055", "train<->test leak; keep test member"),
+    ("MNMs_K3R0Y7", "MNMs_A7G0P5", "train<->val leak; keep val member"),
+    ("MNMs_C8O0P2", "MNMs_C8J7L5", "val<->test leak; keep test member"),
+    ("ACDC_patient074", "ACDC_patient076", "train<->train; 2x weight only"),
+    ("MNMs_A8C9H8", "MNMs_Q0Q1Y4", "train<->train; 2x weight only"),
+    ("MNMs_C5Q2Y5", "MNMs_E9L4N2", "train<->train; 2x weight only"),
+]
+DROP_IDS = {drop for _, drop, _ in DUPLICATE_PAIRS}
+EXCLUDED_SPLIT = "excluded_duplicate"
+
+
+def fingerprint(sax_dir):
+    """Coarse content hash of a subject: 16x16x8 mean-pooled frame_00, L2-normalized.
+    MEASURED over all 1343 subjects: the 6 real duplicates sit at cosine 1.0000 and the
+    next-closest unrelated pair at 0.9655, so the 0.999 threshold sits in the gap. Note
+    0.9655 is much tighter than the 0.6724 docs/59 F3 reported for its own (differently
+    built) thumbnail -- mean-pooled cardiac MR is globally self-similar. The margin is
+    still clean, but do NOT loosen the threshold."""
+    import nibabel as nib
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    path = os.path.join(sax_dir, "3d_recon", "sax_frame_00.nii.gz")
+    a = np.asarray(nib.load(path).dataobj, dtype=np.float32)
+    t = torch.from_numpy(a)[None, None]
+    v = F.adaptive_avg_pool3d(t, (16, 16, 8)).reshape(-1)
+    return (v / (v.norm() + 1e-8)).numpy()
+
+
+def check_duplicates(rows, data_root):
+    """Re-derive the duplicate set from pixel content. Returns the list of (id_a, id_b)
+    pairs found. Raises if a duplicate pair is NOT covered by DUPLICATE_PAIRS -- a new
+    duplicate must be triaged by a human, never silently absorbed."""
+    import numpy as np
+
+    ids, fps = [], []
+    for i, r in enumerate(rows):
+        try:
+            fps.append(fingerprint(os.path.join(data_root, r["rel_path"], "sax")))
+            ids.append(r["id"])
+        except Exception as e:  # noqa: BLE001 - a missing/unreadable subject must be loud
+            print(f"  fingerprint FAILED for {r['id']}: {e}")
+        if (i + 1) % 200 == 0:
+            print(f"  fingerprinted {i + 1}/{len(rows)}")
+    M = np.stack(fps)
+    sim = M @ M.T
+    np.fill_diagonal(sim, 0.0)
+    found = []
+    for a, b in zip(*np.where(sim > 0.999)):
+        if a < b:
+            found.append((ids[a], ids[b]))
+    known = {frozenset(p[:2]) for p in DUPLICATE_PAIRS}
+    novel = [p for p in found if frozenset(p) not in known]
+    print(f"  duplicate pairs found: {len(found)} (max non-duplicate similarity "
+          f"{sim[sim <= 0.999].max():.4f})")
+    for a, b in found:
+        print(f"    {a} == {b}" + ("   <-- NOT IN DUPLICATE_PAIRS" if (a, b) in novel else ""))
+    if novel:
+        raise SystemExit(
+            f"{len(novel)} duplicate pair(s) are not covered by DUPLICATE_PAIRS. Triage them "
+            "(decide which member to drop) and add them to the list before regenerating."
+        )
+    return found
 
 
 def read_manifest():
@@ -174,9 +257,16 @@ def assign_cmrx2025(rows, train_n, val_n, test_n):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(REPO, "training", "splits", "pooled.txt"))
+    ap.add_argument("--check-duplicates", action="store_true",
+                    help="re-derive the duplicate set from pixel content (slow, reads all subjects)")
+    ap.add_argument("--data-root", default=os.path.join(REPO, "scratch", "data"))
     args = ap.parse_args()
 
     rows = read_manifest()
+
+    if args.check_duplicates:
+        print("checking for duplicate subjects by pixel content...")
+        check_duplicates(rows, args.data_root)
     by_source = defaultdict(list)
     for r in rows:
         by_source[r["source"]].append(r)
@@ -209,6 +299,16 @@ def main():
 
     assert set(split.keys()) == {r["id"] for r in rows}, "every manifest row must get a split"
 
+    # Duplicate exclusion, applied AFTER assignment so the 1337 survivors keep exactly the
+    # splits they were assigned (see the module docstring for why order matters here).
+    all_ids = {r["id"] for r in rows}
+    missing = DROP_IDS - all_ids
+    assert not missing, f"DROP_IDS not present in the manifest: {sorted(missing)}"
+    for keep, drop, _ in DUPLICATE_PAIRS:
+        assert keep in all_ids, f"duplicate pair partner {keep} missing from the manifest"
+    for i in DROP_IDS:
+        split[i] = EXCLUDED_SPLIT
+
     for r in rows:
         r["split"] = split[r["id"]]
     with open(MANIFEST, "w", newline="") as f:
@@ -218,10 +318,19 @@ def main():
 
     by_split = defaultdict(list)
     for r in rows:
+        if r["split"] == EXCLUDED_SPLIT:
+            continue
         by_split[r["split"]].append(r["rel_path"])
     with open(args.out, "w") as f:
         f.write("# Pooled multi-dataset split (docs/58). Generated by tools/build_pooled_split.py\n")
-        f.write(f"# from {os.path.relpath(MANIFEST, REPO)}. data_root = scratch/data.\n\n")
+        f.write(f"# from {os.path.relpath(MANIFEST, REPO)}. data_root = scratch/data.\n")
+        f.write(f"# {len(DROP_IDS)} source-shipped duplicate subjects are EXCLUDED (docs/59 F3) -- they\n")
+        f.write("# are marked split=excluded_duplicate in the manifest, NOT deleted. Do not 'restore'\n")
+        f.write("# them: each is a byte-identical copy of a subject that IS in the pool, and three of\n")
+        f.write("# the pairs straddled train/val/test. Excluded:\n")
+        for keep, drop, why in DUPLICATE_PAIRS:
+            f.write(f"#   {drop:16s} (== {keep}) -- {why}\n")
+        f.write("\n")
         for section in ("train", "val", "test"):
             f.write(f"[{section}]\n")
             for p in sorted(by_split[section]):
@@ -230,14 +339,18 @@ def main():
 
     print(f"wrote split column -> {MANIFEST}")
     print(f"wrote pooled split -> {args.out}")
-    print(f"totals: train={len(by_split['train'])} val={len(by_split['val'])} test={len(by_split['test'])}")
+    n_tot = sum(len(by_split[s]) for s in ("train", "val", "test"))
+    print(f"totals: train={len(by_split['train'])} val={len(by_split['val'])} "
+          f"test={len(by_split['test'])} (pooled {n_tot}, {len(DROP_IDS)} excluded as duplicates)")
+    print("ratio: " + " : ".join(f"{100*len(by_split[s])/n_tot:.1f}" for s in ("train", "val", "test")))
     print()
-    print("per-source breakdown:")
+    print("per-source breakdown (excluded duplicates not counted):")
     for src, srows in by_source.items():
         c = defaultdict(int)
         for r in srows:
             c[split[r["id"]]] += 1
-        print(f"  {src}: train={c['train']} val={c['val']} test={c['test']}")
+        print(f"  {src}: train={c['train']} val={c['val']} test={c['test']}"
+              + (f"  [{c[EXCLUDED_SPLIT]} excluded]" if c[EXCLUDED_SPLIT] else ""))
     print()
     print("CMRxRecon2025 vendor coverage per split (Philips must be 0 in train):")
     vs = defaultdict(lambda: defaultdict(int))

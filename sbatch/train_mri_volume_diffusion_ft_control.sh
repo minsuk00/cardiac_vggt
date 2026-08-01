@@ -99,7 +99,7 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_ftctrl_gather0_1frame_dynamic_axial_pooled1343"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_ftctrl_gather0_1frame_dynamic_axial_pooled1337"
         EXTRA_OVERRIDES="max_epochs=100 max_img_per_gpu=12 loss.volume.gather_weight=0.0"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "CONTROL 4wok (1-frame) + gather_weight=0.0: exp_name=${EXP_NAME}, max_img_per_gpu=12, max_epochs=100, fresh wandb run"
@@ -107,7 +107,7 @@ else
         # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
         # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_pooled1343"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_pooled1337"
         EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
         echo "Fresh-from-base diffusion run: exp_name=${EXP_NAME}, max_epochs=200"

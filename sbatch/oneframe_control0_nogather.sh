@@ -109,7 +109,7 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_oneframe_ctrl_nogather_dynamic_axial_pooled1343"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_oneframe_ctrl_nogather_dynamic_axial_pooled1337"
         EXTRA_OVERRIDES="${ABLATION_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "ONEFRAME control0 (no gather): exp_name=${EXP_NAME}"
@@ -117,7 +117,7 @@ else
         # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
         # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_pooled1343"
+        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_pooled1337"
         EXTRA_OVERRIDES="max_epochs=200"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
         echo "Fresh-from-base diffusion run: exp_name=${EXP_NAME}, max_epochs=200"
