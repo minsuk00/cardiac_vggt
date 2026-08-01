@@ -20,17 +20,29 @@ import time
 import numpy as np
 import nibabel as nib
 
-CANON_SPACING = (1.4, 1.4, 12.0)                                   # canonical grid mm/voxel
-VOX_ML = CANON_SPACING[0] * CANON_SPACING[1] * CANON_SPACING[2] / 1000.0
+IN_PLANE_MM = 1.4        # canonical in-plane spacing — FIXED for every subject (native-z, docs/58)
+# NOTE (docs/59 F14): there is deliberately NO canonical z spacing constant. Under native-z each
+# subject keeps its own acquired pitch (5-12 mm), so a module-level `CANON_SPACING=(1.4,1.4,12.0)`
+# stamped 12 mm onto every written volume regardless of the subject — up to 2.4x wrong at 5 mm.
+# That was harmless for the REPORTED metric (EF is a ratio, so the voxel volume cancels; and
+# nnU-Net `-m 2d` preserves input geometry verbatim, measured), but it made the dumped NIfTIs
+# geometrically false and every absolute mL wrong by dz/12 — and it would have started changing
+# the segmentation itself the moment anyone switched to `3d_fullres`, which DOES resample z.
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ENV_SH = os.path.join(_REPO, "tools", "nnunet_mnms_eval", "env.sh")
 
 
-def save_pred_volume(V_dhw, out_dir, subject, t):
+def save_pred_volume(V_dhw, out_dir, subject, t, dz_mm):
     """Write one reconstructed volume in nnU-Net input format.
-    V_dhw: canonical (D,H,W) splat-order (Z,Y,X) -> nnU-Net (X,Y,Z), affine diag(1.4,1.4,12), _0000."""
+
+    V_dhw: canonical (D,H,W) splat-order (Z,Y,X) -> nnU-Net (X,Y,Z), suffixed _0000.
+    dz_mm: REQUIRED, no default — THIS subject's own native slice pitch (`batch["dz_mm"]`).
+        Required rather than defaulted for the same reason as `splat.py`'s `z_scale`: a silent
+        fallback writes a plausible-looking volume with false geometry and nothing errors.
+    """
     arr = np.transpose(np.asarray(V_dhw, dtype=np.float32), (2, 1, 0))   # (X,Y,Z)
-    nib.save(nib.Nifti1Image(arr, np.diag([*CANON_SPACING, 1.0])),
+    affine = np.diag([IN_PLANE_MM, IN_PLANE_MM, float(dz_mm), 1.0])
+    nib.save(nib.Nifti1Image(arr, affine),
              os.path.join(out_dir, f"{subject}_t{t:02d}_0000.nii.gz"))
 
 
@@ -52,8 +64,14 @@ def run_nnunet(in_dir, out_dir, retries=5):
 
 
 def _lv_ml(seg_path):
-    seg = np.asarray(nib.load(seg_path).dataobj)
-    return float((seg == 1).sum()) * VOX_ML                        # LV cavity = label 1
+    # Voxel volume comes from the seg's OWN header, not a module constant (docs/59 F14), so this
+    # is automatically right for every subject's native pitch and cannot drift from what
+    # `save_pred_volume` wrote. Safe because nnU-Net `-m 2d` reproduces the input geometry
+    # verbatim — MEASURED over 133 real ED/ES pairs: zooms and shape identical in/out, including
+    # D=8..13 passing through unresampled.
+    im = nib.load(seg_path)
+    vox_ml = float(np.prod(im.header.get_zooms()[:3])) / 1000.0
+    return float((np.asarray(im.dataobj) == 1).sum()) * vox_ml     # LV cavity = label 1
 
 
 def _spearman(x, y):

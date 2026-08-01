@@ -1,6 +1,7 @@
 """batchaug GPU augmentation pipeline for VGGT-MRI.
 
-Operates on the cached canonical `(B, T=12, D=12, H=256, W=256)` phases tensor
+Operates on the cached canonical `(B, T=12, D, H=256, W=256)` phases tensor
+(`D` = this subject's own native slice count, 5-21 — native-z, docs/58; NOT a fixed 12)
 that `MRIDataset.get_data` puts in the batch under the `phases` key. One spatial
 affine is sampled per subject (B-dim); the same affine is applied to all 12
 T-phases (T as channel) AND to the `content_mask`, so:
@@ -353,6 +354,16 @@ def gpu_augment_batch(batch, transforms, device,
             )
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
         D = phases_cur.shape[2]                    # this subject's own native slice count (native-z)
+        # One scalar dz for the whole batch — valid only at batch_size==1. Guard it
+        # (docs/59 F7): same-D-different-dz subjects collate fine, and row 1 would then be
+        # breathed at row 0's scale, a silent through-plane geometry error.
+        _dz = batch["dz_mm"].reshape(-1)
+        if not bool((_dz == _dz[0]).all()):
+            raise RuntimeError(
+                f"dz_mm is not uniform across the batch: {_dz.tolist()}. One scalar dz is applied "
+                "to every row, so mixing slice pitches would breathe rows 1..B-1 at row 0's scale "
+                "— a silent through-plane geometry error (docs/59 F7)."
+            )
         dz = float(batch["dz_mm"].reshape(-1)[0])   # this subject's own native z spacing (mm)
         # z-plane per slot — the burst-grouping key for group_by_burst (one breath per plane).
         # Ignored unless respiratory_cfg.group_by_burst is set (default → per-slot iid, unchanged).

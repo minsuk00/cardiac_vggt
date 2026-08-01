@@ -12,7 +12,10 @@ The reconstruction target and `scanner_coords` stay at the unshifted end-
 expiration reference — the model learns to *correct* breathing (blind to `r`).
 
 Geometry (splat order, matching `gpu_aug.py` / `mri_dataset.py`):
-    phases  (B, T=12, D=12, H=256, W=256)   spacing (D=Z=12.0, H=Y=1.4, W=X=1.4) mm
+    phases  (B, T=12, D, H=256, W=256)   spacing (D=Z=dz, H=Y=1.4, W=X=1.4) mm
+    NOTE (native-z, docs/58): D is THIS SUBJECT's own slice count (5-21 across the pooled
+    cohort) and the D-axis spacing is its own pitch `dz` (5-12 mm) — NOT a fixed 12/12.0.
+    `SPACING_MM`/`N_CANON_PLANES` below are legacy fallbacks; the live callers pass both.
     D = SI (through-plane)   H/W = in-plane (AP vs LR not recoverable → AP axis
     is configurable, default H).
 

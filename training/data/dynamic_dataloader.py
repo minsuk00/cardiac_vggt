@@ -27,7 +27,6 @@ class DynamicTorchDataset(ABC):
         worker_init_fn: Optional[Callable] = None,
         persistent_workers: bool = False,
         seed: int = 42,
-        max_img_per_gpu: int = 48,
     ) -> None:
         self.dataset_config = dataset
         self.common_config = common_config
@@ -39,7 +38,6 @@ class DynamicTorchDataset(ABC):
         self.worker_init_fn = worker_init_fn
         self.persistent_workers = persistent_workers
         self.seed = seed
-        self.max_img_per_gpu = max_img_per_gpu
 
         # Instantiate the dataset
         self.dataset = instantiate(dataset, common_config=common_config, _recursive_=False)
@@ -64,7 +62,6 @@ class DynamicTorchDataset(ABC):
             self.aspect_ratio_range,
             self.image_num_range,
             seed=seed,
-            max_img_per_gpu=max_img_per_gpu
         )
 
     def get_loader(self, epoch):
@@ -105,7 +102,7 @@ class DynamicBatchSampler(Sampler):
                  image_num_range,
                  epoch=0,
                  seed=42,
-                 max_img_per_gpu=48):
+                 ):
         """
         Initializes the dynamic batch sampler.
 
@@ -115,7 +112,6 @@ class DynamicBatchSampler(Sampler):
             image_num_range: List containing [min_images, max_images] per sample.
             epoch: Current epoch number.
             seed: Random seed for reproducibility.
-            max_img_per_gpu: Maximum number of images to fit in GPU memory.
         """
         self.sampler = sampler
         self.aspect_ratio_range = aspect_ratio_range
@@ -133,9 +129,6 @@ class DynamicBatchSampler(Sampler):
         # Normalize weights for sampling
         weights = [self.image_num_weights[n] for n in self.possible_nums]
         self.normalized_weights = np.array(weights) / sum(weights)
-
-        # Maximum image number per GPU
-        self.max_img_per_gpu = max_img_per_gpu
 
         # Set the epoch for the sampler
         self.set_epoch(epoch + seed)
@@ -172,10 +165,27 @@ class DynamicBatchSampler(Sampler):
                     image_num=random_image_num
                 )
 
-                # Calculate batch size based on max images per GPU and current image number
-                batch_size = self.max_img_per_gpu / random_image_num
-                batch_size = np.floor(batch_size).astype(int)
-                batch_size = max(1, batch_size)  # Ensure batch size is at least 1
+                # BATCH SIZE IS PINNED TO 1 (docs/59 F9/F19).
+                #
+                # Upstream VGGT scaled batch size inversely with the per-sample image count
+                # (`floor(max_img_per_gpu / random_image_num)`) to hold GPU memory roughly
+                # constant. Under native-z that scheme was both INERT and UNSAFE, so it was
+                # removed outright (docs/59 F9) — `max_img_per_gpu` is gone from the configs
+                # and the signatures:
+                #   * INERT — with one_frame_per_slice the dataset overrides S to the subject's
+                #     own D, so the memory a sample costs has nothing to do with
+                #     `random_image_num` any more; and at the shipped config the formula already
+                #     evaluated to floor(20/20) = 1.
+                #   * UNSAFE — every subject now has its OWN D and dz. Two subjects with
+                #     different D fail loudly in `default_collate` ("stack expects each tensor to
+                #     be equal size"), but two with the SAME D and DIFFERENT pitch collate
+                #     silently, and the loss/aug read a single scalar `z_scale`/`dz_mm` for the
+                #     whole batch — so row 1 would be splatted and breathed at row 0's scale
+                #     (verified: a (10, dz=7.5) + (10, dz=18.0) pair collates cleanly). The
+                #     uniformity guards in loss.py / gpu_aug.py now catch that, but the only
+                #     configuration that is safe by construction is B = 1.
+                # To trade memory, change D or the model — not this knob.
+                batch_size = 1
 
                 # Collect samples for the current batch
                 current_batch = []
