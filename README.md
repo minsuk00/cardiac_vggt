@@ -20,7 +20,7 @@ run `training/launch.py`; `training` is what lets the Hydra configs resolve thei
 Entry point: `training/launch.py` (Hydra). Active config: `mri_volume`.
 
 ```bash
-PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config mri_volume
+PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default
 ```
 
 Cluster: `bash sbatch/train_mri_volume_reference.sh`.

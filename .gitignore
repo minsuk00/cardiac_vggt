@@ -190,3 +190,7 @@ _agent/
 _paper/
 
 GEMINI.md
+
+# Upstream clone, used unmodified as the EF segmentation backend (docs/57).
+# github.com/RunhaoXu2003/CorSeg @ b006956 — has its own nested .git; we edit nothing in it.
+/CorSeg/

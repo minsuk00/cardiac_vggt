@@ -1429,7 +1429,7 @@ analysis scripts already out of scope per the standing `tools/`-fix-on-demand /
 subject D=18, ACDC, M&Ms) spanning 5–12mm pitch: fault-injected run (deliberately wrong `z_scale`)
 → all 35 correctly FAIL at 14–22dB; real run → all 35 PASS at exactly 120.00dB. `pytest tests/`:
 221/221 before the refiner removal, 203/203 after (the 18-test delta is exactly
-`tests/test_refiner.py`, deleted). A real `torchrun --config mri_volume` smoke run (3 train steps,
+`tests/test_refiner.py`, deleted). A real `torchrun --config default` smoke run (3 train steps,
 2 val steps, `ef_val_sweep=false`) completed cleanly with real gradients and the full metric set. A
 6-reviewer + 2-adversarial-verifier `/prove-it` pass covered the full diff; findings are the two
 bugs described above (both fixed) plus the already-known-and-deferred `inference/`/`tools/`
@@ -1653,7 +1653,7 @@ implicit — `MRIDataset` falls back to `${data_root}/../../whs/cardiac_phase.cs
 *only* because `data_root` used to sit two levels deeper. With the new `data_root` that fallback
 resolves to `scratch/whs/…` and would have failed, so the path is now explicit rather than derived.
 
-**Verified**: Hydra `compose(config_name="mri_volume")` resolves all five keys as above, and a real
+**Verified**: Hydra `compose(config_name="default")` resolves all five keys as above, and a real
 `MRIDataset(...)` constructed against the new `data_root`/`split_file` returns exactly **940 / 134 /
 269** subjects for train/val/test. `pytest tests/` green.
 

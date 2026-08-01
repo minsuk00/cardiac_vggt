@@ -1106,7 +1106,7 @@ Recorded so a future agent doesn't spend the tokens again. All `MEASURED` unless
 - `pytest tests/` — **215 passed**.
 - `tools/gate_native_z_identity.py` — fault-injected **0/35 pass** (14–22 dB); real **35/35 at exactly
   120.00 dB**. *(Valid as far as it goes — but see F2 for what it cannot see.)*
-- **Real `torchrun --config mri_volume`** on the pooled cohort: 940/134 subjects loaded, base weights staged,
+- **Real `torchrun --config default`** on the pooled cohort: 940/134 subjects loaded, base weights staged,
   identity baseline, 3 train steps with real gradients, checkpoint saved, full val epoch with the complete
   metric set (including `heartseg` and all `resp_*`), per-phase panels, val volumes written at per-subject
   native `D` (11/9/8). **0 tracebacks, 0 swallowed `try/except` warnings.** GPU aug (conservative) and
@@ -1359,7 +1359,7 @@ falling back to 12 mm.
 
 ### Final end-to-end run (real default config, `ef_val_sweep` + `ef_eval` both on)
 
-`torchrun --config mri_volume max_epochs=1 limit_train_batches=3`, epoch 0 (an EF epoch, since
+`torchrun --config default max_epochs=1 limit_train_batches=3`, epoch 0 (an EF epoch, since
 `epoch % ef_eval_every_n_val_epochs == 0`):
 
 | check | before the F21/F14 fixes | after |

@@ -8,9 +8,9 @@ VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D 
 
 **Research goal:** enable fast real-time free-breathing cine by reconstructing the full 3D heart volume at any target cardiac phase from a *few scattered single-frame-per-slice* acquisitions (ideally one frame/slice), instead of the slow many-frames-per-slice + retrospective-sort/SVR route. No real-time training data exists, so we **simulate** the sparse scattered acquisition from gated breath-hold CMRxRecon2024 cine (each input slice = one frame at an arbitrary (phase t, z-depth)) + motion aug, and aim to generalize to true real-time cine. Currently *only* the scattered sampling + in-plane aug are simulated; realistic acquisition physics (bSSFP transient, single-shot artifacts, respiratory motion) is aspirational — see Future enhancements. **Target inference information contract:** at the one-frame-per-slice extreme the model is assumed to know only `z` per input slice — input cardiac `t` and respiratory `r` are *unavailable* (no ECG / no respiratory device / no self-gating); target-phase *queries* stay free. Design stance, not yet implemented — see `docs/04_inference_information_contract.md`.
 
-**Active pipeline: unsupervised intensity-based, multi-phase** (`mri_volume*` configs). No GT DVF. Each sample picks a target cardiac phase `t_target ∈ {0..T-1}`; loss compares splatted predicted volume `V_canon` against the on-disk NIfTI at that target phase (`V_gt`).
+**Active pipeline: unsupervised intensity-based, multi-phase** (`default.yaml` / `exp_*` configs). No GT DVF. Each sample picks a target cardiac phase `t_target ∈ {0..T-1}`; loss compares splatted predicted volume `V_canon` against the on-disk NIfTI at that target phase (`V_gt`).
 
-**Target-phase conditioning = REFERENCE SLICE (current default, `mri_volume.yaml`).** Slot 0 is a real target-phase reference slice at the mid-ventricular plane (`reference_slot=true`, `use_reference_token=true`), marked via VGGT's native two-token `camera_token` (index 0 = anchor, 1 = the rest). The model reads the target phase from slot-0's *image content* (`V_gt = phases[t_target]` = that slice's phase) — **not** a content-free `target_t` index, which regressed every patient's EF to the cohort mean (flat-EF; `use_t_pose_embedding`/`use_target_t_pose_embedding` OFF, `target_t_indices` inert). This requires the **aggregator finetune (aggft)** so the camera_token/z_embedder specialize (freeze `*patch_embed*` only). Consequence: you reconstruct **observed** phases (≈ the recoverable limit). **EF recovery is confirmed on real final ckpts** (slope 0.77–0.79, honest Spearman ~0.55; the earlier "flat-EF" reading was an undertrained ckpt) — see `docs/24`, `docs/25`, `docs/33`. Legacy `target_t`-index path survives behind the default-off flags (`mri_finetune.yaml`).
+**Target-phase conditioning = REFERENCE SLICE (current default, `default.yaml`).** Slot 0 is a real target-phase reference slice at the mid-ventricular plane (`reference_slot=true`, `use_reference_token=true`), marked via VGGT's native two-token `camera_token` (index 0 = anchor, 1 = the rest). The model reads the target phase from slot-0's *image content* (`V_gt = phases[t_target]` = that slice's phase) — **not** a content-free `target_t` index, which regressed every patient's EF to the cohort mean (flat-EF; `use_t_pose_embedding`/`use_target_t_pose_embedding` OFF, `target_t_indices` inert). This requires the **aggregator finetune (aggft)** so the camera_token/z_embedder specialize (freeze `*patch_embed*` only). Consequence: you reconstruct **observed** phases (≈ the recoverable limit). **EF recovery is confirmed on real final ckpts** (slope 0.77–0.79, honest Spearman ~0.55; the earlier "flat-EF" reading was an undertrained ckpt) — see `docs/24`, `docs/25`, `docs/33`. The legacy `target_t`-index path is gone (docs/25); `target_t_indices` is still emitted by the dataset but the model ignores it.
 
 The "**4-day baseline**" (referenced below) is the prior ED-only run at `./scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/` — 31+ dB PSNR at ED. Post-refactor it's available **weights-only as a warm-start seed** (via `CKPT_ONLY` / `resume_checkpoint_path`, `strict=false`; the current reference script defaults to fresh-from-base instead), **not a true resume**: input normalization + V_gt frame changed, so its memorized codes are stale and the old PSNR won't reproduce — treat the canonical-grid pipeline as a fresh-retrain series.
 
@@ -18,7 +18,7 @@ The "**4-day baseline**" (referenced below) is the prior ED-only run at `./scrat
 
 - MRI data: `/scratch/data/CMRxRecon2024/` (symlinked, GPFS)
 - Env: `micromamba activate svr`
-- SLURM: `spgpu` partition for training (A40 GPUs), `standard` for CPU jobs. **Account: use `jjparkcv0` by default** (`jjparkcv98` frequently hits `AssocGrpSubmitJobsLimit`). The existing sbatch headers say `jjparkcv98` — override with `sbatch --account=jjparkcv0 …` or edit the `#SBATCH --account` line.
+- SLURM: `spgpu` partition for training (A40 GPUs), `standard` for CPU jobs. **Account: `jjparkcv0` is the default and every `sbatch/*.sh` header now says so** (`jjparkcv98` frequently hits `AssocGrpSubmitJobsLimit`; a few GPU-heavy recon jobs use `jjparkcv_owned1` for spgpu2/L40S).
 
 ## Setup
 
@@ -39,7 +39,7 @@ Entry point: `training/launch.py` (Hydra).
 ```bash
 # Active config
 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
-    training/launch.py --config mri_volume
+    training/launch.py --config default
 
 # NOTE: single-GPU only. DDP was removed in 284992c (no process group, device hardcoded to
 # cuda:0, sampler pinned to num_replicas=1) — `--nproc_per_node>1` would run N duplicate
@@ -47,16 +47,16 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
 
 # Warm-start (weights only, strict=false) from the 4-day baseline — fresh series, not a true resume
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
-    --config mri_volume \
+    --config default \
     checkpoint.resume_checkpoint_path=./scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt
 
 # ED-only fallback (matches original pre-multi-phase behavior)
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
-    --config mri_volume t_target_fixed=0
+    --config default t_target_fixed=0
 
 # Override
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
-    --config mri_volume optim.base_lr=1e-4
+    --config default optim.base_lr=1e-4
 ```
 
 **Cluster submission**: `bash sbatch/train_mri_volume_reference.sh` — self-submits via embedded `sbatch`, sets `WANDB_MODE=online`, `max_epochs=200`, and has SLURM auto-requeue (SIGUSR1 → checkpoint-and-resume across the walltime). Head variants: `sbatch/train_mri_volume_{diffusion,bspline}.sh` (+ `_diffusion_s20{,_contz}.sh`). Resume modes (edit the vars at the top of the script):
@@ -64,18 +64,18 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 - `RESUME_FROM=<exp_dir>` → continue same exp_name + reuse same wandb run id (crash/requeue recovery).
 - `CKPT_ONLY=<ckpt_path>` → **fresh** exp dir + new wandb run, loading from `<ckpt_path>` via `checkpoint.resume_checkpoint_path` (`strict=false`). **GOTCHA (docs/37):** `resume_checkpoint_path` does a **FULL resume** (weights + optimizer + `prev_epoch`), NOT weights-only — so pointing it at a full `checkpoint_last.pt` resumes at that epoch (e.g. 191) and, if `> max_epochs`, does **zero training**, at end-of-schedule LR. The base-weights path only *acts* weights-only because `vggt1b_base.pt` has no optimizer/epoch keys. For a real weights-only warm-start, first strip to `{"model": ...}`: `torch.save({'model': torch.load(ckpt)['model']}, out)` and point `CKPT_ONLY` at `out` (→ epoch 0, fresh optimizer + fresh warmup→5e-5→cosine schedule). Example: `scratch/checkpoints/4wok_weights_only.pt`.
 
-**Configs** (`training/config/`):
-- `mri_volume.yaml` — **active** unsupervised intensity pipeline. Inherits `mri_finetune.yaml` via `defaults:` and disables the deprecated DVF loss. Sets `config_name: "mri_volume"` (used as one of the wandb tags).
-- `mri_finetune.yaml` — base/parent config (shared optimizer / data / freeze pattern); `mri_volume.yaml` inherits it and is what you actually run. Running `mri_finetune` directly still carries the deprecated supervised point-loss weights (`point.weight=1.0`), not the active intensity pipeline.
-- `default.yaml` / `default_dataset.yaml` — templates inherited via `defaults:`.
-- Legacy variants (`mri_finetune_*`, `mri_p001_overfit`, `mri_volume_overfit`) and their sbatch scripts now live under `_archive/legacy_configs/` and `_archive/legacy_sbatch/`.
+**Configs** (`training/config/`) — **one complete config + thin experiment overrides** (flattened 2026-08-01):
+- `default.yaml` — **THE config.** Complete and runnable on its own (`--config default`): cohort, sampling, logging, loss, optimizer, augmentation, aggft freeze. One file, one truth.
+- `exp_bspline.yaml`, `exp_diffusion.yaml` — experiment variants inheriting `default.yaml`, ~20 lines each, overriding only the warp head / warp regularizer respectively.
+- The old three-layer chain `default → mri_finetune → mri_volume` is **gone**. It was a trap: `mri_finetune` was a HALF config (no `loss.volume` ⇒ `MultitaskLoss(volume=None)` ⇒ `objective=0` ⇒ a silent zero-loss run), and the upstream `default` layer advertised values that were immediately overridden (`/YOUR/PATH/TO/CKPT`, `frozen_module_names: ["*aggregator*"]  # example`, `enable_point: False`, `compile_attention_blocks: False`) — so reading it gave the WRONG answer about the freeze pattern and the head. The flattening was verified by diffing Hydra's fully-resolved config before/after: **byte-identical** for all three configs. `exp_name`/`config_name` deliberately keep the `mri_volume` family name (log-dir + wandb continuity).
+- Legacy variants (`mri_finetune_*`, `mri_p001_overfit`, `mri_volume_overfit`) and their sbatch scripts live under `_archive/legacy_configs/` and `_archive/legacy_sbatch/`.
 
 **Key knobs:**
-- `max_img_per_gpu: 20` → **fixed S=20 slot budget** (multi-frame; docs/28). Reduce on OOM (~37 GB/A40 at aggft). Was 12 (one-frame-per-plane) pre-multi-frame.
+- `img_nums: [20, 20]` → **slot BUDGET/cap, not a slot count.** With `one_frame_per_slice: true` (the default) the dataset sets **S = this subject's own in-FOV plane count**, and under native-z z is never padded, so **S == D exactly** (5–21 across the pooled cohort). `img_nums` only bounds it — `get_data` raises if a subject needs more (docs/59 F19). `max_img_per_gpu` no longer exists (deleted, docs/59 F9); **to cut memory, cut D or the model, not this knob** — batch size is pinned to 1 in `dynamic_dataloader.py` because same-D-different-pitch subjects collate silently.
 - `continuous_z: false` (default) | `true` → sample non-reference slots at **continuous physical z** (±`z_jitter`=0.5 off the integer plane + 2-plane interp); off ⇒ numerically identical to the discrete grid. docs/28.
 - `t_target_fixed: null` (default → multi-phase, uniform per train call) | `0` (reproduces ED-only behavior) | any int K (force `t_target=K`).
 - `t_target_phases: null` (default → all T phases) | list e.g. `[0,7]` → restrict the multi-phase target pool to that subset (train samples uniformly, val cycles it deterministically). **Mutually exclusive with `t_target_fixed`** (single-phase wins if both set).
-- `optim.frozen_module_names` — **two regimes**, guarded by `tests/test_freeze_pattern.py`. (1) **Head-only** (`mri_finetune.yaml`, legacy target_t path): `["*patch_embed*", "*camera_token*", "*aggregator*"]` freezes the **entire** aggregator; only `point_head` trains (~32.65M/941M). (2) **aggft** (`mri_volume.yaml` reference default + `mri_volume_bspline/diffusion`): `["*patch_embed*"]` — attention blocks, `z_embedder`, `camera_token` (the reference anchor), and `point_head` all train (~2.8× slower, ~27 GB/A40). (The old `distributed.find_unused_parameters=true` requirement is **obsolete**: DDP was removed in `284992c`, the config key is gone, and nothing reads it — no-gradient params like the register token are simply ignored now.)
+- `optim.frozen_module_names` — **two regimes**, guarded by `tests/test_freeze_pattern.py`. (1) **Head-only** (legacy, no longer in any shipped config): `["*patch_embed*", "*camera_token*", "*aggregator*"]` freezes the **entire** aggregator; only `point_head` trains (~32.65M/941M). (2) **aggft** (`default.yaml` + `exp_bspline`/`exp_diffusion`): `["*patch_embed*"]` — attention blocks, `z_embedder`, `camera_token` (the reference anchor), and `point_head` all train (~2.8× slower, ~27 GB/A40). (The old `distributed.find_unused_parameters=true` requirement is **obsolete**: DDP was removed in `284992c`, the config key is gone, and nothing reads it — no-gradient params like the register token are simply ignored now.)
 - `model.train_on_residual_dvf: true` → point head outputs Δ; `world_points = scanner_coords + Δ`.
 - `logging.filmstrip_every_n_val_epochs: 5` → cadence for the multi-phase cardiac-cycle visualization.
 - `data.augmentation.enable: true` (default since 2026-07-31) | `false` → opt out of GPU augmentation. `data.augmentation.tier: conservative|moderate|aggressive` (default `conservative`). See "Augmentation" below.
@@ -83,7 +83,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 ## Volume pipeline (one forward pass)
 
 0. **Preprocess (cached, one-time per subject; native-z, docs/58).** monai `PersistentDataset` resamples all 12 phase NIfTIs' **in-plane** axes to `1.4` mm and crops/zero-pads to `256×256` (geometric center) — **Z is never resampled**: `Spacingd(pixdim=(1.4,1.4,0.0))` and `ResizeWithPadOrCropd(spatial_size=(256,256,-1))` keep each subject's own native slice pitch (`dz`, recorded by a `RecordSpacingD` transform) and native slice count (`D`), which both vary per subject (`dz` 5–12mm, `D` 5–21 across the pooled cohort). Prior to 2026-07-31 every subject was forced onto one shared `(256,256,12)` @ `(1.4,1.4,12.0)`mm grid — that only worked because CMRxRecon2024 alone is uniformly 12mm; see `docs/58` for why forcing non-12mm data onto that grid is a measured trap (25dB ceiling, not the ~120dB a correct native-pitch splat gets). Normalizes intensity against phase_00's 0.5/99.9 percentiles (computed over non-zero FOV voxels, excluding zero-padding), and stacks into one `(T=12, 256, 256, D)` float16 tensor + a `(256,256,D)` content mask (1=native FOV, 0=zero-pad in X/Y only — Z is never padded) + `dz_mm` (that subject's spacing). Cached on `/tmp/vggt-mri_${USER}_monai_cache/`. Pipeline + custom transforms live in `training/data/preprocess.py`.
-1. **Sample (multi-frame, fixed S=20; docs/28).** **z is sampled only from within the geometric anatomy bbox** (in-FOV planes). Each sample = **full z-coverage** (every in-bbox plane ≥once) **+ uniform-random extra frames** filling the S=20 budget. Planes repeat; this keeps full V_canon coverage so the full-volume L1 loss stays valid. Per-slot `t` is a random phase **used only to extract slice content** — never a model input (`t_indices`/`target_t` inert).
+1. **Sample (ONE frame per slice; `one_frame_per_slice: true` is the default).** **z is sampled only from within the geometric anatomy bbox** (in-FOV planes) — and under native-z that bbox spans the whole stack, so **S == D**, this subject's own plane count (5–21), *not* a fixed 20. Every plane appears **exactly once**, no repeats, no extra frames: the sparse one-frame-per-slice extreme the research goal targets. Full z-coverage keeps V_canon complete so the full-volume L1 loss stays valid. Per-slot `t` is a random phase **used only to extract slice content** — never a model input (`t_indices`/`target_t` inert). (Set `one_frame_per_slice: false` for the legacy fixed-S multi-frame sampler of docs/28: full coverage + uniform-random extras filling the `img_nums` budget.)
    - **Reference default (`mri_volume`, `reference_slot=true`):** slot 0 = `(t_target, z_mid)` (the camera-token anchor = target-phase reference); the rest = coverage + LV extras.
    - **Train vs val:** identical sampler; train draws from global `random` (fresh each epoch), val from a private `random.Random(seq_index)` (reproducible, no global-RNG leak).
    - **Fixed-phase fallback:** `t_target_fixed=K` → every sample at phase K. **Continuous z:** `continuous_z=true` jitters non-reference slots off-grid (docs/28).
@@ -117,7 +117,7 @@ Native cine shapes vary: W=256 fixed, H∈{162,204,246}, Z∈{6..14}, T=12. Spac
 
 ## Augmentation
 
-GPU augmentation via `batchaug` (`training/data/gpu_aug.py`), **ON by default since 2026-07-31** (`data.augmentation.enable: true`, tier `conservative`), train-only (val never augments). One affine per subject, applied across all 12 T-phases + content mask so cardiac motion stays phase-consistent; the trainer then re-derives `gt_target_volume`, re-extracts input slices at the original (t,z) pairs, and recomputes `anatomy_bbox` (`scanner_coords` need no update — pure geometry). Tiers (in-plane only — no through-plane rotation, no elastic, since z is coarse/anisotropic vs the 1.4 mm in-plane grid; under native-z each subject keeps its own 5–12 mm pitch): `conservative` / `moderate` / `aggressive`, escalating affine + photometric (**flip**, rotate, translate/scale, gamma, bias field — Gaussian noise is commented out in all tiers). The W-axis **flip was re-enabled 2026-07-31** (docs/58 §10c): the training objective is exactly mirror-equivariant (measured) and 29% of the pooled CMRx cohort is mirrored on disk, so chirality-robustness is wanted. Verified D-agnostic under native-z (D=5/7/12/21), though `tests/test_gpu_aug.py` still only covers D=12. Visual proof: `tools/render_augmentation_examples.py` → `result/augmentation_examples/`.
+GPU augmentation via `batchaug` (`training/data/gpu_aug.py`), **ON by default since 2026-07-31** (`data.augmentation.enable: true`, tier `conservative`), train-only (val never augments). One affine per subject, applied across all 12 T-phases + content mask so cardiac motion stays phase-consistent; the trainer then re-derives `gt_target_volume`, re-extracts input slices at the original (t,z) pairs, and recomputes `anatomy_bbox` (`scanner_coords` need no update — pure geometry). Tiers (in-plane only — no through-plane rotation, no elastic, since z is coarse/anisotropic vs the 1.4 mm in-plane grid; under native-z each subject keeps its own 5–12 mm pitch): `conservative` / `moderate` / `aggressive`, escalating affine + photometric (rotate, translate/scale, gamma, bias field — Gaussian noise is commented out in all tiers). The W-axis **flip is aggressive-tier-only** (2026-08-01): it was briefly on in every tier (2026-07-31, docs/58 §10c — the objective is exactly mirror-equivariant and 29% of the pooled CMRx cohort is mirrored on disk), but `moderate` is the arm docs/46 §3 C2 measured and shipped and that arm had no flip, so flip stays out of the default. Verified D-agnostic under native-z (D=5/7/12/21), though `tests/test_gpu_aug.py` still only covers D=12. Visual proof: `tools/render_augmentation_examples.py` → `result/augmentation_examples/`.
 
 **Respiratory-motion sim** (`training/data/respiratory.py`) is a SEPARATE toggle (`data.augmentation.respiratory.enable`), **ON by default in `mri_volume`** (the proven resp/z-only recipe, docs/05; inherited by `mri_volume_diffusion`/`mri_volume_bspline`; `mri_finetune` base defaults it off). Per-input-slice deform-then-reslice SI+AP shift (Lujan `sin^{2n}`), applied **after** affine and overwriting **only the input slices** — target/`scanner_coords`/`gt_target_volume`/`anatomy_bbox`/`phases` stay at the unshifted end-expiration reference, so the model learns to **correct** breathing (blind to `r`). Applies in **both train AND val** (unlike affine): train iid per epoch from a private generator (no global-RNG leak), val **deterministic per `seq_index`** (the new batch key carrying the val seed — reproducible corrupted→clean task). **Per-subject acquisition geometry (2026-07):** the tilt direction `θ ~ U(tilt_min_deg, tilt_max_deg)` (default 0–45°, replacing the old `direction_jitter_deg=30` undershoot) and azimuth `φ` are drawn **once per subject** (not per z-plane) — the SAX obliquity is fixed per scan; and the amplitude **scale** is per-subject (one lung capacity, `amplitude_breath_jitter` adds optional per-breath tidal wobble). Only breath **phase** `r` varies per z-plane (`group_by_burst`). `tilt_max_deg=None` falls back to legacy `direction_jitter_deg` (kept for the `tools/` scripts). `=0` tilt → pure SI+AP. Needs a retrain to benefit; A/B on `inference/run_rtfb.py`. Disabling ⇒ bit-identical to pre-respiratory. Visual proof: `tools/render_respiratory_examples.py` → `_html/06_*.html`. Design: `docs/01_respiratory_motion_simulation.md`.
 
@@ -152,7 +152,7 @@ Tools:
 - `tools/render_augmentation_examples.py` — per-op + combined aug variant PNGs and a cardiac-cycle GIF → `result/augmentation_examples/`.
 - `tools/render_volume_example.py` — random val sample, per-z V_gt/V_canon/diff panel.
 - `tools/test_sequential_sampling.py` — diagonal `(t=k+offset, z=k)` for one subject; PNGs to `result/`.
-- `baselines/eval_all_baselines.py`, `baselines/eval_within_body_mask.py` — PSNR sweeps over the val set (identity-Δ floor, etc.).
+- `baselines/eval_within_body_mask.py` — PSNR sweep over the val set (identity-Δ floor, etc.). (`eval_all_baselines.py` was archived 2026-08-01: it read the `world_points` batch key that vanished with the supervised-DVF removal, so it could not run, and its elastix-vs-carmen arm compared two identical batches because `dvf_dirname` was already being ignored.)
 
 **Where new scripts go** (sort by *reuse potential*, not temp-vs-permanent):
 - **Throwaway** one-off probe / sanity-check you won't rerun → scratchpad dir, NOT the repo.
@@ -161,7 +161,28 @@ Tools:
 
 **Evaluation & SVR baselines** (external datasets / occasional runs — not the training loop): the inference/eval harness lives in `inference/` (`run_cmrxrecon.py` in-distribution EF/Dice, `run_rtfb.py` real-time free-breathing inference, `adapters/`, `seg_metrics_cmrxrecon.py`); classical SVR baselines (NiftyMIC / NeSVoR / fetal_cmr_4d) live in `baselines/`. Rationale, protocol, results: `docs/24` + `docs/29–35` (index in `docs/README.md`). The frozen breathing-simulated baseline harness is now git-tracked in **`evaluation/`** (`evaluation/README.md`; the heavy data stays on gitignored GPFS via `evaluation/volumes` → `scratch/eval`). Standing analysis/figure scripts live in `evaluation/analysis/` — but per the off-limits rule above, **never add to `evaluation/` on your own initiative; write to `tools/` and ask.**
 
-## Logging (wandb, project `vggt-mri`)
+## Logging (wandb + on-disk, project `vggt-mri`)
+
+**To analyse a past run, READ THE FILES IN ITS `log_dir` — do NOT go to wandb.** Every run mirrors
+all its numbers to disk (docs/60), so no network, auth, or run-id lookup is needed:
+
+```python
+from tools.load_run import load_run, load_identity_baseline
+meta, scalars, subjects = load_run("scratch/logs/<exp_dir>")   # or: python tools/load_run.py <log_dir>
+subjects.groupby("source")["metric_psnr_3d_bbox"].mean()       # any slice, offline
+```
+
+- `run_meta.jsonl` — one line **per process launch** (git sha+dirty, config, split/manifest md5,
+  cohort sizes, wandb id, SLURM job/node, `resumed_from_epoch`). A requeued run has several lines.
+- `metrics.jsonl` — every scalar (mirrored from `Trainer._log_scalar`, the single scalar chokepoint).
+- `val_per_subject.csv` — one row per val sample: subject, source, `D`, `dz`, `t_target` + every
+  `metric_*`. **This exists nowhere else** — B=1 means these are per-subject values that the
+  AverageMeter otherwise discards. Join to `training/splits/manifest.csv` for vendor/pathology/centre.
+- `baseline_identity.json` — per-phase **and per-subject** identity floors. Per-subject PSNR is *not*
+  comparable across this cohort (the ceiling moves with `D`/`dz`/FOV) — normalise by these first.
+
+Requeue replays steps, so duplicate `(name, step)` rows are expected; `load_run` dedupes keep-last.
+**Only the 8 image panels (filmstrip GIF, ED/ES, DVF, motion mask, aug, lookup) are wandb-only.**
 
 Metrics carry a `_full` / `_bbox` suffix: `_full` = whole `D×256×256` cube (D = that subject's native slice count, native-z), `_bbox` = subject's geometric content region. Equal for full-FOV subjects; for small-FOV subjects `_full` is inflated by padded zeros in X/Y (Z is never padded under native-z, so `_full`/`_bbox` differ less in Z than they used to) — **prefer `metric_psnr_3d_bbox` as the honest number** (SSIM is `_full` only). **Don't compare PSNR across the canonical-grid refactor OR the native-z refactor** — V_gt frame, normalization, and metric defs all changed at each; treat post-2026-07-31 runs as a fresh series from pre-native-z ones.
 
