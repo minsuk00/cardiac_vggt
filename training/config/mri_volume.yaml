@@ -29,7 +29,7 @@ ef_val_sweep: true                   # val = targeted 30×{ED,ES} sweep (honest 
 
 logging:
   log_visual_frequency:
-    train: 1000  # once per epoch (matches limit_train_batches)
+    train: 935  # once per epoch (matches limit_train_batches = train-split size)
     val: 200     # once per val epoch
   # Cardiac filmstrip/GIF + ED/ES panels every 3 val epochs (was 1, then 5). At 1 the filmstrip does
   # 12 subj-0 model forwards per epoch (~4 h over 200 epochs); 3 gives finer cadence for shorter (~90 ep) runs.
@@ -42,12 +42,13 @@ logging:
         - loss_pos_tv
         - loss_diffusion
         - loss_gather
-        # Full-volume metrics (averaged over all D·H·W = 786K voxels).
+        # Full-volume metrics (averaged over all D·H·W voxels; D is this subject's own
+        # native slice count under native-z, so the voxel count VARIES per subject).
         # Matches what the L1 loss is optimizing.
         - metric_mae_3d_full
         - metric_mse_3d_full
         - metric_psnr_3d_full
-        - metric_ssim_3d_full
+        - metric_ssim_2d_full   # per-slice SSIM; replaced the D-dependent 3D one (docs/59 F11)
         # Bbox-cropped metrics (only voxels inside the subject's geometric
         # native-FOV region — derived from a content mask propagated through
         # the canonical resample/pad/crop transforms, not from intensity).
@@ -70,7 +71,7 @@ logging:
         - metric_mae_3d_full
         - metric_mse_3d_full
         - metric_psnr_3d_full
-        - metric_ssim_3d_full
+        - metric_ssim_2d_full   # per-slice SSIM; replaced the D-dependent 3D one (docs/59 F11)
         - metric_mae_3d_bbox
         - metric_mse_3d_bbox
         - metric_psnr_3d_bbox
@@ -132,7 +133,9 @@ loss:
     # a "pull" term that restores the sharp through-plane placement gradient the splat ÷coverage
     # flattens. Same [0,1] intensity scale as the primary L1 ⇒ weight is a direct ratio; start
     # ~0.1–0.2, sweep toward ~0.5 (docs/38). 0.0 ⇒ no-op (bit-identical). Whole volume, no mask.
-    gather_weight: 0.0
+    # 0.5 is the DEFAULT as of 2026-08-01: docs/46 §3 C1 kept the gather arm (no_gather −0.15 dB
+    # in-dist p=0.013, −0.12 pooled OOD) and docs/45 found it decisive for breathing quality.
+    gather_weight: 0.5
 
 # ── GPU augmentation (batchaug) ─────────────────────────────────────────────
 # ON by default (2026-07-31). Set `enable: false` to opt out. Augmentation is applied to the
@@ -174,9 +177,13 @@ data:
                                 # exactly mirror-equivariant, and 29% of the pooled CMRx cohort is
                                 # mirrored on disk, so chirality-robustness is wanted, not avoided.
                                 # (docs/05's "aggressive aug hurts in-dist" was measured on the
-                                # AGGRESSIVE tier at 294 subjects; the default here is conservative
-                                # and the pooled cohort is 1343.)
-    tier: "conservative"
+                                # AGGRESSIVE tier at 294 subjects; the default here is moderate
+                                # and the pooled cohort is 1337.)
+    tier: "moderate"            # DEFAULT as of 2026-08-01: docs/46 §3 C2 is the shipped arm —
+                                # the moderate tier is a robust OOD winner (+0.41 dB pooled OOD,
+                                # p<0.001; MIITT +0.48, ACDC +0.47) at a small in-dist cost
+                                # (−0.13 dB). 052555b turned aug on but left this at the
+                                # never-exercised "conservative" value.
     respiratory:
       enable: true              # breathing sim ON for all reference runs (the proven "resp, z-only" recipe; docs/05). Inherited by mri_volume_diffusion/bspline.
       # SI breath-depth mean/jitter from Burger & Meintjes, "Elliptical Subject-Specific
