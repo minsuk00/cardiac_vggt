@@ -36,7 +36,8 @@
 > `/prove-it` pass found and fixed one real live bug (§12). **§8.2 (manifest CSV + pooled split
 > file) is now DONE too — see §13.** `training/splits/manifest.csv` (1343 subjects, real on-disk
 > geometry + joined demographics) and `training/splits/pooled.txt` (928→940 train / 134 val / 269
-> test depending on iteration, final: 940/134/269 ≈ 70:10:20) are built and verified through the
+> test depending on iteration, final: 940/134/269 ≈ 70:10:20 — **later 935/133/269 = 1337 once 6
+> source-shipped duplicate subjects were excluded, see §13a**) are built and verified through the
 > real `MRIDataset` loader. **The config is now switched over (§14)** — `mri_finetune.yaml` (and
 > everything that inherits it) points at `pooled.txt`/`data_root=scratch/data`, and
 > `heart_roi_canonical`/`heart_seg_canonical` (§8.4) and `cardiac_phase.csv` (§8.4) are both
@@ -1521,6 +1522,10 @@ pathology_detail, age, sex, height_cm, weight_kg, ed, es, split, source_file` �
 
 `940 + 134 + 269 = 1343`. Ratio 69.99% / 9.98% / 20.03% ≈ **70:10:20**.
 
+> ⚠️ **SUPERSEDED 2026-07-31 by the duplicate exclusion — see §13a. The live cohort is 1337
+> (935 / 133 / 269).** The table above is the assignment *before* 6 source-shipped duplicate
+> subjects were removed. The assignment itself is unchanged; only those 6 rows dropped out.
+
 ### Verification performed
 
 Re-read directly from `training/splits/manifest.csv` (not from memory/recomputation): 1343 rows,
@@ -1539,6 +1544,96 @@ identical split.
 remaining §8.3/§8.4 items (heart_roi_canonical regeneration, `cardiac_phase.csv` for CMRx `es`) are
 still open.~~ **Both also DONE (2026-07-31) — see §8.4.** §8.3 (`inference/`/`evaluation/`/`tools/`)
 remains deliberately deferred.
+
+## 13a. Duplicate subjects excluded — cohort is 1337, not 1343 (2026-07-31)
+
+The `/prove-it` audit (docs/59 F3) found that **ACDC and M&Ms each ship some subjects twice under
+different ids**, including across their own official split boundaries. This was inherited, not
+introduced: `tools/convert_to_sax_layout.py` faithfully converted both copies.
+
+**Evidence — verified at the RAW source** (`scratch/data/ACDC/…/patientNNN_4d.nii.gz`,
+`scratch/data/MNMs/MNMs1/…/XXXXXX_sa.nii.gz`), on the **full native 4D** (all 25/30 native frames,
+not just our 12 resampled phases), using `np.array_equal` on the voxel arrays plus an exact affine
+comparison:
+
+| pair | native shape | voxels equal | max abs diff | affine identical | file md5 equal |
+|---|---|---|---|---|---|
+| `ACDC_patient055` (train) ↔ `ACDC_patient118` (test) | (256,216,9,25) | ✅ | 0.0 | ✅ | ✗ |
+| `ACDC_patient074` ↔ `ACDC_patient076` (both train) | (256,256,8,30) | ✅ | 0.0 | ✅ | ✅ |
+| `MNMs_A7G0P5` (train) ↔ `MNMs_K3R0Y7` (val) | (320,320,10,30) | ✅ | 0.0 | ✅ | ✗ |
+| `MNMs_C8J7L5` (val) ↔ `MNMs_C8O0P2` (test) | (256,256,10,25) | ✅ | 0.0 | ✅ | ✗ |
+| `MNMs_A8C9H8` ↔ `MNMs_Q0Q1Y4` (both train) | (256,256,10,25) | ✅ | 0.0 | ✅ | ✗ |
+| `MNMs_C5Q2Y5` ↔ `MNMs_E9L4N2` (both train) | (256,256,10,25) | ✅ | 0.0 | ✅ | ✗ |
+
+Same voxels *and* same affine — only the gzip containers differ (074/076 are byte-identical files).
+`ACDC/training/patient055` and `ACDC/testing/patient118` are literally the same scan filed twice.
+Visual confirmation: `result/duplicate_pairs/duplicate_pairs.png`
+(`tools/render_duplicate_pairs.py`).
+
+**Which member was dropped.** Rule: never delete from an evaluation split when a train member
+exists (train has ~940 to spare; eval sets are the scarce resource); for a val↔test pair keep test;
+for a train↔train pair the choice is arbitrary, so drop the lexicographically later id.
+
+| dropped | duplicate of | was in | reason |
+|---|---|---|---|
+| `ACDC_patient055` | `ACDC_patient118` | train | train↔test leak; protect test |
+| `MNMs_A7G0P5` | `MNMs_K3R0Y7` | train | train↔val leak; protect val |
+| `MNMs_C8J7L5` | `MNMs_C8O0P2` | **val** | val↔test leak; test is the more precious |
+| `ACDC_patient076` | `ACDC_patient074` | train | 2× weight only, no leak |
+| `MNMs_Q0Q1Y4` | `MNMs_A8C9H8` | train | 2× weight only, no leak |
+| `MNMs_E9L4N2` | `MNMs_C5Q2Y5` | train | 2× weight only, no leak |
+
+### Live cohort (supersedes §13's table)
+
+| source | train | val | test |
+|---|---|---|---|
+| CMRxRecon2023 | 156 | 19 | 20 |
+| CMRxRecon2024 | 235 | 29 | 30 |
+| CMRxRecon2025 | 289 | 37 | 33 |
+| ACDC | **83** | 15 | 50 |
+| M&Ms-1 | **172** | **33** | 136 |
+| **total** | **935** | **133** | **269** |
+
+`935 + 133 + 269 = 1337`. Ratio **69.9 / 9.9 / 20.1** — still within the 7:1:2 rule, so **no
+re-split was needed**.
+
+### Why the exclusion is applied AFTER assignment (important)
+
+`tools/build_pooled_split.py`'s assigners draw from `random.Random(42)`, and the draws depend on
+**list lengths**. Filtering the 6 rows out of the manifest *before* assignment would have changed
+every shuffle and reshuffled the entire pool, invalidating comparisons with anything already run.
+So the script assigns all 1343 rows exactly as before, then marks the 6 as
+`split=excluded_duplicate` and omits them from `pooled.txt`. **Verified:** the regenerated
+`pooled.txt` differs from the previous one by *exactly* those 6 deleted lines — zero subjects moved
+between splits — and `manifest.csv` still has 1343 rows with exactly 6 changed.
+
+The manifest rows are **kept** (marked, not deleted) so the provenance survives, and `pooled.txt`
+carries a header naming each excluded subject and its twin. **Do not "restore" them.**
+
+### Recurrence guard
+
+`tools/build_pooled_split.py --check-duplicates` re-derives the duplicate set from pixel content
+(16×16×8 mean-pooled `frame_00`, L2-normalized, all-pairs cosine). **Run over all 1343 subjects it
+found exactly these 6 pairs and no others**, at cosine 1.0000, with the next-closest unrelated pair
+at **0.9655** — so the 0.999 threshold sits in the gap. (0.9655 is far tighter than the 0.6724
+docs/59 F3 quoted for its own differently-built thumbnail; mean-pooled cardiac MR is globally
+self-similar. Clean, but do not loosen the threshold.)
+It **hard-fails** on any pair not already listed in `DUPLICATE_PAIRS`, so a new duplicate must be
+triaged by a human rather than silently absorbed.
+
+### Knock-on config edits
+
+`limit_train_batches: 940 → 935`, `limit_val_batches: 268 → 266` (= 2 × 133 for the ef sweep),
+`logging.log_visual_frequency.train: → 935`. `tools/gate_native_z_identity.py` had `MNMs_E9L4N2`
+hardcoded in its subject list; swapped for its surviving twin `MNMs_C5Q2Y5`.
+
+### Caveat this exposes
+
+The duplicated M&Ms subjects carry **contradictory metadata**: `MNMs_A7G0P5` is labelled
+Philips/centre-2 while `MNMs_K3R0Y7` is GE/centre-4 — for identical pixels; `C8J7L5` is F and
+`C8O0P2` is M, same age, same pixels. At least one vendor label per pair is demonstrably wrong,
+which weakens §2.1/§13's "respecting M&Ms' official split buys a clean unseen-vendor (Canon) test"
+argument. Not acted on — recorded so it isn't rediscovered.
 
 ## 14. Config switched to the pooled split (2026-07-31)
 
