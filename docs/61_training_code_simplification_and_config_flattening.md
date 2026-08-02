@@ -325,6 +325,13 @@ not better than identity on random volumes), and perturbing the predictions did 
 **The synthetic harness structurally cannot reach the recov family** — recorded here as a known
 limitation, not glossed over.
 
+> ⚠️ **CORRECTED by docs/62 §2.2 (2026-08-01): "structurally cannot" is WRONG.** The recov family
+> IS reachable on synthetic data — at `D=12` with perturbed predictions the `span > 1e-6` guard
+> passes. The limitation was in *this harness's* choice of inputs, not in the code, so the gap is
+> closable in-repo. (docs/62 independently re-verified the refactor anyway, by running the
+> pre-refactor tree: `recov_frac_heart` is the single deliberate old-vs-new delta, old `1.5` = the
+> clamp ceiling vs new `1.975`.)
+
 That gap was closed *empirically* by the real smoke run, where the guard does pass:
 `recov_frac_heart = −4.83` (per-subject −3.12 … −7.83), `recov_frac_seg = −4.58` (−1.43 … −7.71).
 **All 8 subjects sit far below the old −0.5 floor**, i.e. every one would previously have been
