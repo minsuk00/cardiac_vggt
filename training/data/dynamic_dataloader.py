@@ -35,7 +35,7 @@ class DynamicTorchDataset(ABC):
         self.drop_last = drop_last
         self.collate_fn = collate_fn
         self.persistent_workers = persistent_workers
-        self.seed = seed
+        self.seed = seed        # property below: propagates to the sampler once it exists
 
         # Instantiate the dataset
         self.dataset = instantiate(dataset, common_config=common_config, _recursive_=False)
@@ -60,6 +60,23 @@ class DynamicTorchDataset(ABC):
             self.image_num_range,
             seed=seed,
         )
+
+    @property
+    def seed(self):
+        return self._seed
+
+    @seed.setter
+    def seed(self, value):
+        """Propagate to the sampler, which is constructed BEFORE the trainer assigns the
+        real `seed_value` (`trainer._setup_dataloaders`). A plain attribute reached only
+        `worker_init_fn`, so the subject permutation stayed on the ctor default 42 no matter
+        what `seed_value` said — two "different-seed" runs replayed the same subject order
+        (docs/62 §5.5). Guarded with getattr because __init__ assigns this before `sampler`
+        exists. Default 42 is unchanged, so existing runs are bit-identical.
+        """
+        self._seed = value
+        if getattr(self, "sampler", None) is not None:
+            self.sampler.seed = value
 
     def get_loader(self, epoch):
         print("Building dynamic dataloader with epoch:", epoch)

@@ -185,18 +185,23 @@ class RunLog:
     def _widen(self, new_keys):
         """Add columns, rewriting existing rows under the union header."""
         path = self._path(self.SUBJECT_FILE)
-        self._subject_fields = self._subject_fields + sorted(new_keys)
+        # Commit the widened header to `self` ONLY after the on-disk rewrite lands. If the
+        # rewrite raises (ENOSPC on GPFS, say), subject_row's handler just warns, and a
+        # field list already widened in memory would then write N+k-field rows under the
+        # old N-field header forever — never retried, since the next call sees no new keys.
+        # pandas(on_bad_lines="skip") drops those rows silently. docs/62 §5.4.
+        new_fields = self._subject_fields + sorted(new_keys)
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            with open(path, newline="") as f:
+                old_rows = list(csv.DictReader(f))
+            tmp = path + ".tmp"
+            with open(tmp, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=new_fields, extrasaction="ignore")
+                w.writeheader()
+                w.writerows(old_rows)
+            os.replace(tmp, path)       # atomic: a crash mid-rewrite leaves the old file
+        self._subject_fields = new_fields
         logging.info(f"RunLog: {self.SUBJECT_FILE} gained columns {sorted(new_keys)}")
-        if not (os.path.exists(path) and os.path.getsize(path) > 0):
-            return
-        with open(path, newline="") as f:
-            old_rows = list(csv.DictReader(f))
-        tmp = path + ".tmp"
-        with open(tmp, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=self._subject_fields, extrasaction="ignore")
-            w.writeheader()
-            w.writerows(old_rows)
-        os.replace(tmp, path)           # atomic: a crash mid-rewrite leaves the old file
 
     # ── helpers ──────────────────────────────────────────────────────────
     def _resolve_fields(self, row):
@@ -204,13 +209,27 @@ class RunLog:
         the identifying columns first and the rest sorted (stable across launches)."""
         path = self._path(self.SUBJECT_FILE)
         if os.path.exists(path) and os.path.getsize(path) > 0:
+            header = None
             try:
                 with open(path, newline="") as f:
                     header = next(csv.reader(f))
-                if header:
-                    return header
             except Exception:
-                pass        # unreadable header → fall through and define a fresh one
+                header = None
+            if header:
+                return header
+            # Unreadable/empty header on a NON-empty file. Falling straight through used to
+            # invent a fresh field list while `subject_row` still saw `new_file == False`
+            # and wrote NO header — so every later row was appended under whatever the first
+            # line happens to be, silently misaligned (docs/62 §5.4, "related"). Move the
+            # damaged file aside instead: the next write then legitimately creates a new file
+            # WITH a header, and nothing is destroyed (renamed, never deleted).
+            try:
+                salvage = f"{path}.corrupt.{int(time.time())}"
+                os.rename(path, salvage)
+                logging.warning(f"RunLog: {self.SUBJECT_FILE} has an unreadable header; "
+                                f"moved to {os.path.basename(salvage)} and starting a fresh file")
+            except Exception as e:
+                logging.warning(f"RunLog: could not set aside a corrupt {self.SUBJECT_FILE}: {e}")
         lead = [k for k in ("epoch", "step", "seq_name", "source", "t_target",
                             "dz_mm", "D", "S") if k in row]
         return lead + sorted(k for k in row if k not in lead)

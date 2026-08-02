@@ -170,8 +170,14 @@ def _ef_stats(gts, preds):
     does NOT raise — it returns lstsq's minimum-norm slope (plus a RankWarning on exactly
     constant input), so a healthy group of 3 subjects at EF 54/55/56 yields a large,
     finite, meaningless slope. Groups this narrow are exactly what `by_group` targets.
+
+    The spread threshold is 1.0 EF percentage points. It was `1e-6` until 2026-08-01
+    (docs/62 §5.5), which rejected only an EXACTLY constant GT, so the 54/55/56 example above
+    (sigma = 0.82) sailed through and returned slope = 10.0. Latent, not live: today's groups
+    are sigma 6.2 (healthy, n=60) and 16.2 (diseased, n=73), so nothing currently reported
+    changes — this only guards the narrow groups a re-seeded split or finer `by_group` creates.
     """
-    if len(preds) < 3 or np.std(np.asarray(gts, dtype=float)) < 1e-6:
+    if len(preds) < 3 or np.std(np.asarray(gts, dtype=float)) < 1.0:
         return None
     gts, preds = np.asarray(gts), np.asarray(preds)
     return dict(slope=float(np.polyfit(gts, preds, 1)[0]),         # d(pred)/d(GT)

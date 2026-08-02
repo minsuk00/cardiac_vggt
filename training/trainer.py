@@ -213,7 +213,7 @@ class Trainer(TrainerVizMixin):
         self._identity_baseline_motion_per_phase = None
         self._identity_baseline_motion_mean = None
         # Cumulative count of training batches skipped due to non-finite loss. Without this,
-        # NaN/Inf chunks get swallowed by the early-return in _run_steps_on_batch_chunks and
+        # NaN/Inf batches get swallowed by the early-return in _run_step_and_backward and
         # loss_meters silently undercount, making the wandb loss curve look healthier than it is.
         self._nan_batch_count = 0
         # Per-phase count of batches whose objective was non-finite when logging was
@@ -973,7 +973,29 @@ class Trainer(TrainerVizMixin):
                 and self.logging_conf.log_visuals and data_iter == 0
                 and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
             )
-            _orig_images = batch["images"].detach().clone() if (_aug_log and "images" in batch) else None
+            # `defer_input_images` (the train default) means the dataset omits `images` —
+            # gpu_augment_batch creates it below. The old `"images" in batch` guard was
+            # vacuous when written and silently killed this panel once deferral landed
+            # (docs/62 §5.1), so rebuild the pre-aug snapshot from `phases`, exactly as
+            # trainer_viz._subject_device_batch does. `phases` here is pre-affine,
+            # pre-respiratory, so this is the true "before".
+            _orig_images = None
+            if _aug_log:
+                if "images" in batch:
+                    _orig_images = batch["images"].detach().clone()
+                elif "phases" in batch:
+                    from data.gpu_aug import extract_slices_from_phases
+                    # `extract_slices_from_phases` returns (B,S,518,518,3) in [0,255]; the
+                    # `batch["images"]` contract — and what `_log_augmentation_to_wandb._gray`
+                    # expects — is (B,S,3,518,518) in [0,1]. Convert exactly as gpu_aug does at
+                    # all three of its own assignment sites. Skipping this does NOT crash: _gray
+                    # would clamp [0,255] to all-1.0 and average over H instead of the channel
+                    # axis, rendering the "original" row as a 518x3 near-white sliver.
+                    _orig_images = extract_slices_from_phases(
+                        batch["phases"].float(), batch["timesteps"], batch["slice_indices"]
+                    ).permute(0, 1, 4, 2, 3).contiguous().div(255.0).detach()
+                else:
+                    logging.warning("[aug-viz] neither 'images' nor 'phases' in batch; panel skipped")
             batch = gpu_augment_batch(
                 batch, self.gpu_transforms, self.device,
                 respiratory_cfg=self.respiratory_cfg, train=True,
@@ -1109,8 +1131,9 @@ class Trainer(TrainerVizMixin):
         log_data = {**{f"pred_{k}": v for k, v in y_hat.items()}, **loss_dict, **batch}
 
         # Skip logging (only) for a non-finite batch, so one NaN can't poison the epoch's
-        # AverageMeters. The backward-skip logic in _run_steps_on_batch_chunks runs later
-        # and is unchanged; val had no check at all. docs/60.
+        # AverageMeters. The backward-skip logic in _run_step_and_backward runs later and is
+        # unchanged; val had no check at all. docs/60. (Named _run_steps_on_batch_chunks
+        # until 2026-08-01, when accumulation was removed — docs/62 §7.)
         if not self._log_if_finite(log_data, phase):
             self.steps[phase] += 1
             return loss_dict

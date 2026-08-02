@@ -287,9 +287,15 @@ def gpu_augment_batch(batch, transforms, device,
         # we must still produce it even with every augmentation off — otherwise the batch
         # would reach the model with no input. This is the guarantee that makes deferral safe.
         if "images" not in batch:
-            # float32, matching the dataset's own extraction exactly — with no augmentation
-            # in play, deferring must be a numeric no-op. (The augmented branches below
-            # extract from the fp16 `phases` as they always have.)
+            # float32, matching the dataset's own extraction in dtype and algorithm — but
+            # NOT bit-for-bit: the dataset built this on CPU in a worker, we build it on
+            # CUDA, and the 256→518 bilinear `F.interpolate` differs by up to 1 ULP
+            # (measured 5.96e-08 = 2^-24 on values in [0,1]; docs/62 §3). Everything else —
+            # dtype, align_corners, the *255→clamp→/255 order, RGB replication — matches
+            # exactly. Only reachable with BOTH affine and respiratory off, which nothing
+            # ships, and 6e-8 is ~5 orders below the bf16 the model computes in.
+            # (The augmented branches below extract from the fp16 `phases` as they always
+            # have, and ARE bit-identical to pre-deferral — proven in docs/62 §2.1.)
             phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
             images = extract_slices_from_phases(
                 phases_cur, batch["timesteps"], batch["slice_indices"])
