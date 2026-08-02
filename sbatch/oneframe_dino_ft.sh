@@ -37,7 +37,7 @@ CKPT_ONLY="/home/minsukc/vggt/scratch/checkpoints/4wok_weights_only.pt"
 # RESUME_FROM branch applies them too: without this a resume silently reverts to the
 # mri_volume defaults (one_frame_per_slice=false -> multiframe S=20, gather_weight=0,
 # max_epochs=200) and is no longer the same experiment.
-ABLATION_OVERRIDES="max_epochs=100 max_img_per_gpu=12 one_frame_per_slice=true checkpoint.save_freq=50 loss.volume.gather_weight=0.5 optim.frozen_module_names=[] optim.optimizer.lr=2e-5 optim.options.lr.0.scheduler.schedulers.0.end_value=2e-5 optim.options.lr.0.scheduler.schedulers.1.start_value=2e-5 logging.wandb_writer.tags=[mri_volume_diffusion,multiphase,1frame_series,dino_ft,lr2e5]"
+ABLATION_OVERRIDES="max_epochs=100 one_frame_per_slice=true checkpoint.save_freq=50 loss.volume.gather_weight=0.5 optim.frozen_module_names=[] optim.optimizer.lr=2e-5 optim.options.lr.0.scheduler.schedulers.0.end_value=2e-5 optim.options.lr.0.scheduler.schedulers.1.start_value=2e-5 logging.wandb_writer.tags=[mri_volume_diffusion,multiphase,1frame_series,dino_ft,lr2e5]"
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then

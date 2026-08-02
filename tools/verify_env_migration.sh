@@ -63,16 +63,22 @@ run_case () {           # run_case <name> <config> <extra overrides...>
 echo "=============================================================="
 echo "CONFIG MATRIX  (every distinct code path)"
 echo "=============================================================="
-run_case dpt_tv            mri_volume
-run_case diffusion         mri_volume_diffusion
-run_case bspline           mri_volume_bspline
-run_case gather05          mri_volume loss.volume.gather_weight=0.5
-run_case one_frame         mri_volume one_frame_per_slice=true max_img_per_gpu=12
-run_case continuous_z      mri_volume continuous_z=true
-run_case lowdiff100        mri_volume_diffusion loss.volume.diffusion_weight=100
-run_case aug_moderate      mri_volume data.augmentation.enable=true data.augmentation.tier=moderate
-run_case dino_unfrozen     mri_volume 'optim.frozen_module_names=[]'
-run_case fixed_phase_ED    mri_volume t_target_fixed=0
+# Config names repointed 2026-08-01 (docs/62 §5.5): the three-layer chain was flattened to
+# `default.yaml` (= the old mri_volume_diffusion: tv=0, L2 diffusion=1000) + `exp_bspline`.
+# `mri_volume{,_diffusion,_bspline}` no longer exist, so every line here died at Hydra
+# compose — in the script the project designates for verifying dependency bumps.
+# The old `mri_volume` arm (L1 TV) is reproduced by overriding the two regularizer weights.
+TV_ARM="loss.volume.tv_weight=0.1 loss.volume.diffusion_weight=0.0"
+run_case dpt_tv            default $TV_ARM
+run_case diffusion         default
+run_case bspline           exp_bspline
+run_case gather05          default $TV_ARM loss.volume.gather_weight=0.5
+run_case one_frame         default $TV_ARM one_frame_per_slice=true
+run_case continuous_z      default $TV_ARM continuous_z=true
+run_case lowdiff100        default loss.volume.diffusion_weight=100
+run_case aug_moderate      default $TV_ARM data.augmentation.enable=true data.augmentation.tier=moderate
+run_case dino_unfrozen     default $TV_ARM 'optim.frozen_module_names=[]'
+run_case fixed_phase_ED    default $TV_ARM t_target_fixed=0
 
 echo
 echo "=============================================================="

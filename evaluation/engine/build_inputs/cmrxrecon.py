@@ -126,10 +126,12 @@ def main():
         # clean stack == GT planes (the SVR upper-bound: nothing to correct)
         save_xyz(np.asarray(Vt), os.path.join(subj_dir, "clean", f"stack_t{t:02d}.nii.gz"))
         # breathing stack: each plane z resliced by its own disp[z], keep that plane
-        # `spacing=` is REQUIRED here: reslice_volume_vec still defaults to SPACING_MM=(12.0,…)
-        # for un-migrated callers, so omitting it silently understates the shift on any non-12mm
-        # subject (10mm -> 17% too small) while `resp_disp_mm` records the requested value — the
-        # silent, pitch-keyed mis-grading of docs/58 §8.1a. acdc.py/ocmr.py already pass it.
+        # `spacing=` is REQUIRED here — literally: reslice_volume_vec has no default any more
+        # (2026-08-01), so a missed call site now raises instead of silently breathing the
+        # subject at 12 mm. It USED to default to SPACING_MM=(12.0,…), which understated the
+        # shift on any non-12mm subject (10mm -> 17% too small) while `resp_disp_mm` recorded
+        # the requested value — the silent, pitch-keyed mis-grading of docs/58 §8.1a.
+        # (This comment claimed the default still existed until docs/62 §7.)
         breathed = torch.stack(
             [reslice_volume_vec(Vt, disp0[z], spacing=spacing_dhw)[z] for z in range(D)], dim=0)
         save_xyz(breathed.numpy(), os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz"))

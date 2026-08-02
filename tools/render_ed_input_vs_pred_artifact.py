@@ -41,12 +41,13 @@ from loss import compute_volume_intensity_loss
 
 DEV = torch.device("cuda")
 LOGS = os.path.join(_ROOT, "scratch", "logs")
+# Config names repointed 2026-08-01 (docs/62 §5.5) — see render_cardiac_filmstrip_multislice.py.
 MODELS = [
-    ("reference", "mri_volume",
+    ("reference", "default",
      f"{LOGS}/217721337_mri_volume_reference_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"),
-    ("diffusion", "mri_volume_diffusion",
+    ("diffusion", "default",
      f"{LOGS}/217720691_mri_volume_diffusion_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"),
-    ("bspline", "mri_volume_bspline",
+    ("bspline", "exp_bspline",
      f"{LOGS}/217719798_mri_volume_bspline_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"),
 ]
 SUBJECTS = [0, 7]

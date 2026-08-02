@@ -45,12 +45,17 @@ from loss import compute_volume_intensity_loss
 
 DEV = torch.device("cuda")
 LOGS = os.path.join(_ROOT, "scratch", "logs")
+# Config names repointed 2026-08-01 (docs/62 §5.5): `mri_volume{,_diffusion,_bspline}` were
+# flattened away into `default.yaml` (= the old mri_volume_diffusion) + `exp_bspline`, so
+# these lines died at Hydra compose. Only the WARP HEAD differs for rendering — the loss
+# regularizer that separated reference/diffusion is inert at inference — so both DPT arms
+# compose `default`; the ckpt path is what actually distinguishes them.
 MODELS = [
-    ("reference", "mri_volume",
+    ("reference", "default",
      f"{LOGS}/217721337_mri_volume_reference_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"),
-    ("bspline", "mri_volume_bspline",
+    ("bspline", "exp_bspline",
      f"{LOGS}/217719798_mri_volume_bspline_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"),
-    ("diffusion", "mri_volume_diffusion",
+    ("diffusion", "default",
      f"{LOGS}/217720691_mri_volume_diffusion_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"),
 ]
 SUBJECTS = [0, 7]          # a couple of deterministic val subjects
