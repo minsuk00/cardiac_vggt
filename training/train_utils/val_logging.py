@@ -139,12 +139,21 @@ def resp_offslab_stats(batch, b=0):
     D = int(phases.shape[2])
     dz = max(float(dz_t.reshape(-1)[b]), 1e-6)
     landing = slice_idx[b].float() + disp[b].float()[..., 0] / dz        # (S,) planes
+    # `off` = ANY attenuation: outside [0, D-1] the reslicer's `padding_mode="zeros"`
+    # mixes zero-padding in, so retained < 1. (Verified against the real reslicer: this is
+    # exactly `retained < 1`, blanked and partially-attenuated slots together.)
     off = (landing < 0) | (landing > D - 1)
-    # "Dimmed" = inside the slab but not on an exact end plane, so trilinear interpolation
-    # mixes in zero-padding. The bounds are STRICT: landing == 0 and landing == D-1 are
-    # exact planes with no padding contribution, and counting them gave every subject a
-    # spurious ~2/S floor even at zero displacement.
-    dimmed = ((landing > 0) & (landing < 1)) | ((landing > D - 2) & (landing < D - 1))
+    # "Dimmed" = the PARTIAL subset of `off`: one bracketing plane is real and the other is
+    # zero-padding, so retained is in (0, 1). Beyond [-1, D] both brackets are padding and
+    # the slot is fully blank. `dimmed ⊂ off`, so blanked-fraction = offslab - dimmed.
+    #
+    # This band was WRONG until 2026-08-01 (docs/62 §5.3): it read
+    # `((landing > 0) & (landing < 1)) | ((landing > D-2) & (landing < D-1))`, one plane too
+    # low at BOTH ends. Those ranges interpolate between two REAL planes and retain 1.0000,
+    # so the metric had ZERO true positives while reporting a 7-35% rate. The old comment
+    # justified it as "inside the slab but not on an exact end plane" — trilinear only mixes
+    # in padding once a bracket falls OUTSIDE [0, D-1], which is `off`, not "not exact".
+    dimmed = ((landing > -1) & (landing < 0)) | ((landing > D - 1) & (landing < D))
     extent_mm = max((D - 1) * dz, 1e-6)
     return {
         "frac_slots_offslab": float(off.float().mean()),

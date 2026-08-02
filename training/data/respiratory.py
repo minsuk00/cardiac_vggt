@@ -130,12 +130,17 @@ class RespiratoryConfig:
         )
 
 
-N_CANON_PLANES = 12   # FALLBACK canonical grid depth (D); used only when a caller doesn't pass
-                       # n_planes explicitly. Correct for the legacy fixed-12 grid; callers on the
-                       # native-z pipeline (docs/58) should pass n_planes = this subject's real D.
-                       # Kept as a default (not removed) because this function is shared with
-                       # evaluation/ callers not yet migrated to native-z — see gpu_aug.py for the
-                       # migrated call site.
+N_CANON_PLANES = 12   # FALLBACK canonical grid depth (D), consulted ONLY on the
+                       # `group_by_burst and group_ids is not None` path when a caller omits
+                       # n_planes. Correct for the legacy fixed-12 grid; native-z callers
+                       # (docs/58) must pass n_planes = this subject's real D.
+                       # Reachability, checked 2026-08-01 (docs/62 §7): the trainer path
+                       # (gpu_aug.py) passes n_planes, and `evaluation/`'s four adapters never
+                       # reach this line at all — none of them passes `group_ids`, so they take
+                       # the per-slot `else` branch where n_planes is unused. (cmrxrecon.py
+                       # passes n_planes=D anyway; acdc/miitt/ocmr pass neither. docs/62 §7
+                       # claimed all four passed n_planes — they do not; it does not matter.)
+                       # So no live caller can currently be mis-graded by this fallback.
 
 
 def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None,
@@ -277,8 +282,9 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
       (mirrors the dataset's `random.Random(seq_index)` z/t determinism). Per-ROW (not
       per-batch) because `DynamicBatchSampler` groups variable rows per batch.
 
-    n_planes: see `sample_displacements`. None (default) preserves old behavior for
-        callers not yet migrated to native-z (docs/58) — e.g. evaluation/.
+    n_planes: see `sample_displacements`. None (default) preserves old behavior for callers
+        not yet migrated to native-z (docs/58). Inert unless `group_ids` is also passed —
+        `evaluation/`'s adapters pass neither, so they never consult it (docs/62 §7).
     """
     if train:
         return sample_displacement_vectors(B, S, cfg, device, generator=generator,

@@ -257,9 +257,9 @@ def test_resp_offslab_counts_slots_that_leave_the_slab():
 
 
 def test_resp_offslab_dimmed_has_no_false_floor_at_zero_displacement():
-    """Slots landing exactly on plane 0 or D-1 are on EXACT planes — trilinear mixes in no
-    zero-padding — so they must not count as dimmed. Counting them gave every subject a
-    spurious ~2/S floor even with breathing effectively off."""
+    """Slots landing inside [0, D-1] interpolate between two REAL planes — trilinear mixes
+    in no zero-padding — so they must not count as dimmed. The pre-2026-08-01 band counted
+    them and gave every subject a spurious floor even with breathing effectively off."""
     import torch
     S, D = 8, 8
     batch = {
@@ -274,6 +274,9 @@ def test_resp_offslab_dimmed_has_no_false_floor_at_zero_displacement():
 
 
 def test_resp_offslab_counts_a_partial_plane_as_dimmed():
+    """Only a landing OUTSIDE [0, D-1] but within one plane of it is partially attenuated:
+    one bracket is real, the other is zero-padding. A landing of 0.5 is NOT — it sits
+    between planes 0 and 1, both real, and measurably retains 1.0000 (docs/62 §5.3)."""
     import torch
     S, D = 4, 8
     batch = {
@@ -282,9 +285,20 @@ def test_resp_offslab_counts_a_partial_plane_as_dimmed():
         "dz_mm": torch.tensor([[10.0]]),
         "phases": torch.zeros(1, 12, D, 4, 4),
     }
-    batch["resp_disp_mm"][0, 0, 0] = 5.0        # plane 0 -> 0.5, straddles the edge
+    batch["resp_disp_mm"][0, 0, 0] = 5.0        # plane 0 -> 0.5: between two REAL planes
+    st = resp_offslab_stats(batch, 0)
+    assert st["frac_slots_dimmed"] == pytest.approx(0.0)
+    assert st["frac_slots_offslab"] == pytest.approx(0.0)
+
+    batch["resp_disp_mm"][0, 0, 0] = -5.0       # plane 0 -> -0.5: half off the near edge
     st = resp_offslab_stats(batch, 0)
     assert st["frac_slots_dimmed"] == pytest.approx(0.25)
+    assert st["frac_slots_offslab"] == pytest.approx(0.25), "dimmed is a subset of offslab"
+
+    batch["resp_disp_mm"][0, 0, 0] = -15.0      # plane 0 -> -1.5: fully blank, not dimmed
+    st = resp_offslab_stats(batch, 0)
+    assert st["frac_slots_dimmed"] == pytest.approx(0.0)
+    assert st["frac_slots_offslab"] == pytest.approx(0.25)
 
 
 def test_resp_offslab_frac_of_extent_uses_this_subjects_geometry():

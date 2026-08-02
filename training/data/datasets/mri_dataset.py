@@ -122,13 +122,29 @@ class MRIDataset(Dataset):
         self.split_file = os.path.abspath(split_file) if split_file else None
         self.mode = mode
         self.num_slices = num_slices
-        # Input-image resolution R. Really honoured now (2026-08-01): the slice upsample and
-        # the `scanner_coords` normalization both read it, so changing it changes the model
-        # input. It was previously stored and ignored — every site hardcoded INPUT_IMG_SIZE.
-        # ⚠️ Must stay a multiple of the DINOv2 patch size (14): 518 = 37×14. A non-multiple
-        # fails inside patch_embed, and the pretrained position embeddings are interpolated
-        # for any R != 518, so a change starts a fresh numeric series.
+        # Input-image resolution R. HALF-THREADED — this is the honest statement (docs/62
+        # §5.5). `get_data`'s own upsample and the `scanner_coords` normalization read it,
+        # but the two paths that actually build `images` in training do NOT:
+        # `gpu_aug.extract_slices_from_phases` and `respiratory.extract_slices_with_*` both
+        # hardcode their module-level `INPUT_IMG_SIZE = 518`. Under `defer_input_images`
+        # (the train default) those are the ONLY builders, so a non-518 R yields
+        # `images` at 518 against `scanner_coords` at R and trips the shape assert in the
+        # loss — or, under `python -O`, a broadcast RuntimeError deep in the step.
+        # Before 2026-08-01 `target_size` was assigned and never read, so a non-518 value
+        # was silently IGNORED; the refactor turned that no-op into a late crash. Reject it
+        # here instead, at construction, where the message can say why.
+        # ⚠️ R must also be a multiple of the DINOv2 patch size (14): 518 = 37×14, and the
+        # pretrained position embeddings would need interpolating for any R != 518, so a
+        # real change starts a fresh numeric series — it is not a free knob.
         self.target_size = int(target_size)
+        if self.target_size != INPUT_IMG_SIZE:
+            raise ValueError(
+                f"target_size={self.target_size} is not supported: it is only half-threaded. "
+                f"`gpu_aug.INPUT_IMG_SIZE` and `respiratory.INPUT_IMG_SIZE` are hardcoded to "
+                f"{INPUT_IMG_SIZE}, and under defer_input_images they are what build `images`, "
+                f"so `images` would be {INPUT_IMG_SIZE}px against {self.target_size}px "
+                f"scanner_coords. To really change R, thread it through both modules first."
+            )
         # See the block in get_data: skip building `images` because the trainer's
         # gpu_augment_batch re-extracts them on GPU regardless. Training sets this true;
         # anything that calls get_data WITHOUT going through gpu_augment_batch must leave
