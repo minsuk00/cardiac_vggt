@@ -24,9 +24,10 @@ torch.backends.cudnn.allow_tf32 = True
 
 REPO = "/home/minsukc/vggt"
 SCRATCH = "/tmp/claude-114459240/-home-minsukc-vggt/38f5000c-c83b-4a11-8157-e666a5fcf314/scratchpad"
-CONFIG = "mri_volume_diffusion"
+CONFIG = "default"      # was "mri_volume_diffusion", deleted in the 2026-08-01 config
+                        # flattening; `default.yaml` IS that config (docs/62 §5.5)
 OVERRIDES = [
-    "max_img_per_gpu=12",
+    # `max_img_per_gpu=12` dropped: the key was deleted (docs/59 F9)
     "one_frame_per_slice=true",
     "loss.volume.gather_weight=0.5",
 ]

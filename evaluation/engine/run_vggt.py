@@ -409,7 +409,11 @@ def main():
     ap.add_argument("--stage-tmp", action="store_true",
                     help="copy ckpt to node-local /tmp + strip to weights-only for fast loads "
                          "(GPFS small-read fix, ~266s->~5s); original untouched, staged once per node")
-    ap.add_argument("--config", default="mri_volume_diffusion", help="for the model card")
+    # Provenance only — recorded on the model card, never composed by Hydra. Default was
+    # "mri_volume_diffusion" until the 2026-08-01 flattening deleted that name (docs/62 §7);
+    # `default.yaml` IS that config. Existing models.json rows keep the OLD name on purpose:
+    # they record what those runs actually used, and rewriting them would falsify provenance.
+    ap.add_argument("--config", default="default", help="for the model card")
     ap.add_argument("--note", default="")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all built subjects")
     ap.add_argument("--overwrite", action="store_true",

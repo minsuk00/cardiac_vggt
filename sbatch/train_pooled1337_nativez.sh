@@ -19,8 +19,10 @@
 # ep100 one-frame ablation (docs/46 §3), carried over verbatim except for the cohort:
 #   C1 keep gather (0.5)        C2 SHIP aug tier=moderate     C3 no-ship continuous_z (off)
 #   C4 DINO stays FROZEN        C5 null -> keep diffusion_weight=1000
-# CONFIG=exp_diffusion is the series hub: tv_weight=0, VoxelMorph L2 diffusion 1000
-# (NOT mri_volume, which is the older tv=0.1 / diffusion=0 baseline).
+# CONFIG=default is the series hub: tv_weight=0, VoxelMorph L2 diffusion 1000. (Named
+# exp_diffusion, then mri_volume_diffusion, before the 2026-08-01 flattening folded that
+# arm into default.yaml — docs/62 §7. The older tv=0.1 / diffusion=0 baseline survives
+# only as exp_bspline's regularizer setting.)
 #
 # aug tier=moderate (C2) and gather_weight=0.5 (C1) are NOT overridden here — as of 2026-08-01 they
 # are the mri_volume.yaml DEFAULTS, so this script inherits them. Check the config, not this line.

@@ -15,7 +15,7 @@
 #SBATCH --open-mode=append
 
 # --- Configuration ---
-# Target-phase REFERENCE-SLICE conditioning (docs/24, docs/25). mri_volume.yaml is now the
+# Target-phase REFERENCE-SLICE conditioning (docs/24, docs/25). default.yaml is now the
 # reference pipeline: slot 0 = a real target-phase reference slice (mid-ventricular plane),
 # marked via VGGT's native camera_token anchor; the model reads the target phase from slot-0's
 # image content instead of a content-free target_t index. This fixes the flat-EF amplitude
@@ -24,8 +24,18 @@
 # WARM-START: FRESH FROM BASE VGGT-1B (the config default resume path,
 # ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM
 # and CKPT_ONLY empty for that. aggft (aggregator unfrozen): ~2.8×
-# slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via mri_volume.yaml
-# (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe), affine aug off.
+# slower, ~27 GB/A40. max_epochs=200 (matches the config). Respiration is ON via default.yaml
+# (data.augmentation.respiratory.enable=true — the proven "resp, z-only" recipe).
+#
+# ⚠️ REGULARIZER ARM (docs/62 §4 #3): this script ran `mri_volume.yaml` (L1 TV, tv=0.1,
+# diffusion=0) until the 2026-08-01 config flattening repointed CONFIG to `default`, which is
+# the L2-diffusion arm (tv=0, diffusion=1000). That switch was silent. It is now DELIBERATE
+# and confirmed — the series continues on L2 diffusion. To go back to L1 TV, append
+# `loss.volume.tv_weight=0.1 loss.volume.diffusion_weight=0.0` to the overrides
+# (`exp_bspline` is the only shipped config still on tv=0.1).
+#
+# Affine augmentation is ON by default (tier=moderate, docs/46 §3 C2) — the header used to
+# say "affine aug off", which stopped being true when aug was enabled by default 2026-07-31.
 CONFIG="default"
 # --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
 # RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).

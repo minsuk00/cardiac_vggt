@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --account=jjparkcv0
-#SBATCH --partition=spgpu
-#SBATCH --gres=gpu:a40:1
+#SBATCH --account=jjparkcv_owned1
+#SBATCH --partition=spgpu2
+#SBATCH --gres=gpu:l40s:1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=5
@@ -15,24 +15,59 @@
 #SBATCH --open-mode=append
 
 # --- Configuration ---
-# DIFFUSION-REG variant of the reference run (docs/24, docs/25). Identical to
-# train_mri_volume_reference.sh EXCEPT the warp regularizer: mri_volume_diffusion.yaml swaps the
-# L1 TV (tv_weight=0) for VoxelMorph-style L2 diffusion ‖∇u‖² (diffusion_weight=1000). Everything
-# else inherits mri_volume: reference-slice conditioning (slot 0 = target-phase reference via the
-# camera_token anchor), aggft (freeze only patch_embed), NO refiner, respiration ON, max_epochs=200.
+# ============================================================================================
+# POOLED-1337 NATIVE-Z LONG RUN — arm A/B pair, 2026-08-01. THIS SCRIPT = **AUG OFF**.
+# Its partner `train_pooled1337_dpt_aug.sh` is byte-identical except `AUG_OVERRIDES`.
+# The two together are a clean A/B on affine+photometric augmentation: everything else —
+# cohort, seed, epochs, LR schedule, freeze, head, loss, respiratory — is identical.
+# ============================================================================================
 #
-# WARM-START: FRESH FROM BASE VGGT-1B (config default resume path,
-# ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM and
-# CKPT_ONLY empty. aggft: ~2.8× slower, ~27 GB/A40.
+# Target-phase REFERENCE-SLICE conditioning (docs/24, docs/25): slot 0 = a real target-phase
+# reference slice (mid-ventricular plane), marked via VGGT's native camera_token anchor; the
+# model reads the target phase from slot-0's image content instead of a content-free target_t
+# index. Fixes the flat-EF amplitude regression + the target_t=k/12 timing ambiguity.
+#
+# WARM-START: FRESH FROM BASE VGGT-1B (the config default resume path,
+# ./scratch/base_weights/vggt1b_base.pt, strict=false) — NOT a cardiac ckpt. Leave RESUME_FROM
+# and CKPT_ONLY empty for that. aggft (only `*patch_embed*` frozen ⇒ the 24+24 attention
+# blocks, z_embedder, camera_token and point_head all train).
+#
+# Regularizer arm = L2 diffusion (`tv=0`, `diffusion=1000`) — deliberate, docs/62 §4 #3.
+# Respiration is ON in BOTH arms via default.yaml (`data.augmentation.respiratory.enable=true`,
+# the proven "resp, z-only" recipe, docs/05) — it is a SEPARATE toggle from affine aug and is
+# NOT part of this A/B.
+#
+# DEVIATIONS FROM default.yaml, applied via RECIPE_OVERRIDES below:
+#   max_epochs 200 -> 300
+#   LR         5e-5 -> 3e-4  (must be set in THREE places — see the note at RECIPE_OVERRIDES)
 CONFIG="default"
-# --- Resume settings (leave BOTH empty for the fresh-from-base run) ---
+
+# --- Recipe (shared by both arms; keep in sync with the noaug partner) ---
+# ⚠️ LR IS THREE KNOBS, NOT ONE. `optim.optimizer.lr` only sets AdamW's initial value; the
+# CompositeParamScheduler overwrites the LR every step from `where`, so setting the optimizer
+# alone leaves the schedule at 5e-5 and the override silently does nothing after step 0.
+# schedulers.0 = LinearParamScheduler (warmup 1e-8 -> peak, first 5%),
+# schedulers.1 = CosineParamScheduler (peak -> 1e-8, remaining 95%).
+PEAK_LR="3e-4"
+RECIPE_OVERRIDES="max_epochs=300 \
+optim.optimizer.lr=${PEAK_LR} \
+optim.options.lr.0.scheduler.schedulers.0.end_value=${PEAK_LR} \
+optim.options.lr.0.scheduler.schedulers.1.start_value=${PEAK_LR}"
+
+# --- The A/B variable: affine + photometric augmentation (tier=moderate, docs/46 §3 C2) ---
+AUG_OVERRIDES="data.augmentation.enable=false"
+VARIANT_TAG="noaug"
+# --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
+# RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
 RESUME_FROM=""
-CKPT_ONLY="/home/minsukc/vggt/scratch/checkpoints/4wok_weights_only.pt"
+# CKPT_ONLY: load weights from a checkpoint into a fresh exp dir. EMPTY here on purpose →
+# fresh-from-base (the config's base-weights resume path is used). Ignored if RESUME_FROM set.
+CKPT_ONLY=""
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    JOB_NAME="vggt_${CONFIG}"
+    JOB_NAME="vggt_pooled1337_dpt_${VARIANT_TAG}"
     if [ ! -z "$RESUME_FROM" ]; then
         JOB_NAME="${JOB_NAME}_resume"
     elif [ ! -z "$CKPT_ONLY" ]; then
@@ -98,18 +133,21 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_ftctrl_gather0_1frame_dynamic_axial_pooled1337"
-        EXTRA_OVERRIDES="max_epochs=100 loss.volume.gather_weight=0.0"
+        EXP_NAME="${REV_TS}_mri_volume_dpt_${VARIANT_TAG}_dynamic_axial_pooled1337"
+        EXTRA_OVERRIDES="${RECIPE_OVERRIDES} ${AUG_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
-        echo "CONTROL 4wok (1-frame) + gather_weight=0.0: exp_name=${EXP_NAME}, max_epochs=100, fresh wandb run"
+        echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run)"
     else
         # Mode 0 — FRESH FROM BASE VGGT-1B (config default resume path, strict=false).
-        # max_epochs=200 (= config) made explicit so it persists verbatim across requeues.
+        # The full recipe is spelled out in EXTRA_OVERRIDES so it persists VERBATIM across
+        # requeues (the requeue branch replays this string; anything left implicit in the
+        # config would silently revert if default.yaml were edited mid-run).
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_diffusion_dynamic_axial_pooled1337"
-        EXTRA_OVERRIDES="max_epochs=200"
+        EXP_NAME="${REV_TS}_mri_volume_dpt_${VARIANT_TAG}_dynamic_axial_pooled1337"
+        EXTRA_OVERRIDES="${RECIPE_OVERRIDES} ${AUG_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
-        echo "Fresh-from-base diffusion run: exp_name=${EXP_NAME}, max_epochs=200"
+        echo "Fresh-from-base run: exp_name=${EXP_NAME}"
+        echo "  recipe: ${EXTRA_OVERRIDES}"
     fi
     { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi
