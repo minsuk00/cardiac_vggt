@@ -330,8 +330,16 @@ data:
   #                    scale ±5%); gamma p=.4 (0.8-1.3); bias field p=.4 (±0.10).
   #   "moderate"     — no flip; affine p=.6 (rotate ±180° FULL-CIRCLE, translate ±16 px,
   #                    scale ±5%); gamma p=.6 (0.7-1.5); bias field p=.5 (±0.5).
-  #   "aggressive"   — flip p=.5; affine p=.9 (rotate ±180°, translate ±20 px, scale ±8%);
-  #                    gamma p=.75 (0.6-1.7); bias field p=.7 (±0.6).
+  #   "aggressive"   — flip p=.5; affine p=.9 (rotate ±180°, translate ±32 px, NO per-axis
+  #                    scale — replaced by isotropic zoom below); gamma p=.75 (0.6-1.5);
+  #                    bias field p=.7 (±0.4). PLUS (2026-08-12, docs/63 §5) in-plane
+  #                    acquisition-artifact post-ops: isotropic zoom p=.5 (0.8-1.2),
+  #                    simulated low-res p=.4 (0.5-0.85), Gibbs ringing p=.3 (alpha
+  #                    0.5-0.75), phase-encode ghosting p=.3 (2-5 ghosts, 15-40% line
+  #                    attenuation, random H/W axis). All strictly per-slice 2-D;
+  #                    native-z D untouched (see _build_ood_post_ops in gpu_aug.py).
+  #                    Geometric ops (flip/affine/zoom) warp content_mask AND
+  #                    heart_roi_canonical with the same draw (nearest interp).
   #
   # `respiratory`: INDEPENDENT breathing sim (separate toggle from affine). A per-input-slice
   # deform-then-reslice SI+AP shift (Lujan waveform), applied AFTER affine and overwriting ONLY

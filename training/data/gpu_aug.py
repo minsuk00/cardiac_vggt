@@ -170,6 +170,12 @@ def build_gpu_transforms(aug_cfg=None):
         # but at higher prob + wider gamma/bias-field and larger translate; scale still capped
         # (±8%) to bound ellipse distortion; flip ON (this tier ONLY), Gaussian noise OFF. Same
         # plane semantics (rotate slot 0 = in-plane H-W; translate/scale (D,H,W) with D frozen).
+        #
+        # 2026-08-12 (docs/63 §5, user decision: APPEND, keep the escalated affine as-is): this
+        # tier additionally runs 4 acquisition-artifact post-ops after the Compose — isotropic
+        # in-plane zoom, simulated low-res, Gibbs ringing, phase-encode ghosting — attached as
+        # `vggt_post_ops` and applied by gpu_augment_batch. See _build_ood_post_ops below for
+        # why they can't just be more entries in this transforms list.
         transforms = [
             # RandFlipd — AGGRESSIVE-ONLY as of 2026-08-01 (it was briefly on in all tiers,
             # 2026-07-31, docs/58 §10c). Why it is justified at all: (1) the training objective
@@ -186,19 +192,109 @@ def build_gpu_transforms(aug_cfg=None):
                 keys=keys,
                 prob=0.9,
                 rotate_range=(float(np.deg2rad(180)), 0.0, 0.0),  # FULL-CIRCLE in-plane rotation (±180° = whole circle)
-                translate_range=(0.0, 20.0, 20.0),               # H, W only (D frozen)
-                scale_range=(0.0, 0.08, 0.08),                   # H, W only; capped ±8% to bound anisotropic ellipse distortion
+                translate_range=(0.0, 32.0, 32.0),               # H, W only (D frozen); widened 20→32 px (2026-08-12, user tuning)
+                scale_range=None,                                # REPLACED by the isotropic zoom post-op (2026-08-12) — per-axis
+                                                                 # scale distorted the LV into an ellipse; zoom keeps it circular
                 padding_mode="zeros",
             ),
-            # Photometric — apply ONLY to `phases`, not the mask.
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.75, gamma=(0.6, 1.7)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.7, degree=3, coeff_range=(-0.6, 0.6)),  # symmetric → zero-mean shading
+            # Photometric — apply ONLY to `phases`, not the mask. Maxes softened 2026-08-12
+            # (user tuning: gamma 1.7→1.5, bias ±0.6→±0.4 — the old maxes were too destructive).
+            _B.RandAdjustContrastd(keys=["phases"], prob=0.75, gamma=(0.6, 1.5)),
+            _B.RandBiasFieldd(keys=["phases"], prob=0.7, degree=3, coeff_range=(-0.4, 0.4)),  # symmetric → zero-mean shading
             # RandGaussianNoised DISABLED — see conservative note.
             # _B.RandGaussianNoised(keys=["phases"], prob=0.6, std=(0.0, 0.05)),
         ]
-        return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
+        compose = _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
+        compose.vggt_post_ops = _build_ood_post_ops(keys, mode_dict)
+        return compose
 
     raise ValueError(f"unknown aug tier: {tier!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Aggressive-tier acquisition-artifact post-ops (docs/63 §5)
+# ──────────────────────────────────────────────────────────────────────────────
+def _apply_ghosting(x, num_ghosts, intensity, axis):
+    """Phase-encode ghosting (docs/63 §3.4, NOT in batchaug): attenuate periodic
+    k-space lines along one in-plane axis → faint anatomy copies offset by
+    FOV/num_ghosts. Comb period = num_ghosts k-LINES (a period-2 comb is the
+    classic half-FOV Nyquist ghost) — NOT axis_len//num_ghosts, which docs/63's
+    snippet had inverted (that puts the replicas ~num_ghosts PIXELS away, i.e. a
+    faint local ripple, no ghosts; prove-it 2026-08-12, blob-probe verified).
+    The comb starts at step//2, NOT 0, so the DC line (global brightness) is
+    never touched, and it is unioned with its k-space mirror (N−i) so the
+    filtered spectrum of a real image stays Hermitian — otherwise `.real` would
+    silently halve the delivered intensity for odd periods. Same comb for every
+    (T, D) slice ⇒ phase-consistent.
+
+    Args:
+        x: (B, T, D, H, W) float — augmented phases.
+        num_ghosts: number of ghost copies (= comb period in k-lines).
+        intensity: attenuation of the comb lines (0 = identity, 1 = zeroed).
+        axis: "H" or "W" — the simulated phase-encode direction.
+    """
+    k = torch.fft.fft2(x.float())
+    n = x.shape[-1 if axis == "W" else -2]
+    step = max(2, int(num_ghosts))
+    idx = torch.arange(step // 2, n, step, device=x.device)
+    idx = torch.cat([idx, (n - idx) % n]).unique()          # Hermitian mirror
+    if axis == "W":
+        k[..., idx] *= (1.0 - intensity)
+    else:
+        k[..., idx, :] *= (1.0 - intensity)
+    return torch.fft.ifft2(k).real.to(x.dtype)
+
+
+def _build_ood_post_ops(keys, mode_dict):
+    """Build the docs/63 acquisition-artifact step that runs AFTER the affine
+    Compose (gpu_augment_batch applies it via the `vggt_post_ops` attribute,
+    inside the same try/except — a failure discards the whole aug_dict, so the
+    batch reverts to fully UN-augmented, dropping the successful affine too).
+
+    Why not more entries in the Compose: batchaug treats all 3 trailing dims as
+    spatial, and OUR dim 2 is native-z D — RandZoomd would zoom ACROSS slices,
+    RandSimulateLowResolutiond would downsample D (e.g. 10 native slices → 5),
+    and RandGibbsNoised's spherical k-mask would ring across the 5-12 mm pitch
+    (real Gibbs is in-plane, per-slice 2D k-space). Fix: run them on a pure VIEW
+    `(B, C, D, H, W) → (B, C·D, H, W, 1)` — slices become channels (batchaug
+    applies one param draw to all channels ⇒ phase- and slice-consistent), and
+    the dummy size-1 third dim makes every op exactly 2-D in-plane (zoom/low-res
+    scale a size-1 axis to 1; the Gibbs dist-grid is 0 along it). D untouched by
+    construction. Ghosting is custom (not in batchaug) and runs on the native
+    layout afterwards.
+
+    Order: zoom (geometric, warps masks too) → low-res → Gibbs → ghosting
+    (acquisition artifacts happen after geometry). Intensity ops touch `phases`
+    only; the existing clamp + gt/bbox re-derivation in gpu_augment_batch run
+    after this, so inputs and target stay mutually consistent for free.
+    """
+    pad_zeros = {k: "zeros" for k in keys}
+    zoom = _B.RandZoomd(keys=keys, prob=0.5, min_zoom=0.8, max_zoom=1.2,
+                        mode=mode_dict, padding_mode=pad_zeros)
+    lowres = _B.RandSimulateLowResolutiond(
+        keys=["phases"], prob=0.4, zoom_range=(0.5, 0.85),
+        downsample_mode="nearest", upsample_mode="trilinear", align_corners=True)
+    gibbs = _B.RandGibbsNoised(keys=["phases"], prob=0.3, alpha=(0.5, 0.75))
+
+    def _post_ops(aug_dict):
+        shapes = {k: v.shape for k, v in aug_dict.items()}
+        d = {k: v.reshape(v.shape[0], -1, *v.shape[3:]).unsqueeze(-1)
+             for k, v in aug_dict.items()}                      # (B, C·D, H, W, 1)
+        d = gibbs(lowres(zoom(d)))
+        out = {k: d[k].squeeze(-1).reshape(shapes[k]) for k in d}
+        x = out["phases"]
+        if float(torch.rand((), device=x.device)) < 0.3:
+            lo, hi = 0.15, 0.4
+            x = _apply_ghosting(
+                x,
+                num_ghosts=int(torch.randint(2, 6, (1,), device=x.device).item()),
+                intensity=lo + (hi - lo) * float(torch.rand((), device=x.device)),
+                axis="W" if float(torch.rand((), device=x.device)) < 0.5 else "H",
+            )
+            out["phases"] = x
+        return out
+
+    return _post_ops
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -328,6 +424,13 @@ def gpu_augment_batch(batch, transforms, device,
                 device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
         try:
             aug_dict = transforms(aug_dict)
+            # Aggressive tier only: docs/63 acquisition-artifact post-ops (isotropic
+            # zoom / low-res / Gibbs / ghosting), attached by build_gpu_transforms.
+            # Other tiers have no attribute → no-op. Runs inside this try so a
+            # post-op failure falls back to the un-augmented batch, like the Compose.
+            post_ops = getattr(transforms, "vggt_post_ops", None)
+            if post_ops is not None:
+                aug_dict = post_ops(aug_dict)
         except Exception as e:
             # Aug must never crash training; log and fall through with identity affine.
             logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
