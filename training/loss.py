@@ -73,7 +73,8 @@ class MultitaskLoss(torch.nn.Module):
             vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **self.volume)
             vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]
                         + vol_loss_dict.get("loss_diffusion", 0.0)
-                        + vol_loss_dict.get("loss_gather", 0.0)) * self.volume["weight"]
+                        + vol_loss_dict.get("loss_gather", 0.0)
+                        + vol_loss_dict.get("loss_heart", 0.0)) * self.volume["weight"]
             total_loss = total_loss + vol_loss
             loss_dict.update(vol_loss_dict)
 
@@ -136,7 +137,8 @@ def _masked_mse(a, b, mask):
 
 
 def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
-                                  diffusion_weight=0.0, gather_weight=0.0, **kwargs):
+                                  diffusion_weight=0.0, gather_weight=0.0,
+                                  heart_weight=0.0, **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -194,6 +196,53 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
     # loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
     loss_volume = (V_canon - V_gt).abs().mean()
 
+    # ── ARM heart-L1 (docs/69 follow-up): ADDITIVE heart-ROI L1 on top of the full L1 ──
+    # Motivation: the full-volume L1 above averages over a volume in which the heart is only
+    # ~4.5-6.5% of voxels (measured: metric_heartseg_frac on native-z runs), so ~95% of the
+    # gradient is spent on chest wall / lungs / background / padding, none of which move with
+    # the heart. This term upweights the heart WITHOUT masking.
+    #
+    # ADDITIVE, NOT A MASK — deliberately. The masked variant (`V_gt > 1e-3`, still commented
+    # out above) was removed because it gave the model a free pass to over-predict intensity
+    # wherever V_gt was zero (ghost blobs). Keeping the full L1 as the primary term preserves
+    # that penalty; this only adds pressure inside the ROI.
+    #
+    # `heart_roi_canonical` is the DILATED WHOLE-HEART nnU-Net ROI (union over the 12 phases)
+    # on the canonical grid — it includes atria/RV, so this is not an "LV loss". It is loaded
+    # by MRIDataset.get_data with NO split gate, so it is present for train as well as val
+    # (only the psnr_3d_heartseg METRIC is val-gated).
+    #
+    # Availability is per-sample: get_data omits the key when the on-disk ROI shape does not
+    # match the canonical grid. That never fires on native-z (measured: 0 warnings across a
+    # full pooled run) but fires on ~28/29 subjects under the fixed12 hub wrapper, which pads
+    # phases/mask to D=12 and leaves the ROI at native D. So this arm is for the NATIVE-Z
+    # pipeline; under fixed12 the term would silently vanish. Hence the explicit raise below
+    # rather than a silent 0.0 — a weight that is asked for but cannot be applied is a bug.
+    #
+    # ⚠️ Training on this ROI makes metric_psnr_3d_heartseg a TRAINING TARGET, so it is no
+    # longer an independent val check. Judge this arm on amp_ratio / motion PSNR instead.
+    loss_heart = pos_pred.new_zeros(())
+    if heart_weight > 0:
+        if "heart_roi_canonical" not in batch:
+            raise RuntimeError(
+                "loss.volume.heart_weight > 0 but batch has no 'heart_roi_canonical'. The ROI is "
+                "dropped per-sample when its on-disk shape != the canonical grid (see "
+                "MRIDataset.get_data) — this is expected under the fixed12 hub wrapper, which "
+                "pads phases/mask to D=12 but leaves the ROI at native D. Use native-z, or "
+                "set heart_weight=0."
+            )
+        roi = batch["heart_roi_canonical"].bool()
+        # BRANCHLESS on purpose — no `if n_roi > 0`. `heart_weight` is a Python float so the
+        # outer `if` is free, but a tensor-valued test would force a GPU sync + graph break on
+        # EVERY train step, and cuda.compile_attention_blocks is True by default. Same reason
+        # the motion-metric block above is branchless ("a Python-level decision here costs 4
+        # graph breaks, measured"). The empty-ROI case needs no branch anyway: the numerator is
+        # exactly 0 when the mask is empty, and clamp(min=1) keeps the denominator safe, so the
+        # expression already evaluates to 0.0 — verified against the branched version.
+        # Mean over ROI voxels only, so the term is on the same per-voxel scale as loss_volume;
+        # heart_weight is then a straight relative weight.
+        loss_heart = ((V_canon - V_gt).abs() * roi).sum() / roi.sum().clamp(min=1) * heart_weight
+
     # Plain TV on pos_pred — mean absolute difference between H/W neighbors. fp32-forced
     # so the reduction stays accurate under autocast(bf16).
     with torch.amp.autocast("cuda", enabled=False):
@@ -240,6 +289,7 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         "loss_pos_tv": loss_pos_tv,
         "loss_diffusion": loss_diffusion,
         "loss_gather": loss_gather,
+        "loss_heart": loss_heart,   # ARM heart-L1 (already scaled by heart_weight)
         "V_canon": V_canon,
         "V_gt": V_gt,
         "coverage": coverage,
