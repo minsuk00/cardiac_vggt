@@ -1051,14 +1051,14 @@ class Trainer(TrainerVizMixin):
                     _orig_images = batch["images"].detach().clone()
                 elif "phases" in batch:
                     from data.gpu_aug import extract_slices_from_phases
-                    # `extract_slices_from_phases` returns (B,S,518,518,3) in [0,255]; the
+                    # `extract_slices_from_phases` returns (B,S,R,R,3) in [0,255]; the
                     # `batch["images"]` contract — and what `_log_augmentation_to_wandb._gray`
-                    # expects — is (B,S,3,518,518) in [0,1]. Convert exactly as gpu_aug does at
-                    # all three of its own assignment sites. Skipping this does NOT crash: _gray
-                    # would clamp [0,255] to all-1.0 and average over H instead of the channel
-                    # axis, rendering the "original" row as a 518x3 near-white sliver.
+                    # expects — is (B,S,3,R,R) in [0,1]. Skipping the conversion does NOT
+                    # crash: _gray would clamp [0,255] to all-1.0 and average over H instead
+                    # of the channel axis, rendering the "original" row as a near-white sliver.
                     _orig_images = extract_slices_from_phases(
-                        batch["phases"].float(), batch["timesteps"], batch["slice_indices"]
+                        batch["phases"].float(), batch["timesteps"], batch["slice_indices"],
+                        out_size=int(batch["scanner_coords"].shape[-2]),
                     ).permute(0, 1, 4, 2, 3).contiguous().div(255.0).detach()
                 else:
                     logging.warning("[aug-viz] neither 'images' nor 'phases' in batch; panel skipped")

@@ -261,9 +261,9 @@ def test_gpu_aug_passes_native_pitch_and_plane_count(monkeypatch, dz, D):
     real_extract = gpu_aug.extract_slices_with_respiratory_vec
     real_sample = gpu_aug.sample_resp_disp
 
-    def spy_extract(phases, t_seq, z_seq, disp, spacing):
+    def spy_extract(phases, t_seq, z_seq, disp, spacing, **kwargs):
         seen["spacing"] = tuple(float(s) for s in spacing)
-        return real_extract(phases, t_seq, z_seq, disp, spacing)
+        return real_extract(phases, t_seq, z_seq, disp, spacing, **kwargs)
 
     def spy_sample(*args, **kwargs):
         seen["n_planes"] = kwargs.get("n_planes")

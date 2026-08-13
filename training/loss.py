@@ -7,6 +7,7 @@
 import logging
 
 import torch
+import torch.nn.functional as F
 from data.preprocess import Z_HALF_MM
 from vggt.utils.splat import sample_volume, splat_to_volume, splat_predictions
 
@@ -136,6 +137,36 @@ def _masked_mse(a, b, mask):
     return ((a[mask] - b[mask]) ** 2).mean()
 
 
+def _resize_field(wp, Hn, Wn):
+    """Bilinear-resize a (B, S, h, w, 3) point field in-plane to (Hn, Wn). Exact w.r.t.
+    the scanner-coords convention (x = px/(R-1)*2-1 is linear; z is per-slot constant)."""
+    B, S, h, w, _ = wp.shape
+    if (h, w) == (Hn, Wn):
+        return wp
+    x = wp.permute(0, 1, 4, 2, 3).reshape(B * S, 3, h, w)
+    x = F.interpolate(x, size=(Hn, Wn), mode="bilinear", align_corners=True)
+    return x.reshape(B, S, 3, Hn, Wn).permute(0, 1, 3, 4, 2)
+
+
+def _splat_preds_native(predictions, batch, grid_shape, z_scale):
+    """Native-render splat: resample the predicted point field to the native canonical
+    resolution and splat batch["images_splat"] (pre-model-resize slice content,
+    resp-corrupted where resp is on). Resampling the smooth FIELD is ~free (−0.12 dB,
+    docs/72 §3); resampling the IMAGE is lossy for img_size < 256. Falls back to the
+    model-resolution splat when images_splat is absent (batches built outside
+    gpu_augment_batch, e.g. the offline eval harnesses)."""
+    imsp = batch.get("images_splat")
+    if imsp is None:
+        return splat_predictions(predictions, batch, grid_shape, z_scale)
+    Hn, Wn = imsp.shape[-2:]
+    wp = _resize_field(predictions["world_points"], Hn, Wn)
+    B = wp.shape[0]
+    pos = wp.reshape(B, -1, 3)
+    inten = imsp.float().reshape(B, -1)
+    return splat_to_volume(pos, inten, tuple(grid_shape), z_scale,
+                           weight=(inten > 1e-3).to(inten.dtype))
+
+
 def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                                   diffusion_weight=0.0, gather_weight=0.0,
                                   heart_weight=0.0, **kwargs):
@@ -177,7 +208,7 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         )
     z_scale = float(batch["z_scale"].reshape(-1)[0])
 
-    V_canon, coverage = splat_predictions(predictions, batch, grid_shape, z_scale)
+    V_canon, coverage = _splat_preds_native(predictions, batch, grid_shape, z_scale)
 
     if V_gt.shape != V_canon.shape:
         raise RuntimeError(f"gt_target_volume {tuple(V_gt.shape)} must match V_canon {tuple(V_canon.shape)}")
@@ -268,7 +299,8 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
     # through-plane placement gradient the splat's ÷coverage flattens into a plateau; the splat L1
     # stays primary (keeps V_canon complete/coherent). No anatomical/motion mask — only the standard
     # padded-pixel gate (intensity>1e-3), same as splat_predictions (docs/38). One grid_sample —
-    # cheaper than the splat. Uses the SAME input intensity as `splat_predictions`. padding_mode
+    # cheaper than the splat. Uses the model-resolution `images` intensity (the primary splat
+    # renders native `images_splat` since docs/73 — same content, different sampling). padding_mode
     # 'zeros' in sample_volume means predicting p outside the FOV samples 0 → mismatch → the aux
     # discourages moving pixels out of bounds. gather_weight=0.0 ⇒ exactly 0.0 ⇒ no-op (bit-identical).
     if gather_weight > 0:
@@ -432,13 +464,21 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
             try:
                 heart = compute_motion_mask(batch["phases"])            # (B,D,H,W) bool
                 # identity splat (Δ=0, real corrupted input content) — exact forward path
-                V_id, _ = splat_predictions({"world_points": batch["scanner_coords"]}, batch, grid_shape, z_scale)
+                V_id, _ = _splat_preds_native({"world_points": batch["scanner_coords"]}, batch, grid_shape, z_scale)
                 # oracle splat (Δ=0, TRUE target-phase content sampled at each pixel's home) —
                 # the recoverable ceiling; the model→oracle gap is the appearance wall (docs 19-21).
-                inv_scale = torch.where((batch["images"] > 2.0).any(), 1.0 / 255.0, 1.0)
-                intensity = batch["images"].float().mean(dim=2) * inv_scale
-                scan_flat = batch["scanner_coords"].reshape(B, -1, 3)
-                w = (intensity.reshape(B, -1) > 1e-3).float()
+                # Same point set / weight gate as V_id and V_canon (native when images_splat
+                # exists), so the recov_frac ratio compares one splat pipeline throughout.
+                if "images_splat" in batch:
+                    imsp = batch["images_splat"]
+                    sc = _resize_field(batch["scanner_coords"], *imsp.shape[-2:])
+                    scan_flat = sc.reshape(B, -1, 3)
+                    w = (imsp.float().reshape(B, -1) > 1e-3).float()
+                else:
+                    inv_scale = torch.where((batch["images"] > 2.0).any(), 1.0 / 255.0, 1.0)
+                    intensity = batch["images"].float().mean(dim=2) * inv_scale
+                    scan_flat = batch["scanner_coords"].reshape(B, -1, 3)
+                    w = (intensity.reshape(B, -1) > 1e-3).float()
                 V_or, _ = splat_to_volume(scan_flat, sample_volume(V_gt, scan_flat, z_scale), grid_shape, z_scale, weight=w)
                 recov, mse_id_l, mse_mo_l, mse_or_l, holes, static_psnr = [], [], [], [], [], []
                 for b in range(B):

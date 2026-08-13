@@ -70,7 +70,9 @@ class TrainerVizMixin:
             phases = torch.from_numpy(
                 np.asarray(data["phases"]).astype(np.float32)).unsqueeze(0).to(self.device)
             images = extract_slices_from_phases(
-                phases, timesteps, slice_indices).permute(0, 1, 4, 2, 3).contiguous() / 255.0
+                phases, timesteps, slice_indices,
+                out_size=int(np.stack(data["scanner_coords"]).shape[-2]),
+            ).permute(0, 1, 4, 2, 3).contiguous() / 255.0
 
         return {
             "images": images,
@@ -151,8 +153,8 @@ class TrainerVizMixin:
                 # identity (do-nothing, Δ=0) reference is the splat of the SAME breathing-
                 # corrupted inputs the model is scored on — NOT the unshifted clean inputs.
                 # Otherwise "Δ vs identity" compares a clean-input splat against a
-                # corrupted-input model and understates motion correction. No-op when
-                # respiratory is disabled (gpu_augment_batch early-returns unchanged).
+                # corrupted-input model and understates motion correction. With respiratory
+                # disabled this still builds `images_splat` (native render content, docs/73).
                 # (timesteps / slice_indices / seq_index come from _subject_device_batch.)
                 batch = gpu_augment_batch(
                     batch, None, self.device,
@@ -404,8 +406,12 @@ class TrainerVizMixin:
                     else:
                         ref_up = _F.interpolate(
                             phases_bundle[t, ref_zmid][None, None].float(), size=(hw, hw),
-                            mode="bilinear", align_corners=True)  # (1, 1, 518, 518) in [0, 1]
+                            mode="bilinear", align_corners=True)  # (1, 1, R, R) in [0, 1]
                         batch["images"][:, 0] = ref_up.repeat(1, 3, 1, 1)
+                        # Rebuild images_splat for the current timesteps (slot 0 = phase t)
+                        # so the no-breathing filmstrip renders native like val (docs/73).
+                        batch = gpu_augment_batch(
+                            batch, None, self.device, respiratory_cfg=None, train=False)
                 batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)  # (1, D, H, W)
                 with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=amp_dtype):
                     preds = model(batch["images"], batch=batch)
