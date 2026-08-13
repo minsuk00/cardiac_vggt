@@ -58,7 +58,7 @@ from data.respiratory import (
 )
 
 # Local constants (kept in sync with preprocess.py / mri_dataset.py).
-INPUT_IMG_SIZE = 518   # DINOv2 input — must match MRIDataset.target_size
+INPUT_IMG_SIZE = 518   # legacy default for standalone callers; gpu_augment_batch derives R from scanner_coords
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -309,21 +309,37 @@ from data.preprocess import compute_geometric_bbox as recompute_bbox_gpu
 # ──────────────────────────────────────────────────────────────────────────────
 # Helper: re-extract S slices from an augmented (B, T, D, H, W) tensor
 # ──────────────────────────────────────────────────────────────────────────────
-def extract_slices_from_phases(phases, t_seq, z_seq):
+def _resize_to_model_res(native, R):
+    """(B, S, H, W) [0,1] native slices → (B, S, 3, R, R) [0,1] model input: bilinear
+    resample + RGB-replicate. The model input is purely a derived view of the native
+    slices — the splat/loss side never sees it."""
+    B, S, H, W = native.shape
+    x = F.interpolate(native.reshape(B * S, 1, H, W), size=(R, R),
+                      mode="bilinear", align_corners=True)
+    return x.view(B, S, 1, R, R).expand(B, S, 3, R, R).contiguous()
+
+
+def extract_slices_from_phases(phases, t_seq, z_seq, out_size=None):
     """Pull S slices per batch element from an augmented phases tensor and
-    bilinear-upsample each to `(INPUT_IMG_SIZE, INPUT_IMG_SIZE)` for DINOv2.
+    bilinear-resize each to `(out_size, out_size)` for DINOv2.
 
     Args:
         phases: `(B, T, D, H=256, W=256)` float.
         t_seq:  `(B, S)` int64 — t index per slot.
         z_seq:  `(B, S)` z index per slot — int OR continuous float (linearly
                 interpolated between the two bracketing z planes; exact at integer z).
+        out_size: model-input resolution (default: module INPUT_IMG_SIZE).
+                `gpu_augment_batch` passes the batch's scanner_coords resolution so
+                config `img_size` is a real knob; at out_size == H the resize is an
+                identity, which is how the native `images_splat` content is built.
 
     Returns:
-        `(B, S, 518, 518, 3)` float in `[0, 255]` — RGB-replicated, ready to
+        `(B, S, out_size, out_size, 3)` float in `[0, 255]` — RGB-replicated, ready to
         replace `batch["images"]` after a `permute(0, 1, 4, 2, 3) / 255` in
         the trainer (matches the ComposedDataset contract).
     """
+    if out_size is None:
+        out_size = INPUT_IMG_SIZE
     Bsize, T, D, H, W = phases.shape
     S = t_seq.shape[1]
     b_idx = torch.arange(Bsize, device=phases.device).view(Bsize, 1).expand(Bsize, S)
@@ -340,14 +356,14 @@ def extract_slices_from_phases(phases, t_seq, z_seq):
     slices_canon = slices_canon.reshape(Bsize * S, 1, H, W)
     upsampled = F.interpolate(
         slices_canon,
-        size=(INPUT_IMG_SIZE, INPUT_IMG_SIZE),
+        size=(out_size, out_size),
         mode="bilinear",
         align_corners=True,
-    )                                                    # (B*S, 1, 518, 518)
-    upsampled = upsampled.view(Bsize, S, INPUT_IMG_SIZE, INPUT_IMG_SIZE)
+    )                                                    # (B*S, 1, out, out)
+    upsampled = upsampled.view(Bsize, S, out_size, out_size)
     upsampled = (upsampled * 255.0).clamp(0.0, 255.0)
-    # RGB-replicate to (B, S, 518, 518, 3).
-    return upsampled.unsqueeze(-1).expand(Bsize, S, INPUT_IMG_SIZE, INPUT_IMG_SIZE, 3)
+    # RGB-replicate to (B, S, out, out, 3).
+    return upsampled.unsqueeze(-1).expand(Bsize, S, out_size, out_size, 3)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -363,45 +379,52 @@ def gpu_augment_batch(batch, transforms, device,
         `content_mask` and re-derives `gt_target_volume`/`anatomy_bbox`/`images`.
         Affects BOTH target and inputs. `None` → skipped.
       * **Respiratory** (`respiratory_cfg.enable`, per-input-slice): a deform-then-
-        reslice shift that overwrites **ONLY** `images` — the target,
-        `scanner_coords`, `gt_target_volume`, `anatomy_bbox`, `content_mask`, and
-        `phases` stay at the unshifted end-expiration reference (the model learns to
-        CORRECT breathing, blind to `r`). Runs even when affine is off, and AFTER
-        affine when both are on.
+        reslice shift that corrupts the INPUT SLICES only (`images` + `images_splat`,
+        plus the `resp_disp_mm`/`resp_r` diagnostics) — the target, `scanner_coords`,
+        `gt_target_volume`, `anatomy_bbox`, `content_mask`, and `phases` stay at the
+        unshifted end-expiration reference (the model learns to CORRECT breathing,
+        blind to `r`). Runs even when affine is off, and AFTER affine when both are on.
 
     Train uses the private `resp_generator` (iid per epoch); val seeds breathing
     deterministically per row from `batch["seq_index"]` (required when val + resp).
 
-    If neither augmentation is active, the batch is returned unchanged.
+    On EVERY path — including both augmentations off — this function finalizes the
+    batch for the loss: the slices are extracted ONCE at native resolution into
+    `batch["images_splat"]` (what the loss splats, docs/73), and `batch["images"]`
+    (the model input, a resample of it) is built when absent/stale. Consequently the
+    batch is never "returned unchanged", and mutating `images` afterwards does NOT
+    affect the render — rewrite `images_splat` too (or re-call this with aug off).
 
-    Required batch keys:
+    Required batch keys (ALL paths):
         phases           (B, T, D, H, W) float16/float32
+        scanner_coords   (B, S, R, R, 3) float32 — defines model-input resolution R
+        timesteps / slice_indices        (B, S)
+    Additionally:
         content_mask     (B, D, H, W)    uint8        (affine)
         t_target         (B, 1)          int64        (affine)
         timesteps        (B, S)          int64 — original t per slot
         slice_indices    (B, S)          float32 — original z per slot (may be continuous)
         seq_index        (B, 1)          int64 — required for val respiratory
     """
+    # Model-input resolution: follow the batch's own scanner_coords (built at config
+    # `img_size` by the dataset) so images always match the coords they are paired with.
+    R = int(batch["scanner_coords"].shape[-2])
     do_affine = transforms is not None
     do_resp = respiratory_cfg is not None and getattr(respiratory_cfg, "enable", False)
     if not do_affine and not do_resp:
-        # A missing `images` means the dataset deferred it to us (`defer_input_images`), so
-        # we must still produce it even with every augmentation off — otherwise the batch
-        # would reach the model with no input. This is the guarantee that makes deferral safe.
+        # Native slices for the loss splat — built on EVERY path through this function
+        # (even when `images` came from the dataset), so train and val always render
+        # from the same native content.
+        phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
+        native = extract_slices_from_phases(
+            phases_cur, batch["timesteps"], batch["slice_indices"],
+            out_size=phases_cur.shape[-1])[..., 0] / 255.0
+        batch["images_splat"] = native
+        # A missing `images` means the dataset deferred it to us (`defer_input_images`) —
+        # the model input is the native slice resampled to R, nothing more. (~1 ULP vs the
+        # dataset's own CPU extraction, same class of difference as docs/62 §3.)
         if "images" not in batch:
-            # float32, matching the dataset's own extraction in dtype and algorithm — but
-            # NOT bit-for-bit: the dataset built this on CPU in a worker, we build it on
-            # CUDA, and the 256→518 bilinear `F.interpolate` differs by up to 1 ULP
-            # (measured 5.96e-08 = 2^-24 on values in [0,1]; docs/62 §3). Everything else —
-            # dtype, align_corners, the *255→clamp→/255 order, RGB replication — matches
-            # exactly. Only reachable with BOTH affine and respiratory off, which nothing
-            # ships, and 6e-8 is ~5 orders below the bf16 the model computes in.
-            # (The augmented branches below extract from the fp16 `phases` as they always
-            # have, and ARE bit-identical to pre-deferral — proven in docs/62 §2.1.)
-            phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
-            images = extract_slices_from_phases(
-                phases_cur, batch["timesteps"], batch["slice_indices"])
-            batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
+            batch["images"] = _resize_to_model_res(native, R)
         return batch
 
     phases = batch["phases"]                 # (B, T, D, H, W) any float
@@ -496,22 +519,26 @@ def gpu_augment_batch(batch, transforms, device,
             train=train, seq_index=seq_index, generator=resp_generator, group_ids=group_ids,
             n_planes=D,
         )                                                       # (B,S,3) mm, (B,S) phase
-        images = extract_slices_with_respiratory_vec(
+        # Extract ONCE at native resolution (the resp-CORRUPTED slices — never clean
+        # phases[t, z]: that would leak the target); the model input is a resample of it.
+        native = extract_slices_with_respiratory_vec(
             phases_cur, batch["timesteps"], batch["slice_indices"], disp,
-            spacing=(dz, 1.4, 1.4),
-        )                                                       # (B, S, 518, 518, 3) [0,255]
-        batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
+            spacing=(dz, 1.4, 1.4), out_size=phases_cur.shape[-1])[..., 0] / 255.0
+        batch["images_splat"] = native
+        batch["images"] = _resize_to_model_res(native, R)
         # Surface per-slot displacement (canonical D,H,W mm) + respiratory phase r for
         # diagnostics only — captions + the resp scalar. Inert for model/loss (read-only).
         batch["resp_disp_mm"] = disp
         batch["resp_r"] = resp_r
-    elif affine_applied or "images" not in batch:
-        # `"images" not in batch` covers the deferred case where the affine BUILD failed
-        # (caught above, affine_applied stays False) and respiratory is off — without it the
-        # batch would reach the model with no input at all.
+    else:
+        # Respiratory off: always build the native content for the loss splat; rebuild the
+        # model input only when needed (`affine_applied`, or deferred/affine-failed batches
+        # where `images` is absent — without it the batch would reach the model with no input).
         phases_cur = batch["phases"].to(device=device, non_blocking=True)
-        images = extract_slices_from_phases(
+        native = extract_slices_from_phases(
             phases_cur, batch["timesteps"], batch["slice_indices"],
-        )                                                       # (B, S, 518, 518, 3) [0,255]
-        batch["images"] = images.permute(0, 1, 4, 2, 3).contiguous() / 255.0
+            out_size=phases_cur.shape[-1])[..., 0] / 255.0
+        batch["images_splat"] = native
+        if affine_applied or "images" not in batch:
+            batch["images"] = _resize_to_model_res(native, R)
     return batch

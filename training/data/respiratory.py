@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-INPUT_IMG_SIZE = 518          # DINOv2 input — must match MRIDataset.target_size
+INPUT_IMG_SIZE = 518          # legacy default for standalone callers (gpu_augment_batch passes out_size)
 SPACING_MM = (12.0, 1.4, 1.4)  # (D=Z, H=Y, W=X) mm — canonical cube (Z=true CMRx pitch, was thickness 8.0)
 
 
@@ -314,7 +314,8 @@ def _norm_delta(d_mm, spacing_mm, size):
     return (d_mm / spacing_mm) * (2.0 / (size - 1))
 
 
-def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing):
+def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing,
+                                        out_size=None):
     """Reslice S input slices per batch element with a per-slot CANONICAL 3-vector
     displacement (the general, rotation-aware core). Drop-in for
     `gpu_aug.extract_slices_from_phases` (identical output contract).
@@ -330,8 +331,11 @@ def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing)
             any non-12mm subject (e.g. 8mm -> 33% too small); a missed call site must
             now raise instead of silently corrupting the applied breathing shift.
 
+    out_size: model-input resolution, as in `gpu_aug.extract_slices_from_phases`
+        (default: module INPUT_IMG_SIZE; at out_size == H the resize is an identity).
+
     Returns:
-        (B, S, 518, 518, 3) float in [0, 255] — RGB-replicated (ready for
+        (B, S, out_size, out_size, 3) float in [0, 255] — RGB-replicated (ready for
         `permute(0,1,4,2,3)/255`).
 
     Sign convention: d > 0 samples the volume at coord `+ d_vox` (so deeper anatomy
@@ -372,12 +376,14 @@ def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing)
         inp, grid, mode="bilinear", padding_mode="zeros", align_corners=True,
     ).view(N, 1, H, W)                                        # (N,1,256,256)
 
-    # Tail mirrors extract_slices_from_phases: upsample 256→518, scale, RGB-replicate.
-    up = F.interpolate(resliced, size=(INPUT_IMG_SIZE, INPUT_IMG_SIZE),
-                       mode="bilinear", align_corners=True)   # (N,1,518,518)
-    up = up.view(B, S, INPUT_IMG_SIZE, INPUT_IMG_SIZE)
+    if out_size is None:
+        out_size = INPUT_IMG_SIZE
+    # Tail mirrors extract_slices_from_phases: resize 256→out_size, scale, RGB-replicate.
+    up = F.interpolate(resliced, size=(out_size, out_size),
+                       mode="bilinear", align_corners=True)   # (N,1,out,out)
+    up = up.view(B, S, out_size, out_size)
     up = (up * 255.0).clamp(0.0, 255.0)
-    return up.unsqueeze(-1).expand(B, S, INPUT_IMG_SIZE, INPUT_IMG_SIZE, 3)
+    return up.unsqueeze(-1).expand(B, S, out_size, out_size, 3)
 
 
 def extract_slices_with_respiratory(

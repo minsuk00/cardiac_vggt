@@ -172,6 +172,10 @@ def reconstruct_from_bundle(model, phases_bundle, bbox, rcfg, seq_index, breathi
             ref_up = F.interpolate(phases_bundle[t, z_mid][None, None].float(), size=(hw, hw),
                                    mode="bilinear", align_corners=True)  # (1,1,518,518) in [0,1]
             batch["images"][:, 0] = ref_up.repeat(1, 3, 1, 1)
+            # Aug-off pass rebuilds images_splat for the CURRENT timesteps (slot 0 = phase t)
+            # so the clean arm renders native, same as the breathing arm — one splat pipeline
+            # for both protocols (native-splat port, docs/73).
+            batch = gpu_augment_batch(batch, None, device, respiratory_cfg=None, train=False)
         batch["gt_target_volume"] = phases_bundle[t].unsqueeze(0)   # (1,D,H,W) = V_gt at phase t
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)

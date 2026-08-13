@@ -85,7 +85,7 @@ except ImportError:  # pragma: no cover — monai is a hard dep after this refac
 # fixed D anymore: each subject's canonical grid is (D, 256, 256) with D = that
 # subject's own native slice count (docs/58).
 CANONICAL_HW = (TARGET_SHAPE[1], TARGET_SHAPE[0])  # (256, 256)
-INPUT_IMG_SIZE = 518  # DINOv2 patch_embed expects 518×518 (37 × 14)
+INPUT_IMG_SIZE = 518  # default model-input resolution (37×14; any multiple of 14 runs — docs/73)
 
 
 class MRIDataset(Dataset):
@@ -122,28 +122,19 @@ class MRIDataset(Dataset):
         self.split_file = os.path.abspath(split_file) if split_file else None
         self.mode = mode
         self.num_slices = num_slices
-        # Input-image resolution R. HALF-THREADED — this is the honest statement (docs/62
-        # §5.5). `get_data`'s own upsample and the `scanner_coords` normalization read it,
-        # but the two paths that actually build `images` in training do NOT:
-        # `gpu_aug.extract_slices_from_phases` and `respiratory.extract_slices_with_*` both
-        # hardcode their module-level `INPUT_IMG_SIZE = 518`. Under `defer_input_images`
-        # (the train default) those are the ONLY builders, so a non-518 R yields
-        # `images` at 518 against `scanner_coords` at R and trips the shape assert in the
-        # loss — or, under `python -O`, a broadcast RuntimeError deep in the step.
-        # Before 2026-08-01 `target_size` was assigned and never read, so a non-518 value
-        # was silently IGNORED; the refactor turned that no-op into a late crash. Reject it
-        # here instead, at construction, where the message can say why.
-        # ⚠️ R must also be a multiple of the DINOv2 patch size (14): 518 = 37×14, and the
-        # pretrained position embeddings would need interpolating for any R != 518, so a
-        # real change starts a fresh numeric series — it is not a free knob.
+        # Input-image resolution R (config `img_size`). Fully threaded since the native-splat
+        # port (2026-08-13): `get_data`'s own resize and the `scanner_coords` normalization
+        # read it here, and `gpu_aug`/`respiratory` extraction derive R from the batch's own
+        # scanner_coords (`R = batch["scanner_coords"].shape[-2]`), so every `images`
+        # builder matches. Any
+        # multiple of the DINOv2 patch size (14) runs — the pretrained position embeddings
+        # are interpolated dynamically. 224 is trained/validated (docs/72); changing R starts
+        # a fresh numeric series — it is not a free knob for comparisons.
         self.target_size = int(target_size)
-        if self.target_size != INPUT_IMG_SIZE:
+        if self.target_size % 14 != 0 or self.target_size <= 0:
             raise ValueError(
-                f"target_size={self.target_size} is not supported: it is only half-threaded. "
-                f"`gpu_aug.INPUT_IMG_SIZE` and `respiratory.INPUT_IMG_SIZE` are hardcoded to "
-                f"{INPUT_IMG_SIZE}, and under defer_input_images they are what build `images`, "
-                f"so `images` would be {INPUT_IMG_SIZE}px against {self.target_size}px "
-                f"scanner_coords. To really change R, thread it through both modules first."
+                f"target_size={self.target_size} must be a positive multiple of the DINOv2 "
+                f"patch size (14), e.g. 224 (16²) / 252 (18²) / 518 (37² tokens)."
             )
         # See the block in get_data: skip building `images` because the trainer's
         # gpu_augment_batch re-extracts them on GPU regardless. Training sets this true;

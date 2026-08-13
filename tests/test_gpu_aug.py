@@ -306,9 +306,12 @@ def test_affine_plus_resp_single_extraction(monkeypatch):
     t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
     g = torch.Generator(device=DEVICE).manual_seed(1)
     out = gpu_augment_batch(_fake_batch(), t, DEVICE, respiratory_cfg=_resp_cfg(), train=True, resp_generator=g)
+    # ONE resp extraction, at native resolution (-> images_splat); the model input is a
+    # resample of it. The affine slice-extractor must still NOT run (wasted + discarded).
     assert calls["resp"] == 1 and calls["plain"] == 0
     # gt/bbox were re-derived by affine; images carry breathing.
     assert out["images"].shape == (2, 8, 3, 518, 518)
+    assert out["images_splat"].shape == (2, 8, 256, 256)
 
 
 # ── defer_input_images contract ───────────────────────────────────────────────

@@ -34,6 +34,8 @@ config_name: "mri_volume"
 
 split: "train"
 mode: "train"
+# Model-input resolution: any multiple of 14. 518 = 37² tokens (original VGGT), 224 = 16²
+# (≈3-6× faster, half the VRAM — docs/72). Changing it starts a fresh numeric series.
 img_size: 518
 seed_value: 42
 num_workers: 4
@@ -396,6 +398,12 @@ loss:
     weight: 1.0
     # grid_shape is not a config param — compute_volume_intensity_loss derives it from
     # batch["gt_target_volume"].shape[1:] (D varies per subject, native-z, docs/58).
+    #
+    # Note: the splat always renders NATIVE 256² slice content (batch["images_splat"],
+    # docs/73) — the predicted field is resampled to the native grid in the loss. Not a
+    # knob; series break vs pre-2026-08-13 runs: ~0.1 dB PSNR at 518, and coverage-derived
+    # metrics (metric_coverage_*, hole_frac_heart's absolute 0.5 threshold) see ~4.1× fewer
+    # splatted points at 518 — never compare hole_frac/coverage across the port.
     #
     # WARP REGULARIZER = L2 DIFFUSION, not L1 TV (default as of 2026-08-01). Every recent
     # experiment — the whole docs/46 series of 100-epoch arms (control0/nogather, gather05,
