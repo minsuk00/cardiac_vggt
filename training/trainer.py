@@ -37,7 +37,12 @@ from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 from train_utils.freeze import freeze_modules
 from train_utils.general import *
 from train_utils.logging import setup_logging
+from train_utils.notify import GradientCollapseAlarm, send_email
 from train_utils.optimizer import construct_optimizers
+
+# Fallback when `checkpoint.best_metric` is absent from a config. Heart-segmentation ROI
+# PSNR — a real anatomical mask; see the rationale in default.yaml's checkpoint block.
+_BEST_METRIC_DEFAULT = "metric_psnr_3d_heartseg"
 from train_utils.run_log import RunLog, file_md5
 from train_utils.val_logging import resp_offslab_stats, seq_index_to_subject
 from trainer_viz import TrainerVizMixin
@@ -470,6 +475,19 @@ class Trainer(TrainerVizMixin):
         self.model = instantiate(self.model_conf, _recursive_=False)
         self.loss = instantiate(self.loss_conf, _recursive_=False)
         self.gradient_clipper = instantiate(self.optim_conf.gradient_clip)
+        # docs/64 tripwire. Both pooled1337 runs sat at grad_aggregator < 1e-6 for ~70
+        # epochs (dead ReLU in the DPT head) while grad_point looked healthy, so nothing
+        # in the standard logging flagged it. One alarm per clipper group, keyed by the
+        # same name the clipper reports.
+        alarm_cfg = self.optim_conf.get("grad_collapse_alarm", None)
+        self._grad_alarms = {}
+        if alarm_cfg is None or alarm_cfg.get("enable", True):
+            thr = float(alarm_cfg.get("threshold", 1e-6)) if alarm_cfg else 1e-6
+            pat = int(alarm_cfg.get("patience", 200)) if alarm_cfg else 200
+            watch = list(alarm_cfg.get("modules", ["aggregator"])) if alarm_cfg else ["aggregator"]
+            for name in watch:
+                self._grad_alarms[name] = GradientCollapseAlarm(
+                    threshold=thr, patience=pat, name=name)
         # GradScaler only helps fp16 (prevents underflow). bf16 has fp32 range, so loss
         # scaling is dead weight — disable to keep the train loop honest.
         self.scaler = torch.amp.GradScaler("cuda",
@@ -509,6 +527,47 @@ class Trainer(TrainerVizMixin):
         if self.mode in ["train"]:
             self.train_dataset = instantiate(self.data_conf.train, _recursive_=False)
             self.train_dataset.seed = self.seed_value
+
+    def _maybe_save_best_checkpoint(self):
+        """Keep a WEIGHTS-ONLY `checkpoint_best.pt` for the best val epoch so far.
+
+        Why this exists (docs/64): both pooled1337 runs peaked around epoch 10-15 and then
+        collapsed permanently at epoch ~17. With `save_freq=50` the only files on disk were
+        `checkpoint_50.pt` and `checkpoint_last.pt` — BOTH post-collapse. The best weights
+        either run ever produced were never written anywhere and are unrecoverable.
+
+        Weights-only on purpose: a best checkpoint is for evaluating/deploying, never for
+        resuming (`checkpoint_last.pt` is the resume path). That keeps it ~3.8 GB instead of
+        ~8.9 GB — and this repo has already hit `Disk quota exceeded` mid-run — and it also
+        sidesteps the docs/37 trap where `resume_checkpoint_path` restores `prev_epoch` and
+        silently does zero training.
+        """
+        if not self.checkpoint_conf.get("save_best", True):
+            return
+        value = getattr(self, "_last_val_metric", None)
+        if value is None or not math.isfinite(value):
+            return
+        higher_is_better = self.checkpoint_conf.get("best_metric_higher_is_better", True)
+        prev = getattr(self, "_best_val_metric", None)
+        improved = prev is None or (value > prev if higher_is_better else value < prev)
+        if not improved:
+            return
+        self._best_val_metric = value
+        try:
+            path = os.path.join(self.checkpoint_conf.save_dir, "checkpoint_best.pt")
+            safe_makedirs(self.checkpoint_conf.save_dir)
+            tmp = path + ".tmp"
+            # Write-then-rename: a kill mid-write must not destroy the previous best.
+            torch.save({"model": self.model.state_dict(),
+                        "prev_epoch": int(self.epoch),
+                        "best_metric_name": self.checkpoint_conf.get(
+                            "best_metric", _BEST_METRIC_DEFAULT),
+                        "best_metric_value": float(value)}, tmp)
+            os.replace(tmp, path)
+            logging.info(f"[checkpoint] new best {self.checkpoint_conf.get('best_metric', _BEST_METRIC_DEFAULT)}"
+                         f"={value:.4f} at epoch {int(self.epoch)} -> {path}")
+        except Exception as e:
+            logging.warning(f"[checkpoint] best-checkpoint save failed (ignored): {e}")
 
     def save_checkpoint(self, epoch: int, checkpoint_names: Optional[List[str]] = None):
         """
@@ -659,6 +718,7 @@ class Trainer(TrainerVizMixin):
             # Skips validation after the last training epoch, as it can be run separately.
             if self.epoch % self.val_epoch_freq == 0 and self.epoch < self.max_epochs - 1:
                 self.run_val()
+                self._maybe_save_best_checkpoint()
 
             self.epoch += 1
 
@@ -832,6 +892,12 @@ class Trainer(TrainerVizMixin):
             # instead — that is what this logged before the guard existed.
             value = meter.avg if meter.count else float("nan")
             self._log_scalar(self._scalar_name("val", raw_name), value, current_train_step)
+            # Capture the best-checkpoint selection metric (default: heart-seg ROI PSNR, a
+            # real anatomical mask — see default.yaml's checkpoint block). Deliberately not
+            # bbox/full: those are dominated by static tissue the model gets for free and
+            # look fine even when zero motion correction is happening.
+            if raw_name == self.checkpoint_conf.get("best_metric", _BEST_METRIC_DEFAULT):
+                self._last_val_metric = value
 
         # ── Per-phase val PSNR (only when t_target is varying) ──
         # Metric name bakes in n and the identity baseline:
@@ -1057,6 +1123,12 @@ class Trainer(TrainerVizMixin):
                     if self.steps[phase] % self.logging_conf.log_freq == 0:
                         # Logged under train/optim/ alongside lr + where (gradient norms are optimizer diagnostics).
                         self._log_scalar(f"train/optim/grad_{key}", grad_norm, self.steps[phase])
+                    # docs/64 tripwire: a dead ReLU in the DPT head silently severs the
+                    # gradient to the aggregator. Fed EVERY step (not on log_freq) so the
+                    # patience counter counts real steps.
+                    alarm = self._grad_alarms.get(key)
+                    if alarm is not None:
+                        alarm.update(grad_norm, self.steps[phase], epoch=self.epoch)
 
             # Optimizer step
             for optim in self.optims:
