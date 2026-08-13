@@ -2,7 +2,7 @@ _XCAT
 scratch
 /data
 /eval
-/baselines/svr
+/baselines/fc_svr
 setup.md
 .vscode/
 _archive/

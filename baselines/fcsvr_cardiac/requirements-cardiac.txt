@@ -1,0 +1,3 @@
+# The cardiac entrypoints use the repository's active PyTorch environment.
+torch-interpol==0.2.4
+wandb==0.25.0
