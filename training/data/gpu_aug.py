@@ -89,8 +89,14 @@ def build_gpu_transforms(aug_cfg=None):
 
     tier = getattr(aug_cfg, "tier", "conservative")
     logging.info(f"GPU augmentation enabled: tier={tier}")
-    keys = ["phases", "content_mask"]
-    mode_dict = {"phases": "bilinear", "content_mask": "nearest"}
+    # ARM heart-L1 fix (2026-08-11): `heart_roi_canonical` MUST be warped by the same spatial
+    # affine as `phases`/`content_mask` — the heart-L1 loss reads it at TRAIN time against the
+    # augmented gt_target_volume, and an unwarped ROI is misaligned with the rotated heart
+    # (moderate tier rotates ±180°). batchaug tolerates missing keys (base.py `if key in d`),
+    # so subjects without an ROI pass through unchanged. Photometric ops stay phases-only.
+    keys = ["phases", "content_mask", "heart_roi_canonical"]
+    mode_dict = {"phases": "bilinear", "content_mask": "nearest",
+                 "heart_roi_canonical": "nearest"}
 
     if tier == "conservative":
         # Conservative tier — IN-DISTRIBUTION-PRIORITY (mild). Broadens the natural orientation
@@ -313,6 +319,13 @@ def gpu_augment_batch(batch, transforms, device,
         # batchaug grid_sample needs float; mask keeps 0/1 under nearest interp.
         mask_f = mask.to(device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
         aug_dict = {"phases": phases_f, "content_mask": mask_f}
+        # ARM heart-L1 fix: warp the train-time loss ROI with the same affine (nearest).
+        # get_data omits the key for subjects without a valid ROI — then nothing is added
+        # and the batchaug transforms skip it (missing keys are tolerated).
+        heart_roi = batch.get("heart_roi_canonical")
+        if heart_roi is not None:
+            aug_dict["heart_roi_canonical"] = heart_roi.to(
+                device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
         try:
             aug_dict = transforms(aug_dict)
         except Exception as e:
@@ -338,6 +351,11 @@ def gpu_augment_batch(batch, transforms, device,
 
             batch["phases"] = phases_aug.to(phases.dtype)
             batch["content_mask"] = mask_aug_u8
+            # ARM heart-L1 fix: write the warped ROI back (same 0.5-threshold → uint8 as the
+            # content mask; nearest interp keeps it 0/1 but the threshold is cheap insurance).
+            if heart_roi is not None and "heart_roi_canonical" in aug_dict:
+                batch["heart_roi_canonical"] = (
+                    aug_dict["heart_roi_canonical"].squeeze(1) > 0.5).to(torch.uint8)
             batch["gt_target_volume"] = gt_target_volume
             batch["anatomy_bbox"] = bboxes
             affine_applied = True

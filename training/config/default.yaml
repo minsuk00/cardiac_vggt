@@ -150,6 +150,7 @@ logging:
         - loss_pos_tv
         - loss_diffusion
         - loss_gather
+        - loss_heart
         # Full-volume metrics (averaged over all D·H·W voxels; D is this subject's own
         # native slice count under native-z, so the voxel count VARIES per subject).
         - metric_mae_3d_full
@@ -174,6 +175,7 @@ logging:
         - loss_pos_tv
         - loss_diffusion
         - loss_gather
+        - loss_heart
         - metric_mae_3d_full
         - metric_mse_3d_full
         - metric_psnr_3d_full
@@ -226,6 +228,21 @@ checkpoint:
   save_freq: 50  # 3 numbered archives over 200 epochs (50/100/150) + checkpoint_last each epoch
   resume_checkpoint_path: "./scratch/base_weights/vggt1b_base.pt"
   strict: false
+  # Keep the best val epoch's WEIGHTS (docs/64). Both pooled1337 runs peaked at epoch ~10-15
+  # then collapsed at ~17; with save_freq=50 the only files on disk were post-collapse, so the
+  # best weights were lost outright. Weights-only (~3.8GB, not 8.9GB) — a best checkpoint is
+  # for evaluating, never for resuming (that is checkpoint_last.pt).
+  save_best: true
+  # Heart-segmentation ROI PSNR: a real anatomical mask, preferred over the motion-mask
+  # metrics for selecting weights. NOTE docs/experiment_evaluation_instruction.md §3.3 warns
+  # not to AVERAGE this ACROSS subjects (79% of its between-subject spread is intrinsic scan
+  # difficulty). That caveat does not apply here: val is deterministic, so every epoch scores
+  # the identical 266 subject/phase pairs and the scan-difficulty term is a constant offset
+  # that cancels in an epoch-vs-epoch comparison. Measured 0% NaN over all 266 rows.
+  # (`metric_psnr_seg_gain_db` — same ROI, referenced to each subject's own identity floor —
+  # is the more robust choice if val composition ever stops being fixed.)
+  best_metric: metric_psnr_3d_heartseg
+  best_metric_higher_is_better: true
 
 # ── Data ──────────────────────────────────────────────────────────────────────────────────
 data:
@@ -390,6 +407,29 @@ loss:
     # 0.5 is the DEFAULT as of 2026-08-01: docs/46 §3 C1 kept the gather arm (no_gather −0.15 dB
     # in-dist p=0.013, −0.12 pooled OOD) and docs/45 found it decisive for breathing quality.
     gather_weight: 0.5
+    # ── ARM heart-L1 (docs/69 follow-up) ────────────────────────────────────────────────
+    # ADDITIVE heart-ROI L1 on top of the full-volume L1 (NOT a mask — the masked variant was
+    # removed for letting the model paint ghost blobs where V_gt==0; see loss.py).
+    # Rationale: the heart is only ~4.5-6.5% of the volume (metric_heartseg_frac, native-z), so
+    # ~95% of the full-L1 gradient goes to tissue that does not move with the heart.
+    # SCALE — read this before changing the number. Both terms are per-voxel MEANS over
+    # DIFFERENT voxel counts, so `heart_weight` is NOT a mild relative nudge. A heart voxel's
+    # effective per-voxel weight is `1 + heart_weight/heartseg_frac`, and heartseg_frac ~0.05:
+    #     w=0.05 -> ~2.0x background, heart ~50% of gradient   (mild)
+    #     w=0.10 -> ~3.0x background, heart ~67% of gradient
+    #     w=0.25 -> ~6.0x background, heart ~83% of gradient
+    #     w=0.50 -> ~11x  background, heart ~91% of gradient   (STRONG — near-masked regime)
+    # At 0.5 the background retains only ~9% of the gradient, which is close to the masked
+    # variant that produced ghost blobs. If that shows up in the V_canon-V_gt panel, drop to
+    # ~0.05-0.10 rather than removing the term.
+    # NATIVE-Z ONLY: under the fixed12 hub wrapper the ROI stays at native D while phases are
+    # padded to 12, so get_data drops the key and loss.py raises rather than silently no-op.
+    # ⚠️ Makes metric_psnr_3d_heartseg a training target — judge on amp_ratio / motion PSNR.
+    # DEFAULT 0.5 per the docs/71 verdict: fastest measured amplitude bootstrap (~8.9k steps
+    # vs 43.9k unweighted), offline amp_ratio 0.640 vs 0.114 control, best motion PSNR.
+    # Watch the V_canon-V_gt panel for ghost blobs (near-masked regime); fall back to
+    # 0.05-0.10 if they appear, per the scale table above.
+    heart_weight: 0.5
 
 # ── Optimizer ─────────────────────────────────────────────────────────────────────────────
 # AGGREGATOR FINETUNE (aggft) — required for reference-slice conditioning. Reference
@@ -407,6 +447,18 @@ optim:
   amp:
     enabled: true
     amp_dtype: bfloat16
+  # Tripwire for the docs/64 failure: a dead ReLU in the DPT head severs the gradient to
+  # the aggregator, so the run freezes while grad_point still LOOKS healthy (it is only the
+  # final conv's bias). Both pooled1337 arms ran ~70 dead epochs on 2 GPUs unnoticed.
+  # Calibration (measured): healthy grad_aggregator median is 1e-2..8e-2, and even a badly
+  # degraded arm reads ~6e-5 — so <=1e-6 sustained for 200 steps cannot happen in a live run.
+  # Alarms email $VGGT_NOTIFY_EMAIL (default minsukc@umich.edu) ONCE, then training continues.
+  grad_collapse_alarm:
+    enable: true
+    threshold: 1.0e-6
+    patience: 200
+    modules: ["aggregator"]
+
   gradient_clip:
     _target_: train_utils.gradient_clip.GradientClipper
     configs:
