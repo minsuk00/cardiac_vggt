@@ -1,7 +1,7 @@
 """Regenerate heart_seg_canonical.nii.gz / heart_roi_canonical.nii.gz on the native-z (256,256,D)
 grid for all already-segmented cmrx/acdc_sax/mnms_sax units (docs/58 A6).
 
-The per-frame nnU-Net outputs used by sbatch/whs_segment.sh live on node-local $TMPDIR and are
+The per-frame nnU-Net outputs used by sbatch/_archive/whs_segment.sh live on node-local $TMPDIR and are
 deleted after each unit -- this reads the persisted native-space heart_seg.nii.gz sibling instead
 (same affine as the per-frame segs it was stacked from) and rebuilds the canonical siblings from
 it. No GPU / nnU-Net rerun needed. CPU-only; run directly, not via sbatch.
