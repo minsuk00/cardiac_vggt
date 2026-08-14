@@ -17,12 +17,12 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
         self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True, use_z_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
         gradient_checkpointing=True,
-        warp_head_type="dpt", bspline_grid_size=32, **kwargs
+        warp_head_type="dpt", bspline_grid_size=32, backbone="dinov2_vitl14_reg", **kwargs
     ):
         super().__init__()
         self.train_on_residual_dvf = train_on_residual_dvf
 
-        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_reference_token=use_reference_token, gradient_checkpointing=gradient_checkpointing)
+        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, use_z_pose_embedding=use_z_pose_embedding, use_reference_token=use_reference_token, gradient_checkpointing=gradient_checkpointing)
 
         point_activation = "linear" if train_on_residual_dvf else "inv_log"
         if not enable_point:
@@ -31,7 +31,7 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             # Smooth-by-construction warp head: coarse control grid + B-spline upsample.
             self.point_head = BSplineWarpHead(dim_in=2 * embed_dim, patch_size=patch_size, grid_size=bspline_grid_size, output_dim=4, activation=point_activation, conf_activation="expp1")
         elif warp_head_type == "dpt":
-            self.point_head = DPTHead(dim_in=2 * embed_dim, output_dim=4, activation=point_activation, conf_activation="expp1")
+            self.point_head = DPTHead(dim_in=2 * embed_dim, patch_size=patch_size, output_dim=4, activation=point_activation, conf_activation="expp1")
         else:
             raise ValueError(f"Unknown warp_head_type: {warp_head_type!r} (expected 'dpt' or 'bspline')")
 

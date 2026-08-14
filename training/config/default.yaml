@@ -34,9 +34,11 @@ config_name: "mri_volume"
 
 split: "train"
 mode: "train"
-# Model-input resolution: any multiple of 14. 518 = 37² tokens (original VGGT), 224 = 16²
+# Model-input resolution: any multiple of patch_size. 518 = 37² tokens (original VGGT), 224 = 16²
 # (≈3-6× faster, half the VRAM — docs/72). Changing it starts a fresh numeric series.
 img_size: 518
+patch_size: 14
+backbone: "dinov2_vitl14_reg"
 seed_value: 42
 num_workers: 4
 
@@ -274,6 +276,7 @@ data:
           mri_mode: ${mri_mode}
           num_slices: 20
           target_size: ${img_size}
+          patch_size: ${patch_size}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
@@ -305,6 +308,7 @@ data:
           mri_mode: ${mri_mode}
           num_slices: 20
           target_size: ${img_size}
+          patch_size: ${patch_size}
           t_target_fixed: ${t_target_fixed}
           t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
@@ -388,6 +392,9 @@ data:
 # ── Model ─────────────────────────────────────────────────────────────────────────────────
 model:
   _target_: vggt.models.vggt.VGGT
+  img_size: ${img_size}
+  patch_size: ${patch_size}
+  backbone: ${backbone}
   enable_point: true
   # 224 fits on an A40 without activation checkpointing and runs faster. Keep this enabled
   # for higher input resolutions: 518 without checkpointing OOMs, and 294 is near the A40 limit.

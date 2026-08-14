@@ -88,6 +88,18 @@ CANONICAL_HW = (TARGET_SHAPE[1], TARGET_SHAPE[0])  # (256, 256)
 INPUT_IMG_SIZE = 518  # default model-input resolution (37×14; any multiple of 14 runs — docs/73)
 
 
+def validate_patch_grid(target_size, patch_size):
+    target_size = int(target_size)
+    patch_size = int(patch_size)
+    if patch_size <= 0:
+        raise ValueError(f"patch_size={patch_size} must be positive.")
+    if target_size <= 0 or target_size % patch_size:
+        raise ValueError(
+            f"target_size={target_size} must be a positive multiple of patch_size={patch_size}."
+        )
+    return target_size, patch_size
+
+
 class MRIDataset(Dataset):
     def __init__(
         self,
@@ -110,6 +122,7 @@ class MRIDataset(Dataset):
         cardiac_phase_csv=None,
         defer_input_images=False,
         intensity_percentiles=(0.5, 99.9),
+        patch_size=14,
     ):
         """
         Args mirrors the legacy MRIDataset for Hydra-config compatibility.
@@ -128,15 +141,10 @@ class MRIDataset(Dataset):
         # read it here, and `gpu_aug`/`respiratory` extraction derive R from the batch's own
         # scanner_coords (`R = batch["scanner_coords"].shape[-2]`), so every `images`
         # builder matches. Any
-        # multiple of the DINOv2 patch size (14) runs — the pretrained position embeddings
-        # are interpolated dynamically. 224 is trained/validated (docs/72); changing R starts
+        # multiple of the configured patch size runs — the pretrained position embeddings
+        # are interpolated dynamically. 224 is trained/validated for DINOv2 (docs/72); changing R starts
         # a fresh numeric series — it is not a free knob for comparisons.
-        self.target_size = int(target_size)
-        if self.target_size % 14 != 0 or self.target_size <= 0:
-            raise ValueError(
-                f"target_size={self.target_size} must be a positive multiple of the DINOv2 "
-                f"patch size (14), e.g. 224 (16²) / 252 (18²) / 518 (37² tokens)."
-            )
+        self.target_size, self.patch_size = validate_patch_grid(target_size, patch_size)
         # See the block in get_data: skip building `images` because the trainer's
         # gpu_augment_batch re-extracts them on GPU regardless. Training sets this true;
         # anything that calls get_data WITHOUT going through gpu_augment_batch must leave
