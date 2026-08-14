@@ -7,7 +7,6 @@ config_name: "mri_volume_dinov3"
 
 backbone: "dinov3_vitl16"
 img_size: 256
-patch_size: 16
 
 checkpoint:
   # One-time exact VGGT-1B/DINOv3 hybrid built by tools/build_dinov3_seed.py.
