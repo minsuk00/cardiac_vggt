@@ -389,6 +389,9 @@ data:
 model:
   _target_: vggt.models.vggt.VGGT
   enable_point: true
+  # 224 fits on an A40 without activation checkpointing and runs faster. Keep this enabled
+  # for higher input resolutions: 518 without checkpointing OOMs, and 294 is near the A40 limit.
+  gradient_checkpointing: true
   use_z_pose_embedding: ${use_z_pose_embedding}
   use_reference_token: ${use_reference_token}
   train_on_residual_dvf: ${train_on_residual_dvf}
@@ -509,12 +512,11 @@ optim:
           value: 0.05
 
 # ── CUDA ──────────────────────────────────────────────────────────────────────────────────
-# compile_attention_blocks: torch.compile the 48 aggregator attention blocks in place
-# (docs/40) — the ONLY worthwhile compile target measured: 1.28x on the full train step
-# (L40S 2255 → 1761 ms/step; A40 3940 → 3092 ms) and -1.1 GB VRAM, for ~15-22 s of one-time
-# compile. Whole-model compile OOMs (it inlines through the per-block gradient checkpointing
-# and keeps all 48 blocks' activations live); compiling point_head is 3% SLOWER.
-# NOT bit-identical to eager: compile matches to ~4e-6 (bf16 reassociation) and fused AdamW
+# compile_attention_blocks: compile the 24 frozen DINO + 48 aggregator attention blocks
+# individually (docs/40). At 224 without checkpointing this measured 962 → 716 ms/step and
+# 26.24 → 23.01 GiB, with zero graph breaks and ~58 s cold compile. Whole-model compilation
+# takes minutes per unseen S; compiling the point head or loss does not help.
+# NOT bit-identical to eager: compiled BF16 operations reassociate, and fused AdamW
 # reorders its update, so these two start a fresh numeric series. Set both False to reproduce
 # a pre-2026-07-27 run exactly.
 cuda:

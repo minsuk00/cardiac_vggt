@@ -16,12 +16,13 @@ from vggt.models.aggregator import Aggregator
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
         self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True, use_z_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
+        gradient_checkpointing=True,
         warp_head_type="dpt", bspline_grid_size=32, **kwargs
     ):
         super().__init__()
         self.train_on_residual_dvf = train_on_residual_dvf
 
-        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_reference_token=use_reference_token)
+        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, use_z_pose_embedding=use_z_pose_embedding, use_reference_token=use_reference_token, gradient_checkpointing=gradient_checkpointing)
 
         point_activation = "linear" if train_on_residual_dvf else "inv_log"
         if not enable_point:
