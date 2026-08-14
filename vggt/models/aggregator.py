@@ -214,8 +214,13 @@ class Aggregator(nn.Module):
 
             if patch_embed not in vit_models:
                 raise ValueError(f"Unknown patch_embed/backbone: {patch_embed!r}")
+            # ALWAYS build DINOv2 at the checkpoint-native 518: img_size only sizes
+            # pos_embed, which every existing checkpoint (vggt1b_base.pt included) stores
+            # at 518 shape (1,1370,1024), and load_state_dict raises on a shape mismatch
+            # even with strict=False. Forward interpolates pos encodings dynamically, so
+            # any input resolution (224/336/...) runs regardless of this build size.
             self.patch_embed = vit_models[patch_embed](
-                img_size=img_size,
+                img_size=518,
                 patch_size=patch_size,
                 num_register_tokens=num_register_tokens,
                 interpolate_antialias=interpolate_antialias,
