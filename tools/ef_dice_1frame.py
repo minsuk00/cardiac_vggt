@@ -10,7 +10,7 @@ Two steps around one nnU-Net call:
                        named by INDEX (subject names contain '__'); writes ef_manifest.json.
   score <seg_dir>    : read Task114 segs -> per-subject EF(clean/breath/gt) + Dice; aggregate per cohort.
 
-Usage (see sbatch/ef_dice_ood.sh for the full chain):
+Usage (see sbatch/_archive/ef_dice_ood.sh for the full chain):
   python tools/ef_dice_1frame.py dump  <input_dir> --method <m> --cohorts miitt ocmr acdc
   # nnUNet_predict -t 114 -m 2d -tr nnUNetTrainerV2_MMS -i <input_dir> -o <seg_dir>   (nnunet env)
   python tools/ef_dice_1frame.py score <seg_dir> --input <input_dir> --out <ef.json>

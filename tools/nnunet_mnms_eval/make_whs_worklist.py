@@ -1,6 +1,6 @@
 """Emit the whole-heart-seg work-list: one line per (dataset, regime, recon-path) unit.
 
-Consumed by the sbatch array job `sbatch/whs_segment.sh` (line N -> array task N). A "unit" is one
+Consumed by the sbatch array job `sbatch/_archive/whs_segment.sh` (line N -> array task N). A "unit" is one
 subject-regime = one nnUNet_predict call over all its phases/frames. 421 units total:
 CMRx 301 (all subjects, split file) + MIITT 13 gated + 13 rt + OCMR 8 gated + 17 rtfb + Goettingen 69.
 

@@ -1,7 +1,7 @@
 """Prep ONE work unit (subject-regime, all phases/frames) into nnU-Net v1 Task114 inputs.
 
 Each phase/frame -> a 3D SAX volume `<out_dir>/f{ff:03d}_0000.nii.gz` (X,Y,Z, real affine). nnU-Net
-does its own per-image z-score, so raw intensities pass through. Called by `sbatch/whs_segment.sh`.
+does its own per-image z-score, so raw intensities pass through. Called by `sbatch/_archive/whs_segment.sh`.
 
   cmrx (native):  path = subject `sax/` dir; reads 12 `3d_recon/sax_frame_{tt}.nii.gz` (each 3D).
   others:         path = 4D recon NIfTI (X,Y,Z,T); one input per frame t.
