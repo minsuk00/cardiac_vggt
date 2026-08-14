@@ -16,6 +16,7 @@ from vggt.layers import PatchEmbed
 from vggt.layers.block import Block
 from vggt.layers.rope import PositionGetter, RotaryPositionEmbedding2D
 from vggt.layers.vision_transformer import vit_base, vit_giant2, vit_large, vit_small
+from vggt.models.dinov3 import DINOv3ViTL16PatchEmbed
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +200,10 @@ class Aggregator(nn.Module):
 
         if "conv" in patch_embed:
             self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=3, embed_dim=embed_dim)
+        elif patch_embed == "dinov3_vitl16":
+            if patch_size != 16:
+                raise ValueError(f"dinov3_vitl16 requires patch_size=16, got {patch_size}")
+            self.patch_embed = DINOv3ViTL16PatchEmbed(img_size=img_size)
         else:
             vit_models = {
                 "dinov2_vitl14_reg": vit_large,
@@ -207,6 +212,8 @@ class Aggregator(nn.Module):
                 "dinov2_vitg2_reg": vit_giant2,
             }
 
+            if patch_embed not in vit_models:
+                raise ValueError(f"Unknown patch_embed/backbone: {patch_embed!r}")
             self.patch_embed = vit_models[patch_embed](
                 img_size=img_size,
                 patch_size=patch_size,

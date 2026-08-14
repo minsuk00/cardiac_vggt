@@ -1,0 +1,2 @@
+# Optional dependency for training/config/exp_dinov3.yaml only.
+transformers==5.3.0

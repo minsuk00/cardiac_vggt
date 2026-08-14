@@ -1,0 +1,16 @@
+defaults:
+  - default
+  - _self_
+
+exp_name: "${rev_ts:}_mri_volume_dinov3_${mri_data_mode}_${mri_mode}_${dataset_name}"
+config_name: "mri_volume_dinov3"
+
+backbone: "dinov3_vitl16"
+img_size: 256
+patch_size: 16
+
+checkpoint:
+  # One-time exact VGGT-1B/DINOv3 hybrid built by tools/build_dinov3_seed.py.
+  # Strict loading guards against a missing backbone or target-only z-embedder tensors.
+  resume_checkpoint_path: "./scratch/base_weights/vggt1b_dinov3_vitl16_seed.pt"
+  strict: true
