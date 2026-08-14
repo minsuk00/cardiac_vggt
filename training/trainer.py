@@ -392,7 +392,13 @@ class Trainer(TrainerVizMixin):
         if agg is None:
             logging.warning("compile_attention_blocks requested but model has no aggregator; skipping.")
             return
-        dino_blocks = getattr(getattr(agg, "patch_embed", None), "blocks", None)
+        pe = getattr(agg, "patch_embed", None)
+        # The in-repo DINOv2 ViT stores its 24 layers at `.blocks`; the DINOv3 adapter
+        # (vggt/models/dinov3.py) wraps the HF DINOv3ViTModel at `.model`, whose layers
+        # live at `.layer` — cover both so neither backbone silently skips compilation.
+        dino_blocks = getattr(pe, "blocks", None)
+        if dino_blocks is None:
+            dino_blocks = getattr(getattr(pe, "model", None), "layer", None)
         n = 0
         for blocks in (dino_blocks, getattr(agg, "frame_blocks", None),
                        getattr(agg, "global_blocks", None)):
