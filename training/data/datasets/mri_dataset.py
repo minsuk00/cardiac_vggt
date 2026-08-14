@@ -109,6 +109,7 @@ class MRIDataset(Dataset):
         ef_val_sweep=False,
         cardiac_phase_csv=None,
         defer_input_images=False,
+        intensity_percentiles=(0.5, 99.9),
     ):
         """
         Args mirrors the legacy MRIDataset for Hydra-config compatibility.
@@ -141,6 +142,15 @@ class MRIDataset(Dataset):
         # anything that calls get_data WITHOUT going through gpu_augment_batch must leave
         # it false (the default) or it will get a batch with no `images` key.
         self.defer_input_images = bool(defer_input_images)
+        if len(intensity_percentiles) != 2:
+            raise ValueError("intensity_percentiles must be [lower, upper].")
+        self.intensity_percentiles = tuple(float(x) for x in intensity_percentiles)
+        lower, upper = self.intensity_percentiles
+        if not 0 <= lower < upper <= 100:
+            raise ValueError(
+                f"intensity_percentiles must satisfy 0 <= lower < upper <= 100, got "
+                f"{self.intensity_percentiles}."
+            )
         self.mri_mode = mri_mode
         self.t_target_fixed = t_target_fixed
         self.t_target_phases = list(t_target_phases) if t_target_phases is not None else None
@@ -214,7 +224,8 @@ class MRIDataset(Dataset):
         # Subdir keyed by content-defining params (spacing/shape/normalization) so a
         # normalization change routes to a fresh cache instead of silently reusing a
         # stale one (PersistentDataset hashes only the input dict, not the transform).
-        cache_dir = os.path.join(cache_dir or default_cache_dir(), cache_signature())
+        self.cache_signature = cache_signature(lower, upper)
+        cache_dir = os.path.join(cache_dir or default_cache_dir(), self.cache_signature)
         os.makedirs(cache_dir, exist_ok=True)
         data_dicts = build_data_dicts(self.subjects, num_phases=NUM_PHASES)
         self.cache = PersistentDataset(
@@ -223,6 +234,8 @@ class MRIDataset(Dataset):
                 target_spacing=TARGET_SPACING,
                 target_shape=TARGET_SHAPE,
                 num_phases=NUM_PHASES,
+                lower=lower,
+                upper=upper,
             ),
             cache_dir=cache_dir,
         )

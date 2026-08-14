@@ -54,6 +54,28 @@ def pick_one_index_per_source(subjects, max_picks=8):
     return tuple(picks)
 
 
+def pick_visual_indices(subjects, vendor_by_subject):
+    """Deterministic source/vendor coverage for validation visual panels."""
+    vendor_targets = {
+        "CMRx25": {"Siemens", "UIH", "Philips"},
+        "MNMs": {"Siemens", "GE", "Canon"},
+    }
+    seen, picks = set(), []
+    for i, path in enumerate(subjects):
+        src = subject_source(path)
+        if src in vendor_targets:
+            vendor = vendor_by_subject.get(subject_id(path))
+            if vendor not in vendor_targets[src]:
+                continue
+            key = (src, vendor)
+        else:
+            key = (src, None)
+        if key not in seen:
+            seen.add(key)
+            picks.append(i)
+    return tuple(picks)
+
+
 def seq_index_to_subject(mri_ds, seq_index):
     """(subject_id, source) for a val `seq_index`, mirroring `MRIDataset.get_data`.
 

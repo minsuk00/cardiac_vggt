@@ -10,11 +10,17 @@ helpers did not, and no test encoded the real layout, so nothing failed.
 Every test here therefore uses REAL-SHAPED paths, including the trailing "/sax".
 """
 
-import pytest
+from types import SimpleNamespace
 
+import numpy as np
+import pytest
+import torch
+
+from trainer_viz import TrainerVizMixin, _display_gamma
 from train_utils.val_logging import (
     pick_one_index_per_source,
     pick_planes,
+    pick_visual_indices,
     resp_offslab_stats,
     seq_index_to_subject,
     subject_id,
@@ -27,6 +33,13 @@ MNMS = "/root/MNMs_sax/MNMs_A9C5P4/sax"
 CMRX23 = "/root/CMRxRecon2023/Cine_combined/CMRx23_Train_P069/sax"
 CMRX24 = "/root/CMRxRecon2024/Cine_combined/CMRx24_Train_P011/sax"
 CMRX25 = "/root/CMRxRecon2025/Cine_combined/CMRx25_train_Center001_UIH_30T_umr780_P005/sax"
+
+
+def test_display_gamma_brightens_only_the_display_scale():
+    image = np.array([-1.0, 0.0, 0.5, 1.0, 2.0], dtype=np.float32)
+    shown = _display_gamma(image, vmax=1.0)
+    np.testing.assert_allclose(shown, [0.0, 0.0, 0.5 ** 0.7, 1.0, 1.0])
+    assert shown[2] > image[2]
 
 
 @pytest.mark.parametrize("path,expected", [
@@ -74,6 +87,61 @@ def test_pick_one_index_per_source_is_deterministic():
 def test_pick_one_index_per_source_respects_max():
     subjects = [ACDC, MNMS, CMRX23, CMRX24, CMRX25]
     assert len(pick_one_index_per_source(subjects, max_picks=3)) == 3
+
+
+def test_pick_visual_indices_covers_requested_source_vendors():
+    def path(sid):
+        return f"/root/data/{sid}/sax"
+
+    ids_and_vendors = [
+        ("ACDC_patient001", "Siemens"),
+        ("CMRx23_Train_P001", "Siemens"),
+        ("CMRx24_Train_P001", "Siemens"),
+        ("CMRx25_a", "Siemens"), ("CMRx25_b", "UIH"), ("CMRx25_c", "Philips"),
+        ("MNMs_a", "Siemens"), ("MNMs_b", "Philips"),
+        ("MNMs_c", "GE"), ("MNMs_d", "Canon"),
+    ]
+    subjects = [path(sid) for sid, _ in ids_and_vendors]
+    vendors = dict(ids_and_vendors)
+
+    picks = pick_visual_indices(subjects, vendors)
+
+    assert picks == (0, 1, 2, 3, 4, 5, 6, 8, 9)
+
+
+def test_ordinary_val_visuals_log_only_es_half_of_sweep():
+    class Viz(TrainerVizMixin):
+        _ED_ES_SUBJECTS = (0,)
+
+        def __init__(self):
+            self.logging_conf = SimpleNamespace(
+                log_visual_frequency={"val": 1}, log_visuals=True,
+                visuals_keys_to_log={"val": []},
+            )
+            self.steps = {"train": 7}
+            self._val_iter = 0
+            self.calls = []
+            self.ds = SimpleNamespace(subjects=[ACDC], val_targets=[(0, 0), (0, 6)])
+
+        def _get_mri_dataset(self):
+            return self.ds
+
+        def _log_volume_and_dvf_to_wandb(self, *args, **kwargs):
+            self.calls.append("volume")
+
+        def _log_lookup_to_wandb(self, *args, **kwargs):
+            self.calls.append("lookup")
+
+    viz = Viz()
+    viz._log_visuals_to_wandb({"seq_index": torch.tensor([[0]])}, "val", 0)
+    assert viz.calls == []
+
+    viz._log_visuals_to_wandb({"seq_index": torch.tensor([[1]])}, "val", 1)
+    assert viz.calls == ["volume", "lookup"]
+
+    viz.calls.clear()
+    viz._log_visuals_to_wandb({"seq_index": torch.tensor([[2]])}, "val", 2)
+    assert viz.calls == []
 
 
 @pytest.mark.parametrize("D", [5, 6, 8, 11, 12, 18, 21])

@@ -7,10 +7,16 @@ from data.preprocess import (
     TARGET_SHAPE,
     TARGET_SPACING,
     ScaleIntensityByT0PercentilesD,
+    cache_signature,
     compute_geometric_bbox,
     get_canonical_transforms,
     build_data_dicts,
 )
+
+
+def test_cache_signature_tracks_intensity_percentiles():
+    assert cache_signature() == cache_signature(0.5, 99.9)
+    assert cache_signature(2.0, 98.0) != cache_signature()
 
 
 # ── compute_geometric_bbox ────────────────────────────────────────────────────

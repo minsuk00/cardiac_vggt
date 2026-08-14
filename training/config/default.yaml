@@ -103,6 +103,9 @@ ef_val_sweep: true
 # MRIDataset's fallback is `${data_root}/../../whs/cardiac_phase.csv`, only correct when
 # data_root pointed two levels deeper (CMRxRecon2024/Cine_combined).
 cardiac_phase_csv: "/home/minsukc/vggt/scratch/data/whs/cardiac_phase.csv"
+# Phase-0 nonzero-FOV percentiles used to normalize every phase to [0, 1]. Changing these
+# changes model inputs, targets, metrics, cache contents, and checkpoint comparability.
+intensity_percentiles: [0.5, 99.9]
 
 # ── Logging ───────────────────────────────────────────────────────────────────────────────
 # Every scalar is ALSO mirrored to `${log_dir}/metrics.jsonl`, plus `run_meta.jsonl` and
@@ -117,9 +120,10 @@ logging:
   log_visual_frequency:
     train: 935  # once per epoch (matches limit_train_batches = train-split size)
     val: 200    # once per val epoch
-  # Cardiac filmstrip/GIF + ED/ES panels every N val epochs. At 1 the filmstrip does 12 subj-0
-  # model forwards per epoch (~4 h over 200 epochs); 3 gives finer cadence for shorter runs.
-  filmstrip_every_n_val_epochs: 3
+  # Nine source/vendor cardiac-cycle GIFs (12 forwards each) are expensive, so log less often.
+  filmstrip_every_n_val_epochs: 5
+  # Cheaper ED/ES and augmentation panels retain their original cadence.
+  visual_panels_every_n_val_epochs: 3
   # Predicted-EF metric (val-only; requires ef_val_sweep). false keeps the ED/ES sweep but
   # skips the segmentation.
   ef_eval_enable: true
@@ -276,6 +280,7 @@ data:
           continuous_z: ${continuous_z}
           one_frame_per_slice: ${one_frame_per_slice}
           z_jitter: ${z_jitter}
+          intensity_percentiles: ${intensity_percentiles}
           # The trainer's gpu_augment_batch re-extracts every input slice on GPU, so building
           # them on the CPU worker first is ~64 MB/sample of pure waste. Only safe because the
           # trainer ALWAYS calls gpu_augment_batch, which treats a missing `images` key as
@@ -306,6 +311,7 @@ data:
           continuous_z: ${continuous_z}
           one_frame_per_slice: ${one_frame_per_slice}
           z_jitter: ${z_jitter}
+          intensity_percentiles: ${intensity_percentiles}
           # NOT deferred on val (deliberately — see the train block). 12 scripts across
           # inference/ and tools/ instantiate THIS `data.val` node and then read
           # `get_data()["images"]` directly, bypassing gpu_augment_batch; deferring here

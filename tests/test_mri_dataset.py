@@ -63,6 +63,24 @@ def test_split_file_preserves_order(synthetic_root, common_conf, tmp_path, monai
     assert "Train_P001" in ds.subjects[1]
 
 
+def test_intensity_percentiles_are_configurable_and_validated(
+        synthetic_root, split_file, common_conf, monai_cache_dir):
+    from data.datasets.mri_dataset import MRIDataset
+    ds = MRIDataset(
+        common_conf, synthetic_root, split="val", split_file=split_file,
+        mode="dynamic", mri_mode="axial", cache_dir=monai_cache_dir,
+        intensity_percentiles=[2, 98],
+    )
+    assert ds.intensity_percentiles == (2.0, 98.0)
+
+    with pytest.raises(ValueError, match="lower < upper"):
+        MRIDataset(
+            common_conf, synthetic_root, split="val", split_file=split_file,
+            mode="dynamic", mri_mode="axial", cache_dir=monai_cache_dir,
+            intensity_percentiles=[99, 1],
+        )
+
+
 # ── 2. Frame file discovery ───────────────────────────────────────────────────
 
 def test_t_total_correct(train_ds):
