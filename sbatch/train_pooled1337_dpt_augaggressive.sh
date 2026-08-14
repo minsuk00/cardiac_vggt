@@ -151,7 +151,7 @@ else
             exit 1
         fi
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_dpt_${VARIANT_TAG}_dynamic_axial_pooled1337"
+        EXP_NAME="${REV_TS}_${VARIANT_TAG}_pooled1337"
         EXTRA_OVERRIDES="${RECIPE_OVERRIDES} ${AUG_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} checkpoint.resume_checkpoint_path=${CKPT_ONLY} ${EXTRA_OVERRIDES}"
         echo "Loading weights only from: $CKPT_ONLY (exp_name=${EXP_NAME}, fresh wandb run)"
@@ -161,7 +161,7 @@ else
         # requeues (the requeue branch replays this string; anything left implicit in the
         # config would silently revert if default.yaml were edited mid-run).
         REV_TS=$((2000000000 - $(date +%s)))
-        EXP_NAME="${REV_TS}_mri_volume_dpt_${VARIANT_TAG}_dynamic_axial_pooled1337"
+        EXP_NAME="${REV_TS}_${VARIANT_TAG}_pooled1337"
         EXTRA_OVERRIDES="${RECIPE_OVERRIDES} ${AUG_OVERRIDES}"
         OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
         echo "Fresh-from-base run: exp_name=${EXP_NAME}"
