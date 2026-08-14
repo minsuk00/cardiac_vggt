@@ -70,7 +70,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 - `t_target_phases: null` (default → all T phases) | list e.g. `[0,7]` → restrict the multi-phase target pool to that subset (train samples uniformly, val cycles it deterministically). **Mutually exclusive with `t_target_fixed`** (single-phase wins if both set).
 - `optim.frozen_module_names` — two regimes, guarded by `tests/test_freeze_pattern.py`: **head-only** (legacy) freezes the entire aggregator; **aggft** (all shipped configs) = `["*patch_embed*"]` — attention blocks, `z_embedder`, `camera_token`, `point_head` all train (~2.8× slower, ~27 GB/A40). Exact patterns: docs/65.
 - `model.train_on_residual_dvf: true` → point head outputs Δ; `world_points = scanner_coords + Δ`.
-- `logging.filmstrip_every_n_val_epochs: 3` → cadence for the multi-phase cardiac-cycle visualization (also gates the ED/ES panels and the augmentation panel).
+- `logging.filmstrip_every_n_val_epochs: 5` → cadence for the per-subject 12-phase cardiac-cycle GIFs; the cheaper ED/ES + augmentation panels use the independent `logging.visual_panels_every_n_val_epochs: 3` (docs/74).
 - `data.augmentation.enable: true` (default since 2026-07-31) | `false` → opt out of GPU augmentation. `data.augmentation.tier: conservative|moderate|aggressive` (default `moderate` — the docs/46 §3 C2 shipped arm). See "Augmentation" below.
 
 ## Volume pipeline (one forward pass)
@@ -142,6 +142,8 @@ Handy tools (full descriptions: docs/65): `tools/preview_canonical_preprocess.py
 - **Throwaway** one-off probe / sanity-check you won't rerun → scratchpad dir, NOT the repo.
 - **Might reuse, or an experiment script backing a `docs/` finding** → `tools/` (git-tracked; several `tools/exp_*`/`toy_*` are cited by docs as repro provenance).
 - **`evaluation/` is OFF-LIMITS for auto-adding** — it holds only standing eval code we always run. **NEVER add anything to `evaluation/` on your own initiative; the user decides what goes there.** Write to `tools/` and ask.
+
+**Where scratch outputs go**: one-off figures/JSON/logs → `temp/` (gitignored).
 
 **Evaluation & SVR baselines**: eval harness in `inference/` (`run_cmrxrecon.py`, `run_rtfb.py`, `adapters/`), classical SVR baselines in `baselines/`, frozen breathing-simulated harness in `evaluation/` (see its README; heavy data on gitignored GPFS). Rationale/protocol/results: docs/24 + docs/29–35. The `evaluation/` off-limits rule above applies to `evaluation/analysis/` too.
 

@@ -316,7 +316,7 @@ def build_data_dicts(subject_sax_dirs, num_phases: int = NUM_PHASES):
     return items
 
 
-def cache_signature() -> str:
+def cache_signature(lower: float = 0.5, upper: float = 99.9) -> str:
     """Short hash of the params that determine cached tensor *content*.
 
     monai `PersistentDataset` keys its cache on the input data dict (file paths),
@@ -330,7 +330,7 @@ def cache_signature() -> str:
     # `slice_order_apex_at_z0` bumps the signature for the docs/58 §10a on-disk slice-order fix
     # (893 base-first subjects flipped to apex-at-z0 by tools/fix_slice_order.py). The file PATHS
     # are unchanged, so without this the cache would silently serve pre-flip volumes.
-    sig = repr((TARGET_SPACING, TARGET_SHAPE, NUM_PHASES, "nonzero", 0.5, 99.9,
+    sig = repr((TARGET_SPACING, TARGET_SHAPE, NUM_PHASES, "nonzero", lower, upper,
                 "slice_order_apex_at_z0"))
     return hashlib.md5(sig.encode()).hexdigest()[:10]
 

@@ -5,7 +5,8 @@ scratch
 /baselines/fc_svr
 setup.md
 .vscode/
-_archive/
+/_archive
+temp/
 fireants
 
 

@@ -26,9 +26,16 @@ from data.preprocess import NUM_PHASES, Z_HALF_MM
 from ef_eval import IN_PLANE_MM
 from train_utils.general import safe_makedirs
 from train_utils.val_logging import (
-    N_FILM_PLANES, load_subject_groups, pick_one_index_per_source, pick_planes,
+    N_FILM_PLANES, load_subject_groups, pick_one_index_per_source, pick_planes, pick_visual_indices,
     seq_index_to_subject, subject_id, subject_source, to_float,
 )
+
+
+def _display_gamma(image, vmax: float, gamma: float = 0.7):
+    """Map an MRI intensity array to [0, 1] for display only."""
+    import numpy as np
+
+    return np.clip(image / max(float(vmax), 1e-8), 0.0, 1.0) ** gamma
 
 
 class TrainerVizMixin:
@@ -239,10 +246,10 @@ class TrainerVizMixin:
             logging.warning(f"_compute_identity_baseline failed (ignored): {e}")
 
     def _log_motion_mask_example(self, log_step: int):
-        """Render the motion mask for 3 val subjects in one panel under `media_others/`.
+        """Render the motion mask for the selected val subjects under `media_others/`.
 
         Each row is one subject (val indices 0, 7, 15); columns show, at a mid-bbox
-        z-plane: V_gt(ED) | motion magnitude (max-min over phases) | mask overlay on V_gt.
+        z-plane: V_gt(t=0) | motion magnitude (max-min over phases) | mask overlay on V_gt.
         Data-derived only (no model forward) and static across training, so this is logged
         ONCE at startup to document which voxels the `val/psnr/motion` PSNR is computed over.
         vmin/vmax are per-subject so small-FOV rows aren't washed out. Wrapped, never raises.
@@ -263,8 +270,7 @@ class TrainerVizMixin:
         try:
             # Distinct val subjects; drop any out-of-range / duplicate after wraparound
             # so tiny val sets (e.g. synthetic test data) don't render the same subject twice.
-            # One subject per source dataset, same picks as every other visual panel
-            # (was a hardcoded (0, 7, 15) = three ACDC subjects under the pooled split).
+            # Same source/vendor picks as every other visual panel.
             subj_indices = [i for i in self._ED_ES_SUBJECTS if i < len(mri_ds.subjects)]
             if not subj_indices:
                 return
@@ -277,7 +283,7 @@ class TrainerVizMixin:
                 for row, subj_idx in enumerate(subj_indices):
                     data = mri_ds.get_data(seq_index=subj_idx, img_per_seq=mri_ds.num_slices)
                     phases = np.asarray(data["phases"]).astype(np.float32)   # (T, D, H, W)
-                    ed = phases[0]                                           # (D, H, W)
+                    phase0 = phases[0]                                       # (D, H, W)
                     motion_mag = phases.max(0) - phases.min(0)              # (D, H, W)
                     mask = compute_motion_mask(
                         torch.from_numpy(phases).unsqueeze(0)
@@ -288,20 +294,21 @@ class TrainerVizMixin:
                     # provably the reference slot (see pick_planes). Apex/mid/base tells
                     # you whether the mask degenerates away from the centre; one mid
                     # plane cannot.
-                    zs = pick_planes(ed.shape[0], 3)
+                    zs = pick_planes(phase0.shape[0], 3)
                     frac = float(mask[z0:z1].mean())
-                    vmax = max(float(ed.max()), 1e-3)
+                    vmax = max(float(phase0.max()), 1e-3)
                     mmax = max(float(motion_mag.max()), 1e-3)
 
                     ax = axes[row]
-                    ax[0].imshow(np.concatenate([ed[z] for z in zs], axis=1),
-                                 cmap="gray", vmin=0, vmax=vmax)
-                    ax[0].set_title(f"subj {subj_idx}: V_gt ED (z={list(zs)})", fontsize=9)
+                    phase0_strip = np.concatenate([phase0[z] for z in zs], axis=1)
+                    ax[0].imshow(_display_gamma(phase0_strip, vmax),
+                                 cmap="gray", vmin=0, vmax=1)
+                    ax[0].set_title(f"subj {subj_idx}: V_gt t=0 (z={list(zs)})", fontsize=9)
                     ax[1].imshow(np.concatenate([motion_mag[z] for z in zs], axis=1),
                                  cmap="magma", vmin=0, vmax=mmax)
                     ax[1].set_title("motion = max-min", fontsize=9)
-                    ax[2].imshow(np.concatenate([ed[z] for z in zs], axis=1),
-                                 cmap="gray", vmin=0, vmax=vmax)
+                    ax[2].imshow(_display_gamma(phase0_strip, vmax),
+                                 cmap="gray", vmin=0, vmax=1)
                     m3 = np.concatenate([mask[z] for z in zs], axis=1)
                     overlay = np.zeros((*m3.shape, 4))
                     overlay[m3] = [1, 0, 0, 0.45]
@@ -317,8 +324,8 @@ class TrainerVizMixin:
         except Exception as e:
             logging.warning(f"motion mask example log failed (ignored): {e}")
 
-    def _log_cardiac_cycle_filmstrip(self, log_step: int):
-        """Reconstruct one fixed val subject (idx 0) at all 12 phases and log an animated GIF
+    def _log_cardiac_cycle_filmstrip(self, log_step: int, subj_idx: int = 0):
+        """Reconstruct one val subject at all 12 phases and log an animated GIF
         (V_gt top / V_canon bottom; N_FILM_PLANES z-planes evenly spanning the stack).
         The static 2×T still image is intentionally disabled — see the commented block below.
         Builds ONE input batch and sweeps the global
@@ -341,7 +348,6 @@ class TrainerVizMixin:
             return
 
         T_total = NUM_PHASES
-        subj_idx = 0
         num_slices = mri_ds.num_slices
 
         canon_frames = []
@@ -483,16 +489,17 @@ class TrainerVizMixin:
                 planes = stack.reshape(n, h, W)
                 return np.concatenate([planes[i] for i in range(n)], axis=1)
             grid = np.concatenate([_row(gt_stack), _row(model_stack)], axis=0)   # (2h, n·W)
-            g = np.clip(grid / vmax * 255.0, 0, 255).astype(np.uint8)
+            g = (_display_gamma(grid, vmax) * 255.0).astype(np.uint8)
             return np.stack([g, g, g], axis=0)                  # (3, 2h, 5W)
 
         try:
             frames = np.stack([_tile_2xn(gt_frames[t], canon_frames[t], v_vmax)
                                for t in range(len(gt_frames))], axis=0)   # (T, 3, 2h, n·W)
+            sid = subject_id(mri_ds.subjects[subj_idx])
             self.wandb_writer.log(
-                "media_val_ED_ES/Val_Visuals_cardiac_cycle_gif",
+                f"media_filmstrip/Val_Visuals_subj{subj_idx}_{sid}_cardiac_cycle_gif",
                 wandb.Video(frames, fps=4, format="gif",
-                            caption=f"step={log_step} — rows: V_gt (top) / V_canon (bottom); "
+                            caption=f"{sid} — step={log_step} — rows: V_gt (top) / V_canon (bottom); "
                                     f"cols: {N_FILM_PLANES} planes evenly spanning z=0..D-1"
                                     f"{mode_note}"),
                 log_step,
@@ -686,12 +693,12 @@ class TrainerVizMixin:
                 fig.suptitle("Data augmentation -- original (top) vs augmented (bottom)", fontsize=8)
                 for s in range(S):
                     ax0 = fig.add_subplot(gs[0, s])
-                    ax0.imshow(orig[s], cmap="gray", vmin=0, vmax=1)
+                    ax0.imshow(_display_gamma(orig[s], 1.0), cmap="gray", vmin=0, vmax=1)
                     ax0.set_xticks([]); ax0.set_yticks([])
                     if s == 0:
                         ax0.set_ylabel("original", fontsize=8)
                     ax1 = fig.add_subplot(gs[1, s])
-                    ax1.imshow(aug[s], cmap="gray", vmin=0, vmax=1)
+                    ax1.imshow(_display_gamma(aug[s], 1.0), cmap="gray", vmin=0, vmax=1)
                     ax1.set_xticks([]); ax1.set_yticks([])
                     if s == 0:
                         ax1.set_ylabel("augmented", fontsize=8)
@@ -749,7 +756,7 @@ class TrainerVizMixin:
                 # Row 0: input slices
                 for s in range(S):
                     ax = fig.add_subplot(gs[0, s])
-                    ax.imshow(imgs[s], cmap="gray", vmin=0, vmax=1)
+                    ax.imshow(_display_gamma(imgs[s], 1.0), cmap="gray", vmin=0, vmax=1)
                     ax.set_xticks([]); ax.set_yticks([])
                     if t_picks is not None and z_picks is not None:
                         ttl = f"t={int(t_picks[s])}, z={int(z_picks[s])}"
@@ -762,11 +769,15 @@ class TrainerVizMixin:
                     fig.add_subplot(gs[0, s]).axis("off")
                 fig.add_subplot(gs[0, n_cols]).axis("off")
 
-                def _vol_row(r, vol, cmap, vmin, vmax, ylabel, show_titles=False):
+                def _vol_row(r, vol, cmap, vmin, vmax, ylabel, show_titles=False,
+                             gamma=False):
                     last_im = None
                     for d in range(D):
                         ax = fig.add_subplot(gs[r, d])
-                        last_im = ax.imshow(vol[d], cmap=cmap, vmin=vmin, vmax=vmax)
+                        shown = _display_gamma(vol[d], vmax) if gamma else vol[d]
+                        last_im = ax.imshow(shown, cmap=cmap,
+                                            vmin=(0 if gamma else vmin),
+                                            vmax=(1 if gamma else vmax))
                         ax.set_xticks([]); ax.set_yticks([])
                         if show_titles:
                             ax.set_title(f"z={d}", fontsize=7)
@@ -776,8 +787,8 @@ class TrainerVizMixin:
                         fig.add_subplot(gs[r, d]).axis("off")
                     plt.colorbar(last_im, cax=fig.add_subplot(gs[r, n_cols]))
 
-                _vol_row(1, V_gt,    "gray",   0,     v_vmax, "V_gt", show_titles=True)
-                _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon")
+                _vol_row(1, V_gt,    "gray",   0,     v_vmax, "V_gt", show_titles=True, gamma=True)
+                _vol_row(2, V_canon, "gray",   0,     v_vmax, "V_canon", gamma=True)
                 _vol_row(3, diff,    "RdBu_r", -ERR,  ERR,    f"V_canon-V_gt\n(±{ERR})")
 
                 self.wandb_writer.log(f"{group}/{name}_Volume", wandb.Image(fig, caption=caption), step)
@@ -821,7 +832,7 @@ class TrainerVizMixin:
                     fontsize=8,
                 )
                 rows = [
-                    ("input intensity", imgs,                          "gray",   0,           1.0,        True),
+                    ("input intensity", _display_gamma(imgs, 1.0),    "gray",   0,           1.0,        True),
                     ("Δx (mm)",         pred_dvf[..., 0] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
                     ("Δy (mm)",         pred_dvf[..., 1] * IN_PLANE_MM, "RdBu_r", -IN_PLANE_R, IN_PLANE_R, False),
                     ("Δz (mm)",         pred_dvf[..., 2] * THROUGH_MM,  "RdBu_r", -THROUGH_R,  THROUGH_R,  False),
@@ -847,7 +858,7 @@ class TrainerVizMixin:
 
     @property
     def _ED_ES_SUBJECTS(self):
-        """Val indices shown in every visual panel — ONE PER SOURCE DATASET.
+        """Val indices shown in every visual panel, with source/vendor coverage.
 
         Was a hardcoded `(0, 7, 14, 21)`. Under the pooled cohort the val split is written
         `sorted()`, so those four indices are ACDC/ACDC/ACDC/CMRx2023: every ED/ES panel,
@@ -867,9 +878,11 @@ class TrainerVizMixin:
         try:
             mri_ds = self._get_mri_dataset()
             if mri_ds is not None and getattr(mri_ds, "subjects", None):
-                picks = pick_one_index_per_source(mri_ds.subjects)
+                vendors = load_subject_groups(mri_ds.split_file, "vendor")
+                picks = (pick_visual_indices(mri_ds.subjects, vendors) if vendors
+                         else pick_one_index_per_source(mri_ds.subjects))
         except Exception as e:
-            logging.warning(f"per-source viz subject pick failed (ignored): {e}")
+            logging.warning(f"visual subject pick failed (ignored): {e}")
         if not picks:
             n = 0
             try:
@@ -878,7 +891,7 @@ class TrainerVizMixin:
                 pass
             picks = tuple(i for i in (0, 7, 14, 21) if n == 0 or i < n)
         self._ed_es_subjects_cache = picks
-        logging.info(f"Visual panel val subjects (one per source): {picks}")
+        logging.info(f"Visual panel val subjects (source/vendor coverage): {picks}")
         return picks
 
     def _stash_ed_es(self, batch: Mapping, loss_dict: Mapping) -> None:
@@ -961,7 +974,8 @@ class TrainerVizMixin:
                     ts, zs = prec.get("timesteps"), prec.get("slices")
                     for c in range(ncol):
                         ax = fig.add_subplot(gs[r, c])
-                        ax.imshow(data[c], cmap="gray", vmin=0, vmax=(1.0 if kind == "in" else vmax))
+                        vm = 1.0 if kind == "in" else vmax
+                        ax.imshow(_display_gamma(data[c], vm), cmap="gray", vmin=0, vmax=1)
                         ax.set_xticks([]); ax.set_yticks([])
                         if c == 0:
                             ax.set_ylabel(label, fontsize=8)          # row label on the leftmost cell
@@ -1056,10 +1070,10 @@ class TrainerVizMixin:
                 zt = int(z_picks[s]); tt = int(t_picks[s]) if t_picks is not None else -1
                 is_ref = (ref_slot is not None and s == ref_slot)
                 cells = [
-                    (imgs[s], "gray",   0, 1.0),
-                    (rc,      "gray",   0, vmax),
-                    (rg,      "gray",   0, vmax),
-                    (err,     "magma",  0, ERR),
+                    (_display_gamma(imgs[s], 1.0), "gray",  0, 1.0),
+                    (_display_gamma(rc, vmax),     "gray",  0, 1.0),
+                    (_display_gamma(rg, vmax),     "gray",  0, 1.0),
+                    (err,                          "magma", 0, ERR),
                 ]
                 for c, (data, cmap, vmin, vm) in enumerate(cells):
                     ax = fig.add_subplot(gs[r, c])
@@ -1119,9 +1133,13 @@ class TrainerVizMixin:
             # matching on the raw seq_index meant the ES half NEVER rendered these panels.
             _ds = self._get_mri_dataset()
             _vt = getattr(_ds, "val_targets", None) if _ds is not None else None
-            subj_idx = _vt[val_idx % len(_vt)][0] if _vt else val_idx
+            sweep_idx = val_idx % len(_vt) if _vt else None
+            subj_idx = _vt[sweep_idx][0] if _vt else val_idx
             val_sid, _ = seq_index_to_subject(_ds, val_idx)
-            should_log = subj_idx in VAL_VISUAL_SUBJECT_INDICES
+            # The dedicated ED/ES panel already shows both phases. Keep these larger
+            # per-source Volume/DVF/Lookup panels to the harder ES reconstruction only.
+            is_es = _vt is None or sweep_idx >= len(_vt) // 2
+            should_log = is_es and subj_idx in VAL_VISUAL_SUBJECT_INDICES
         if not (self.logging_conf.log_visuals and should_log and (self.logging_conf.visuals_keys_to_log is not None)):
             return
 
@@ -1166,7 +1184,7 @@ class TrainerVizMixin:
             caption = "  ".join(caption_parts)
 
             # Wandb key prefix. Train stays in the media_others/ bucket; val gets a per-subject
-            # section (media_val_subj{i}/) so the 4 val subjects' panels group together.
+            # section (media_val_subj{i}/) so each selected subject's panels group together.
             if phase == "train":
                 name, group = "Train_Visuals", "media_others"
             else:

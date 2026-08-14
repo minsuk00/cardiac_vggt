@@ -291,7 +291,7 @@ class Trainer(TrainerVizMixin):
             # runs on different pixels look identical.
             try:
                 from data.preprocess import cache_signature
-                cache_sig = cache_signature()
+                cache_sig = getattr(mri_ds, "cache_signature", cache_signature())
             except Exception:
                 cache_sig = None
 
@@ -824,7 +824,7 @@ class Trainer(TrainerVizMixin):
         self._viz_ed_es = bool(
             getattr(self.logging_conf, "log_visuals", True)
             and _mri_ds is not None and getattr(_mri_ds, "val_targets", None) is not None
-            and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
+            and self.epoch % max(1, getattr(self.logging_conf, "visual_panels_every_n_val_epochs", 3)) == 0
         )
         if self._viz_ed_es:
             self._ed_es_stash = {}
@@ -970,9 +970,10 @@ class Trainer(TrainerVizMixin):
         # Useful in BOTH modes: in multi-phase it's the qualitative proof of
         # cross-phase reconstruction; in fixed-ED it shows what the model does at
         # phases it wasn't trained on (degenerate or not — diagnostic).
-        filmstrip_every_n = getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)
+        filmstrip_every_n = max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5))
         if self.epoch % filmstrip_every_n == 0:
-            self._log_cardiac_cycle_filmstrip(current_train_step)
+            for subj_idx in self._ED_ES_SUBJECTS:
+                self._log_cardiac_cycle_filmstrip(current_train_step, subj_idx)
 
         # ED-vs-ES per-subject panels (per-z; from the sweep's ED+ES reconstructions)
         if getattr(self, "_viz_ed_es", False):
@@ -1037,7 +1038,7 @@ class Trainer(TrainerVizMixin):
             _aug_log = (
                 (self.gpu_transforms is not None or self.respiratory_cfg.enable)
                 and self.logging_conf.log_visuals and data_iter == 0
-                and self.epoch % max(1, getattr(self.logging_conf, "filmstrip_every_n_val_epochs", 5)) == 0
+                and self.epoch % max(1, getattr(self.logging_conf, "visual_panels_every_n_val_epochs", 3)) == 0
             )
             # `defer_input_images` (the train default) means the dataset omits `images` —
             # gpu_augment_batch creates it below. The old `"images" in batch` guard was
