@@ -23,7 +23,7 @@ Entry point: `training/launch.py` (Hydra). Active config: `mri_volume`.
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default
 ```
 
-Cluster: `bash sbatch/train_mri_volume_reference.sh`.
+Cluster: `bash sbatch/_archive/train_mri_volume_reference.sh`.
 
 ## Acknowledgements
 

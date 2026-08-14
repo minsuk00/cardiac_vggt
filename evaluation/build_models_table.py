@@ -96,7 +96,7 @@ def write_markdown(rows, out):
         "",
         "Config deltas (gather05/contz/lowdiff100/…) are NOT in a resolved yaml — they live in",
         "the named base config (`training/config/<config>.yaml`) + the training sbatch",
-        "(`sbatch/oneframe_*.sh`). `ckpt (source)` is the original path; `copied`=✓ means a",
+        "(`sbatch/_archive/oneframe_*.sh`). `ckpt (source)` is the original path; `copied`=✓ means a",
         "durable copy sits in `checkpoints/<arm>/checkpoint.pt`.",
         "",
         "| " + " | ".join(hdr[c] for c in cols) + " |",

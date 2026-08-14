@@ -23,4 +23,4 @@ VARIANT_TAG="w100"
 # Resume the spgpu2 run (killed 2026-08-12 to free the owned L40S) in place, ~42k steps in.
 # Clear this for a fresh-from-base launch.
 RESUME_EXP_NAME="213515736_mri_volume_corsegdice_w100_dynamic_axial_cmrx24only"
-source /home/minsukc/vggt/sbatch/corsegdice_common.sh
+source /home/minsukc/vggt/sbatch/_archive/corsegdice_common.sh
