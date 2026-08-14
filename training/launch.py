@@ -52,6 +52,9 @@ OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p))
 OmegaConf.register_new_resolver(
     "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}"
 )
+# Patch size derives from the backbone (`backbone_ps` resolver) so config cannot express
+# a mismatch; registered in data/__init__.py so standalone compose() scripts get it too.
+import data  # noqa: F401  (side effect: registers the backbone_ps resolver)
 
 
 def main():

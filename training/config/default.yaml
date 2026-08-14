@@ -37,8 +37,9 @@ mode: "train"
 # Model-input resolution: any multiple of patch_size. 518 = 37² tokens (original VGGT), 224 = 16²
 # (≈3-6× faster, half the VRAM — docs/72). Changing it starts a fresh numeric series.
 img_size: 518
-patch_size: 14
 backbone: "dinov2_vitl14_reg"
+# Derived from the backbone (dinov2_* -> 14, dinov3_vitl16 -> 16) — not a free knob.
+patch_size: ${backbone_ps:${backbone}}
 seed_value: 42
 num_workers: 4
 
