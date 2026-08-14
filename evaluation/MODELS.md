@@ -7,7 +7,7 @@ durable copy exists, `checkpoints/<arm>/`). VGGT arms are harvested from their
 
 Config deltas (gather05/contz/lowdiff100/…) are NOT in a resolved yaml — they live in
 the named base config (`training/config/<config>.yaml`) + the training sbatch
-(`sbatch/oneframe_*.sh`). `ckpt (source)` is the original path; `copied`=✓ means a
+(`sbatch/_archive/oneframe_*.sh`). `ckpt (source)` is the original path; `copied`=✓ means a
 durable copy sits in `checkpoints/<arm>/checkpoint.pt`.
 
 | arm | type | ep | config | regime | fps | z_mode | date | wandb | commit | copied | datasets | ckpt (source) | note |

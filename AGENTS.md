@@ -52,7 +52,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
     --config default optim.base_lr=1e-4
 ```
 
-**Cluster submission**: `bash sbatch/train_mri_volume_reference.sh` — self-submits via embedded `sbatch`, `WANDB_MODE=online`, SLURM auto-requeue (SIGUSR1 → checkpoint-and-resume). Resume modes (vars at the top of the script):
+**Cluster submission**: `bash sbatch/_archive/train_mri_volume_reference.sh` — self-submits via embedded `sbatch`, `WANDB_MODE=online`, SLURM auto-requeue (SIGUSR1 → checkpoint-and-resume). Resume modes (vars at the top of the script):
 - both `RESUME_FROM`/`CKPT_ONLY` empty (**default**) → **fresh-from-base VGGT-1B** (config's base-weights resume path, `strict=false`), fresh exp dir + new wandb run.
 - `RESUME_FROM=<exp_dir>` → continue same exp_name + reuse same wandb run id (crash/requeue recovery).
 - `CKPT_ONLY=<ckpt_path>` → **fresh** exp dir + new wandb run, loading from `<ckpt_path>` via `checkpoint.resume_checkpoint_path` (`strict=false`). **GOTCHA (docs/37):** this is a **FULL resume** (weights + optimizer + `prev_epoch`), NOT weights-only — a full `checkpoint_last.pt` can silently do zero training. For a real warm-start, strip to `{"model": ...}` first (`torch.save({'model': torch.load(ckpt)['model']}, out)`). Full mechanics: docs/37 + docs/65.
