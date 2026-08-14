@@ -366,12 +366,10 @@ class Trainer(TrainerVizMixin):
             torch.backends.cudnn.allow_tf32 = cuda_conf.allow_tf32
 
     def _compile_attention_blocks(self) -> None:
-        """`torch.compile` the aggregator's frame/global attention blocks in place (docs/40).
+        """`torch.compile` the DINO and aggregator attention blocks in place (docs/40).
 
-        Compiles each Block individually rather than the whole model: the aggregator wraps every
-        block in `torch.utils.checkpoint`, and a whole-model compile inlines through those
-        wrappers and keeps all 48 blocks' activations live (>44 GB → OOM). Per-block compilation
-        leaves the outer `checkpoint()` in eager Python, so checkpointing is fully preserved.
+        Compiles each Block individually rather than the whole model. Per-block compilation leaves
+        the outer `checkpoint()` calls in eager Python, so checkpointing is fully preserved.
 
         Uses `nn.Module.compile()`, NOT `mod = torch.compile(mod)`: the former swaps the module's
         internal call implementation, so the module identity and `state_dict()` keys are unchanged
@@ -394,12 +392,14 @@ class Trainer(TrainerVizMixin):
         if agg is None:
             logging.warning("compile_attention_blocks requested but model has no aggregator; skipping.")
             return
+        dino_blocks = getattr(getattr(agg, "patch_embed", None), "blocks", None)
         n = 0
-        for blocks in (getattr(agg, "frame_blocks", None), getattr(agg, "global_blocks", None)):
+        for blocks in (dino_blocks, getattr(agg, "frame_blocks", None),
+                       getattr(agg, "global_blocks", None)):
             for block in (blocks or []):
                 block.compile(mode="default", dynamic=True)
                 n += 1
-        logging.info(f"torch.compile applied to {n} aggregator attention blocks "
+        logging.info(f"torch.compile applied to {n} DINO + aggregator attention blocks "
                      "(mode=default, dynamic=True); first steps pay one-time compilation.")
 
     def _load_resuming_checkpoint(self, ckpt_path: str):
@@ -1440,5 +1440,3 @@ class Trainer(TrainerVizMixin):
                         self._log_scalar("train/slice_selection/n_slots_at_target", n_anchor, step)
                     except Exception as e:
                         logging.warning(f"n_slots_at_target log failed (ignored): {e}")
-
-
