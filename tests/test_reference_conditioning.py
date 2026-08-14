@@ -109,6 +109,7 @@ def test_reference_val_deterministic_across_instances(
 # Model: use_reference_token (tiny conv-patch aggregator, CPU-fast)
 # ──────────────────────────────────────────────────────────────────────────────
 def _tiny(**kw):
+    kw.setdefault("cached_layer_indices", (1,))
     return Aggregator(
         img_size=28, patch_size=14, embed_dim=64, depth=2, num_heads=4,
         patch_embed="conv", use_z_pose_embedding=True, use_t_pose_embedding=False,
@@ -138,7 +139,7 @@ def test_reference_token_works_without_other_embeddings():
     agg = Aggregator(
         img_size=28, patch_size=14, embed_dim=64, depth=2, num_heads=4,
         patch_embed="conv", use_z_pose_embedding=False, use_t_pose_embedding=False,
-        use_reference_token=True,
+        use_reference_token=True, cached_layer_indices=(1,),
     ).eval()
     images = torch.rand(1, 2, 3, 28, 28)
     with torch.no_grad():
@@ -156,6 +157,28 @@ def test_no_target_t_embedder_in_reference_model():
     """Reference model uses the camera_token anchor, not a target_t index → no target_t_embedder."""
     agg = _tiny(use_reference_token=True)
     assert not hasattr(agg, "target_t_embedder")
+
+
+def test_aggregator_only_retains_requested_layer_outputs():
+    agg = _tiny(cached_layer_indices=(1,))
+    images = torch.rand(1, 2, 3, 28, 28)
+    z = torch.randn(1, 2, 1)
+    with torch.no_grad():
+        outputs, _ = agg(images, z_indices=z)
+    assert outputs[0] is None
+    assert outputs[1] is not None
+
+
+def test_selective_output_caching_preserves_retained_layer():
+    all_outputs = _tiny(cached_layer_indices=(0, 1))
+    selective = _tiny(cached_layer_indices=(1,))
+    selective.load_state_dict(all_outputs.state_dict())
+    images = torch.rand(1, 2, 3, 28, 28)
+    z = torch.randn(1, 2, 1)
+    with torch.no_grad():
+        expected, _ = all_outputs(images, z_indices=z)
+        actual, _ = selective(images, z_indices=z)
+    torch.testing.assert_close(actual[1], expected[1], rtol=0, atol=0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
