@@ -47,7 +47,7 @@ class Aggregator(nn.Module):
     The Aggregator applies alternating-attention over input frames,
     as described in VGGT: Visual Geometry Grounded Transformer.
 
-    Remember to set model.train() to enable gradient checkpointing to reduce memory usage.
+    Gradient checkpointing is used during training when ``gradient_checkpointing=True``.
 
     Args:
         img_size (int): Image size in pixels.
@@ -91,6 +91,8 @@ class Aggregator(nn.Module):
         init_values=0.01,
         use_z_pose_embedding=False,
         use_reference_token=False,
+        gradient_checkpointing=True,
+        cached_layer_indices=(4, 11, 17, 23),
         **kwargs,
     ):
         super().__init__()
@@ -106,6 +108,8 @@ class Aggregator(nn.Module):
         # content; this token just says "slot 0 is the anchor". No new module — reuses the
         # pretrained `self.camera_token` (built below). See docs/25.
         self.use_reference_token = use_reference_token
+        self.gradient_checkpointing = gradient_checkpointing
+        self.cached_layer_indices = set(cached_layer_indices)
 
         self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
 
@@ -302,11 +306,13 @@ class Aggregator(nn.Module):
                     raise ValueError(f"Unknown attention type: {attn_type}")
 
             for i in range(len(frame_intermediates)):
-                # concat frame and global intermediates, [B x S x P x 2C]
-                concat_inter = torch.cat([frame_intermediates[i], global_intermediates[i]], dim=-1)
-                output_list.append(concat_inter)
+                layer_idx = len(output_list)
+                if layer_idx in self.cached_layer_indices:
+                    # concat frame and global intermediates, [B x S x P x 2C]
+                    output_list.append(torch.cat([frame_intermediates[i], global_intermediates[i]], dim=-1))
+                else:
+                    output_list.append(None)
 
-        del concat_inter
         del frame_intermediates
         del global_intermediates
         return output_list, self.patch_start_idx
@@ -326,7 +332,7 @@ class Aggregator(nn.Module):
 
         # by default, self.aa_block_size=1, which processes one block at a time
         for _ in range(self.aa_block_size):
-            if self.training:
+            if self.training and self.gradient_checkpointing:
                 tokens = checkpoint(self.frame_blocks[frame_idx], tokens, pos, use_reentrant=self.use_reentrant)
             else:
                 tokens = self.frame_blocks[frame_idx](tokens, pos=pos)
@@ -349,7 +355,7 @@ class Aggregator(nn.Module):
 
         # by default, self.aa_block_size=1, which processes one block at a time
         for _ in range(self.aa_block_size):
-            if self.training:
+            if self.training and self.gradient_checkpointing:
                 tokens = checkpoint(self.global_blocks[global_idx], tokens, pos, use_reentrant=self.use_reentrant)
             else:
                 tokens = self.global_blocks[global_idx](tokens, pos=pos)

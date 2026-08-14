@@ -203,7 +203,10 @@ class DPTHead(nn.Module):
         dpt_idx = 0
 
         for layer_idx in self.intermediate_layer_idx:
-            x = aggregated_tokens_list[layer_idx][:, :, patch_start_idx:]
+            x = aggregated_tokens_list[layer_idx]
+            if x is None:
+                raise ValueError(f"Aggregator did not cache layer {layer_idx}, which DPTHead needs.")
+            x = x[:, :, patch_start_idx:]
 
             # Select frames if processing a chunk
             if frames_start_idx is not None and frames_end_idx is not None:
