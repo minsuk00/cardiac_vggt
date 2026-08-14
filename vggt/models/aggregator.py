@@ -214,6 +214,10 @@ class Aggregator(nn.Module):
 
             if patch_embed not in vit_models:
                 raise ValueError(f"Unknown patch_embed/backbone: {patch_embed!r}")
+            if patch_size != 14:
+                # Wrong patch_size builds a mismatched conv stem that only fails later,
+                # at checkpoint load, with an opaque shape error — fail early instead.
+                raise ValueError(f"{patch_embed} requires patch_size=14, got {patch_size}")
             # ALWAYS build DINOv2 at the checkpoint-native 518: img_size only sizes
             # pos_embed, which every existing checkpoint (vggt1b_base.pt included) stores
             # at 518 shape (1,1370,1024), and load_state_dict raises on a shape mismatch
