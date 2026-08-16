@@ -19,14 +19,14 @@ Three panels (choose via --panel; default all), written INTO the arm dir beside 
                     (sample_volume). Port of training's _log_lookup_to_wandb: col1≈col2 by
                     construction (renderer blur), col2≈col3 by training (recon error).
 
-N_SLOTS VARIES and is NOT 12: continuous-z keeps fractional z with no collision dedup, so slots can
-share a rounded plane and outnumber D_CANON (up to 17 on ACDC). dvf/lookup are breath-only: run_vggt
-saves the per-pixel Δ field only for t==ED_PHASE under `if breathing:` (run_vggt.py:390), so `--arm
-clean` renders panel_input only.
+N_SLOTS VARIES and is NOT 12: it is this SUBJECT'S OWN D (native-z, docs/58 — 9 to 18 across the
+pooled cohort), and continuous-z keeps fractional z with no collision dedup so slots can share a
+rounded plane. dvf/lookup are breath-only: run_vggt saves the per-pixel Δ field only for
+t == ED_PHASE under `if breathing:`, so `--arm clean` renders panel_input only.
 
-Pure disk read — no GPU, no VGGT model load (lookup uses torch sample_volume on CPU). Reuses
-run_vggt's own prep_* so the input frames are the exact pixels the model saw rather than a
-reimplementation that could silently drift (OOD cohorts resample native->canonical in `fetch`).
+Pure disk read — no GPU, no VGGT model load (lookup uses torch sample_volume on CPU). Input
+frames come from the frozen bundle itself (`prep_bundle`), which IS what the model was fed, so
+there is no second placement implementation that could drift.
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
@@ -50,20 +50,38 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))                   #
 import paths                                                                    # noqa: E402
 sys.path.insert(0, str(paths.EVAL_ROOT / "engine"))                            # evaluation/engine (run_vggt)
 import run_vggt as R                                                            # noqa: E402
-from inference.adapters.base import D_CANON, MM_PER_NORM                        # noqa: E402
+sys.path.insert(0, str(paths.EVAL_ROOT.parent / "training"))                   # training/ (preprocess)
+from data.preprocess import Z_HALF_MM                                           # noqa: E402
+
+# normalized [-1,1] -> mm. Through-plane is Z_HALF_MM, a CONSTANT for every subject under physical
+# z (docs/58); the retired `MM_PER_NORM[2] = 66.0` encoded the old fixed 12-plane x 12 mm cube.
+MM_PER_NORM = R.MM_PER_NORM
 
 # output dir defaults to paths.figure_dir (figures/<ds>/<subj>/<arm>/ on GPFS); --out overrides
-HUB = "vggt_20260719_1f_gather05_ep99"
+HUB = "vggt_augaggr224hw2_ep300"
 COHORTS = list(paths.DATASETS)
 FOV_GATE = 0.05                                    # matches run_vggt.resp_diag's `imgs > 0.05`
 
-# T is per-SUBJECT, read from manifest.json — it is NOT 12. CMRx resamples to 12, but the OOD
-# cohorts keep their native phase count (measured: ACDC 13-35, OCMR 18-30, MIITT 30), and slot_t
-# indexes into that. Hardcoding 12 silently blows up on OOD. Only D_CANON (the z depth) is fixed.
-PREP = {"cmrxrecon": lambda sd, subj, T, cz: R.prep_cmrxrecon(sd, T, cz),
-        "miitt":     lambda sd, subj, T, cz: R.prep_miitt(sd, subj, T, cz),
-        "ocmr":      lambda sd, subj, T, cz: R.prep_ocmr(sd, subj, T, cz),
-        "acdc":      lambda sd, subj, T, cz: R.prep_acdc(sd, subj, T, cz)}
+
+def prep_bundle(subj_dir, T, D, dz_mm):
+    """(gt, entries, fetch) straight from the frozen bundle — ONE reader for every source.
+
+    Replaces the old four-entry PREP table, which existed only because three sources reached the
+    model through adapters and had to be placed onto a shared 12-plane cube. Every bundle is now
+    written on the SUBJECT'S OWN native grid by `build_inputs/pooled.py`, so a plane index IS the
+    slice index and `z_val` is physical: `(z - (D-1)/2) * dz / Z_HALF_MM` — the same formula
+    `MRIDataset.get_data` uses, not the retired index-normalized `z/(D-1)*2-1`.
+    """
+    gt = R.load_bundle(subj_dir, T, "gt")
+    clean = R.load_bundle(subj_dir, T, "clean")
+    breath = R.load_bundle(subj_dir, T, "breath")
+    entries = [{"z_plane": z, "slice_idx": z,
+                "z_val": (z - (D - 1) / 2.0) * dz_mm / Z_HALF_MM} for z in range(D)]
+
+    def fetch(phase, slice_idx, breathing):
+        return (breath if breathing else clean)[phase, slice_idx]
+
+    return gt, entries, fetch
 
 
 # ── locating things on disk ──────────────────────────────────────────────────────────────────
@@ -93,48 +111,41 @@ def rep_subject(cohort, method):
 
 
 # ── slot bookkeeping ─────────────────────────────────────────────────────────────────────────
-def slot_entry_order(entries):
-    """Reproduce run_vggt.build_slots' ENTRY ORDER for regime='onef':
-         slots = [(ref_k, 0)] + [(k, <random phase>) for k in range(n) if k != ref_k]   (ascending k)
-    The phases come from the npz (slot_t), so build_slots' rng — hence seq_index — is not needed;
-    only the order is. ref_k is computed exactly as reconstruct() does (bbox-centre plane, NOT
-    argmin|z_val|)."""
-    z_planes = [e["z_plane"] for e in entries]
-    z_mid = (min(z_planes) + max(z_planes) + 1) // 2
-    ref_k = int(np.argmin([abs(e["z_plane"] - z_mid) for e in entries]))
-    return [ref_k] + [k for k in range(len(entries)) if k != ref_k], ref_k
-
-
-def load_slots(md, entries):
+def load_slots(md, entries, D, dz_mm):
     """-> (slots, ref_k), slots in npz order.
 
-    Sanity-checks the rebuilt order against the npz's own slot_z. NOTE this check is
-    necessary-but-NOT-sufficient: it is invariant to permutation within a group of entries sharing
-    a rounded z_plane (continuous-z produces such groups). Correctness ultimately rests on both
-    orders being ascending-k over the same deterministic `entries` (assign_canonical_z returns a
-    totally-ordered `sorted(...)`), which was verified against build_slots. The check still earns
-    its keep: it fires loudly on a multiframe dir (length mismatch) and on stale bundles whose
-    geometry drifted across a rounding boundary."""
+    The order is READ from `ed_dvf.npz` (`slot_z`), not reconstructed. It used to be re-derived by
+    replaying the runner's own slot-building rule, guarded by an equality check that was explicitly
+    "necessary but not sufficient" — invariant to permutation within a group of slots sharing a
+    rounded plane. `run_vggt` now records the realized draw directly, so there is nothing to
+    reproduce and nothing to drift: slot i sat at plane `slot_z[i]`, phase `slot_t[i]`.
+
+    Slot 0 is the reference by construction (`MRIDataset.get_data` puts the target-phase reference
+    there when `reference_slot` is on), so ref is simply the entry at `slot_z[0]`.
+    """
     npz = np.load(os.path.join(md, "ed_dvf.npz"))
-    order, ref_k = slot_entry_order(entries)
-    got = [entries[k]["z_plane"] for k in order]
-    want = npz["slot_z"].tolist()
-    if got != want:
-        raise AssertionError(
-            f"slot order mismatch: rebuilt {got} != npz slot_z {want}. "
-            f"(This script reproduces regime='onef' only — a multiframe method dir lands here.)")
+    slot_z = np.asarray(npz["slot_z"]).reshape(-1)
+    # Under native-z, entries are indexed BY PLANE (entry k == plane k), so the npz's plane index
+    # is the entry index. Round because continuous_z stores fractional z.
+    order = [int(round(float(z))) for z in slot_z]
+    if max(order) >= len(entries) or min(order) < 0:
+        raise AssertionError(f"npz slot_z {slot_z.tolist()} outside this subject's D={len(entries)}")
+    ref_k = order[0]
 
     dz = npz["delta"][..., 2].astype(np.float32) * MM_PER_NORM[2]               # (S,hw,hw) mm
     slots = []
     for i, k in enumerate(order):
-        # z_cont = the slot's TRUE (possibly fractional) canonical depth. Under continuous_z,
-        # assign_canonical_z returns fractional z with NO collision dedup, so several slots can
-        # share a rounded z_plane and the slot count can exceed D_CANON (seen up to 17 on ACDC).
-        # Keying anything by z_plane silently drops those slices — hence z_cont + per-slot columns.
-        z_cont = (entries[k]["z_val"] + 1.0) / 2.0 * (D_CANON - 1)
+        # z_cont = the slot's TRUE (possibly fractional) depth IN PLANE UNITS on this subject's own
+        # grid. Physical z (docs/58) inverts as z_index = z_norm * Z_HALF_MM / dz + (D-1)/2 — the
+        # exact inverse of `MRIDataset.get_data`'s z_val. The retired form
+        # `(z_val+1)/2*(D_CANON-1)` assumed the fixed 12-plane cube and silently mis-places every
+        # subject whose dz != 12 mm. Under continuous_z several slots can share a rounded plane,
+        # so keying anything by z_plane still drops slices — hence z_cont + per-slot columns.
+        z_cont = entries[k]["z_val"] * Z_HALF_MM / dz_mm + (D - 1) / 2.0
         slots.append(dict(i=i, k=k, z=entries[k]["z_plane"], z_cont=float(z_cont),
+                          z_val=float(entries[k]["z_val"]),   # physical normalized z, carried through
                           slice_idx=entries[k]["slice_idx"], phase=int(npz["slot_t"][i]),
-                          applied=float(npz["applied_disp_mm"][i, 0]), dz=dz[i], is_ref=(k == ref_k)))
+                          applied=float(npz["applied_disp_mm"][i, 0]), dz=dz[i], is_ref=(i == 0)))
     return slots, ref_k
 
 
@@ -144,16 +155,17 @@ def slot_cols(slots):
     return sorted(slots, key=lambda s: s["z_cont"])
 
 
-def splat_z_weights(z_cont):
+def splat_z_weights(z_cont, D):
     """The trilinear z-weights splat_to_volume ACTUALLY deposits for a slice at depth z_cont.
 
     Mirrors vggt/utils/splat.py exactly, including its in-bounds gate `z0f >= 0 & z0f <= D-2`.
-    That bound is ASYMMETRIC: a slice sitting exactly on the TOP plane (z_cont == D_CANON-1) has
+    That bound is ASYMMETRIC: a slice sitting exactly on the TOP plane (z_cont == D-1) has
     floor == D-1 > D-2 and is dropped ENTIRELY — it deposits nothing anywhere — whereas z_cont == 0
-    is fine. Verified: z_cont 10.999 -> {10: .001, 11: .999} but z_cont 11.0 -> {} (35 of 1118
-    method dirs have a slot at plane 11). A naive `max(0, 1-|z_cont-p|)` would claim 1.00 there."""
+    is fine. Verified: at D=12, z_cont 10.999 -> {10: .001, 11: .999} but z_cont 11.0 -> {}.
+    A naive `max(0, 1-|z_cont-p|)` would claim 1.00 there. `D` is this subject's own native slice
+    count (docs/58), not a fixed 12."""
     z0 = int(np.floor(z_cont))              # int() alone would truncate -0.5 to 0 and wrongly admit it
-    if not (0 <= z0 <= D_CANON - 2):
+    if not (0 <= z0 <= D - 2):
         return {}
     frac = z_cont - z0
     # Drop negligible weights: z_cont is a float round-trip (z/11*2-1 -> back), so a slot on plane 1
@@ -163,7 +175,7 @@ def splat_z_weights(z_cont):
         {z0 + 1: 1.0} if frac >= 1.0 - 1e-9 else {z0: 1.0 - frac, z0 + 1: frac})
 
 
-def plane_coverage(slots, p):
+def plane_coverage(slots, p, D):
     """Splat mass the input slices deposit on canonical plane p, in slice-equivalents.
 
     Two things the splat does that a naive rounded-plane count gets wrong, both corrected here:
@@ -184,23 +196,26 @@ def plane_coverage(slots, p):
     a low weight here is NOT proof the recon lacked evidence at that depth (measured counter-case:
     ocmr exam_fs_0012 z2 reads 0.55 slice-eq while the recon there is essentially blank)."""
     return sum(s["mass"] * w for s in slots
-               for q, w in splat_z_weights(s["z_cont"]).items() if q == p)
+               for q, w in splat_z_weights(s["z_cont"], D).items() if q == p)
 
 
-def plane_note(slots, p):
-    w = plane_coverage(slots, p)
+def plane_note(slots, p, D):
+    w = plane_coverage(slots, p, D)
     # A fractional-z reference legitimately lands on BOTH flanking planes, so REF can mark two.
-    ref = " REF" if any(s["is_ref"] and p in splat_z_weights(s["z_cont"]) for s in slots) else ""
+    ref = " REF" if any(s["is_ref"] and p in splat_z_weights(s["z_cont"], D) for s in slots) else ""
     return "no input" if w < 1e-3 else f"{w:.2f} slice-eq{ref}"
 
 
-def up518(img):
-    """Canonical 256 frame -> the 518 grid the model actually saw (matches assemble_batch, so the
-    FOV gate lands on the same pixels resp_diag gated on)."""
+def up_model(img, res):
+    """Canonical 256 frame -> the model-input grid the model actually saw, so the FOV gate lands on
+    the same pixels `run_vggt.resp_diag` gated on.
+
+    `res` is NOT a constant any more: `img_size` is a real config knob (the arm under test trains at
+    224, not 518), and the Δ field in ed_dvf.npz is stored at exactly that resolution. Callers pass
+    `delta.shape[1]` so the two can never disagree."""
     import torch
     import torch.nn.functional as F
-    return F.interpolate(torch.as_tensor(img)[None, None].float(),
-                         size=(R.INPUT_IMG_SIZE, R.INPUT_IMG_SIZE),
+    return F.interpolate(torch.as_tensor(img)[None, None].float(), size=(res, res),
                          mode="bilinear", align_corners=True)[0, 0].numpy()
 
 
@@ -320,15 +335,15 @@ def render_dvf(inputs_ed, cols, out, title):
     print("wrote", out)
 
 
-def render_input(cols, fetch, T, out, title):
+def render_input(cols, fetch, T, out, title, res):
     """The one-frame INPUT the model is fed, animated over the target-phase sweep. Row 1 = clean,
     row 2 = breathing-corrupted; one column per slot (depth-ordered). Only the REFERENCE column
     cycles with t — slot 0 = (t_target, z_mid) — while companion slots stay fixed at their acquired
     phase. So 'the middle slice is the only one moving', exactly the one-frame contract; the breath
     row shows that reference slice wobbling under the respiratory corruption."""
-    def img(s, t, breathing):                                        # up-sampled 518 grid, [0,1]
+    def img(s, t, breathing):                                # up-sampled model-input grid, [0,1]
         ph = t if s["is_ref"] else s["phase"]                        # only the reference tracks t
-        return up518(fetch(ph, s["slice_idx"], breathing))
+        return up_model(fetch(ph, s["slice_idx"], breathing), res)
     n = len(cols)
     ref = next((s for s in cols if s["is_ref"]), cols[0])
     allpix = np.concatenate([img(s, R.ED_PHASE, b).ravel() for s in cols for b in (False, True)])
@@ -365,7 +380,7 @@ def render_input(cols, fetch, T, out, title):
     print("wrote", out)
 
 
-def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title):
+def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title, z_scale):
     """Round-trip / analysis-by-synthesis (breath arm, at ED). For ≤4 slots across depth, sample the
     reconstruction V_canon AND the GT volume V_gt back at the model's predicted coords
     p = scanner_coords + Δ, beside the input slice and the |V_canon−V_gt|@p error. Port of training's
@@ -380,7 +395,7 @@ def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title):
         sel = (ref[:1] + [nonref[i] for i in pick])[:4]
     else:
         sel = ref[:4] or cols[:4]
-    hw = R.INPUT_IMG_SIZE
+    hw = int(delta_full.shape[1])            # model-input resolution, from the stored Δ field
     py, px = np.meshgrid(np.arange(hw), np.arange(hw), indexing="ij")
     x_norm = (px / (hw - 1) * 2.0 - 1.0).astype(np.float32)          # matches assemble_batch exactly
     y_norm = (py / (hw - 1) * 2.0 - 1.0).astype(np.float32)
@@ -391,13 +406,14 @@ def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title):
                            left_in=0.66, right_in=0.10, hgap_in=0.12, wgap_in=0.06)
     titles = ["input I", "V_canon @ pred", "V_gt @ pred", "|V_canon−V_gt| @ pred"]
     for r, s in enumerate(sel):
-        z_val = s["z_cont"] / (D_CANON - 1) * 2.0 - 1.0             # recover normalized scanner z
+        z_val = s["z_val"]        # physical normalized z, carried from entries (docs/58)
         d = delta_full[s["i"]].astype(np.float32)                  # (hw,hw,3) normalized Δ
         pos = np.stack([x_norm + d[..., 0], y_norm + d[..., 1],
                         np.full_like(x_norm, z_val) + d[..., 2]], -1)   # scanner_coords + Δ
         pos_t = torch.as_tensor(pos.reshape(1, -1, 3)).float()
-        rc = sample_volume(Vc, pos_t).reshape(hw, hw).numpy()
-        rg = sample_volume(Vg, pos_t).reshape(hw, hw).numpy()
+        # z_scale is REQUIRED (docs/58): [-1,1] is physical z, not this volume's own depth.
+        rc = sample_volume(Vc, pos_t, z_scale).reshape(hw, hw).numpy()
+        rg = sample_volume(Vg, pos_t, z_scale).reshape(hw, hw).numpy()
         cells = [(inputs518[s["i"]], "gray", 0, max(vmax, 1e-3)),
                  (rc, "gray", 0, vmax), (rg, "gray", 0, vmax),
                  (np.abs(rc - rg), "magma", 0, ERR)]
@@ -419,25 +435,29 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
     subj_dir = str(paths.subject_dir(cohort, subject))
     md = method_dir(cohort, subject, method)
     meta = json.load(open(os.path.join(md, "metadata.json")))
-    cz = meta.get("z_mode") == "continuous"                                     # contz: OOD only
     breathing = (arm == "breath")
-    T = int(json.loads(paths.manifest(cohort, subject).read_text())["T"])       # per-subject, not 12
+    man = json.loads(paths.manifest(cohort, subject).read_text())
+    T = int(man["T"])                                                          # per-subject, not 12
+    D, dz_mm = int(man["D"]), float(man["dz_mm"])                              # native-z, per subject
 
-    gt, entries, fetch, _ = PREP[cohort](subj_dir, subject, T, cz)              # gt (T,D,H,W) clean
-    slots, ref_k = load_slots(md, entries)
+    gt, entries, fetch = prep_bundle(subj_dir, T, D, dz_mm)                    # gt (T,D,H,W) clean
+    slots, ref_k = load_slots(md, entries, D, dz_mm)
     cols = slot_cols(slots)
+    # Model-input resolution: `img_size` is a real knob now (this arm is 224, not 518). Prefer the
+    # arm's own metadata; fall back to the stored Δ field, which is written at exactly that size.
+    res = int(meta.get("img_size") or np.load(os.path.join(md, "ed_dvf.npz"))["delta"].shape[1])
 
     # Input frames at ED, keyed by SLOT index (never by z_plane — continuous-z slots collide there).
-    # The reference slot's recorded phase is 0 == ED_PHASE by construction (build_slots seeds
-    # slots[0] = (ref_k, 0)), which is exactly the frame the Δ field was computed from.
+    # The reference slot's recorded phase is ED by construction (run_vggt sets slot 0's timestep
+    # per queried phase and dumps the Δ field at t == ED_PHASE), which is exactly the frame the Δ
+    # field was computed from.
     # NOTE on --arm clean: `phase`/`slice_idx` come from the BREATH npz but select frames from the
-    # CLEAN stack. Sound only because run_vggt calls reconstruct with the same seq_index for both
-    # arms (run_vggt.py:383-384), so build_slots' rng yields identical (k, phase) pairs. If the arms
-    # ever get separate seeds this silently mislabels — nothing here can detect it.
+    # CLEAN stack. Sound because run_vggt reconstructs BOTH arms from the same name-seeded draw
+    # (one `make_dataset` + one seq_index per subject), so the (plane, phase) pairs are identical.
     inputs_ed = [fetch(R.ED_PHASE if s["is_ref"] else s["phase"], s["slice_idx"], breathing)
                  for s in slots]
     for s, im in zip(slots, inputs_ed):
-        up = up518(im)                                                         # the 518 grid
+        up = up_model(im, res)                             # the model-input grid this arm used
         g = up > FOV_GATE                             # 0.05 — resp_diag's gate, for the cross-check
         s["has_fov"] = bool(g.any())
         s["mass"] = float((up > 1e-3).mean())         # 1e-3 — the SPLAT's gate, for plane_coverage
@@ -466,7 +486,7 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
     # panel_input: the model's INPUT animated (clean+breath rows); arm-independent content, so a
     # neutral title (no clean/breath suffix) — the file is the same whichever arm triggered it.
     if "input" in panels:
-        render_input(cols, fetch, T, dst("panel_input.gif"), base)
+        render_input(cols, fetch, T, dst("panel_input.gif"), base, res)
 
     # panel_dvf / panel_lookup need the ED Δ field, which run_vggt dumps ONLY for the breath arm.
     if not breathing:
@@ -478,8 +498,10 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
     if "lookup" in panels:
         V_canon = R._load_xyz_to_dhw(os.path.join(md, f"recon_{arm}", f"vol_t{R.ED_PHASE:02d}.nii.gz"))
         delta_full = np.load(os.path.join(md, "ed_dvf.npz"))["delta"].astype(np.float32)   # (S,hw,hw,3) norm
-        inputs518 = [up518(im) for im in inputs_ed]                                         # keyed by slot i
-        render_lookup(inputs518, cols, delta_full, V_canon, gt[R.ED_PHASE], dst("panel_lookup.png"), ttl)
+        res = int(delta_full.shape[1])                                   # model-input resolution
+        inputs518 = [up_model(im, res) for im in inputs_ed]              # keyed by slot i
+        render_lookup(inputs518, cols, delta_full, V_canon, gt[R.ED_PHASE],
+                      dst("panel_lookup.png"), ttl, Z_HALF_MM / dz_mm)
 
 
 def main():
