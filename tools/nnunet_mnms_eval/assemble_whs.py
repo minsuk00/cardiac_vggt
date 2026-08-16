@@ -44,7 +44,7 @@ def unit_id(dataset, regime, path):
     if dataset == "cmrx":
         subj = os.path.basename(os.path.dirname(path))
         return f"cmrx_{subj}", subj, path                              # out dir = the sax dir
-    if dataset in ("acdc_sax", "mnms_sax", "miitt_sax"):
+    if dataset in ("acdc_sax", "mnms_sax", "miitt_sax", "ocmr_sax"):
         # Converted to the CMRx layout (docs/58); path = the subject's `sax/` dir. Directory
         # names are already source-prefixed and globally unique (ACDC_patient001, MNMs_A0S9V9,
         # MIITT_Volunteer1), so unit == subj — no second prefix needed. `miitt_sax` is the
