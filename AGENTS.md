@@ -102,7 +102,7 @@ Native cine shapes and spacings vary per subject (T=12 always). **Gotcha: CMRxRe
 - **Never "fix" orientation by editing the affine** — flip the *array*; `Orientationd(axcodes="LPS")` would silently undo an affine edit.
 - **Adding data?** Run `tools/render_slice_order_check.py` and flip to apex-at-z0 **per subject** — never by a per-source rule (CMRx2025 is ~50/50 within one scanner).
 - ⚠️ **Do NOT run/revert `tools/fix_slice_order.py` / `fix_slice_roll.py` without reading docs/56 + docs/58 §10** — the fixes don't commute and a wrong ordering corrupts silently.
-- ⚠️ **Anything derived from the cohort before 2026-07-31 12:19 is pre-flip stale** (frozen eval bundle, SVR baseline outputs, `*_recon_v1_espirit_imagedomain/`); rebuilding the eval bundle needs the three `evaluation/engine/build_inputs/cmrxrecon.py` fixes first — docs/58 §10b.
+- ⚠️ **Anything derived from the cohort before 2026-07-31 12:19 is pre-flip stale** (SVR baseline outputs, `*_recon_v1_espirit_imagedomain/`) — docs/58 §10b. The eval bundles have since been **rebuilt** on native-z by `evaluation/engine/build_inputs/pooled.py`; the stale pre-flip ones were moved to `scratch/eval/_archive_prenativez_20260712/` and the old per-dataset builders (including the `cmrxrecon.py` that carried the §10b fixes) to `evaluation/_archive/build_inputs/` — docs/79.
 
 ## Augmentation
 
@@ -145,7 +145,7 @@ Handy tools (full descriptions: docs/65): `tools/preview_canonical_preprocess.py
 
 **Where scratch outputs go**: one-off figures/JSON/logs → `temp/` (gitignored).
 
-**Evaluation & SVR baselines**: eval harness in `inference/` (`run_cmrxrecon.py`, `run_rtfb.py`, `adapters/`), classical SVR baselines in `baselines/`, frozen breathing-simulated harness in `evaluation/` (see its README; heavy data on gitignored GPFS). Rationale/protocol/results: docs/24 + docs/29–35. The `evaluation/` off-limits rule above applies to `evaluation/analysis/` too.
+**Evaluation & SVR baselines**: the gated + breathing-simulated harness is **`evaluation/`** (see its README; heavy data on gitignored GPFS); classical SVR baselines in `baselines/`. **`inference/` is now model loading only** — `load_run.load_model_from_run` builds the model from the checkpoint's own `run_meta.jsonl`, never the live `default.yaml` (which would score an old arm at today's `img_size`/aug tier). Its RTFB runners and per-dataset adapters were retired to `inference/_archive/` (**docs/79**): every source now flows through `MRIDataset.get_data`, so the native-z geometry contract has ONE implementation instead of four that drifted. Rationale/protocol/results: docs/24 + docs/29–35 + docs/79. The `evaluation/` off-limits rule above applies to `evaluation/analysis/` too.
 
 ## Logging (wandb + on-disk, project `vggt-mri`)
 

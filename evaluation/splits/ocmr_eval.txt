@@ -1,0 +1,15 @@
+# OCMR gated SAX — EVAL-ONLY cohort (docs/79).
+# OCMR is not in any training pool: it is a transfer/eval source, so all 8 gated SAX
+# stacks sit in [val] rather than being carved into train/val/test. Converted to the
+# standard 12-phase layout by tools/convert_ocmr_to_12phase.py (source tree read-only).
+# Lives under evaluation/ rather than training/splits/ precisely BECAUSE nothing here is
+# ever trained on — keeping it out of the training split dir prevents an accidental pool.
+[val]
+OCMR_sax/OCMR_fs_0012_3T
+OCMR_sax/OCMR_fs_0045_3T
+OCMR_sax/OCMR_fs_0053_1_5T
+OCMR_sax/OCMR_fs_0060_1_5T
+OCMR_sax/OCMR_fs_0063_1_5T
+OCMR_sax/OCMR_fs_0068_1_5T
+OCMR_sax/OCMR_fs_0069_1_5T
+OCMR_sax/OCMR_fs_0074_1_5T

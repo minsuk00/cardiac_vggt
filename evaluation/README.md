@@ -177,11 +177,16 @@ Cohort numbers live in git at `results/<dataset>/<arm>.json`; per-arm provenance
 - **New baseline method** — write `engine/run_<method>.sh` (mirror the `(subject, variant)` +
   `METHOD=` shell contract), score/aggregate are arm-name-agnostic. If its output isn't on the
   GT `[0,1]` scale, add it to `SELF_NORM_METHODS` / `PURE_SCALE_METHODS` in `assemble_and_gif.py`.
-- **New dataset/cohort** — the sore spot: each dataset needs its own prep + adapter, so expect
-  to touch **`paths.DATASETS`**, `run_vggt.py` (`--dataset` choices + a `prep_<ds>` in
-  `prep_by_ds`), `engine/build_inputs/<ds>.py`, `inference/adapters/<ds>.py`, and the
-  `analysis/` per-dataset dispatches (`slice_panels.PREP`, `ef_dice --cohorts`). Start from
-  `paths.DATASETS` and grep the codebase for the current members.
+- **New dataset/cohort** — no longer the sore spot. It used to need a prep function, a builder
+  and an adapter per dataset; the work is now **upstream of this dir**: convert the source to the
+  standard 12-phase layout (`tools/convert_*_to_12phase.py` → `<SRC>_sax/`, mirroring
+  `ACDC_sax`/`MNMs_sax`) so `MRIDataset` can read it. Inside `evaluation/` only **two** entries
+  change: `paths.DATASETS` and `build_inputs/pooled.py:SOURCE_PREFIX`. Everything downstream
+  (`run_vggt`, `assemble_and_gif`, `aggregate`, `slice_panels`, `ef_dice`) is source-agnostic and
+  reads geometry per subject from `manifest.json`.
+  A source that is never trained on also needs a split file — put it in **`evaluation/splits/`**
+  (e.g. `ocmr_eval.txt`), not `training/splits/`, so it cannot be pulled into a training pool by
+  accident.
 
 **contz naming (historical):** existing OOD contz arms are stored *doubled*
 (`vggt_..._contz_contz`) because an old `run_vggt` appended `_contz` twice. `canonical_arm`
