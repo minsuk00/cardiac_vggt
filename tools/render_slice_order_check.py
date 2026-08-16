@@ -77,6 +77,7 @@ SOURCES = [
     ("ACDC", os.path.join(DATA, "ACDC_sax/*/sax")),
     ("M&Ms", os.path.join(DATA, "MNMs_sax/*/sax")),
     ("MIITT", os.path.join(DATA, "MIITT_sax/*/sax")),
+    ("OCMR", os.path.join(DATA, "OCMR_sax/*/sax")),
 ]
 
 LV, MYO, RV = 1, 2, 3
@@ -97,8 +98,12 @@ def _slope(y):
 
 
 def features(seg_path, min_planes=4):
-    """-> dict of per-subject ordering features, or None if unusable."""
-    seg = np.asarray(nib.load(seg_path).dataobj)
+    """-> dict of per-subject ordering features, or None if unusable.
+
+    `seg_path` is a path, or an already-loaded (X,Y,Z[,T]) array — the array form lets a
+    converter score its own output in memory, before it has written anything to disk."""
+    seg = (np.asarray(nib.load(seg_path).dataobj)
+           if isinstance(seg_path, (str, os.PathLike)) else np.asarray(seg_path))
     if seg.ndim == 4:
         seg = seg[..., 0]                      # ED frame (frame 0 is ED by construction)
     if seg.ndim != 3:

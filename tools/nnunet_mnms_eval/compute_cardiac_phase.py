@@ -19,7 +19,9 @@ ROOT = "/home/minsukc/vggt"
 WORKLIST = os.path.join(ROOT, "scratch/data/whs/worklist.txt")
 MANIFEST = os.path.join(ROOT, "scratch/data/whs/whs_manifest.csv")
 OUT = os.path.join(ROOT, "scratch/data/whs/cardiac_phase.csv")
-sys.path.insert(0, os.path.join(ROOT, "tools/nnunet_mnms_eval"))
+# Import the sibling from THIS file's directory, not from a hardcoded ROOT — otherwise a checkout
+# in a git worktree silently runs the other tree's assemble_whs.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from assemble_whs import unit_id, is_gated                        # sibling path + gated test (reused)
 
 MONO_OK = 0.80   # min fraction of frames moving in the physiologically-correct direction
@@ -55,7 +57,7 @@ def converted_labels(ds, out_dir):
     """
     if ds == "acdc":
         return {"group": acdc_group(out_dir), "vendor": "", "centre": ""}
-    if ds in ("acdc_sax", "mnms_sax", "miitt_sax"):
+    if ds in ("acdc_sax", "mnms_sax", "miitt_sax", "ocmr_sax"):
         p = os.path.join(out_dir, "convert_meta.json")
         if os.path.exists(p):
             import json
