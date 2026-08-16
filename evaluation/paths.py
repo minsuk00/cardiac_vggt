@@ -32,7 +32,10 @@ CHECKPOINTS = EVAL_ROOT / "checkpoints"  # -> GPFS (copied ckpts per arm)
 RESULTS = EVAL_ROOT / "results"          # git-tracked cohort summaries
 FIGURES = EVAL_ROOT / "figures"          # -> GPFS (subject-major DISPOSABLE figures; rm-safe)
 
-DATASETS = ("cmrxrecon", "acdc", "miitt", "ocmr")
+# One dir per POOLED SOURCE (was: 4 dirs split by in-dist vs "OOD"). That distinction is gone —
+# ACDC and M&Ms are in the training pool now, and every source here is gated + breathing-simulated,
+# so they differ by provenance, not by regime. Keys match `build_inputs/pooled.py`'s --source.
+DATASETS = ("cmrx2023", "cmrx2024", "cmrx2025", "acdc", "mnms", "miitt", "ocmr")
 VARIANTS = ("clean", "breath")           # the two recon conditions (both in one metrics.json)
 BUNDLE_DIRS = ("gt", "clean", "breath")  # input-bundle subdirs; NOT arms
 # input-bundle phase-stack filename prefix per subdir: gt/ -> gt_t*, clean|breath/ -> stack_t*
