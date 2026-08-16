@@ -475,7 +475,10 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
     # basename(md) — NOT meta['model_name'], which drops both the date and the `_contz` suffix and
     # so collides (miitt vggt_20260713_gather05 vs ..._contz both -> 'gather05').
     mtag = os.path.basename(md)
-    base = f"{cohort} · {subject} · {mtag} · z={meta.get('z_mode','?')}"        # arm-neutral prefix
+    # `z_mode` (snapped|continuous) is retired — there is no 12 mm snap left to opt out of. Label
+    # the geometry that actually varies now: this subject's own native D and dz.
+    zlbl = f"D={D} dz={dz_mm:g}mm" + (" contz" if meta.get("continuous_z") else "")
+    base = f"{cohort} · {subject} · {mtag} · {zlbl}"                            # arm-neutral prefix
     ttl = f"{base} · {arm} input"
     # Panels co-locate with the gifs in the arm dir (volumes/<ds>/out/<subj>/<arm>/); --out overrides.
     def dst(name):

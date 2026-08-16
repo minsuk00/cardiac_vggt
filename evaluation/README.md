@@ -18,7 +18,7 @@ evaluation/
 ├── build_models_table.py  # harvest metadata.json -> MODELS.md + models.json
 ├── MODELS.md  models.json # provenance: one row per arm -> ckpt / config / scheme / wandb
 ├── engine/             # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor, run_seg,
-│                       #   assemble_and_gif, aggregate, build_inputs/<ds>.py + geom.py)
+│                       #   assemble_and_gif, aggregate, build_inputs/pooled.py)
 ├── analysis/        # the standing every-eval analyses (breathing, slice panels, EF/Dice,
 │                    #   compare_methods = multi-arm GIF, compare_table = cross-arm ranking)
 ├── results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
@@ -34,16 +34,25 @@ evaluation/
 └── checkpoints/ -> GPFS (COPIED ckpts per arm; gitignored)
 ```
 
-Datasets: `cmrxrecon` (paired, has GT) + OOD transfer `acdc` / `miitt` / `ocmr`. Phase
-count `T` is **per-dataset** (cmrx 12, ocmr 18, miitt/acdc 30) — always read `T` from
-`manifest.json`, never hardcode 12. `_ef_ood/` is a separate derived product with its own
-layout, not part of this harness.
+Sources: one dir per **pooled source** — `cmrx2023` `cmrx2024` `cmrx2025` `acdc` `mnms`
+`miitt` `ocmr`. There is no in-distribution/OOD split any more: ACDC and M&Ms are in the
+training pool, and every source here is gated + breathing-simulated, so they differ by
+provenance rather than regime.
+
+**Geometry is native-z (docs/58).** Each subject keeps its own slice count `D` and pitch
+`dz`; there is no 12-plane cube and nothing is snapped to 12 mm. Read `D`, `dz_mm` and `T`
+from `manifest.json` — never hardcode any of them. Every source is converted to 12 phases
+on disk, so `T == 12` today, but the rule stands.
+
+`_ef_ood/` is a separate derived product with its own layout, not part of this harness, and
+is **stale** (it derives from the pre-native-z bundles archived in
+`scratch/eval/_archive_prenativez_20260712/`).
 
 ## Scope
 
 This dir is **only** the gated + breathing-simulated pipeline (the frozen-bundle harness).
-Real-time free-breathing (RTFB) inference is **out of scope for now** and stays in
-`inference/run_rtfb.py`.
+Real-time free-breathing (RTFB) inference is **out of scope** and is archived in
+`inference/_archive/`.
 
 ## What lives here vs elsewhere (the curation rule)
 
@@ -54,10 +63,13 @@ Real-time free-breathing (RTFB) inference is **out of scope for now** and stays 
   script into `evaluation/` unless it is re-run on every eval.
 - **`analysis/` is human-curated.** Do not add a script here on your own initiative —
   write it to `tools/` and ask.
-- **Relationship to sibling dirs:** `inference/` = the shared library (model loading +
-  dataset adapters; the harness imports it). `baselines/` = classical-method
-  implementations (SVRTK / NeSVoR / NiftyMIC internals). `evaluation/` = the frozen-bundle
-  harness that drives both against one shared input and scores them.
+- **Relationship to sibling dirs:** `inference/` = model loading only
+  (`load_run.load_model_from_run`, which reads the protocol from the checkpoint's own
+  `run_meta.jsonl`). Its dataset adapters are **gone** — every source now goes through
+  `MRIDataset.get_data`, so the geometry contract has ONE implementation, the one training
+  uses. `baselines/` = classical-method implementations (SVRTK / NeSVoR / NiftyMIC
+  internals). `evaluation/` = the frozen-bundle harness that drives both against one shared
+  input and scores them.
 
 ## Data rules
 
@@ -90,13 +102,13 @@ Real-time free-breathing (RTFB) inference is **out of scope for now** and stays 
 
 ```python
 import sys; sys.path.insert(0, "<repo>/evaluation"); import paths
-for arm in paths.arms("cmrxrecon"):              # arm-style iteration over subject-major disk
-    for subj in paths.subjects("cmrxrecon"):
-        vol = paths.recon("cmrxrecon", subj, arm, "clean", phase=0)
+for arm in paths.arms("cmrx2024"):               # arm-style iteration over subject-major disk
+    for subj in paths.subjects("cmrx2024"):
+        vol = paths.recon("cmrx2024", subj, arm, "clean", phase=0)
 ```
 
 Run `python evaluation/check_paths.py` after any layout change — it asserts every resolver
-matches a raw glob of the real tree, across all four datasets.
+matches a raw glob of the real tree, across every source.
 
 ## Running the harness
 
@@ -107,10 +119,16 @@ and the classical-baseline shells write to the same location via their own `OUT_
 (verbatim snapshots — see "What lives here").
 
 ```bash
-# 1. build the frozen breathing bundle (once per dataset)
-python evaluation/engine/build_inputs/<dataset>.py ...
-# 2. reconstruct — VGGT [GPU], or a classical baseline
-python evaluation/engine/run_vggt.py --dataset <ds> --ckpt <pt> --model-name <slug>
+# 0. everything at once (build -> score -> assemble -> aggregate, all sources)
+sbatch sbatch/eval_pooled_val.sh
+# 1. build the frozen breathing bundle — ONE builder for every source; idempotent and
+#    incremental (a subject with a manifest.json is skipped unless --overwrite)
+python evaluation/engine/build_inputs/pooled.py --source <src> \
+       --split-file training/splits/pooled.txt --split val [--subjects A,B]
+# 2. reconstruct — VGGT [GPU], or a classical baseline. The model protocol (img_size,
+#    backbone, sampling knobs) comes from the ckpt's OWN run_meta.jsonl, so there are no
+#    --regime / --continuous-z / --refiner flags to get wrong.
+python evaluation/engine/run_vggt.py --dataset <src> --ckpt <pt> --model-name <slug>
 #    baseline shells take (subject, variant); the arm/method is the METHOD env var, ONE call per variant:
 EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/engine/run_svrtk3d.sh <subj> clean
 EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/engine/run_svrtk3d.sh <subj> breath
@@ -180,3 +198,46 @@ and every method consumes a shared *generated* breathing bundle. Subject-major k
 subject's bundle welded to the recons derived from it and matches the data's shape at zero
 migration cost; arm-style iteration is recovered in `paths.py`. Model identity is a short
 slug in the dir name; scheme/epoch/date/ckpt live in `MODELS.md`.
+
+## Adding val subjects later (the incremental guarantee)
+
+Append them to the split file and re-run the build for that source. **Nothing already on
+disk is invalidated**, because both random draws are keyed on the subject NAME, never on
+its position in the split:
+
+| | seeded by |
+|---|---|
+| breathing realization | `sha256("<source>/<subject>")` → `build_inputs/pooled.py` |
+| input slot draw (which z, which t per slot) | the same hash → `run_vggt.py`, via a one-subject `MRIDataset` |
+
+The slot draw needs that one-subject dataset because `MRIDataset.get_data` uses `seq_index`
+for BOTH the subject index (`seq_index % len(subjects)`) and the val RNG seed
+(`random.Random(seq_index)`). With a single subject the index term is always 0, which frees
+`seq_index` to be the name hash.
+
+Verified, not assumed: inserting a subject at the head of `[val]` — the worst case, which
+shifts every `seq_index` — leaves an existing subject's seed and every NIfTI byte identical.
+Existing bundles are skipped (`manifest.json` present), so a re-run only does the new work.
+
+## Reconciling harness numbers with the trainer's
+
+The trainer already writes the full metric suite per val subject to
+`<log_dir>/val_per_subject.csv`. The harness is **not** there to re-derive those; it exists
+so the classical baselines and the model see a byte-identical corruption, and to emit recon
+volumes for EF / Dice / GIFs.
+
+When you do want to compare the two, use **`psnr_unit_peak`**, not `psnr`. They differ by
+exactly `20*log10(gt[roi].max())`:
+
+- harness `psnr` normalizes by the GT's max **inside the ROI** — the cross-method convention
+  here, so SVRTK / NeSVoR / NiftyMIC / VGGT stay mutually comparable.
+- trainer `metric_psnr_3d_*` uses **peak = 1.0**.
+
+Measured on `CMRx24_Test_P012` (heart ROI, both the same `heart_roi_canonical`):
+`gt[roi].max() = 0.353` → a **−9.04 dB** offset. Harness `psnr` 20.59, harness
+`psnr_unit_peak` 29.62, trainer `metric_psnr_3d_heartseg` **29.49**. The residual is the
+different breathing realization (name hash vs `seq_index`), not the metric.
+
+Same check on the geometry, over the anatomy bbox: harness 30.78 dB vs the trainer's 30.39.
+Fault-injected to prove the comparison is sensitive rather than accidental — forcing a wrong
+`z_scale` collapses it to 21.93 / 20.18 dB.
