@@ -332,6 +332,17 @@ def main():
                          "silently overwrite a named arm.")
     ap.add_argument("--date", default=None, help="legacy arm-name form vggt_<date>_<model>")
     ap.add_argument("--split", default="val", help="which split the bundles were built for")
+    ap.add_argument("--arms", nargs="+", default=["breath"], choices=["clean", "breath"],
+                    help="input condition(s) to reconstruct. DEFAULT `breath` — that is the "
+                         "deliverable: the model targets free-breathing acquisition, so the "
+                         "breathing-corrupted input is what it is actually evaluated on. Add "
+                         "`clean` (`--arms clean breath`) only when you want the no-breathing "
+                         "PSNR ceiling; it roughly doubles runtime and buys nothing else. Its "
+                         "negative-control value is redundant, measured: predicted |dz| is 0.47mm "
+                         "on the clean arm AND 0.47mm on the breath arm's own near-zero-"
+                         "displacement slots, and slope is regressed against VARYING applied "
+                         "displacement inside the breath arm, so a constant-dz model already "
+                         "scores slope~0 there without any clean run.")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all built subjects")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--note", default="")
@@ -385,7 +396,8 @@ def main():
             dset = make_dataset(cfg, man["rel_path"], args.split, tmpdir)
             seq = name_seed(ds_name, subject)          # name-keyed: cohort-composition independent
             timing, rdiag = {"model_load_sec": model_load_s}, {}
-            for breathing, var in [(False, "clean"), (True, "breath")]:
+            for breathing, var in [(b, v) for b, v in ((False, "clean"), (True, "breath"))
+                                   if v in args.arms]:
                 rv = str(paths.recon_dir(ds_name, subject, method, var))
                 os.makedirs(rv, exist_ok=True)
                 bundle = load_bundle(subj_dir, T, "breath" if breathing else "clean")

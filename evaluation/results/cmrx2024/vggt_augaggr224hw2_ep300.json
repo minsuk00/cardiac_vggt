@@ -1,0 +1,488 @@
+{
+  "dataset": "cmrx2024",
+  "method": "vggt_augaggr224hw2_ep300",
+  "n": 29,
+  "n_expected": 29,
+  "missing": [],
+  "ckpts": [
+    "8867644927:1786870036"
+  ],
+  "all": {
+    "n": 29,
+    "clean_psnr": [
+      21.26929496896678,
+      1.378776632445472
+    ],
+    "clean_ssim": [
+      0.860083929509267,
+      0.05319835793142812
+    ],
+    "clean_ncc": [
+      0.8604717808722079,
+      0.051158940737788185
+    ],
+    "breath_psnr": [
+      20.66521114042435,
+      1.455753468510146
+    ],
+    "breath_ssim": [
+      0.8288913304093242,
+      0.0655066043011766
+    ],
+    "breath_ncc": [
+      0.8333073081983915,
+      0.06358615891071227
+    ],
+    "cost_psnr": [
+      0.6040838285424244,
+      0.7555601034091378
+    ],
+    "breath_disp_mm": [
+      6.684532575690822,
+      3.4576673235253144
+    ]
+  },
+  "volunteer": {
+    "n": 29,
+    "clean_psnr": [
+      21.26929496896678,
+      1.378776632445472
+    ],
+    "clean_ssim": [
+      0.860083929509267,
+      0.05319835793142812
+    ],
+    "clean_ncc": [
+      0.8604717808722079,
+      0.051158940737788185
+    ],
+    "breath_psnr": [
+      20.66521114042435,
+      1.455753468510146
+    ],
+    "breath_ssim": [
+      0.8288913304093242,
+      0.0655066043011766
+    ],
+    "breath_ncc": [
+      0.8333073081983915,
+      0.06358615891071227
+    ],
+    "cost_psnr": [
+      0.6040838285424244,
+      0.7555601034091378
+    ],
+    "breath_disp_mm": [
+      6.684532575690822,
+      3.4576673235253144
+    ]
+  },
+  "per_subject": [
+    {
+      "subject": "CMRx24_Test_P012",
+      "group": "volunteer",
+      "clean_psnr": 22.76236343383789,
+      "clean_ssim": 0.8909904956817627,
+      "clean_ncc": 0.8895216733217239,
+      "breath_ncc": 0.8791720469792684,
+      "breath_psnr": 22.38931433359782,
+      "breath_ssim": 0.8745043873786926,
+      "cost_psnr": 0.37304910024007043,
+      "breath_disp_mm": 6.06637520639761,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P020",
+      "group": "volunteer",
+      "clean_psnr": 22.58488368988037,
+      "clean_ssim": 0.849096472064654,
+      "clean_ncc": 0.8486349433660507,
+      "breath_ncc": 0.8157277007897695,
+      "breath_psnr": 21.88553794225057,
+      "breath_ssim": 0.8123366286357244,
+      "cost_psnr": 0.6993457476298026,
+      "breath_disp_mm": 9.227460836315966,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P023",
+      "group": "volunteer",
+      "clean_psnr": 22.07625977198283,
+      "clean_ssim": 0.8691679338614146,
+      "clean_ncc": 0.8682548105716705,
+      "breath_ncc": 0.8208697239557902,
+      "breath_psnr": 20.847824096679688,
+      "breath_ssim": 0.8209621955951055,
+      "cost_psnr": 1.2284356753031425,
+      "breath_disp_mm": 9.651228195655245,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P025",
+      "group": "volunteer",
+      "clean_psnr": 21.610174814860027,
+      "clean_ssim": 0.871839572985967,
+      "clean_ncc": 0.8715293606122335,
+      "breath_ncc": 0.8716800957918167,
+      "breath_psnr": 21.72504695256551,
+      "breath_ssim": 0.8700163861115774,
+      "cost_psnr": -0.11487213770548266,
+      "breath_disp_mm": 3.0596100084459734,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P028",
+      "group": "volunteer",
+      "clean_psnr": 22.395433108011883,
+      "clean_ssim": 0.8859607229630152,
+      "clean_ncc": 0.8857234368721644,
+      "breath_ncc": 0.8855301588773727,
+      "breath_psnr": 22.432390689849854,
+      "breath_ssim": 0.8820656885703405,
+      "cost_psnr": -0.03695758183797082,
+      "breath_disp_mm": 7.975535481146122,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P044",
+      "group": "volunteer",
+      "clean_psnr": 16.933021386464436,
+      "clean_ssim": 0.5954055115580559,
+      "clean_ncc": 0.6074575359622637,
+      "breath_ncc": 0.5910287400086721,
+      "breath_psnr": 16.907377243041992,
+      "breath_ssim": 0.583732451001803,
+      "cost_psnr": 0.025644143422443477,
+      "breath_disp_mm": 8.536945667852384,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P054",
+      "group": "volunteer",
+      "clean_psnr": 22.600663979848225,
+      "clean_ssim": 0.848687157034874,
+      "clean_ncc": 0.8486356685558955,
+      "breath_ncc": 0.8112868964672089,
+      "breath_psnr": 21.906269868214924,
+      "breath_ssim": 0.804196298122406,
+      "cost_psnr": 0.6943941116333008,
+      "breath_disp_mm": 9.306217090577674,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P063",
+      "group": "volunteer",
+      "clean_psnr": 19.097959836324055,
+      "clean_ssim": 0.8557457278172175,
+      "clean_ncc": 0.8564868321021398,
+      "breath_ncc": 0.8545708159605662,
+      "breath_psnr": 19.124106884002686,
+      "breath_ssim": 0.8532784432172775,
+      "cost_psnr": -0.02614704767863074,
+      "breath_disp_mm": 3.676361066460432,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P064",
+      "group": "volunteer",
+      "clean_psnr": 21.514331976572674,
+      "clean_ssim": 0.8891917516787847,
+      "clean_ncc": 0.8913604368766149,
+      "breath_ncc": 0.8827569534381231,
+      "breath_psnr": 21.25810194015503,
+      "breath_ssim": 0.8770647694667181,
+      "cost_psnr": 0.2562300364176444,
+      "breath_disp_mm": 5.308633237805467,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Test_P068",
+      "group": "volunteer",
+      "clean_psnr": 22.331217924753826,
+      "clean_ssim": 0.8748043775558472,
+      "clean_ncc": 0.8733112215995789,
+      "breath_ncc": 0.8341466089089712,
+      "breath_psnr": 21.371200402577717,
+      "breath_ssim": 0.8303140898545583,
+      "cost_psnr": 0.9600175221761091,
+      "breath_disp_mm": 8.278987415868109,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P011",
+      "group": "volunteer",
+      "clean_psnr": 21.268000443776447,
+      "clean_ssim": 0.8776287982861201,
+      "clean_ncc": 0.8791575928529104,
+      "breath_ncc": 0.8682189136743546,
+      "breath_psnr": 20.958175818125408,
+      "breath_ssim": 0.8650792588790258,
+      "cost_psnr": 0.3098246256510393,
+      "breath_disp_mm": 3.803316341392917,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P034",
+      "group": "volunteer",
+      "clean_psnr": 19.81860589981079,
+      "clean_ssim": 0.8314116050799688,
+      "clean_ncc": 0.8300566375255585,
+      "breath_ncc": 0.6527907798687617,
+      "breath_psnr": 16.22272491455078,
+      "breath_ssim": 0.6381014684836069,
+      "cost_psnr": 3.5958809852600098,
+      "breath_disp_mm": 16.85302015682245,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P035",
+      "group": "volunteer",
+      "clean_psnr": 22.57232427597046,
+      "clean_ssim": 0.8920947710673014,
+      "clean_ncc": 0.8924150963624319,
+      "breath_ncc": 0.8427085181077322,
+      "breath_psnr": 21.12404139836629,
+      "breath_ssim": 0.8372720827658972,
+      "cost_psnr": 1.4482828776041679,
+      "breath_disp_mm": 6.093558388707971,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P053",
+      "group": "volunteer",
+      "clean_psnr": 20.395944754282635,
+      "clean_ssim": 0.8266057968139648,
+      "clean_ncc": 0.8284505754709244,
+      "breath_ncc": 0.8327853033939997,
+      "breath_psnr": 20.55978186925252,
+      "breath_ssim": 0.8239824573198954,
+      "cost_psnr": -0.16383711496988695,
+      "breath_disp_mm": 4.589225534226766,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P074",
+      "group": "volunteer",
+      "clean_psnr": 22.221128781636555,
+      "clean_ssim": 0.8707440545161566,
+      "clean_ncc": 0.8697471568981806,
+      "breath_ncc": 0.8556005855401357,
+      "breath_psnr": 21.908524831136067,
+      "breath_ssim": 0.8526545564333597,
+      "cost_psnr": 0.3126039505004883,
+      "breath_disp_mm": 5.369778102673536,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P091",
+      "group": "volunteer",
+      "clean_psnr": 23.101883093516033,
+      "clean_ssim": 0.8682108521461487,
+      "clean_ncc": 0.8670059194167455,
+      "breath_ncc": 0.7985403686761856,
+      "breath_psnr": 21.472325960795086,
+      "breath_ssim": 0.7852912247180939,
+      "cost_psnr": 1.6295571327209473,
+      "breath_disp_mm": 9.835961858879374,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P113",
+      "group": "volunteer",
+      "clean_psnr": 19.341154893239338,
+      "clean_ssim": 0.8867078175147375,
+      "clean_ncc": 0.8869588623444239,
+      "breath_ncc": 0.883323922753334,
+      "breath_psnr": 19.29083792368571,
+      "breath_ssim": 0.8812284419933955,
+      "cost_psnr": 0.05031696955362719,
+      "breath_disp_mm": 1.8224160180657623,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P120",
+      "group": "volunteer",
+      "clean_psnr": 19.734842936197918,
+      "clean_ssim": 0.8425308664639791,
+      "clean_ncc": 0.8427412311236063,
+      "breath_ncc": 0.8355590055386225,
+      "breath_psnr": 19.839803059895832,
+      "breath_ssim": 0.8336689472198486,
+      "cost_psnr": -0.1049601236979143,
+      "breath_disp_mm": 5.8405599264061205,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P127",
+      "group": "volunteer",
+      "clean_psnr": 19.948726495107014,
+      "clean_ssim": 0.8638110856215159,
+      "clean_ncc": 0.8633782118558884,
+      "breath_ncc": 0.8427159190177917,
+      "breath_psnr": 19.49529790878296,
+      "breath_ssim": 0.837036649386088,
+      "cost_psnr": 0.4534285863240548,
+      "breath_disp_mm": 3.7303002369289566,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P130",
+      "group": "volunteer",
+      "clean_psnr": 22.066235383351643,
+      "clean_ssim": 0.8898202280203501,
+      "clean_ncc": 0.8910901496807734,
+      "breath_ncc": 0.8614527185757955,
+      "breath_psnr": 21.074899355570476,
+      "breath_ssim": 0.8546170641978582,
+      "cost_psnr": 0.9913360277811663,
+      "breath_disp_mm": 5.299506879077489,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P132",
+      "group": "volunteer",
+      "clean_psnr": 21.701876958211262,
+      "clean_ssim": 0.8861220131317774,
+      "clean_ncc": 0.886455163359642,
+      "breath_ncc": 0.8803519358237585,
+      "breath_psnr": 21.613960425059002,
+      "breath_ssim": 0.877695898214976,
+      "cost_psnr": 0.08791653315226,
+      "breath_disp_mm": 5.529131158264888,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P141",
+      "group": "volunteer",
+      "clean_psnr": 20.174033800760906,
+      "clean_ssim": 0.8938929190238317,
+      "clean_ncc": 0.8937236219644547,
+      "breath_ncc": 0.8590931197007498,
+      "breath_psnr": 19.2679443359375,
+      "breath_ssim": 0.8552990108728409,
+      "cost_psnr": 0.9060894648234061,
+      "breath_disp_mm": 14.163117645000051,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P142",
+      "group": "volunteer",
+      "clean_psnr": 21.647109031677246,
+      "clean_ssim": 0.8813092162211736,
+      "clean_ncc": 0.8812206983566284,
+      "breath_ncc": 0.8703534056742986,
+      "breath_psnr": 21.37288983662923,
+      "breath_ssim": 0.8685153772433599,
+      "cost_psnr": 0.2742191950480155,
+      "breath_disp_mm": 2.402219829523919,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P145",
+      "group": "volunteer",
+      "clean_psnr": 21.72351821263631,
+      "clean_ssim": 0.8670433660348257,
+      "clean_ncc": 0.866588369011879,
+      "breath_ncc": 0.8446463594834009,
+      "breath_psnr": 21.259089310963947,
+      "breath_ssim": 0.8439411818981171,
+      "cost_psnr": 0.4644289016723633,
+      "breath_disp_mm": 11.113318799679405,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P175",
+      "group": "volunteer",
+      "clean_psnr": 21.85471232732137,
+      "clean_ssim": 0.8922902594010035,
+      "clean_ncc": 0.8926993856827418,
+      "breath_ncc": 0.8841291268666586,
+      "breath_psnr": 21.620227336883545,
+      "breath_ssim": 0.8801504323879877,
+      "cost_psnr": 0.23448499043782434,
+      "breath_disp_mm": 5.179553211909563,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Train_P178",
+      "group": "volunteer",
+      "clean_psnr": 22.395392417907715,
+      "clean_ssim": 0.8640156437953314,
+      "clean_ncc": 0.8654531985521317,
+      "breath_ncc": 0.8486783504486084,
+      "breath_psnr": 21.954599857330322,
+      "breath_ssim": 0.846434473991394,
+      "cost_psnr": 0.4407925605773926,
+      "breath_disp_mm": 3.0911255817688823,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Val_P048",
+      "group": "volunteer",
+      "clean_psnr": 20.528969923655193,
+      "clean_ssim": 0.8514485011498133,
+      "clean_ncc": 0.8520164638757706,
+      "breath_ncc": 0.8145480453968048,
+      "breath_psnr": 19.69286060333252,
+      "breath_ssim": 0.8073553591966629,
+      "cost_psnr": 0.8361093203226737,
+      "breath_disp_mm": 7.273325796031108,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Val_P054",
+      "group": "volunteer",
+      "clean_psnr": 20.346484661102295,
+      "clean_ssim": 0.8613952745993932,
+      "clean_ncc": 0.8600088109572729,
+      "breath_ncc": 0.8501347204049429,
+      "breath_psnr": 20.174095789591473,
+      "breath_ssim": 0.8496868113676707,
+      "cost_psnr": 0.17238887151082238,
+      "breath_disp_mm": 2.625174931869823,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "CMRx24_Val_P055",
+      "group": "volunteer",
+      "clean_psnr": 22.062299887339275,
+      "clean_ssim": 0.8644611636797587,
+      "clean_ncc": 0.8635985801617304,
+      "breath_ncc": 0.793511097629865,
+      "breath_psnr": 20.541872183481853,
+      "breath_ssim": 0.7913665473461151,
+      "cost_psnr": 1.5204277038574219,
+      "breath_disp_mm": 8.14948009127988,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    }
+  ]
+}

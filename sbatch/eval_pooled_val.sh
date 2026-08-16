@@ -40,6 +40,8 @@ SPLIT_FILE=${SPLIT_FILE:-$REPO/training/splits/pooled.txt}
 SPLIT=${SPLIT:-val}
 SOURCES=${SOURCES:-"cmrx2023 cmrx2024 cmrx2025 acdc mnms"}
 SKIP_GIF=${SKIP_GIF:-0}          # 1 = metrics only (GIF rendering dominates wall-clock)
+ARMS=${ARMS:-breath}             # `breath` = the deliverable. Add `clean` ("clean breath") only
+                                 # for the no-breathing PSNR ceiling; it ~doubles scoring time.
 
 cd "$REPO"
 export PYTHONPATH=training:.
@@ -49,6 +51,7 @@ echo "ckpt        : $CKPT"
 echo "arm         : vggt_$MODEL_NAME"
 echo "split       : $SPLIT_FILE [$SPLIT]"
 echo "sources     : $SOURCES"
+echo "arms        : $ARMS"
 # The MODEL protocol (img_size, backbone, sampling knobs) is read from the ckpt's own
 # run_meta.jsonl, never from the live default.yaml — see inference/load_run.py for why.
 
@@ -59,7 +62,7 @@ for S in $SOURCES; do
 
   echo "=== [$S] score ======================================================="
   $PY evaluation/engine/run_vggt.py \
-      --dataset "$S" --ckpt "$CKPT" --model-name "$MODEL_NAME" --split "$SPLIT"
+      --dataset "$S" --ckpt "$CKPT" --model-name "$MODEL_NAME" --split "$SPLIT" --arms $ARMS
 
   echo "=== [$S] assemble + metrics =========================================="
   for SUBJ in $(ls "evaluation/volumes/$S/out"); do
