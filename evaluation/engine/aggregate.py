@@ -7,7 +7,7 @@ name contains 'Patient' are pathology; everything else is treated as volunteer/
 healthy). CMRxRecon is all-volunteer so it collapses to one group; MIITT is
 mixed (10 volunteers + 3 patients).
 
-Run: micromamba run -n svr python evaluation/engine/aggregate.py [dataset=cmrxrecon] [method=svrtk3d]
+Run: micromamba run -n svr python evaluation/engine/aggregate.py <dataset> [method=svrtk3d]
 
 Paths/naming go through evaluation/paths.py (the single source of truth).
 """
@@ -38,7 +38,9 @@ def stat(xs):
 
 
 def main():
-    dataset = sys.argv[1] if len(sys.argv) > 1 else "cmrxrecon"
+    if len(sys.argv) < 2:
+        sys.exit(f"usage: aggregate.py <dataset> [method]   datasets: {', '.join(paths.DATASETS)}")
+    dataset = sys.argv[1]
     method = sys.argv[2] if len(sys.argv) > 2 else "svrtk3d"
     root = paths.dataset_root(dataset)
     files = sorted(glob.glob(str(root / "*" / method / "metrics.json")))

@@ -1,4 +1,4 @@
-"""Cohort-agnostic EF + Dice for the 1-frame OOD recons, method-matched via nnU-Net Task114.
+"""Cohort-agnostic EF + Dice for the 1-frame recons, method-matched via nnU-Net Task114.
 
 Segments the recon (clean & breath arms) AND the clean GT bundle with the SAME segmenter, so
 pred-EF-vs-GT-EF isolates recon quality (pseudo-truth, docs/17/24 method). EF is a ratio
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("dump"); d.add_argument("input_dir")
     d.add_argument("--method", default="vggt_20260719_1f_gather05_ep99")
-    d.add_argument("--cohorts", nargs="+", default=["miitt", "ocmr", "acdc"])
+    d.add_argument("--cohorts", nargs="+", default=list(paths.DATASETS))
     s = sub.add_parser("score"); s.add_argument("seg_dir")
     s.add_argument("--input", required=True); s.add_argument("--out", required=True)
     pl = sub.add_parser("plot"); pl.add_argument("input", help="a score() output json")

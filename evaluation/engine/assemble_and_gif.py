@@ -29,21 +29,35 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import paths  # noqa: E402
 
-DATASET = os.environ.get("EVAL_DATASET", "cmrxrecon")
-SPACING_XYZ = (1.4, 1.4, 12.0)
-SHAPE_XYZ = (256, 256, 12)
+DATASET = os.environ.get("EVAL_DATASET", "cmrx2024")
+INPLANE_MM = 1.4          # in-plane only; z is NEVER a constant here (docs/58 native-z)
 
 
-def canon_affine():
-    return np.diag([*SPACING_XYZ, 1.0])
+def subject_grid(ds, subj):
+    """This subject's own scoring grid `(shape_xyz, affine)`, read from its GT bundle.
+
+    Native-z (docs/58): D and dz belong to the subject, so there is no single canonical grid to
+    resample onto. This file used to hardcode `SHAPE_XYZ = (256,256,12)` / `(1.4,1.4,12.0)` and
+    force EVERY volume onto it — which under native-z silently re-snapped each subject's real
+    stack (D ranges 9-18 at dz 8/10/12 mm across the pooled cohort) back onto a 12-plane 12 mm
+    cube at load time, in the SCORER, after the model had correctly reconstructed it.
+    """
+    img = nib.load(str(paths.bundle_stack(ds, subj, "gt", 0)))
+    return tuple(img.shape[:3]), img.affine
 
 
-def load_canon(path):
-    """Load a NIfTI and resample onto the canonical (256,256,12) grid (X,Y,Z)."""
+def load_canon(path, shape_xyz, affine):
+    """Load a NIfTI onto the subject's grid, resampling only if it is not already there.
+
+    The resample is still load-bearing for the CLASSICAL baselines: SVRTK / NeSVoR / NiftyMIC
+    reconstruct on their own (typically 1.4 mm isotropic) grid and have to be brought onto the GT
+    grid to be scored at all. Bundle stacks and VGGT recons are already on it, so they load
+    untouched — which is the point: no method should be silently resampled.
+    """
     img = nib.load(path)
-    if tuple(img.shape[:3]) == SHAPE_XYZ and np.allclose(img.affine, canon_affine()):
+    if tuple(img.shape[:3]) == tuple(shape_xyz) and np.allclose(img.affine, affine):
         return np.asarray(img.dataobj, dtype=np.float32)
-    out = nibproc.resample_from_to(img, (SHAPE_XYZ, canon_affine()), order=1, cval=0.0)
+    out = nibproc.resample_from_to(img, (tuple(shape_xyz), affine), order=1, cval=0.0)
     return np.asarray(out.dataobj, dtype=np.float32)
 
 
@@ -98,11 +112,38 @@ def prep_recon(rec, method, roi):
 
 
 def psnr(a, b, m):
+    """Harness PSNR: peak = the GT's max INSIDE the ROI.
+
+    ⚠️ NOT comparable to the trainer's `metric_psnr_3d_*`, which uses peak = 1.0. The ROI is the
+    same object (`heart_roi_canonical`); only the normalization differs, by exactly
+    `20*log10(gt[roi].max())`. That is a large offset in practice because the heart ROI rarely
+    contains the volume's global maximum — measured on CMRx24_Test_P012: gt[roi].max() = 0.353,
+    i.e. **-9.04 dB**, which is the whole of the 20.6-vs-29.6 discrepancy between this scorer and
+    the trainer's heartseg number.
+
+    Kept as the headline because it is the harness's cross-method convention (SVRTK / NeSVoR /
+    NiftyMIC / VGGT are all scored this way, so the head-to-head is internally consistent), but
+    `psnr_unit_peak` below is emitted alongside it so harness and trainer numbers can be
+    reconciled without re-deriving this every time.
+    """
     if not m.any():                       # empty ROI: b[m].max() would raise on a zero-size array
         return float("nan")
     mse = (((a - b) ** 2)[m]).mean()
     peak = max(b[m].max(), 1e-6)
     return float(10 * np.log10(peak ** 2 / max(mse, 1e-10)))
+
+
+def psnr_unit_peak(a, b, m):
+    """PSNR with peak = 1.0 — the TRAINER's convention (`loss._psnr_from_mse`), for [0,1] data.
+
+    Verified equivalent: on CMRx24_Test_P012 at ED over `heart_roi_canonical` this gives 29.62 dB
+    against the trainer's own recorded 29.49 dB for the same subject/epoch (the residual is the
+    different breathing realization, not the metric).
+    """
+    if not m.any():
+        return float("nan")
+    mse = (((a - b) ** 2)[m]).mean()
+    return float(10 * np.log10(1.0 / max(mse, 1e-10)))
 
 
 def ssim(a, b, m):
@@ -182,11 +223,19 @@ def main():
     # inside -mask) hallucinates spurious content there, and scoring it vs zero-padding GT drags PSNR
     # down artifactually (e.g. CMRx24_Train_P053 clean 20.2->27.5 dB once z0 is dropped). Intersecting with
     # the native FOV drops those no-data planes -> honest metric + no edge-plane flicker in the GIF.
-    heart = load_canon(str(paths.heart_mask(ds, subj))) > 0.5   # (X,Y,Z) dilated whole-heart ROI
-    content = load_canon(str(paths.fov_mask(ds, subj))) > 0.5   # (X,Y,Z) native FOV (1=real data); fov_mask picks mask.nii.gz (cmrx) vs mask_fov.nii.gz (OOD)
+    shape_xyz, aff = subject_grid(ds, subj)               # THIS subject's native grid (docs/58)
+    D = shape_xyz[2]
+    heart_p = str(paths.heart_mask(ds, subj))
+    # The heart ROI is optional now: build_inputs/pooled.py warns-and-skips it for sources that
+    # ship no canonical seg. Fall back to the FOV mask so those subjects still score (on a wider
+    # ROI) instead of crashing — metrics.json records which was used.
+    content = load_canon(str(paths.fov_mask(ds, subj)), shape_xyz, aff) > 0.5   # (X,Y,Z) native FOV
+    has_heart = os.path.exists(heart_p)
+    heart = load_canon(heart_p, shape_xyz, aff) > 0.5 if has_heart else content
     mask = heart & content                                # SCORING ROI: drop no-data padding planes
-    planes = list(range(SHAPE_XYZ[2]))                    # DISPLAY: show ALL 12 planes z0-z11 (even empty)
-    print(f"{subj} [{method}]: T={T} display planes z0-z11  scoring ROI=heart&FOV  "
+    planes = list(range(D))                               # DISPLAY: every NATIVE plane of this subject
+    print(f"{subj} [{method}]: T={T} D={D} display planes z0-z{D-1}  "
+          f"scoring ROI={'heart&FOV' if has_heart else 'FOV only (no heart seg)'}  "
           f"mask_voxels={int(mask.sum())} (heart-only {int(heart.sum())}, dropped {int(heart.sum()-mask.sum())})")
 
     # Breathing magnitude actually applied to this subject (frozen in the manifest; identical across
@@ -202,14 +251,16 @@ def main():
     print(f"  breathing |disp|: mean {breath_mean_mm:.2f} mm  max {breath_max_mm:.2f} mm  "
           f"(tilt-invariant; through-plane dZ mean {dz.mean():.2f} mm; frozen, same for all methods)")
 
-    gt = np.stack([load_canon(str(paths.bundle_stack(ds, subj, "gt", t))) for t in range(T)])
+    gt = np.stack([load_canon(str(paths.bundle_stack(ds, subj, "gt", t)), shape_xyz, aff)
+                   for t in range(T)])
     cines = {"gt": gt}
-    metrics = {"subject": subj, "planes": planes,
+    metrics = {"subject": subj, "planes": planes, "D": int(D),
+               "dz_mm": float(abs(aff[2, 2])), "scoring_roi": "heart&FOV" if has_heart else "FOV",
                "breath_mean_disp_mm": breath_mean_mm, "breath_max_disp_mm": breath_max_mm,
                "breath_mean_dz_mm": float(dz.mean()), "breath_max_dz_mm": float(dz.max()),
                "breath_disp_per_plane_mm": disp_mag.tolist(), "per_phase": {}}
     for var in ("clean", "breath"):
-        rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)))
+        rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)), shape_xyz, aff)
                         for t in range(T)])
         rec = prep_recon(rec, method, mask)  # per-method: SVRTK as-is; nesvor/niftymic self-percentile [0,1]
         rec = rec * content[None]            # DISPLAY: zero the recon in NO-DATA planes (content FOV empty:
@@ -217,18 +268,20 @@ def main():
                                              # into them (SVRTK's hard -mask doesn't). Scoring is UNAFFECTED
                                              # (score mask ⊆ content, and GT is already 0 there).
         cines[var] = rec
-        pv, sv, nv = [], [], []
+        pv, sv, nv, uv = [], [], [], []
         for t in range(T):
             pv.append(psnr(rec[t], gt[t], mask)); sv.append(ssim(rec[t], gt[t], mask)); nv.append(ncc(rec[t], gt[t], mask))
-        metrics["per_phase"][var] = {"psnr": pv, "ssim": sv, "ncc": nv}
+            uv.append(psnr_unit_peak(rec[t], gt[t], mask))    # trainer-comparable (peak=1.0)
+        metrics["per_phase"][var] = {"psnr": pv, "ssim": sv, "ncc": nv, "psnr_unit_peak": uv}
         metrics[f"{var}_psnr_mean"] = float(np.nanmean(pv))   # nanmean for all three so a degenerate phase
         metrics[f"{var}_ssim_mean"] = float(np.nanmean(sv))   # (constant/empty-ROI -> NaN) drops CONSISTENTLY
         metrics[f"{var}_ncc_mean"] = float(np.nanmean(nv))    # across metrics (NCC could already be NaN)
-        print(f"  {var}: PSNR {np.mean(pv):.2f} dB  SSIM {np.mean(sv):.3f}  NCC {np.nanmean(nv):.3f}")
+        metrics[f"{var}_psnr_unit_peak_mean"] = float(np.nanmean(uv))
+        print(f"  {var}: PSNR {np.nanmean(pv):.2f} dB (unit-peak {np.nanmean(uv):.2f})  "
+              f"SSIM {np.nanmean(sv):.3f}  NCC {np.nanmean(nv):.3f}")
 
     # save 4D cines (X,Y,Z,T): cine_gt is method-independent -> subject level (shared, written once);
     # the recon cines -> the method dir.
-    aff = canon_affine()
     nib.save(nib.Nifti1Image(np.moveaxis(cines["gt"], 0, -1), aff), os.path.join(sd, "cine_gt.nii.gz"))
     for k in ("clean", "breath"):
         nib.save(nib.Nifti1Image(np.moveaxis(cines[k], 0, -1), aff), os.path.join(md, f"cine_{k}.nii.gz"))
@@ -264,12 +317,16 @@ def main():
     vmax = float(np.percentile(_roi_vals, 99.9)) if _roi_vals.size else 1.0  # guard empty ROI
     # (all other percentile/score sites guard it; this one would IndexError on a heart&FOV-empty subject)
     breath_tag = f"breathing |disp| mean {breath_mean_mm:.1f} / max {breath_max_mm:.1f} mm"
-    # per-z applied |disp| (mm) under z-labels — ONLY when disp is canonical-indexed (cmrx: len==12).
-    # For OOD (native-indexed, len 10/11/13) the native slice shown at canonical plane z != disp[z], so a
-    # per-plane number would MISLABEL; show None there (the title carries the cohort mean/max instead).
-    canonical_disp = len(disp_mag) == SHAPE_XYZ[2]
-    pd = [float(disp_mag[z]) if (canonical_disp and content[:, :, z].any()) else None
-          for z in range(SHAPE_XYZ[2])]
+    # per-z applied |disp| (mm) under the z-labels. Under native-z every source is indexed the same
+    # way — `disp_dhw_mm` has one row per NATIVE plane and the display shows those same planes — so
+    # the old "canonical vs native indexing" caveat is gone. The length check stays as a guard
+    # against a stale bundle built before the native-z rebuild.
+    aligned_disp = len(disp_mag) == D
+    if not aligned_disp:
+        print(f"  WARNING: manifest disp has {len(disp_mag)} planes but D={D}; "
+              f"per-plane labels suppressed (stale bundle?)")
+    pd = [float(disp_mag[z]) if (aligned_disp and content[:, :, z].any()) else None
+          for z in range(D)]
     render_gif(os.path.join(md, "gif_clean.gif"),
                [("GT", gt), (f"{arm_label}\n(no breath)", cines["clean"])], planes, T, vmax,
                f"{subj} [{method}]  —  clean input (no breathing)   phase t={{t}}", plane_disp=pd)
