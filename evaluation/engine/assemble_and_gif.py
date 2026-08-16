@@ -259,7 +259,13 @@ def main():
                "breath_mean_disp_mm": breath_mean_mm, "breath_max_disp_mm": breath_max_mm,
                "breath_mean_dz_mm": float(dz.mean()), "breath_max_dz_mm": float(dz.max()),
                "breath_disp_per_plane_mm": disp_mag.tolist(), "per_phase": {}}
-    for var in ("clean", "breath"):
+    # `clean` is opt-in (run_vggt --arms; default is breath only, the deliverable). Score whichever
+    # arms exist rather than crashing on a deliberately absent one. `breath` is required.
+    present = [v for v in ("clean", "breath") if paths.recon_dir(ds, subj, method, v).is_dir()]
+    if "breath" not in present:
+        raise FileNotFoundError(f"{subj} [{method}]: no recon_breath — that arm is the deliverable")
+    metrics["arms"] = present
+    for var in present:
         rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)), shape_xyz, aff)
                         for t in range(T)])
         rec = prep_recon(rec, method, mask)  # per-method: SVRTK as-is; nesvor/niftymic self-percentile [0,1]
@@ -283,7 +289,7 @@ def main():
     # save 4D cines (X,Y,Z,T): cine_gt is method-independent -> subject level (shared, written once);
     # the recon cines -> the method dir.
     nib.save(nib.Nifti1Image(np.moveaxis(cines["gt"], 0, -1), aff), os.path.join(sd, "cine_gt.nii.gz"))
-    for k in ("clean", "breath"):
+    for k in present:
         nib.save(nib.Nifti1Image(np.moveaxis(cines[k], 0, -1), aff), os.path.join(md, f"cine_{k}.nii.gz"))
     metrics["method"] = method
     # Provenance stamp: tie this metrics.json to the recon it scored so aggregate can catch stale or
@@ -313,7 +319,7 @@ def main():
         return
 
     _in = mask[None].repeat(T, axis=0)
-    _roi_vals = np.concatenate([gt[_in], cines["clean"][_in], cines["breath"][_in]])
+    _roi_vals = np.concatenate([gt[_in]] + [cines[k][_in] for k in present])
     vmax = float(np.percentile(_roi_vals, 99.9)) if _roi_vals.size else 1.0  # guard empty ROI
     # (all other percentile/score sites guard it; this one would IndexError on a heart&FOV-empty subject)
     breath_tag = f"breathing |disp| mean {breath_mean_mm:.1f} / max {breath_max_mm:.1f} mm"
@@ -327,18 +333,22 @@ def main():
               f"per-plane labels suppressed (stale bundle?)")
     pd = [float(disp_mag[z]) if (aligned_disp and content[:, :, z].any()) else None
           for z in range(D)]
-    render_gif(os.path.join(md, "gif_clean.gif"),
-               [("GT", gt), (f"{arm_label}\n(no breath)", cines["clean"])], planes, T, vmax,
-               f"{subj} [{method}]  —  clean input (no breathing)   phase t={{t}}", plane_disp=pd)
+    if "clean" in present:
+        render_gif(os.path.join(md, "gif_clean.gif"),
+                   [("GT", gt), (f"{arm_label}\n(no breath)", cines["clean"])], planes, T, vmax,
+                   f"{subj} [{method}]  —  clean input (no breathing)   phase t={{t}}", plane_disp=pd)
     render_gif(os.path.join(md, "gif_breath.gif"),
                [("GT", gt), (f"{arm_label}\n(breathing)", cines["breath"])], planes, T, vmax,
                f"{subj} [{method}]  —  breathing input (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
                plane_disp=pd)
-    render_gif(os.path.join(md, "gif_combined.gif"),
-               [("GT", gt), (f"{arm_label}\nno-breath", cines["clean"]), (f"{arm_label}\nbreathing", cines["breath"])],
-               planes, T, vmax,
-               f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
-               plane_disp=pd)
+    # combined = the clean-vs-breath contrast; only meaningful when both arms were run.
+    if "clean" in present:
+        render_gif(os.path.join(md, "gif_combined.gif"),
+                   [("GT", gt), (f"{arm_label}\nno-breath", cines["clean"]),
+                    (f"{arm_label}\nbreathing", cines["breath"])],
+                   planes, T, vmax,
+                   f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
+                   plane_disp=pd)
 
     # Auto-render the VGGT per-arm diagnostic panels (panel_input/dvf/lookup) alongside the gifs in
     # the arm dir. VGGT arms only — baselines have no ed_dvf.npz, so this is skipped for them; and
