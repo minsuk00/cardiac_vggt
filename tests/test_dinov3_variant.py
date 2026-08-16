@@ -13,11 +13,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 def _compose(name):
     from hydra import compose, initialize_config_dir
+    import data  # noqa: F401  (registers the backbone_ps resolver)
 
     OmegaConf.register_new_resolver("rev_ts", lambda: "test", replace=True)
     OmegaConf.register_new_resolver("basename", lambda p: p.rstrip("/").split("/")[-1], replace=True)
     OmegaConf.register_new_resolver(
         "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True
+    )
+    OmegaConf.register_new_resolver(
+        "backbone_tag",
+        lambda name: "dinov3" if str(name).startswith("dinov3_") else "dinov2",
+        replace=True,
+    )
+    OmegaConf.register_new_resolver(
+        "aug_tag",
+        lambda enabled, tier: (
+            "noaug" if not enabled else {
+                "conservative": "aug_cons",
+                "moderate": "aug_mod",
+                "aggressive": "aug_agg",
+            }[str(tier)]
+        ),
+        replace=True,
     )
     config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=config_dir):
@@ -34,6 +51,7 @@ def test_default_and_dinov3_config_contracts():
     assert default.model.backbone == default.backbone
     assert default.model.img_size == default.img_size
     assert default.model.patch_size == default.patch_size
+    assert list(default.logging.wandb_writer.tags) == ["dinov2", "aug_mod", 518]
 
     dinov3 = _compose("exp_dinov3")
     assert (dinov3.backbone, dinov3.img_size, dinov3.patch_size) == (
@@ -45,6 +63,24 @@ def test_default_and_dinov3_config_contracts():
     assert dinov3.checkpoint.resume_checkpoint_path.endswith("vggt1b_dinov3_vitl16_seed.pt")
     assert dinov3.data.train.dataset.dataset_configs[0].patch_size == 16
     assert dinov3.data.val.dataset.dataset_configs[0].patch_size == 16
+    assert list(dinov3.logging.wandb_writer.tags) == ["dinov3", "aug_mod", 256]
+
+
+def test_wandb_augmentation_tags_follow_overrides():
+    from hydra import compose, initialize_config_dir
+
+    _compose("default")  # register the same resolvers used by this standalone compose
+    config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
+    with initialize_config_dir(version_base=None, config_dir=config_dir):
+        aggressive = compose(config_name="default", overrides=["data.augmentation.tier=aggressive"])
+        disabled = compose(config_name="default", overrides=["data.augmentation.enable=false"])
+        res224 = compose(config_name="default", overrides=["img_size=224"])
+        res336 = compose(config_name="default", overrides=["img_size=336"])
+
+    assert list(aggressive.logging.wandb_writer.tags) == ["dinov2", "aug_agg", 518]
+    assert list(disabled.logging.wandb_writer.tags) == ["dinov2", "noaug", 518]
+    assert list(res224.logging.wandb_writer.tags) == ["dinov2", "aug_mod", 224]
+    assert list(res336.logging.wandb_writer.tags) == ["dinov2", "aug_mod", 336]
 
 
 def test_dinov3_special_token_removal_and_grid_validation():
