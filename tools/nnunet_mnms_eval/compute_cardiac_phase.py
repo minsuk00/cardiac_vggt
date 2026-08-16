@@ -55,7 +55,7 @@ def converted_labels(ds, out_dir):
     """
     if ds == "acdc":
         return {"group": acdc_group(out_dir), "vendor": "", "centre": ""}
-    if ds in ("acdc_sax", "mnms_sax"):
+    if ds in ("acdc_sax", "mnms_sax", "miitt_sax"):
         p = os.path.join(out_dir, "convert_meta.json")
         if os.path.exists(p):
             import json

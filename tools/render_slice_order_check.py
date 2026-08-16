@@ -76,6 +76,7 @@ SOURCES = [
     ("CMRx", os.path.join(DATA, "CMRxRecon202*/Cine_combined/*/sax")),
     ("ACDC", os.path.join(DATA, "ACDC_sax/*/sax")),
     ("M&Ms", os.path.join(DATA, "MNMs_sax/*/sax")),
+    ("MIITT", os.path.join(DATA, "MIITT_sax/*/sax")),
 ]
 
 LV, MYO, RV = 1, 2, 3

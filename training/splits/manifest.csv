@@ -1342,3 +1342,16 @@ MNMs_T9U9W2,MNMs,MNMs_sax/MNMs_T9U9W2,Labeled,11,8.0,80.0,25,12,Siemens,,,1,dise
 MNMs_V4W8Z5,MNMs,MNMs_sax/MNMs_V4W8Z5,Testing,12,10.0,110.0,20,12,GE,,,4,diseased,Other,39,F,,55,0,6,test,MNMs/MNMs1/Testing/V4W8Z5/V4W8Z5_sa.nii.gz
 MNMs_W5Z4Z8,MNMs,MNMs_sax/MNMs_W5Z4Z8,Labeled,10,10.0,90.0,30,12,Philips,,,2,healthy,NOR,70,M,,87,0,5,train,MNMs/MNMs1/Training/Labeled/W5Z4Z8/W5Z4Z8_sa.nii.gz
 MNMs_Y6Y9Z2,MNMs,MNMs_sax/MNMs_Y6Y9Z2,Testing,12,10.0,110.0,30,12,Philips,,,3,diseased,DCM,47,M,,81,0,4,test,MNMs/MNMs1/Testing/Y6Y9Z2/Y6Y9Z2_sa.nii.gz
+MIITT_Patient_2023Sep23_ARVC,MIITT,MIITT_sax/MIITT_Patient_2023Sep23_ARVC,,13,10.0,120.0,30,12,,,,UMich,diseased,ARV,,,,,0,5,test,MIITT/nifti/Patient_2023Sep23_ARVC/gated/sax/3d_recon
+MIITT_Patient_2024Feb08_HCM,MIITT,MIITT_sax/MIITT_Patient_2024Feb08_HCM,,13,10.0,120.0,30,12,,,,UMich,diseased,HCM,,,,,0,4,test,MIITT/nifti/Patient_2024Feb08_HCM/gated/sax/3d_recon
+MIITT_Patient_2024Jan04_Cardiomyopathy_AFib,MIITT,MIITT_sax/MIITT_Patient_2024Jan04_Cardiomyopathy_AFib,,15,10.0,140.0,30,12,,,,UMich,diseased,Other,,,,,0,5,test,MIITT/nifti/Patient_2024Jan04_Cardiomyopathy_AFib/gated/sax/3d_recon
+MIITT_Volunteer1,MIITT,MIITT_sax/MIITT_Volunteer1,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,4,train,MIITT/nifti/Volunteer1/gated/sax/3d_recon
+MIITT_Volunteer10,MIITT,MIITT_sax/MIITT_Volunteer10,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,4,test,MIITT/nifti/Volunteer10/gated/sax/3d_recon
+MIITT_Volunteer2,MIITT,MIITT_sax/MIITT_Volunteer2,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,5,train,MIITT/nifti/Volunteer2/gated/sax/3d_recon
+MIITT_Volunteer3,MIITT,MIITT_sax/MIITT_Volunteer3,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,4,train,MIITT/nifti/Volunteer3/gated/sax/3d_recon
+MIITT_Volunteer4,MIITT,MIITT_sax/MIITT_Volunteer4,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,4,train,MIITT/nifti/Volunteer4/gated/sax/3d_recon
+MIITT_Volunteer5,MIITT,MIITT_sax/MIITT_Volunteer5,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,3,train,MIITT/nifti/Volunteer5/gated/sax/3d_recon
+MIITT_Volunteer6,MIITT,MIITT_sax/MIITT_Volunteer6,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,5,val,MIITT/nifti/Volunteer6/gated/sax/3d_recon
+MIITT_Volunteer7,MIITT,MIITT_sax/MIITT_Volunteer7,,12,10.0,110.0,30,12,,,,UMich,healthy,NOR,,,,,0,5,val,MIITT/nifti/Volunteer7/gated/sax/3d_recon
+MIITT_Volunteer8,MIITT,MIITT_sax/MIITT_Volunteer8,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,4,val,MIITT/nifti/Volunteer8/gated/sax/3d_recon
+MIITT_Volunteer9,MIITT,MIITT_sax/MIITT_Volunteer9,,13,10.0,120.0,30,12,,,,UMich,healthy,NOR,,,,,0,6,test,MIITT/nifti/Volunteer9/gated/sax/3d_recon
