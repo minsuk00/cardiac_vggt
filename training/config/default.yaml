@@ -149,8 +149,9 @@ logging:
     name: ${exp_name}
     dir: ${logging.log_dir}/wandb
     tags:
-      - ${oc.select:config_name,mri}
-      - ${phase_mode:${t_target_fixed}}
+      - ${backbone_tag:${backbone}}
+      - ${aug_tag:${data.augmentation.enable},${data.augmentation.tier}}
+      - ${img_size}
   scalar_keys_to_log:
     train:
       keys_to_log:

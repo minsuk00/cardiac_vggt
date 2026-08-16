@@ -52,6 +52,20 @@ OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p))
 OmegaConf.register_new_resolver(
     "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}"
 )
+# Compact WandB tags for experiment dimensions commonly compared in the dashboard.
+OmegaConf.register_new_resolver(
+    "backbone_tag", lambda name: "dinov3" if str(name).startswith("dinov3_") else "dinov2"
+)
+OmegaConf.register_new_resolver(
+    "aug_tag",
+    lambda enabled, tier: (
+        "noaug" if not enabled else {
+            "conservative": "aug_cons",
+            "moderate": "aug_mod",
+            "aggressive": "aug_agg",
+        }[str(tier)]
+    ),
+)
 # Patch size derives from the backbone (`backbone_ps` resolver) so config cannot express
 # a mismatch; registered in data/__init__.py so standalone compose() scripts get it too.
 import data  # noqa: F401  (side effect: registers the backbone_ps resolver)
