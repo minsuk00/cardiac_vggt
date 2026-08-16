@@ -53,10 +53,19 @@ def main():
         s = d["subject"]
         rows.append({
             "subject": s, "group": group_of(s),
-            "clean_psnr": d["clean_psnr_mean"], "clean_ssim": d["clean_ssim_mean"],
+            # `clean` is opt-in (run_vggt --arms; default is breath only, the deliverable), so
+            # every clean field may legitimately be absent. `.get` rather than `[...]`: a
+            # breath-only arm must summarize, not KeyError. `cost_psnr` — the no-breathing ceiling
+            # minus the breathing score — simply does not exist without that arm.
+            "clean_psnr": d.get("clean_psnr_mean"), "clean_ssim": d.get("clean_ssim_mean"),
             "clean_ncc": d.get("clean_ncc_mean"), "breath_ncc": d.get("breath_ncc_mean"),
             "breath_psnr": d["breath_psnr_mean"], "breath_ssim": d["breath_ssim_mean"],
-            "cost_psnr": d["clean_psnr_mean"] - d["breath_psnr_mean"],
+            # trainer-comparable PSNR (peak=1.0); see assemble_and_gif.psnr_unit_peak
+            "breath_psnr_unit_peak": d.get("breath_psnr_unit_peak_mean"),
+            "clean_psnr_unit_peak": d.get("clean_psnr_unit_peak_mean"),
+            "arms": d.get("arms"),
+            "cost_psnr": (d["clean_psnr_mean"] - d["breath_psnr_mean"])
+                         if "clean_psnr_mean" in d else None,
             "breath_disp_mm": d["breath_mean_disp_mm"],
             # stamped by assemble_and_gif (None for pre-stamp metrics / baselines)
             "ckpt": d.get("ckpt"), "ckpt_fingerprint": d.get("ckpt_fingerprint"),
@@ -85,12 +94,17 @@ def main():
               f"(re-run under a reused name?): {ckpts}")
 
     # per-subject table (sorted by group then subject)
-    print(f"\n=== {dataset} / {method}  (n={len(rows)}) ===")
+    # `clean` is opt-in, so a breath-only cohort must print rather than crash on a None format.
+    has_clean = any(r["clean_psnr"] is not None for r in rows)
+    print(f"\n=== {dataset} / {method}  (n={len(rows)}"
+          f"{'' if has_clean else ', breath arm only'}) ===")
+    def _f(v, w, p=2):
+        return f"{v:>{w}.{p}f}" if v is not None else f"{'n/a':>{w}}"
     hdr = f"{'subject':<40}{'grp':<10}{'clean':>8}{'breath':>8}{'cost':>7}{'|disp|mm':>9}"
     print(hdr); print("-" * len(hdr))
     for r in sorted(rows, key=lambda r: (r["group"], r["subject"])):
-        print(f"{r['subject']:<40}{r['group']:<10}{r['clean_psnr']:>8.2f}"
-              f"{r['breath_psnr']:>8.2f}{r['cost_psnr']:>7.2f}{r['breath_disp_mm']:>9.2f}")
+        print(f"{r['subject']:<40}{r['group']:<10}{_f(r['clean_psnr'],8)}"
+              f"{_f(r['breath_psnr'],8)}{_f(r['cost_psnr'],7)}{_f(r['breath_disp_mm'],9)}")
 
     # cohort + per-group summaries
     def summarize(subset, label):
@@ -100,13 +114,23 @@ def main():
         cn = stat([r["clean_ncc"] for r in subset]); bn = stat([r["breath_ncc"] for r in subset])
         bp = stat([r["breath_psnr"] for r in subset]); bs = stat([r["breath_ssim"] for r in subset])
         ct = stat([r["cost_psnr"] for r in subset]); dz = stat([r["breath_disp_mm"] for r in subset])
-        print(f"\n[{label}]  n={cp[2]}")
-        print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}   NCC {cn[0]:.3f} +- {cn[1]:.3f}")
+        bu = stat([r["breath_psnr_unit_peak"] for r in subset])
+        print(f"\n[{label}]  n={bp[2]}")
+        if cp[2]:      # clean arm present
+            print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}   NCC {cn[0]:.3f} +- {cn[1]:.3f}")
         print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}   NCC {bn[0]:.3f} +- {bn[1]:.3f}")
-        print(f"  breathing cost (clean-breath): {ct[0]:.2f} +- {ct[1]:.2f} dB   |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm")
-        return {"n": cp[2],
+        if bu[2]:      # trainer-comparable normalization (peak=1.0), for cross-checking val_per_subject.csv
+            print(f"  breath: PSNR {bu[0]:6.2f} +- {bu[1]:.2f} dB  [unit-peak, trainer-comparable]")
+        if ct[2]:
+            print(f"  breathing cost (clean-breath): {ct[0]:.2f} +- {ct[1]:.2f} dB   |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm")
+        else:
+            print(f"  |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm   (no clean arm -> no breathing-cost delta)")
+        # n keys off the BREATH count: it is the deliverable arm and the only one always present.
+        # (It used to key off clean, which reports n=0 for a breath-only cohort.)
+        return {"n": bp[2], "n_clean": cp[2],
                 "clean_psnr": cp[:2], "clean_ssim": cs[:2], "clean_ncc": cn[:2],
                 "breath_psnr": bp[:2], "breath_ssim": bs[:2], "breath_ncc": bn[:2],
+                "breath_psnr_unit_peak": bu[:2],
                 "cost_psnr": ct[:2], "breath_disp_mm": dz[:2]}
 
     summary = {"dataset": dataset, "method": method, "n": len(rows),

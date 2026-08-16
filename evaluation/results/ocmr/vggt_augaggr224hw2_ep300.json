@@ -1,0 +1,244 @@
+{
+  "dataset": "ocmr",
+  "method": "vggt_augaggr224hw2_ep300",
+  "n": 8,
+  "n_expected": 8,
+  "missing": [],
+  "ckpts": [
+    "8867644927:1786870036"
+  ],
+  "all": {
+    "n": 8,
+    "n_clean": 0,
+    "clean_psnr": [
+      NaN,
+      NaN
+    ],
+    "clean_ssim": [
+      NaN,
+      NaN
+    ],
+    "clean_ncc": [
+      NaN,
+      NaN
+    ],
+    "breath_psnr": [
+      19.095376054445904,
+      2.24419832557874
+    ],
+    "breath_ssim": [
+      0.8088611749311289,
+      0.07648236482688646
+    ],
+    "breath_ncc": [
+      0.8120011215408642,
+      0.07309262302649648
+    ],
+    "breath_psnr_unit_peak": [
+      24.416041016578674,
+      3.256637928441275
+    ],
+    "cost_psnr": [
+      NaN,
+      NaN
+    ],
+    "breath_disp_mm": [
+      6.403136491389022,
+      2.2974158667814466
+    ]
+  },
+  "volunteer": {
+    "n": 8,
+    "n_clean": 0,
+    "clean_psnr": [
+      NaN,
+      NaN
+    ],
+    "clean_ssim": [
+      NaN,
+      NaN
+    ],
+    "clean_ncc": [
+      NaN,
+      NaN
+    ],
+    "breath_psnr": [
+      19.095376054445904,
+      2.24419832557874
+    ],
+    "breath_ssim": [
+      0.8088611749311289,
+      0.07648236482688646
+    ],
+    "breath_ncc": [
+      0.8120011215408642,
+      0.07309262302649648
+    ],
+    "breath_psnr_unit_peak": [
+      24.416041016578674,
+      3.256637928441275
+    ],
+    "cost_psnr": [
+      NaN,
+      NaN
+    ],
+    "breath_disp_mm": [
+      6.403136491389022,
+      2.2974158667814466
+    ]
+  },
+  "per_subject": [
+    {
+      "subject": "OCMR_fs_0012_3T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8281506498654684,
+      "breath_psnr": 19.157855192820232,
+      "breath_ssim": 0.8283476134141287,
+      "breath_psnr_unit_peak": 24.800869464874268,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.696795009454658,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0045_3T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.881596659620603,
+      "breath_psnr": 23.11849006017049,
+      "breath_ssim": 0.8818207730849584,
+      "breath_psnr_unit_peak": 31.124807198842365,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.7468930035926573,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0053_1_5T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8726599663496017,
+      "breath_psnr": 18.291831175486248,
+      "breath_ssim": 0.8693600644667944,
+      "breath_psnr_unit_peak": 18.40202283859253,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.5252914896808365,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0060_1_5T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7854461570580801,
+      "breath_psnr": 19.732908407847088,
+      "breath_ssim": 0.7855673283338547,
+      "breath_psnr_unit_peak": 24.69348891576131,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 8.381858418147077,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0063_1_5T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6489807963371277,
+      "breath_psnr": 16.271629571914673,
+      "breath_ssim": 0.6368529697259268,
+      "breath_psnr_unit_peak": 23.711960315704346,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.269814509412958,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0068_1_5T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8821497708559036,
+      "breath_psnr": 21.57355038324992,
+      "breath_ssim": 0.8797997683286667,
+      "breath_psnr_unit_peak": 24.99784501393636,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.39982422529449,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0069_1_5T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8248838583628336,
+      "breath_psnr": 18.43714698155721,
+      "breath_ssim": 0.8250935226678848,
+      "breath_psnr_unit_peak": 24.75990851720174,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.063351111888294,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    },
+    {
+      "subject": "OCMR_fs_0074_1_5T",
+      "group": "volunteer",
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7721411138772964,
+      "breath_psnr": 16.179596662521362,
+      "breath_ssim": 0.7640473594268163,
+      "breath_psnr_unit_peak": 22.837425867716473,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.141264163641209,
+      "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786870036"
+    }
+  ]
+}
