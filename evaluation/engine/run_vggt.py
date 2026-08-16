@@ -1,263 +1,236 @@
 #!/usr/bin/env python
-"""VGGT model eval on the FROZEN breathing bundles — the GPU head-to-head vs SVRTK / NeSVoR.
+"""Score a VGGT-MRI checkpoint on the frozen breathing bundles — the GPU head-to-head vs SVR.
 
-The GPU analog of engine/run_svrtk3d.sh / run_nesvor.sh: loads a VGGT-MRI checkpoint ONCE and
-loops subjects, writing per-subject recons into `<dataset>/out/<subject>/<method>/` so the SAME
-engine/assemble_and_gif.py scorer + aggregate.py roll-up consume it identically to the classical
-baselines (model recon is canonical [0,1] -> `prep_recon` scores it AS-IS, like SVRTK).
+The GPU analog of `engine/run_svrtk3d.sh` / `run_nesvor.sh`: load a checkpoint ONCE, loop subjects,
+write per-subject recons into `<source>/out/<subject>/<arm>/` so the SAME `assemble_and_gif.py`
+scorer and `aggregate.py` roll-up consume it identically to the classical baselines.
 
-WHY a new runner (not inference/run_cmrxrecon.py): those re-APPLY breathing via
-gpu_augment_batch(rcfg, seq_index), which re-samples the trainer's POSITIONAL seq_index — a
-DIFFERENT realization than the eval harness's name-hash breath. That is unfair vs the frozen
-baselines. Here we consume the FROZEN breathing directly (the on-disk `breath/stack_t*.nii.gz`
-pixels — byte-identical to what SVRTK saw), never re-sampling. GT stays the unshifted `gt/`
-bundle. So model + baselines provably share ONE corruption + ONE target + ONE ROI + ONE scorer.
+## The one idea in this file
 
-Regime (docs, memory `1frame_vs_multiframe_eval_regime`): a 1-frame model (e.g. gather05) must be
-fed 1 frame/plane with the reference plane = the swept slot 0 ONLY; piling the multiframe reference
-burst on it averages under the splat coverage-mean -> the "frozen" artifact. `--regime multiframe`
-is for future s20-style models.
+**The harness does not build batches. It asks the trainer for one.**
 
-MIITT z placement: `--continuous-z` keeps each 10 mm native slice at its true fractional canonical
-z (no 12 mm snap); default snaps (matches gather05's integer-z training). CMRx is genuinely 12 mm
-so the flag is a no-op there.
+    batch = ds.get_data(seq_index=...)          # the run's own sampler + geometry
+    batch["phases"] = frozen_bundle             # swap clean pixels -> frozen breathed pixels
+    batch.pop("images")                         # force re-extraction from the swapped phases
+    batch = gpu_augment_batch(batch, None, device, respiratory_cfg=None, train=False)
+    preds = model(batch["images"], batch=batch)
+    V, cov = _splat_preds_native(preds, batch, grid_shape, z_scale)
 
-Records everything (README §6b) for offline re-analysis with NO re-run: recon vols (EF/Dice-ready),
-resp_diag.json (predicted Δz vs applied disp), timing.json (feed-forward wall vs SVR's minutes),
-provenance.txt, metadata.json (model card), ed_dvf.npz (ED Δ field, the VGGT analog of SVR's .dof).
+That is `trainer.val_epoch` with breathing supplied by frozen pixels instead of re-sampled ones.
+Everything geometric — `scanner_coords`, `z_indices`, `dz_mm`, `z_scale`, the one-frame-per-slice
+slot draw, the reference slot at z_mid — comes from `MRIDataset.get_data`, so there is exactly ONE
+implementation of the native-z contract (docs/58) and it is the one training uses. The previous
+version of this file hand-wrote its own copy, which is how it silently kept the retired fixed-12
+plane convention `z/(D-1)*2-1` long after training moved to physical `(z-(D-1)/2)*dz/90`.
+
+Three consequences worth stating, because they used to be CLI flags:
+
+* **No `--regime`.** Whether this is a one-frame-per-slice model is a property of the run
+  (`one_frame_per_slice`), read from its `run_meta.jsonl`. Feeding a 1-frame model a multiframe
+  reference burst piles constant companions on the reference plane, which the splat's coverage
+  mean averages away — the "frozen recon" artifact. The eval regime now cannot disagree with
+  training.
+* **No `--continuous-z`.** Same: `continuous_z` is the run's knob. There is no 12 mm snap to
+  opt out of any more — z is native per subject.
+* **No `--refiner`.** It was a silent no-op: `VGGT.__init__` absorbs `enable_refiner` via
+  `**kwargs` and builds nothing.
+
+## Why frozen breathing rather than re-simulated
+
+Re-applying breathing per run (what `inference/run_cmrxrecon.py` did) draws a DIFFERENT realization
+than the one the classical baselines were given, so the comparison is not same-input. Here the
+breathed pixels are read off disk byte-identically to what SVRTK saw, and GT stays the unshifted
+`gt/` bundle. Model and baselines provably share one corruption, one target, one ROI, one scorer.
+
+## Reference-phase sweep
+
+Slot 0 is the target-phase reference (docs/25). To query phase `t` we set slot 0's `timesteps`
+entry to `t` and re-extract — the companions are untouched, so it is the same inputs with a
+varying query, mirroring the trainer's cardiac-cycle filmstrip.
 
 Run:
-  EVAL_DATASET=cmrxrecon micromamba run -n svr env PYTHONPATH=training:. python \
-      evaluation/engine/run_vggt.py --dataset cmrxrecon --model-name gather05 --regime onef
-  EVAL_DATASET=miitt micromamba run -n svr env PYTHONPATH=training:. python \
-      evaluation/engine/run_vggt.py --dataset miitt --model-name gather05 --regime onef [--continuous-z]
+  micromamba run -n svr env PYTHONPATH=training:. python evaluation/engine/run_vggt.py \
+      --dataset cmrx2024 --ckpt scratch/logs/<run>/ckpts/checkpoint_last.pt \
+      --model-name augaggr224hw2_ep300
 """
 import argparse
 import glob
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import numpy as np
 import nibabel as nib
 import torch
-import torch.nn.functional as F
 
-VGGT = "/home/minsukc/vggt"
-sys.path.insert(0, VGGT)
-sys.path.insert(0, os.path.join(VGGT, "training"))
-sys.path.insert(0, os.path.join(VGGT, "evaluation"))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "training"))
+sys.path.insert(0, os.path.join(ROOT, "evaluation"))
 
-import paths                                                                    # noqa: E402
-from inference.inference import load_rtfb_model_reference                       # noqa: E402
-from inference.adapters.base import (                                           # noqa: E402
-    GRID_SHAPE, INPUT_IMG_SIZE, D_CANON, MM_PER_NORM,
-    assign_canonical_z, to_canonical_inplane,
-)
-from inference.adapters.miitt import MIITTGatedAdapter                          # noqa: E402
-from inference.adapters.ocmr import OCMRAdapter                                 # noqa: E402
-from inference.adapters.acdc import ACDCGatedAdapter                            # noqa: E402
-from vggt.utils.splat import splat_predictions                                  # noqa: E402
+import paths                                                                   # noqa: E402
+from data.datasets.mri_dataset import MRIDataset                               # noqa: E402
+from data.gpu_aug import gpu_augment_batch                                     # noqa: E402
+from data.preprocess import Z_HALF_MM                                          # noqa: E402
+from loss import _splat_preds_native                                           # noqa: E402
+from inference.load_run import load_model_from_run, mri_dataset_kwargs         # noqa: E402
+from omegaconf import OmegaConf                                                # noqa: E402
 
-CANON_SPACING = (1.4, 1.4, 12.0)
 ED_PHASE = 0
-DEFAULT_CKPT = glob.glob(f"{VGGT}/scratch/logs/216539845_*ftgather05*1frame*/ckpts/checkpoint_last.pt")
+INPLANE_MM = 1.4
+# normalized [-1,1] -> mm. In-plane: (256-1)/2 * 1.4. Through-plane: Z_HALF_MM, which is a
+# CONSTANT for every subject by construction under physical z (docs/58) — using a per-subject
+# (D-1)/2*dz here would systematically understate Δz, exactly as loss.py warns.
+MM_PER_NORM = (0.5 * (256 - 1) * INPLANE_MM, 0.5 * (256 - 1) * INPLANE_MM, Z_HALF_MM)
 
 
-def _canon_affine():
-    return np.diag([*CANON_SPACING, 1.0])
+def name_seed(source, name):
+    """Same stable hash the bundle builder uses — see `build_inputs/pooled.py`."""
+    return int(hashlib.sha256(f"{source}/{name}".encode()).hexdigest(), 16) % (2 ** 31)
 
 
 def _load_xyz_to_dhw(path):
-    """(X,Y,Z) NIfTI -> (D,H,W)=(Z,Y,X) splat order (inverse of build_inputs.save_xyz)."""
-    a = np.asarray(nib.load(path).dataobj, dtype=np.float32)
-    return np.transpose(a, (2, 1, 0))
+    """(X,Y,Z) NIfTI -> (D,H,W)=(Z,Y,X) splat order (inverse of the builder's save_xyz)."""
+    return np.transpose(np.asarray(nib.load(path).dataobj, dtype=np.float32), (2, 1, 0))
 
 
-def _save_dhw_to_xyz(dhw, path):
-    """(D,H,W) splat order -> (X,Y,Z) canonical NIfTI (matches build_inputs.save_xyz)."""
-    nib.save(nib.Nifti1Image(np.ascontiguousarray(np.asarray(dhw, np.float32).transpose(2, 1, 0)),
-                             _canon_affine()), path)
+def load_bundle(subj_dir, T, kind):
+    """The frozen (T,D,H,W) stack. kind in {'gt','clean','breath'}."""
+    pre = "gt" if kind == "gt" else "stack"
+    return np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, kind, f"{pre}_t{t:02d}.nii.gz"))
+                     for t in range(T)])
 
 
-# ── per-subject input prep: one representation for both datasets + both z-modes ──────────────
-def prep_cmrxrecon(subj_dir, T, continuous_z):
-    """CMRx: gt/ and breath/ are ALREADY canonical -> read direct. z snapped (genuine 12 mm)."""
-    gt = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "gt", f"gt_t{t:02d}.nii.gz")) for t in range(T)])
-    breath = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz")) for t in range(T)])
-    content = _load_xyz_to_dhw(os.path.join(subj_dir, "mask.nii.gz")) > 0.5   # (D,H,W) native FOV
-    planes = [int(z) for z in np.where(content.any(axis=(1, 2)))[0]]           # in-data canonical planes
-    entries = [{"z_val": z / max(1, D_CANON - 1) * 2.0 - 1.0, "z_plane": z, "slice_idx": z} for z in planes]
+def make_dataset(cfg, subject_rel, split, tmpdir):
+    """A ONE-SUBJECT MRIDataset, built with the run's own knobs.
 
-    def fetch(phase, slice_idx, breathing):
-        return (breath if breathing else gt)[phase, slice_idx]                 # (256,256) in [0,1]
+    One subject per dataset is what decouples the slot draw from cohort composition.
+    `get_data` uses `seq_index` for BOTH the subject index (`seq_index % len(subjects)`) and the
+    val RNG seed (`random.Random(seq_index)`). With a single subject the index term is always 0,
+    so `seq_index` is free to be the subject's NAME hash — the draw then depends only on the
+    subject, never on where it sits in the split file or on how many subjects are in the cohort.
 
-    disp = np.asarray(json.load(open(os.path.join(subj_dir, "manifest.json")))["breath"]["disp_dhw_mm"],
-                      dtype=np.float64)                                         # (D,3) per canonical plane
-    return gt, entries, fetch, (lambda slice_idx: disp[slice_idx])
-
-
-def prep_miitt(subj_dir, subject, T, continuous_z):
-    """MIITT: gt/ is canonical; clean/ + breath/ are NATIVE (Z,H,W) -> place to canonical per z-mode."""
-    gt = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "gt", f"gt_t{t:02d}.nii.gz")) for t in range(T)])
-    clean_nat = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "clean", f"stack_t{t:02d}.nii.gz")) for t in range(T)])
-    breath_nat = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz")) for t in range(T)])
-    adapter = MIITTGatedAdapter(os.path.join(VGGT, "scratch/data/MIITT/nifti", subject, "gated/sax/4d_recon.nii.gz"))
-    inpl = adapter.inplane_mm()
-    z_map = assign_canonical_z(adapter.slice_positions_mm(), continuous_z=continuous_z)  # [(z_canon,slice_idx)]
-    entries = [{"z_val": float(zc) / max(1, D_CANON - 1) * 2.0 - 1.0,
-                "z_plane": min(max(int(round(float(zc))), 0), D_CANON - 1), "slice_idx": si}
-               for zc, si in z_map]
-
-    def fetch(phase, slice_idx, breathing):
-        nat = (breath_nat if breathing else clean_nat)[phase, slice_idx]       # (H,W) native, already [0,1]
-        return to_canonical_inplane(nat, inpl).numpy()                          # (256,256)
-
-    disp = np.asarray(json.load(open(os.path.join(subj_dir, "manifest.json")))["breath"]["disp_dhw_mm"],
-                      dtype=np.float64)                                         # (Z_native,3) per native slice
-    return gt, entries, fetch, (lambda slice_idx: disp[slice_idx])
+    `ef_val_sweep` is dropped: this runner sweeps the reference phase over all T itself, and the
+    sweep's ED/ES pairing would otherwise double the dataset and re-couple seq_index to position.
+    """
+    kw = dict(mri_dataset_kwargs(cfg, "val"))
+    kw.pop("ef_val_sweep", None)
+    kw.pop("split", None)
+    kw.pop("split_file", None)
+    data_root = kw.pop("data_root", os.path.join(ROOT, "scratch/data"))
+    kw.pop("_target_", None)
+    sf = os.path.join(tmpdir, "one_subject.txt")
+    with open(sf, "w") as f:
+        f.write(f"[{split}]\n{subject_rel}\n")
+    common = OmegaConf.create({"img_size": int(cfg.get("img_size", 518)), "patch_size": 14,
+                               "rescale": True, "rescale_aug": False, "landscape_check": False,
+                               "augs": {"scales": [1.0, 1.0]}})
+    # t_target_fixed=0 pins slot 0 to ED for the base draw; the sweep overwrites slot-0's t per
+    # queried phase, so the COMPANION slots stay fixed across the sweep (same inputs, varying query).
+    kw["t_target_fixed"] = 0
+    kw["t_target_phases"] = None
+    return MRIDataset(common, data_root, split=split, split_file=sf, **kw)
 
 
-def _prep_gated_native(subj_dir, adapter, T, continuous_z):
-    """Shared gated-OOD prep (OCMR/ACDC): gt/ canonical; clean/+breath/ NATIVE -> placed to
-    canonical per z-mode via the adapter's geometry — identical machinery to prep_miitt, only the
-    adapter (hence in-plane spacing + slice positions) differs."""
-    gt = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "gt", f"gt_t{t:02d}.nii.gz")) for t in range(T)])
-    clean_nat = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "clean", f"stack_t{t:02d}.nii.gz")) for t in range(T)])
-    breath_nat = np.stack([_load_xyz_to_dhw(os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz")) for t in range(T)])
-    inpl = adapter.inplane_mm()
-    z_map = assign_canonical_z(adapter.slice_positions_mm(), continuous_z=continuous_z)
-    entries = [{"z_val": float(zc) / max(1, D_CANON - 1) * 2.0 - 1.0,
-                "z_plane": min(max(int(round(float(zc))), 0), D_CANON - 1), "slice_idx": si}
-               for zc, si in z_map]
+def build_batch(ds, seq_index, phases_bundle, device):
+    """`get_data` -> swap in the frozen pixels -> let the trainer's own code finish the batch."""
+    b = ds.get_data(seq_index=seq_index, img_per_seq=ds.num_slices)
+    D_ds = int(np.asarray(b["phases"]).shape[1])
+    if phases_bundle.shape[1] != D_ds:
+        raise ValueError(f"bundle D={phases_bundle.shape[1]} != dataset D={D_ds}")
+    if phases_bundle.shape[0] != np.asarray(b["phases"]).shape[0]:
+        raise ValueError(f"bundle T={phases_bundle.shape[0]} != dataset T={np.asarray(b['phases']).shape[0]}")
 
-    def fetch(phase, slice_idx, breathing):
-        nat = (breath_nat if breathing else clean_nat)[phase, slice_idx]       # (H,W) native, already [0,1]
-        return to_canonical_inplane(nat, inpl).numpy()                          # (256,256)
-
-    disp = np.asarray(json.load(open(os.path.join(subj_dir, "manifest.json")))["breath"]["disp_dhw_mm"],
-                      dtype=np.float64)                                         # (Z_native,3) per native slice
-    return gt, entries, fetch, (lambda slice_idx: disp[slice_idx])
-
-
-def prep_ocmr(subj_dir, subject, T, continuous_z):
-    """OCMR gated: native source dir stored in manifest.native_source -> OCMRAdapter."""
-    src = json.load(open(os.path.join(subj_dir, "manifest.json")))["native_source"]
-    return _prep_gated_native(subj_dir, OCMRAdapter(src), T, continuous_z)
-
-
-def prep_acdc(subj_dir, subject, T, continuous_z):
-    """ACDC gated: native 4d nii path stored in manifest.native_source -> ACDCGatedAdapter (LPS)."""
-    src = json.load(open(os.path.join(subj_dir, "manifest.json")))["native_source"]
-    return _prep_gated_native(subj_dir, ACDCGatedAdapter(src), T, continuous_z)
-
-
-# ── batch assembly + reference sweep ────────────────────────────────────────────────────────
-def build_slots(n_entries, ref_k, T, regime, frames_per_slice, seq_index):
-    """Slot list [(entry_k, phase)]. Slot 0 = swept reference (phase overwritten per step).
-    onef: 1 frame/plane, no reference companions. multiframe: reference plane contributes all T
-    phases as companions + a `frames_per_slice` consecutive burst per other plane (mirrors
-    inference/run_cmrxrecon.py:_build_multiframe_batch). Burst START is random (seeded by
-    seq_index) so ED isn't trivially observed everywhere."""
-    rng = np.random.default_rng(seq_index)
-    slots = [(ref_k, 0)]
-    if regime == "multiframe":
-        slots += [(ref_k, t) for t in range(T)]
-    n = 1 if regime == "onef" else min(frames_per_slice, T)
-    for k in range(n_entries):
-        if k == ref_k:
-            continue
-        s0 = int(rng.integers(T))
-        slots += [(k, (s0 + j) % T) for j in range(n)]
-    return slots
+    # Stand in for the trainer's collate (batch size 1). `get_data` returns a mix of ndarrays and
+    # python lists — `timesteps`/`slice_indices` are list[int], the per-slot fields are
+    # list[ndarray] — and gpu_aug indexes them as (B,S) tensors. Dtypes match the contract in
+    # `gpu_augment_batch`'s docstring: timesteps int64, slice_indices float32 (it may be
+    # continuous under continuous_z).
+    _DTYPE = {"timesteps": torch.int64, "slice_indices": torch.float32}
+    out = {}
+    for k, v in b.items():
+        if isinstance(v, np.ndarray):
+            out[k] = torch.from_numpy(v)[None].to(device)
+        elif torch.is_tensor(v):
+            out[k] = v[None].to(device)
+        elif isinstance(v, list) and v and isinstance(v[0], np.ndarray):
+            out[k] = torch.from_numpy(np.stack(v))[None].to(device)
+        elif isinstance(v, list) and v and isinstance(v[0], (int, float)):
+            out[k] = torch.tensor(v, dtype=_DTYPE.get(k, torch.float32))[None].to(device)
+        else:
+            out[k] = v                      # str / scalar metadata (seq_name); passed through
+    # THE swap. `images` must go too: gpu_augment_batch only rebuilds it when absent, so leaving
+    # the dataset's clean `images` in place would feed the model CLEAN slices while the splat
+    # rendered BREATHED content — a silent, invisible inconsistency.
+    out["phases"] = torch.from_numpy(phases_bundle)[None].to(device)
+    out.pop("images", None)
+    out.pop("images_splat", None)
+    return out
 
 
-def assemble_batch(slots, entries, fetch, breathing, device):
-    hw = INPUT_IMG_SIZE
-    py, px = np.meshgrid(np.arange(hw), np.arange(hw), indexing="ij")
-    x_norm = (px / (hw - 1) * 2.0 - 1.0).astype(np.float32)
-    y_norm = (py / (hw - 1) * 2.0 - 1.0).astype(np.float32)
-    imgs, coords, zidx = [], [], []
-    for k, phase in slots:
-        e = entries[k]
-        img = fetch(phase, e["slice_idx"], breathing)                          # (256,256) [0,1]
-        up = F.interpolate(torch.as_tensor(img)[None, None].float(), size=(hw, hw),
-                           mode="bilinear", align_corners=True)[0, 0].numpy()
-        imgs.append(np.repeat(up[None], 3, axis=0))
-        zv = e["z_val"]
-        coords.append(np.stack([x_norm, y_norm, np.full_like(x_norm, zv)], -1))
-        zidx.append([zv])
-    return {
-        "images": torch.from_numpy(np.stack(imgs)).float()[None].to(device),           # (1,S,3,hw,hw)
-        "scanner_coords": torch.from_numpy(np.stack(coords)).float()[None].to(device),  # (1,S,hw,hw,3)
-        "z_indices": torch.tensor(zidx, dtype=torch.float32)[None].to(device),          # (1,S,1)
-    }
+def _extract(batch, device):
+    """Re-run the trainer's finisher with BOTH augmentations off: rebuilds `images_splat` (native
+    resolution, what the loss/render splats) and `images` (the model input) from `phases` at the
+    batch's own (timesteps, slice_indices). This is the identity path through gpu_augment_batch."""
+    batch.pop("images", None)
+    return gpu_augment_batch(batch, None, device, respiratory_cfg=None, train=False)
 
 
 @torch.no_grad()
-def reconstruct(model, prep, breathing, regime, frames_per_slice, seq_index, device, grid_shape):
-    """Sweep the reference slot over T phases -> per-phase V_canon. Companions fixed; only slot 0
-    (the reference at the queried phase) changes. -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack)."""
-    gt, entries, fetch, applied_disp = prep
-    T = gt.shape[0]
-    # Reference plane = content-bbox center (matches the trainer + inference/run_cmrxrecon, which
-    # anchor slot 0 at z_mid=(z0+z1)//2). NOT argmin|z_val| (canonical-cube center) — that diverges
-    # by one 12mm plane for off-center FOVs (22/30 CMRx subjects), feeding an out-of-convention anchor.
-    z_planes = [e["z_plane"] for e in entries]
-    z_mid = (min(z_planes) + max(z_planes) + 1) // 2
-    ref_k = int(np.argmin([abs(e["z_plane"] - z_mid) for e in entries]))
-    ref_slice = entries[ref_k]["slice_idx"]
-    slots = build_slots(len(entries), ref_k, T, regime, frames_per_slice, seq_index)
-    batch = assemble_batch(slots, entries, fetch, breathing, device)
-    hw = batch["images"].shape[-1]
+def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied):
+    """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack)."""
+    batch = build_batch(ds, seq_index, phases_bundle, device)
+    T = phases_bundle.shape[0]
+    D = phases_bundle.shape[1]
+    grid_shape = (D, 256, 256)
+    z_scale = float(batch["z_scale"].reshape(-1)[0])
 
     pred_vols, per_phase_ms, ed_pack = [], [], None
     for t in range(T):
-        ref = fetch(t, ref_slice, breathing)                                   # reference at queried phase
-        up = F.interpolate(torch.as_tensor(ref)[None, None].float(), size=(hw, hw),
-                           mode="bilinear", align_corners=True).to(device)
-        batch["images"][:, 0] = up.repeat(1, 3, 1, 1)
+        batch["timesteps"][0, 0] = int(t)            # slot 0 = the reference at the queried phase
+        _extract(batch, device)
         torch.cuda.synchronize(); t0 = time.perf_counter()
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         wp = preds["world_points"].float()
-        V_ref = preds.get("V_refined")                                         # refiner ckpts emit V_refined/V_canon
-        V_canon = preds.get("V_canon")
-        if V_canon is None:                                                    # no-refiner model: splat here
-            V_canon, _ = splat_predictions({"world_points": wp}, batch, grid_shape)
-        V_out = V_ref if V_ref is not None else V_canon                        # prefer refined (mirrors inference.forward)
+        V, _cov = _splat_preds_native({"world_points": wp}, batch, grid_shape, z_scale)
         torch.cuda.synchronize(); per_phase_ms.append((time.perf_counter() - t0) * 1e3)
-        pred_vols.append(V_out[0].float().cpu().numpy())
+        pred_vols.append(V[0].float().cpu().numpy())
         if t == ED_PHASE:
-            delta = (wp[0] - batch["scanner_coords"][0].float()).cpu().numpy()  # (S,hw,hw,3) normalized
-            ed_pack = dict(delta=delta, slots=slots, ref_k=ref_k, entries=entries,
-                           images=batch["images"][0].mean(1).cpu().numpy(),
-                           # clean run = negative control: nothing was applied, so applied disp is 0
-                           applied=(np.stack([applied_disp(entries[k]["slice_idx"]) for k, _ in slots])
-                                    if breathing else np.zeros((len(slots), 3), np.float64)))
+            delta = (wp[0] - batch["scanner_coords"][0].float()).cpu().numpy()   # (S,R,R,3) normalized
+            z_slots = batch["slice_indices"][0].cpu().numpy()
+            ed_pack = dict(delta=delta,
+                           # (S,3,R,R) -> (S,R,R): the FOV gate is on slice content, not colour.
+                           images=batch["images"][0].float().mean(1).cpu().numpy(),
+                           slot_z=z_slots,
+                           slot_t=batch["timesteps"][0].cpu().numpy(),
+                           applied=np.stack([disp_applied[int(round(float(z)))] for z in z_slots])
+                           if disp_applied is not None else np.zeros((len(z_slots), 3)))
     return np.stack(pred_vols), per_phase_ms, ed_pack
 
 
 def resp_diag(ed_pack, breathing):
-    """Predicted through-plane Δz (mm) vs applied disp d_D per slot at ED: slope/corr/EPE, a faithful
-    analog of the trainer's metric_resp_slope_dz (loss.py) — includes ALL slots (slot 0, the reference
-    anchor, INCLUDED, matched to the trainer) and uses the same 0.05 FOV gate. For the breath run
-    applied = the manifest disp; for the clean run applied = 0 (a negative control: predicted Δz on
-    un-breathed input, should be ~0)."""
+    """Predicted through-plane Δz (mm) vs the APPLIED sim shift per slot at ED.
+
+    Deliberately mirrors `loss.py`'s `metric_resp_slope_dz`: all slots including slot 0, the same
+    0.05 FOV intensity gate, and `Z_HALF_MM` (not a per-subject half-span) as the normalized->mm
+    factor. For the clean arm `applied` is 0, making it a negative control: predicted Δz on
+    un-breathed input should sit near zero.
+    """
     if ed_pack is None:
         return {}
-    delta = ed_pack["delta"]; imgs = ed_pack["images"]                          # (S,hw,hw,3),(S,hw,hw)
+    delta, imgs = ed_pack["delta"], ed_pack["images"]
     pred_dz, appl_dz = [], []
-    for s in range(delta.shape[0]):                                             # all slots incl. slot 0 (reference)
-        m = imgs[s] > 0.05                                                      # FOV gate (matches trainer)
+    for s in range(delta.shape[0]):
+        m = imgs[s] > 0.05
         if not m.any():
             continue
-        pred_dz.append(float(delta[s, ..., 2][m].mean() * MM_PER_NORM[2]))      # channel 2 = z(D); mm
-        appl_dz.append(float(ed_pack["applied"][s, 0]))                         # applied d_D (through-plane) mm
+        pred_dz.append(float(delta[s, ..., 2][m].mean() * MM_PER_NORM[2]))
+        appl_dz.append(float(ed_pack["applied"][s, 0]) if breathing else 0.0)
     pred_dz, appl_dz = np.asarray(pred_dz), np.asarray(appl_dz)
     out = {"breathing": bool(breathing), "n_slots": int(pred_dz.size),
            "pred_dz_mm": pred_dz.tolist(), "applied_dz_mm": appl_dz.tolist(),
@@ -268,10 +241,10 @@ def resp_diag(ed_pack, breathing):
     return out
 
 
-# ── provenance / metadata ────────────────────────────────────────────────────────────────────
+# ── provenance / guards ──────────────────────────────────────────────────────────────────────
 def _git_commit():
     try:
-        return subprocess.check_output(["git", "-C", VGGT, "rev-parse", "--short", "HEAD"],
+        return subprocess.check_output(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
                                        text=True).strip()
     except Exception:
         return "unknown"
@@ -282,31 +255,7 @@ def _wandb_id(ckpt):
     return runs[0].split("-")[-1] if runs else "unknown"
 
 
-def stage_ckpt_to_tmp(ckpt):
-    """Copy the GPFS ckpt to node-local /tmp + strip to weights-only, for fast repeated loads.
-    Direct torch.load from GPFS is ~50x slower (storage-by-storage small reads that GPFS handles
-    terribly; see global CLAUDE.md) — ~266s vs ~2-5s from /tmp. The ORIGINAL file is never touched.
-    Idempotent: reuses the /tmp weights-only file if present (so multiple runs on a node stage once).
-    Returns the /tmp weights-only path to load from."""
-    import torch
-    tag = hashlib.md5(os.path.abspath(ckpt).encode()).hexdigest()[:8]
-    wo = f"/tmp/vggt_ckpt_{tag}_weightsonly.pt"
-    if os.path.exists(wo):
-        print(f"[stage] reusing {wo} ({os.path.getsize(wo)/1e9:.2f} GB)", flush=True)
-        return wo
-    tmp_full = f"/tmp/vggt_ckpt_{tag}_full.pt"
-    t0 = time.perf_counter()
-    shutil.copyfile(ckpt, tmp_full)                      # one GPFS *sequential* read (fast-ish)
-    ck = torch.load(tmp_full, map_location="cpu", weights_only=False)  # from /tmp: fast, no small-read penalty
-    torch.save({"model": ck["model"]}, wo)               # weights-only (~half the bytes)
-    del ck; os.remove(tmp_full)                          # drop the full copy; keep only weights-only
-    print(f"[stage] {ckpt}\n        -> {wo} (weights-only, {os.path.getsize(wo)/1e9:.2f} GB) "
-          f"in {time.perf_counter()-t0:.0f}s; original untouched", flush=True)
-    return wo
-
-
 def _ckpt_fingerprint(ckpt):
-    """Cheap identity for the checkpoint without hashing GBs off GPFS: (size:mtime)."""
     try:
         st = os.stat(ckpt)
         return f"{st.st_size}:{int(st.st_mtime)}"
@@ -314,33 +263,19 @@ def _ckpt_fingerprint(ckpt):
         return None
 
 
-def _run_identity(args):
-    """The fields that make two runs the SAME model/config. A mismatch under one arm name means a
-    different run would clobber the existing recons."""
-    return {"ckpt": args.ckpt, "ckpt_fingerprint": _ckpt_fingerprint(args.ckpt),
-            "regime": args.regime, "z_mode": "continuous" if args.continuous_z else "snapped"}
-
-
 def _same_ckpt(prev, ident):
-    """Same checkpoint? Prefer the content fingerprint (size:mtime) when BOTH sides have it — that
-    catches a same-PATH file retrained in place (fingerprint differs) and ignores abs-vs-rel path
-    spelling. Legacy metadata has no fingerprint -> fall back to realpath(path) so a pre-guard resume
-    with the real ckpt does NOT false-conflict."""
     pf, cf = prev.get("ckpt_fingerprint"), ident.get("ckpt_fingerprint")
     if pf and cf:
         return pf == cf
     return os.path.realpath(prev.get("ckpt") or "") == os.path.realpath(ident.get("ckpt") or "")
 
 
-def check_overwrite(ds, subjects, method, ident, overwrite):
-    """Refuse to write into an arm whose existing recons came from a DIFFERENT run (ckpt content/
-    regime/z_mode), unless --overwrite. Same identity = a legit resume/re-run; arms with no
-    metadata.json yet (fresh, or classical baselines) never conflict. A corrupt/unreadable
-    metadata.json is treated as no-conflict (warn, don't crash) so a killed prior run can't wedge the
-    guard. Fail fast BEFORE the ~1 min model load."""
+def check_overwrite(ds_name, subjects, method, ident, overwrite):
+    """Refuse to write into an arm whose existing recons came from a DIFFERENT checkpoint, unless
+    --overwrite. Fails fast BEFORE the ~3 min model load."""
     conflicts = []
     for subject in subjects:
-        mpath = str(paths.metadata(ds, subject, method))
+        mpath = str(paths.metadata(ds_name, subject, method))
         if not os.path.exists(mpath):
             continue
         try:
@@ -349,137 +284,151 @@ def check_overwrite(ds, subjects, method, ident, overwrite):
         except (json.JSONDecodeError, OSError) as e:
             print(f"[run_vggt] WARNING: unreadable {mpath} ({e}); treating as fresh", flush=True)
             continue
-        if not isinstance(prev, dict):   # valid JSON but not an object (null/list/scalar) -> don't .get-crash
+        if not isinstance(prev, dict):
             print(f"[run_vggt] WARNING: {mpath} is not a JSON object; treating as fresh", flush=True)
             continue
-        if (prev.get("regime") != ident["regime"] or prev.get("z_mode") != ident["z_mode"]
-                or not _same_ckpt(prev, ident)):
-            conflicts.append((subject, {k: prev.get(k) for k in ("ckpt", "regime", "z_mode")}))
+        if not _same_ckpt(prev, ident):
+            conflicts.append((subject, prev.get("ckpt")))
     if conflicts and not overwrite:
         detail = "\n".join(f"    {s}: {p}" for s, p in conflicts[:5])
         more = "" if len(conflicts) <= 5 else f"\n    ... +{len(conflicts) - 5} more"
-        sys.exit(
-            f"REFUSING to overwrite arm '{method}': {len(conflicts)} existing subject(s) came from a "
-            f"DIFFERENT run.\n  this run: {ident}\n  on disk:\n{detail}{more}\n"
-            f"  -> pass --overwrite to replace, or use a different --model-name.")
+        sys.exit(f"REFUSING to overwrite arm '{method}': {len(conflicts)} subject(s) came from a "
+                 f"DIFFERENT checkpoint.\n  this run: {ident['ckpt']}\n  on disk:\n{detail}{more}\n"
+                 f"  -> pass --overwrite, or use a different --model-name.")
     if conflicts:
-        print(f"[run_vggt] --overwrite: replacing {len(conflicts)} subject(s) of arm '{method}' "
-              f"from a different prior run", flush=True)
+        print(f"[run_vggt] --overwrite: replacing {len(conflicts)} subject(s) of arm '{method}'",
+              flush=True)
 
 
-def build_metadata(args, ckpt, method):
-    exp = os.path.basename(os.path.dirname(os.path.dirname(ckpt)))
-    return {
-        "method": method, "model_name": args.model_name, "date": args.date,
-        "ckpt": ckpt, "ckpt_fingerprint": _ckpt_fingerprint(ckpt), "exp_name": exp, "wandb_id": _wandb_id(ckpt),
-        "config": args.config, "regime": args.regime, "frames_per_slice": args.frames_per_slice,
-        "z_mode": "continuous" if args.continuous_z else "snapped",
-        "breathing_source": "frozen (eval bundle breath/ + manifest disp)",
-        "git_commit": _git_commit(), "note": args.note,
-    }
+def check_bundle_split(ds_name, subjects, split):
+    """Drop bundles built for a different split.
 
-
-def write_provenance(path, args, ckpt, method, model_load_s):
-    with open(path, "w") as f:
-        f.write(f"method: {method}\ncommand: {' '.join(sys.argv)}\nckpt: {ckpt}\n")
-        f.write(f"exp_name: {os.path.basename(os.path.dirname(os.path.dirname(ckpt)))}\n")
-        f.write(f"wandb_id: {_wandb_id(ckpt)}\ngit_commit: {_git_commit()}\n")
-        f.write(f"gpu: {torch.cuda.get_device_name(0)}\n")
-        f.write(f"torch: {torch.__version__}  cuda: {torch.version.cuda}\n")
-        f.write(f"regime: {args.regime}  frames_per_slice: {args.frames_per_slice}  "
-                f"z_mode: {'continuous' if args.continuous_z else 'snapped'}\n")
-        f.write("breathing_source: FROZEN (eval bundle breath/ pixels + manifest disp; NOT re-sampled)\n")
-        f.write(f"model_load_sec: {model_load_s:.1f}\n")
+    A bundle is a directory; anything that lands under `<source>/out/` joins the cohort just by
+    existing. That is a real failure mode, not a hypothetical: a test build of a TRAIN subject
+    into the val dir would otherwise be scored and averaged in silently. The builder records
+    `split` in each manifest, so honour it.
+    """
+    keep, dropped = [], []
+    for s in subjects:
+        try:
+            m = json.load(open(paths.manifest(ds_name, s)))
+        except (json.JSONDecodeError, OSError):
+            dropped.append((s, "unreadable manifest")); continue
+        if m.get("split", split) != split:
+            dropped.append((s, f"built for split '{m.get('split')}'")); continue
+        keep.append(s)
+    for s, why in dropped:
+        print(f"[run_vggt] SKIP {s}: {why}", flush=True)
+    return keep
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True, choices=list(paths.DATASETS))
-    ap.add_argument("--ckpt", default=(DEFAULT_CKPT[0] if DEFAULT_CKPT else None))
+    ap.add_argument("--ckpt", required=True,
+                    help="path INSIDE the run's log_dir; the protocol is read from its run_meta.jsonl")
     ap.add_argument("--model-name", required=True,
-                    help="arm slug; the output dir is vggt_<model-name>. REQUIRED (no default) so a "
-                         "stray run can't silently overwrite a named arm like gather05.")
-    ap.add_argument("--date", default=None, help="legacy: include date in the arm name "
-                    "(vggt_<date>_<model>); omit for the slug form vggt_<model> (scheme/date -> MODELS.md)")
-    ap.add_argument("--regime", choices=["onef", "multiframe"], default="onef")
-    ap.add_argument("--frames-per-slice", type=int, default=5, help="multiframe only")
-    ap.add_argument("--continuous-z", action="store_true",
-                    help="OOD (miitt/ocmr/acdc): fractional physical z, no 12mm snap; no-op on cmrxrecon")
-    ap.add_argument("--refiner", action="store_true")
-    ap.add_argument("--stage-tmp", action="store_true",
-                    help="copy ckpt to node-local /tmp + strip to weights-only for fast loads "
-                         "(GPFS small-read fix, ~266s->~5s); original untouched, staged once per node")
-    # Provenance only — recorded on the model card, never composed by Hydra. Default was
-    # "mri_volume_diffusion" until the 2026-08-01 flattening deleted that name (docs/62 §7);
-    # `default.yaml` IS that config. Existing models.json rows keep the OLD name on purpose:
-    # they record what those runs actually used, and rewriting them would falsify provenance.
-    ap.add_argument("--config", default="default", help="for the model card")
-    ap.add_argument("--note", default="")
+                    help="arm slug; output dir is vggt_<model-name>. Required so a stray run cannot "
+                         "silently overwrite a named arm.")
+    ap.add_argument("--date", default=None, help="legacy arm-name form vggt_<date>_<model>")
+    ap.add_argument("--split", default="val", help="which split the bundles were built for")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all built subjects")
-    ap.add_argument("--overwrite", action="store_true",
-                    help="allow replacing an existing arm produced by a DIFFERENT run (ckpt/regime/"
-                         "z_mode); without it, run_vggt refuses to clobber a named arm.")
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--note", default="")
+    ap.add_argument("--overwrite", action="store_true")
     args = ap.parse_args()
-    assert args.ckpt, "no gather05 ckpt found; pass --ckpt"
 
-    method = paths.canonical_arm(args.model_name, date=args.date, continuous_z=args.continuous_z)
-    # Slug in name, scheme in registry: --date omitted -> vggt_<model_name>; passing --date keeps the
-    # legacy vggt_<date>_<model> form. canonical_arm de-doubles _contz (fixes the historical bug), so a
-    # NEW contz OOD run is named vggt_..._contz (single), unlike the existing doubled dirs (left as-is).
-    ds = args.dataset
-    root = paths.dataset_root(ds)
-    subjects = args.subjects or paths.subjects(ds)
+    method = paths.canonical_arm(args.model_name, date=args.date)
+    ds_name = args.dataset
+    root = paths.dataset_root(ds_name)
+    subjects = args.subjects or paths.subjects(ds_name)
     if not subjects:
-        sys.exit(f"no built subjects under {root}/*/manifest.json")
+        sys.exit(f"no built subjects under {root}/*/manifest.json — run build_inputs/pooled.py first")
+    subjects = check_bundle_split(ds_name, subjects, args.split)
+    if args.limit:
+        subjects = subjects[: args.limit]
+    if not subjects:
+        sys.exit(f"no subjects left for split '{args.split}'")
 
-    check_overwrite(ds, subjects, method, _run_identity(args), args.overwrite)  # fail fast before model load
+    ident = {"ckpt": args.ckpt, "ckpt_fingerprint": _ckpt_fingerprint(args.ckpt)}
+    check_overwrite(ds_name, subjects, method, ident, args.overwrite)
 
-    load_ckpt = stage_ckpt_to_tmp(args.ckpt) if args.stage_tmp else args.ckpt  # metadata still uses args.ckpt
     device = torch.device("cuda")
     t0 = time.perf_counter()
-    model = load_rtfb_model_reference(load_ckpt, refiner=args.refiner, device=device)
+    model, cfg = load_model_from_run(args.ckpt, device=device)
     model_load_s = time.perf_counter() - t0
-    print(f"[run_vggt] method={method}  regime={args.regime}  z={'contz' if args.continuous_z else 'snap'}  "
-          f"subjects={len(subjects)}  (model load {model_load_s:.0f}s)", flush=True)
-    metadata = build_metadata(args, args.ckpt, method)
+    metadata = {
+        "method": method, "model_name": args.model_name, "date": args.date,
+        "ckpt": args.ckpt, "ckpt_fingerprint": _ckpt_fingerprint(args.ckpt),
+        "exp_name": cfg.get("exp_name"), "wandb_id": _wandb_id(args.ckpt),
+        "img_size": cfg.get("img_size"), "backbone": cfg.get("backbone") or "dinov2_vitl14_reg",
+        "one_frame_per_slice": cfg.get("one_frame_per_slice"),
+        "continuous_z": cfg.get("continuous_z"), "reference_slot": cfg.get("reference_slot"),
+        "aug_tier": (cfg.get("data") or {}).get("augmentation", {}).get("tier"),
+        "protocol_source": "run_meta.jsonl (NOT the live default.yaml)",
+        "breathing_source": "frozen (eval bundle breath/ pixels + manifest disp; NOT re-sampled)",
+        "geometry": "native-z (docs/58): per-subject D and dz, z_scale=Z_HALF_MM/dz, no 12mm snap",
+        "git_commit": _git_commit(), "note": args.note,
+    }
+    print(f"[run_vggt] {ds_name}: arm={method} subjects={len(subjects)} "
+          f"(model load {model_load_s:.0f}s)", flush=True)
 
-    for si, subject in enumerate(subjects):
-        subj_dir = str(paths.subject_dir(ds, subject))
-        T = json.load(open(paths.manifest(ds, subject)))["T"]
-        prep_by_ds = {"cmrxrecon": lambda: prep_cmrxrecon(subj_dir, T, args.continuous_z),
-                      "miitt": lambda: prep_miitt(subj_dir, subject, T, args.continuous_z),
-                      "ocmr": lambda: prep_ocmr(subj_dir, subject, T, args.continuous_z),
-                      "acdc": lambda: prep_acdc(subj_dir, subject, T, args.continuous_z)}
-        prep_fn = prep_by_ds[args.dataset]()
-        if not prep_fn[1]:                                                      # no in-FOV planes -> skip, don't crash
-            print(f"  [{subject}] SKIP: no in-FOV planes", flush=True); continue
-        md = str(paths.arm_dir(ds, subject, method)); os.makedirs(md, exist_ok=True)
+    for subject in subjects:
+        subj_dir = str(paths.subject_dir(ds_name, subject))
+        man = json.load(open(paths.manifest(ds_name, subject)))
+        T = man["T"]
+        disp = np.asarray(man["breath"]["disp_dhw_mm"], dtype=np.float64)   # (D,3) per z-plane
+        md = str(paths.arm_dir(ds_name, subject, method))
+        os.makedirs(md, exist_ok=True)
 
-        timing, rdiag = {"model_load_sec": model_load_s}, {}
-        for breathing, var in [(False, "clean"), (True, "breath")]:
-            rv = str(paths.recon_dir(ds, subject, method, var)); os.makedirs(rv, exist_ok=True)
-            ts = time.perf_counter()
-            pred_vols, per_phase_ms, ed_pack = reconstruct(
-                model, prep_fn, breathing, args.regime, args.frames_per_slice, si, device, GRID_SHAPE)
-            wall = time.perf_counter() - ts
-            for t in range(T):
-                _save_dhw_to_xyz(pred_vols[t], str(paths.recon(ds, subject, method, var, t)))
-            timing[var] = {"per_phase_ms": per_phase_ms, "total_sec": wall}
-            rdiag[var] = resp_diag(ed_pack, breathing)
-            if breathing:                                                       # ED Δ field: the SVR .dof analog
-                np.savez_compressed(os.path.join(md, "ed_dvf.npz"),
-                                    delta=ed_pack["delta"].astype(np.float16),
-                                    slot_z=np.array([ed_pack["entries"][k]["z_plane"] for k, _ in ed_pack["slots"]]),
-                                    slot_t=np.array([ph for _, ph in ed_pack["slots"]]),
-                                    applied_disp_mm=ed_pack["applied"])
-            print(f"  [{subject} {var}] T={T} wall={wall:.1f}s  {np.mean(per_phase_ms):.0f}ms/phase", flush=True)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dset = make_dataset(cfg, man["rel_path"], args.split, tmpdir)
+            seq = name_seed(ds_name, subject)          # name-keyed: cohort-composition independent
+            timing, rdiag = {"model_load_sec": model_load_s}, {}
+            for breathing, var in [(False, "clean"), (True, "breath")]:
+                rv = str(paths.recon_dir(ds_name, subject, method, var))
+                os.makedirs(rv, exist_ok=True)
+                bundle = load_bundle(subj_dir, T, "breath" if breathing else "clean")
+                ts = time.perf_counter()
+                pred_vols, per_phase_ms, ed_pack = reconstruct(
+                    model, dset, seq, bundle, device, disp if breathing else None)
+                wall = time.perf_counter() - ts
+                for t in range(T):
+                    p = str(paths.recon(ds_name, subject, method, var, t))
+                    nib.save(nib.Nifti1Image(
+                        np.ascontiguousarray(pred_vols[t].transpose(2, 1, 0).astype(np.float32)),
+                        np.diag([INPLANE_MM, INPLANE_MM, man["dz_mm"], 1.0])), p)
+                timing[var] = {"per_phase_ms": per_phase_ms, "total_sec": wall}
+                rdiag[var] = resp_diag(ed_pack, breathing)
+                if breathing:
+                    np.savez_compressed(os.path.join(md, "ed_dvf.npz"),
+                                        delta=ed_pack["delta"].astype(np.float16),
+                                        slot_z=ed_pack["slot_z"], slot_t=ed_pack["slot_t"],
+                                        applied_disp_mm=ed_pack["applied"])
+                    # The realized draw makes the recon replayable even if the sampler changes.
+                    metadata_draw = {"seq_index_used": int(seq),
+                                     "seq_index_basis": f"sha256('{ds_name}/{subject}')",
+                                     "slot_z": ed_pack["slot_z"].tolist(),
+                                     "slot_t": ed_pack["slot_t"].tolist()}
+                print(f"  [{subject} {var}] T={T} D={bundle.shape[1]} wall={wall:.1f}s "
+                      f"{np.mean(per_phase_ms):.0f}ms/phase", flush=True)
 
         json.dump(timing, open(os.path.join(md, "timing.json"), "w"), indent=2)
         json.dump(rdiag, open(os.path.join(md, "resp_diag.json"), "w"), indent=2)
-        json.dump(metadata, open(os.path.join(md, "metadata.json"), "w"), indent=2)
-        write_provenance(os.path.join(md, "provenance.txt"), args, args.ckpt, method, model_load_s)
+        json.dump({**metadata, "draw": metadata_draw},
+                  open(os.path.join(md, "metadata.json"), "w"), indent=2)
+        with open(os.path.join(md, "provenance.txt"), "w") as f:
+            f.write(f"method: {method}\ncommand: {' '.join(sys.argv)}\nckpt: {args.ckpt}\n")
+            f.write(f"exp_name: {cfg.get('exp_name')}\nwandb_id: {_wandb_id(args.ckpt)}\n")
+            f.write(f"git_commit: {_git_commit()}\ngpu: {torch.cuda.get_device_name(0)}\n")
+            f.write(f"torch: {torch.__version__}  cuda: {torch.version.cuda}\n")
+            f.write(f"img_size: {cfg.get('img_size')}  one_frame_per_slice: "
+                    f"{cfg.get('one_frame_per_slice')}  continuous_z: {cfg.get('continuous_z')}\n")
+            f.write("breathing_source: FROZEN (bundle breath/ pixels; NOT re-sampled)\n")
+            f.write("geometry: native-z (per-subject D/dz, no 12mm snap)\n")
+            f.write(f"model_load_sec: {model_load_s:.1f}\n")
 
-    print(f"DONE -> {root}/*/{method}/  (score: assemble_and_gif.py <subj> {method})", flush=True)
+    print(f"DONE -> {root}/*/{method}/", flush=True)
 
 
 if __name__ == "__main__":
