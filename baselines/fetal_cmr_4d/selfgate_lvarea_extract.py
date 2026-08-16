@@ -16,7 +16,13 @@ import nibabel as nib
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, _ROOT)
-from inference.adapters.base import percentile_scale, to_canonical_inplane
+from inference.canonical_inplane import percentile_scale, to_canonical_inplane
+# ⚠️ BROKEN as of 2026-08-16: the RTFB adapter stack was retired to
+# `inference/_archive/adapters/` when every source moved onto MRIDataset. This script is the only
+# remaining caller of MIITTAdapter and it was already stale — `INPLANE_MM` there is the PLACEHOLDER
+# spacing, superseded by the real 1.5 x 1.5 x 10 mm protocol values (docs/78). The self-gating SVR
+# baseline this feeds (docs/35) was never built, so nothing is regressing today. To revive it, read
+# the raw cine through `scratch/data/MIITT_sax/` + MRIDataset instead of resurrecting the adapter.
 from inference.adapters.miitt import MIITTAdapter, INPLANE_MM
 
 MIITT_RECON = os.path.join(_ROOT, "scratch/data/MIITT/nifti")
