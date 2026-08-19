@@ -6,9 +6,12 @@ under <subject>/<method>/. This reads recons from <subject>/<method>/recon_{clea
   <subject>/cine_gt.nii.gz                        4D canonical GT (method-independent, shared, once)
   <subject>/<method>/cine_{clean,breath}.nii.gz   this method's recons on the canonical grid
   <subject>/<method>/metrics.json                 per-phase PSNR/SSIM (heart&FOV ROI), clean & breath
-  <subject>/<method>/gif_{clean,breath,combined}.gif
+  <subject>/<method>/gif_{clean,breath,combined}.gif (gif_combined currently disabled, see render_gif call site)
 
-Run: EVAL_DATASET=<ds> micromamba run -n svr python evaluation/engine/assemble_and_gif.py <subject> [method=svrtk3d]
+Grayscale display uses the same gamma=0.7 curve as training's own panels (trainer_viz.py's
+`_display_gamma`, ported here as `display_gamma`) — ON by default; GAMMA=0 restores linear display.
+
+Run: EVAL_DATASET=<ds> micromamba run -n svr python evaluation/src/engine/assemble_and_gif.py <subject> [method=svrtk3d]
 
 Paths/naming go through evaluation/paths.py (the single source of truth).
 """
@@ -26,11 +29,21 @@ import matplotlib.pyplot as plt
 import imageio.v2 as imageio
 
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import paths  # noqa: E402
 
 DATASET = os.environ.get("EVAL_DATASET", "cmrx2024")
 INPLANE_MM = 1.4          # in-plane only; z is NEVER a constant here (docs/58 native-z)
+
+# Same curve as training/trainer_viz.py:_display_gamma and slice_panels.display_gamma — mid-tones
+# brightened for readability. ON by default; GAMMA=0 restores the old linear display.
+GAMMA_ON = os.environ.get("GAMMA", "1") != "0"
+GAMMA_TAG = "  [gamma 0.7]" if GAMMA_ON else ""     # appended to every gif's title, so the
+                                                     # rendered file self-documents its own display mode
+
+
+def display_gamma(image, vmax, gamma=0.7):
+    return np.clip(image / max(float(vmax), 1e-8), 0.0, 1.0) ** gamma
 
 
 def subject_grid(ds, subj):
@@ -147,12 +160,22 @@ def psnr_unit_peak(a, b, m):
 
 
 def ssim(a, b, m):
+    """Global (whole-ROI) SSIM on the fixed [0,1] data range — NOT windowed, so not comparable to
+    skimage's default.
+
+    `L` is pinned to 1.0 rather than derived from the data (`max(a.max(),b.max()) - min(...)`).
+    A data-derived range makes c1/c2 method-dependent: at this harness's real ROI size
+    (~28k-67k voxels) a single bright outlier widens L and *raises* a method's SSIM while its PSNR
+    falls. Measured on the shipped arm, data-L vs L=1 shifts per-subject SSIM by up to 0.022
+    (cross-method spread was only 0.0004, so no ranking ever flipped) — but the bias is real and
+    the inputs are normalized to [0,1] by construction, so the fixed range is the honest one.
+    """
     a, b = a[m], b[m]
     if a.size < 2:
         return float("nan")
     mu_a, mu_b, va, vb = a.mean(), b.mean(), a.var(), b.var()
     cov = ((a - mu_a) * (b - mu_b)).mean()
-    L = max(a.max(), b.max()) - min(a.min(), b.min()) + 1e-9
+    L = 1.0
     c1, c2 = (0.01 * L) ** 2, (0.03 * L) ** 2
     return float(((2 * mu_a * mu_b + c1) * (2 * cov + c2)) /
                  ((mu_a ** 2 + mu_b ** 2 + c1) * (va + vb + c2)))
@@ -171,6 +194,46 @@ def ncc(a, b, m):
     return float(((x - x.mean()) * (y - y.mean())).mean() / (sx * sy))
 
 
+def check_variant_stamps(ds, subj, method, present):
+    """Refuse to score `clean` and `breath` recons that came from DIFFERENT runs.
+
+    Variants are discovered by `.is_dir()` and `run_vggt` only rewrites the ones in `--arms`, so a
+    re-run under the same `--model-name` with the default `--arms breath` leaves a stale
+    `recon_clean/` that is silently scored and differenced into `cost_psnr`. `metadata.json` is per
+    ARM (one file, rewritten each run) and cannot see this; `paths.recon_stamp` is per VARIANT and
+    can. Returns True only when every present variant carries an identical stamp.
+
+    Legacy dirs (written before stamping) carry none: with NO variant stamped there is nothing to
+    compare, so warn and return False rather than fail the whole corpus. A MIX of stamped and
+    unstamped is the stale case itself and raises — set ALLOW_MIXED_ARMS=1 if you know otherwise.
+    """
+    if len(present) < 2:
+        return True
+    stamps = {}
+    for v in present:
+        p = paths.recon_stamp(ds, subj, method, v)
+        try:
+            stamps[v] = json.load(open(p))
+        except (json.JSONDecodeError, OSError):
+            stamps[v] = None
+    if all(s is None for s in stamps.values()):
+        print(f"  !! {subj} [{method}]: no per-variant stamps (pre-stamp run) — cannot verify "
+              f"clean/breath came from the same run; cost_psnr is unverified", flush=True)
+        return False
+    if all(s is not None for s in stamps.values()) and len({json.dumps(s, sort_keys=True)
+                                                            for s in stamps.values()}) == 1:
+        return True
+    detail = "\n".join(f"    recon_{v}: {s if s else 'UNSTAMPED (older run)'}"
+                       for v, s in stamps.items())
+    msg = (f"{subj} [{method}]: clean and breath recons are from DIFFERENT runs — cost_psnr would "
+           f"subtract two checkpoints:\n{detail}\n"
+           f"  -> re-run run_vggt with --arms clean breath, or set ALLOW_MIXED_ARMS=1 to score anyway.")
+    if os.environ.get("ALLOW_MIXED_ARMS") == "1":
+        print(f"  !! ALLOW_MIXED_ARMS=1: {msg}", flush=True)
+        return False
+    raise RuntimeError(msg)
+
+
 def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None):
     """rows: list of (label, cine[T,X,Y,Z]); one animation frame per cardiac phase t,
     each frame = len(rows) x len(planes) montage. plane_disp: optional per-z applied breathing
@@ -185,8 +248,13 @@ def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None):
         for ri, (label, cine) in enumerate(rows):
             for ci, z in enumerate(planes):
                 ax = axes[ri, ci]
-                ax.imshow(cine[t, :, :, z].T, cmap="gray", vmin=0, vmax=vmax,
-                          origin="lower", interpolation="nearest")
+                img = cine[t, :, :, z].T
+                if GAMMA_ON:
+                    ax.imshow(display_gamma(img, vmax), cmap="gray", vmin=0, vmax=1,
+                              origin="lower", interpolation="nearest")
+                else:
+                    ax.imshow(img, cmap="gray", vmin=0, vmax=vmax,
+                              origin="lower", interpolation="nearest")
                 ax.set_xticks([]); ax.set_yticks([])
                 if ri == 0:
                     v = None if plane_disp is None else plane_disp[z]
@@ -194,14 +262,16 @@ def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None):
                     ax.set_title(lbl, fontsize=6.5)
                 if ci == 0:
                     ax.set_ylabel(label, fontsize=8)
-        fig.suptitle(titles.format(t=t), fontsize=9, y=0.985, va="top")
+        fig.suptitle(titles.format(t=t) + GAMMA_TAG, fontsize=9, y=0.985, va="top")
         fig.subplots_adjust(left=0.06, right=0.99, top=top, bottom=0.01,
                             wspace=0.03, hspace=0.06)
         fig.canvas.draw()
         buf = np.asarray(fig.canvas.buffer_rgba())   # mpl>=3.8: tostring_rgb removed
         frames.append(buf[..., :3].copy())
         plt.close(fig)
-    imageio.mimsave(out_path, frames, duration=1.0 / fps, loop=0)
+    # imageio 2.x GIF duration is MILLISECONDS; seconds (1/fps) truncates to a 0 ms delay and
+    # every viewer falls back to its own default speed.
+    imageio.mimsave(out_path, frames, duration=1000.0 / fps, loop=0)
     print(f"  -> {out_path}")
 
 
@@ -265,6 +335,7 @@ def main():
     if "breath" not in present:
         raise FileNotFoundError(f"{subj} [{method}]: no recon_breath — that arm is the deliverable")
     metrics["arms"] = present
+    metrics["stamps_agree"] = check_variant_stamps(ds, subj, method, present)
     for var in present:
         rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)), shape_xyz, aff)
                         for t in range(T)])
@@ -287,8 +358,13 @@ def main():
               f"SSIM {np.nanmean(sv):.3f}  NCC {np.nanmean(nv):.3f}")
 
     # save 4D cines (X,Y,Z,T): cine_gt is method-independent -> subject level (shared, written once);
-    # the recon cines -> the method dir.
-    nib.save(nib.Nifti1Image(np.moveaxis(cines["gt"], 0, -1), aff), os.path.join(sd, "cine_gt.nii.gz"))
+    # the recon cines -> the method dir. cine_gt via temp+rename: it is SHARED across arms, and
+    # render_all_gifs.sh runs same-subject/different-arm rows in parallel — a plain nib.save to
+    # one path from two workers can leave a torn gz; os.replace is atomic on one filesystem.
+    gt_path = os.path.join(sd, "cine_gt.nii.gz")
+    gt_tmp = f"{gt_path}.tmp{os.getpid()}.nii.gz"
+    nib.save(nib.Nifti1Image(np.moveaxis(cines["gt"], 0, -1), aff), gt_tmp)
+    os.replace(gt_tmp, gt_path)
     for k in present:
         nib.save(nib.Nifti1Image(np.moveaxis(cines[k], 0, -1), aff), os.path.join(md, f"cine_{k}.nii.gz"))
     metrics["method"] = method
@@ -319,7 +395,11 @@ def main():
         return
 
     _in = mask[None].repeat(T, axis=0)
-    _roi_vals = np.concatenate([gt[_in]] + [cines[k][_in] for k in present])
+    # nan_to_num on gt: the recons are already hardened at load (see `rec` above) but gt was not, and
+    # ONE NaN voxel poisons the percentile -> vmax=nan -> display_gamma divides by nan -> every frame
+    # renders blank, with no error anywhere (max(nan, 1e-8) is nan, so the guard below can't rescue it).
+    _roi_vals = np.concatenate([np.nan_to_num(gt, nan=0.0, posinf=0.0, neginf=0.0)[_in]]
+                               + [cines[k][_in] for k in present])
     vmax = float(np.percentile(_roi_vals, 99.9)) if _roi_vals.size else 1.0  # guard empty ROI
     # (all other percentile/score sites guard it; this one would IndexError on a heart&FOV-empty subject)
     breath_tag = f"breathing |disp| mean {breath_mean_mm:.1f} / max {breath_max_mm:.1f} mm"
@@ -342,13 +422,15 @@ def main():
                f"{subj} [{method}]  —  breathing input (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
                plane_disp=pd)
     # combined = the clean-vs-breath contrast; only meaningful when both arms were run.
-    if "clean" in present:
-        render_gif(os.path.join(md, "gif_combined.gif"),
-                   [("GT", gt), (f"{arm_label}\nno-breath", cines["clean"]),
-                    (f"{arm_label}\nbreathing", cines["breath"])],
-                   planes, T, vmax,
-                   f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
-                   plane_disp=pd)
+    # Disabled on request — gif_breath (the deliverable arm) plus gif_clean (when the clean arm
+    # exists) cover the two cases in use; the 3-row side-by-side wasn't needed.
+    # if "clean" in present:
+    #     render_gif(os.path.join(md, "gif_combined.gif"),
+    #                [("GT", gt), (f"{arm_label}\nno-breath", cines["clean"]),
+    #                 (f"{arm_label}\nbreathing", cines["breath"])],
+    #                planes, T, vmax,
+    #                f"{subj} [{method}]  —  GT vs {method} (mm under z = applied |disp|; {breath_tag})   phase t={{t}}",
+    #                plane_disp=pd)
 
     # Auto-render the VGGT per-arm diagnostic panels (panel_input/dvf/lookup) alongside the gifs in
     # the arm dir. VGGT arms only — baselines have no ed_dvf.npz, so this is skipped for them; and
@@ -358,7 +440,10 @@ def main():
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
             import slice_panels as _sp
-            _sp.build(DATASET, subj, method, "breath", panels=("input", "dvf", "lookup"))
+            # Reuse THIS subject's own heart-ROI-masked p99.9 vmax (computed above for the gifs) so
+            # every rendered file — gifs and panels alike — shares one display scale, not 3 drifting
+            # formulas. slice_panels.build() computes its own (same formula) when run standalone.
+            _sp.build(DATASET, subj, method, "breath", panels=("input", "dvf", "lookup"), vmax=vmax)
         except Exception as e:
             print(f"  [panels skipped — scoring unaffected] {type(e).__name__}: {e}")
     print(f"done -> {md}")

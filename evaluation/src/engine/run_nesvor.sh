@@ -22,8 +22,9 @@
 # Output is stored RAW (NeSVoR's ~700-mean scale); the scorer self-percentile-normalizes it
 # to [0,1] at load time (per-method rule, assemble_and_gif.py).
 #
-# Usage: [EVAL_DATASET=cmrxrecon|miitt] [MASK_FILE=...] [T=] [THICK=] [J=] \
-#          bash evaluation/engine/run_nesvor.sh <subject> <clean|breath> [res_mm]
+# Usage: EVAL_DATASET=<src> [MASK_FILE=...] [T=] [THICK=] [J=] \
+#          bash evaluation/src/engine/run_nesvor.sh <subject> <clean|breath> [res_mm]
+#        EVAL_DATASET is REQUIRED (cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr).
 set -uo pipefail
 VGGT=/home/minsukc/vggt
 module load singularity 2>/dev/null || true
@@ -32,7 +33,7 @@ SUBJ="${1:?subject}"; VAR="${2:?clean|breath}"; RES="${3:-1.4}"
 J="${J:-1}"; T="${T:-12}"; THICK="${THICK:-8}"; METHOD="${METHOD:-nesvor}"
 # Layout: <subject>/ holds the SHARED frozen bundle (gt/ clean/ breath/ mask_heart.nii.gz manifest.json,
 # identical for every method); each method writes under <subject>/<METHOD>/ . See README "Directory layout".
-SD="$VGGT/scratch/eval/${EVAL_DATASET:-cmrxrecon}/out/$SUBJ"
+SD="$VGGT/scratch/eval/${EVAL_DATASET:?EVAL_DATASET must name a source dir: cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr}/out/$SUBJ"
 OUT="$SD/$METHOD/recon_$VAR"; mkdir -p "$OUT"
 
 # Stage the 5.3GB .sif to node-local /tmp so container-internal torch/CUDA reads don't hit GPFS

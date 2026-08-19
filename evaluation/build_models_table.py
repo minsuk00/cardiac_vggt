@@ -1,4 +1,4 @@
-"""Harvest per-arm provenance into models.json + MODELS.md.
+"""Harvest per-arm provenance into models.json (git-tracked; re-run + commit after adding an arm).
 
 One row per arm present under volumes/ (union across datasets). VGGT arms carry a
 metadata.json (identical across subjects — copied per run), harvested once. Classical
@@ -112,10 +112,12 @@ def main():
     arms = harvest()
     rows = to_rows(arms)
     (paths.EVAL_ROOT / "models.json").write_text(json.dumps(rows, indent=2))
-    write_markdown(rows, paths.EVAL_ROOT / "MODELS.md")
+    # MODELS.md disabled on request — its `regime`/`frames_per_slice` columns are stale (no
+    # current run_vggt.py metadata.json carries those keys; the field is always None today).
+    # write_markdown(rows, paths.EVAL_ROOT / "MODELS.md")
     nv = sum(r["type"] == "vggt" for r in rows)
     nb = len(rows) - nv
-    print(f"-> models.json + MODELS.md  ({len(rows)} arms: {nv} vggt, {nb} baseline)")
+    print(f"-> models.json  ({len(rows)} arms: {nv} vggt, {nb} baseline)")
     print(f"   with metadata: {sum(bool(r['config']) for r in rows)}  "
           f"copied ckpts: {sum(r['ckpt_copied'] for r in rows)}")
 

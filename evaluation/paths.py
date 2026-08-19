@@ -20,17 +20,18 @@ one-function edit instead of a hunt across run_vggt.py / assemble_and_gif.py / a
 and ~15 tools/ scripts. Import standalone:
 
     import sys; sys.path.insert(0, "<repo>/evaluation"); import paths
-    for arm in paths.arms("cmrxrecon"):
-        for subj in paths.subjects("cmrxrecon"):
-            v = paths.recon("cmrxrecon", subj, arm, "clean", 0)
+    for arm in paths.arms("cmrx2024"):
+        for subj in paths.subjects("cmrx2024"):
+            v = paths.recon("cmrx2024", subj, arm, "clean", 0)
 """
+import json
 from pathlib import Path
 
 EVAL_ROOT = Path(__file__).resolve().parent
 VOLUMES = EVAL_ROOT / "volumes"          # -> GPFS (subject-major PRECIOUS data: recons/metrics)
 CHECKPOINTS = EVAL_ROOT / "checkpoints"  # -> GPFS (copied ckpts per arm)
-RESULTS = EVAL_ROOT / "results"          # git-tracked cohort summaries
-FIGURES = EVAL_ROOT / "figures"          # -> GPFS (subject-major DISPOSABLE figures; rm-safe)
+RESULTS = EVAL_ROOT / "metric_results"       # git-tracked cohort summaries
+FIGURES = EVAL_ROOT / "comparison_figures"   # -> GPFS (subject-major DISPOSABLE figures; rm-safe)
 
 # One dir per POOLED SOURCE (was: 4 dirs split by in-dist vs "OOD"). That distinction is gone —
 # ACDC and M&Ms are in the training pool now, and every source here is gated + breathing-simulated,
@@ -66,6 +67,32 @@ def subjects(dataset):
                   if d.is_dir() and (d / "manifest.json").is_file())
 
 
+def filter_by_split(dataset, subject_list, split):
+    """Partition `subject_list` into (keep, dropped) by each bundle's own `manifest["split"]`.
+
+    A bundle is a directory; anything that lands under `<source>/out/` joins the cohort just by
+    existing. That is a real failure mode, not a hypothetical: a build of a TEST or TRAIN subject
+    into the same dir would otherwise be reconstructed, scored and AVERAGED IN silently — neither
+    the bundle dir nor `metric_results/<ds>/<arm>.json` is split-keyed. The builder records `split` in
+    every manifest, so every consumer that defines a cohort must honour it. `dropped` is a list of
+    (subject, reason) so the caller can report what it excluded.
+    """
+    keep, dropped = [], []
+    for s in subject_list:
+        try:
+            m = json.load(open(manifest(dataset, s)))
+        except (json.JSONDecodeError, OSError):
+            dropped.append((s, "unreadable manifest")); continue
+        # No default: `m.get("split", split)` would fail OPEN, keeping an unlabelled bundle for ANY
+        # requested split — the exact silent-averaging this function exists to prevent. Every
+        # manifest the builder writes carries the key (verified across all 144 on disk), so a
+        # missing one means a hand-made or pre-split bundle and must be dropped, not trusted.
+        if m.get("split") != split:
+            dropped.append((s, f"built for split '{m.get('split')}'")); continue
+        keep.append(s)
+    return keep, dropped
+
+
 def arms(dataset, subject=None):
     """Method/arm folder names. For one subject if given, else the union across all
     subjects. Excludes the input-bundle dirs (gt/clean/breath)."""
@@ -96,6 +123,19 @@ def recon(dataset, subject, arm, variant, phase):
 
 def recon_dir(dataset, subject, arm, variant):
     return arm_dir(dataset, subject, arm) / f"recon_{variant}"
+
+
+def recon_stamp(dataset, subject, arm, variant):
+    """PER-VARIANT identity of the run that wrote `recon_<variant>/`.
+
+    `metadata.json` is per ARM, one file, rewritten every run — so it cannot tell you that
+    `recon_clean/` is older than `recon_breath/`. That gap is reachable by the shipped driver's
+    own default: re-running an arm with `--arms breath` (the default) leaves the previous run's
+    `recon_clean/` in place, the scorer discovers variants by `.is_dir()` and scores it, and
+    `cost_psnr = clean - breath` then subtracts two DIFFERENT checkpoints. No crash, no warning.
+    One stamp per variant makes that detectable; assemble_and_gif compares them.
+    """
+    return recon_dir(dataset, subject, arm, variant) / "stamp.json"
 
 
 # --- input bundle ----------------------------------------------------------
@@ -147,13 +187,13 @@ def panel_dvf(dataset, subject, arm):
 
 
 def compare_dir(dataset, subject):
-    """Cross-arm figures for one subject (compare_*.gif): figures/<ds>/<subject>/_compare/.
+    """Cross-arm figures for one subject (compare_*.gif): comparison_figures/<ds>/<subject>/_compare/.
     Leading '_' => never mistaken for an arm; compare spans arms so it owns no single one."""
     return FIGURES / dataset / subject / "_compare"
 
 
 def cohort_fig_dir(dataset):
-    """Cohort-level figures (EF scatter, per-arm breathing summaries): figures/<ds>/."""
+    """Cohort-level figures (EF scatter, per-arm breathing summaries): comparison_figures/<ds>/."""
     return FIGURES / dataset
 
 

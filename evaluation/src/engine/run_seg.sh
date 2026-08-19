@@ -7,12 +7,12 @@
 # run_nesvor.sh it crosses envs, so it is a shell wrapper, not an engine python step.
 #
 # Full chain (all git-tracked):
-#   python evaluation/analysis/ef_dice.py dump  <IN> --method <m> --cohorts ...
-#   bash   evaluation/engine/run_seg.sh          <IN> <SEG>
-#   python evaluation/analysis/ef_dice.py score <SEG> --input <IN> --out <ef.json>
-#   python evaluation/analysis/ef_dice.py plot  <ef.json> --out <ef.png>
+#   python evaluation/src/analysis/ef_dice.py dump  <IN> --method <m> --cohorts ...
+#   bash   evaluation/src/engine/run_seg.sh          <IN> <SEG>
+#   python evaluation/src/analysis/ef_dice.py score <SEG> --input <IN> --out <ef.json>
+#   python evaluation/src/analysis/ef_dice.py plot  <ef.json> --out <ef.png>
 #
-# Usage: bash evaluation/engine/run_seg.sh <input_dir> <seg_dir>
+# Usage: bash evaluation/src/engine/run_seg.sh <input_dir> <seg_dir>
 set -euo pipefail
 VGGT=/home/minsukc/vggt
 IN=${1:?input_dir with ef_dice.py dump output (*_0000.nii.gz)}

@@ -5,9 +5,9 @@ One builder for all seven sources. It replaces the four per-dataset builders (`c
 sources reached the model through hand-written adapters. Every source now has an `MRIDataset`
 entry, so the bundle is just that subject's own phases plus one breathing realization.
 
-    python evaluation/engine/build_inputs/pooled.py --source cmrx2024
-    python evaluation/engine/build_inputs/pooled.py --source acdc --subjects ACDC_patient006
-    python evaluation/engine/build_inputs/pooled.py --source ocmr --split-file <f> --split val
+    python evaluation/src/engine/build_inputs/pooled.py --source cmrx2024
+    python evaluation/src/engine/build_inputs/pooled.py --source acdc --subjects ACDC_patient006
+    python evaluation/src/engine/build_inputs/pooled.py --source ocmr --split-file <f> --split val
 
 Output per subject, under `evaluation/volumes/<source>/out/<subject>/`:
 
@@ -73,7 +73,7 @@ import nibabel as nib
 import torch
 from omegaconf import OmegaConf
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 sys.path.insert(0, os.path.join(ROOT, "training"))
 sys.path.insert(0, ROOT)
 

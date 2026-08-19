@@ -15,13 +15,15 @@ symlinked out — with **one deliberate divergence**: the data under `volumes/` 
 evaluation/
 ├── paths.py            # source of truth for paths + arm-name conventions on the READ side
 ├── check_paths.py      # read-only self-check: paths.py resolves the real tree
-├── build_models_table.py  # harvest metadata.json -> MODELS.md + models.json
-├── MODELS.md  models.json # provenance: one row per arm -> ckpt / config / scheme / wandb
-├── engine/             # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor, run_seg,
-│                       #   assemble_and_gif, aggregate, build_inputs/pooled.py)
-├── analysis/        # the standing every-eval analyses (breathing, slice panels, EF/Dice,
-│                    #   compare_methods = multi-arm GIF, compare_table = cross-arm ranking)
-├── results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
+├── build_models_table.py  # harvest metadata.json -> models.json (git-tracked registry)
+├── src/
+│   ├── engine/         # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor, run_seg,
+│   │                   #   assemble_and_gif, aggregate, build_inputs/pooled.py)
+│   └── analysis/       # the standing every-eval analyses (breathing, slice panels, EF/Dice,
+│                       #   compare_methods = multi-arm GIF, compare_table / compare_bars = cross-arm ranking)
+├── splits/          # split files for sources never trained on (e.g. ocmr_eval.txt)
+├── metric_results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
+├── _archive/        # superseded code + pre-native-z results, incl. the old MODELS.md / models.json
 │
 ├── volumes/     -> GPFS (subject-major PRECIOUS data; gitignored)
 │   └── <dataset>/out/<subject>/
@@ -29,7 +31,7 @@ evaluation/
 │       └── <arm>/ recon_clean/ recon_breath/ metrics.json timing.json ed_dvf.npz
 │                  gif_{clean,breath,combined}.gif                   # per-arm renders live WITH the recons
 │                  panel_input.gif  panel_dvf.png  panel_lookup.png  #   (VGGT arms; auto-gen w/ the gifs)
-├── figures/     -> GPFS (DISPOSABLE cross-arm/cohort figures; gitignored, `rm -rf`-safe)
+├── comparison_figures/ -> GPFS (DISPOSABLE cross-arm/cohort figures; gitignored, `rm -rf`-safe)
 │   └── <dataset>/  [<subject>/_compare/compare_*.gif]  [<arm>_breathing.{json,png}]  [ef_*.png]
 └── checkpoints/ -> GPFS (COPIED ckpts per arm; gitignored)
 ```
@@ -61,7 +63,7 @@ Real-time free-breathing (RTFB) inference is **out of scope** and is archived in
   **simple and 100% correct**; it is not a scratchpad.
 - **One-off / report-specific / exploratory scripts stay in `tools/`.** Do not migrate a
   script into `evaluation/` unless it is re-run on every eval.
-- **`analysis/` is human-curated.** Do not add a script here on your own initiative —
+- **`src/analysis/` is human-curated.** Do not add a script here on your own initiative —
   write it to `tools/` and ask.
 - **Relationship to sibling dirs:** `inference/` = model loading only
   (`load_run.load_model_from_run`, which reads the protocol from the checkpoint's own
@@ -75,24 +77,39 @@ Real-time free-breathing (RTFB) inference is **out of scope** and is archived in
 
 - **Volumes are symlinked, never moved or copied.** `evaluation/volumes -> ../scratch/eval`
   points at the existing GPFS tree in place. `volumes/` and `checkpoints/` are gitignored so
-  no GPFS binary or absolute path ever enters git; only code + small `results/` +
+  no GPFS binary or absolute path ever enters git; only code + small `metric_results/` +
   provenance are tracked.
 - **The breathing bundle is frozen and shared.** `gt/ clean/ breath/ manifest.json` +
   masks are byte-identical inputs for every arm — that is the fairness guarantee. Never
   regenerate the bundle under a subject without re-running every arm on it.
+- **A cohort is defined by its split, and the tree does not enforce it.** Neither the bundle
+  dir nor `metric_results/<ds>/<arm>.json` is split-keyed, so a `test`-split bundle built into the
+  same `out/` would otherwise be reconstructed, scored and averaged into the val numbers with
+  no warning. Every consumer that defines a cohort honours `manifest["split"]` via
+  `paths.filter_by_split`: `run_vggt` skips off-split bundles, `aggregate.py` excludes them
+  from the summary (`SPLIT=val` by default; the chosen split is stamped into the summary).
+- **Each `recon_<variant>/` carries its own `stamp.json`** (ckpt + fingerprint + commit).
+  `run_vggt` only rewrites the variants named in `--arms`, so re-running an arm with the
+  default `--arms breath` leaves the previous run's `recon_clean/` in place — and
+  `cost_psnr = clean − breath` would then subtract two different checkpoints. The scorer
+  refuses to score variants whose stamps disagree (`ALLOW_MIXED_ARMS=1` to override); dirs
+  written before stamping warn instead, and record `stamps_agree: false` in `metrics.json`.
 - **Checkpoints are COPIES** (`checkpoints/<arm>/checkpoint.pt`), not symlinks — the
-  original may be deleted; a copy guarantees the arm can be reproduced. Recorded in
-  `MODELS.md`.
+  original may be deleted; a copy guarantees the arm can be reproduced. The per-arm ckpt /
+  config / scheme / wandb id is recorded in each arm's own `metadata.json`.
 - **Never delete regenerable outputs to force a rebuild.** Write to a new path and swap
   after verifying.
 
 ## Naming rule (slug in name, scheme in registry)
 
 - An arm dir name is a short **identity slug** (`vggt_gather05`, `svrtk3d`, `nesvor`).
-  Input scheme, epoch, date, wandb id, ckpt path, and config all live as **columns in
-  `MODELS.md`**, not in the folder name. Adding a new baseline or a differently-configured
-  VGGT run (fixed-z snapped, continuous physical-z, more frames, …) = one new arm dir + one
-  registry row — no naming rules to overload.
+  Input scheme, epoch, date, wandb id, ckpt path, and config all live in the arm's own
+  `metadata.json` (written by `run_vggt.py`), not in the folder name. Adding a new baseline
+  or a differently-configured VGGT run = one new arm dir — no naming rules to overload.
+- **Provenance registry.** `metadata.json` is the source of truth. `build_models_table.py`
+  harvests every arm into `evaluation/models.json`, which **is git-tracked** — re-run the
+  script and commit the diff whenever an arm is added or re-scored. (`MODELS.md` is no
+  longer produced; the pre-native-z pair was archived to `_archive/` by `1b8b454`.)
 - `paths.canonical_arm(model_name, continuous_z=...)` is the single place a VGGT arm name is
   built (guards the historical `_contz` doubling). Build names only through it.
 - **Do not rename the existing dated `vggt_<date>_...` dirs** (they are referenced by frozen
@@ -119,62 +136,67 @@ and the classical-baseline shells write to the same location via their own `OUT_
 (verbatim snapshots — see "What lives here").
 
 ```bash
-# 0. everything at once (build -> score -> assemble -> aggregate, all sources)
+# 0. everything at once (build -> score -> assemble -> aggregate) — ALL SEVEN sources by default,
+#    each routed to its own split file (pooled.txt / pooled_miitt.txt / evaluation/splits/ocmr_eval.txt).
+#    Narrow with SOURCES="cmrx2024 ocmr"; force one split file for every source with SPLIT_FILE=<path>.
 sbatch sbatch/eval_pooled_val.sh
 # 1. build the frozen breathing bundle — ONE builder for every source; idempotent and
 #    incremental (a subject with a manifest.json is skipped unless --overwrite)
-python evaluation/engine/build_inputs/pooled.py --source <src> \
+python evaluation/src/engine/build_inputs/pooled.py --source <src> \
        --split-file training/splits/pooled.txt --split val [--subjects A,B]
 # 2. reconstruct — VGGT [GPU], or a classical baseline. The model protocol (img_size,
 #    backbone, sampling knobs) comes from the ckpt's OWN run_meta.jsonl, so there are no
 #    --regime / --continuous-z / --refiner flags to get wrong.
-python evaluation/engine/run_vggt.py --dataset <src> --ckpt <pt> --model-name <slug>
+python evaluation/src/engine/run_vggt.py --dataset <src> --ckpt <pt> --model-name <slug>
 #    baseline shells take (subject, variant); the arm/method is the METHOD env var, ONE call per variant:
-EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/engine/run_svrtk3d.sh <subj> clean
-EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/engine/run_svrtk3d.sh <subj> breath
+EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/src/engine/run_svrtk3d.sh <subj> clean
+EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/src/engine/run_svrtk3d.sh <subj> breath
 # 3. score per subject -> <subj>/<arm>/metrics.json (+ gifs)   [<arm> = method dir name]
-EVAL_DATASET=<ds> python evaluation/engine/assemble_and_gif.py <subj> <arm>
-# 4. cohort summary -> results/<ds>/<arm>.json  (git-tracked, citable)
-python evaluation/engine/aggregate.py <ds> <arm>
+EVAL_DATASET=<ds> python evaluation/src/engine/assemble_and_gif.py <subj> <arm>
+# 4. cohort summary -> metric_results/<ds>/<arm>.json  (git-tracked, citable)
+#    summarizes ONLY subjects whose manifest["split"] == $SPLIT (default val)
+SPLIT=val python evaluation/src/engine/aggregate.py <ds> <arm>
 ```
 
 Standing analysis. **Per-arm** panels (`slice_panels` → `panel_input.gif` / `panel_dvf.png` /
 `panel_lookup.png`) write INTO the arm dir (`volumes/<ds>/out/<subj>/<arm>/`, beside the gifs) and
 are **auto-rendered by `assemble_and_gif` for VGGT arms** (SKIP_GIF-gated; baselines lack `ed_dvf.npz`
-so they're skipped). **Cross-arm / cohort** figures write to the gitignored `figures/` tree on GPFS
-(`compare_methods` → `figures/<ds>/<subj>/_compare/`; breathing + EF → `figures/<ds>/`). All are
+so they're skipped). **Cross-arm / cohort** figures write to the gitignored `comparison_figures/` tree on GPFS
+(`compare_methods` → `comparison_figures/<ds>/<subj>/_compare/`; breathing + EF → `comparison_figures/<ds>/`). All are
 render-on-demand for a `--subject` — a metric-only sweep (`SKIP_GIF=1`) persists just `metrics.json`
-+ `results/*.json`.
++ `metric_results/*.json`.
 
 ```bash
-python evaluation/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
-python evaluation/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
-python evaluation/analysis/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
-bash   evaluation/engine/run_seg.sh   <dir> <seg_dir>          # nnU-Net Task114 2d (nnunet env, wrapped)
-python evaluation/analysis/ef_dice.py score <seg_dir> --input <dir> --out <ef.json>
-python evaluation/analysis/ef_dice.py plot  <ef.json> --out <ef.png>    # EF scatter + Dice bars
+python evaluation/src/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
+python evaluation/src/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
+python evaluation/src/analysis/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
+bash   evaluation/src/engine/run_seg.sh   <dir> <seg_dir>      # nnU-Net Task114 2d (nnunet env, wrapped)
+python evaluation/src/analysis/ef_dice.py score <seg_dir> --input <dir> --out <ef.json>
+python evaluation/src/analysis/ef_dice.py plot  <ef.json> --out <ef.png>    # EF scatter + Dice bars
 ```
 
 Cross-method comparison (any mix of arms — classical baselines + vggt — one subject / cohort):
 
 ```bash
 # multi-arm cardiac-cycle GIF: GT row + one recon row per arm, same subject (auto-picked if omitted)
-python evaluation/analysis/compare_methods.py --cohort <ds> --subject <s> --arms svrtk3d nesvor vggt_<slug> --variant breath
-# rank every arm of a dataset by a metric, straight from results/<ds>/*.json
-python evaluation/analysis/compare_table.py <ds> --metric breath_psnr [--arms svrtk3d nesvor vggt_<slug> ...]
+python evaluation/src/analysis/compare_methods.py --cohort <ds> --subject <s> --arms svrtk3d nesvor vggt_<slug> --variant breath
+# rank every arm of a dataset by a metric, straight from metric_results/<ds>/*.json
+python evaluation/src/analysis/compare_table.py <ds> --metric breath_psnr [--arms svrtk3d nesvor vggt_<slug> ...]
 ```
 
-Cohort numbers live in git at `results/<dataset>/<arm>.json`; per-arm provenance in `MODELS.md`.
+Cohort numbers live in git at `metric_results/<dataset>/<arm>.json`; per-arm provenance in each arm's
+`metadata.json` (tabulated on demand by `build_models_table.py`).
 
 ## Extending
 
-- **New VGGT arm (any input scheme)** — near one row: `run_vggt.py --model-name <slug>`
-  (+ `--regime multiframe --frames-per-slice N` / `--continuous-z` as needed), then a
-  `MODELS.md` row (regenerate with `build_models_table.py`). `canonical_arm` builds the name;
-  scheme/epoch/date live in the registry, not the name. *Caveat:* `slice_panels.py` only
-  reproduces `regime='onef'` slot ordering and raises on a multiframe dir — a multiframe arm
-  needs new diagnostic code, not just a row.
-- **New baseline method** — write `engine/run_<method>.sh` (mirror the `(subject, variant)` +
+- **New VGGT arm (any input scheme)** — one command: `run_vggt.py --dataset <src> --ckpt <pt>
+  --model-name <slug>`. There is nothing else to configure: the input scheme comes from the
+  ckpt's own `run_meta.jsonl`, so there are no `--regime` / `--continuous-z` /
+  `--frames-per-slice` flags (a differently-configured run = a different checkpoint).
+  `canonical_arm` builds the dir name; scheme/epoch/date land in the arm's `metadata.json`.
+  *Caveat:* `slice_panels.py` only reproduces `regime='onef'` slot ordering and raises on a
+  multiframe dir — a multiframe arm needs new diagnostic code, not just a run.
+- **New baseline method** — write `src/engine/run_<method>.sh` (mirror the `(subject, variant)` +
   `METHOD=` shell contract), score/aggregate are arm-name-agnostic. If its output isn't on the
   GT `[0,1]` scale, add it to `SELF_NORM_METHODS` / `PURE_SCALE_METHODS` in `assemble_and_gif.py`.
 - **New dataset/cohort** — no longer the sore spot. It used to need a prep function, a builder
@@ -202,7 +224,7 @@ phases + `metrics.json`/`timing.json`, which **span both clean and breath in one
 and every method consumes a shared *generated* breathing bundle. Subject-major keeps each
 subject's bundle welded to the recons derived from it and matches the data's shape at zero
 migration cost; arm-style iteration is recovered in `paths.py`. Model identity is a short
-slug in the dir name; scheme/epoch/date/ckpt live in `MODELS.md`.
+slug in the dir name; scheme/epoch/date/ckpt live in the arm's `metadata.json`.
 
 ## Adding val subjects later (the incremental guarantee)
 

@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 """compare_bars.py — bar-figure companion to compare_table.py: PSNR/SSIM/NCC across arms of a
-dataset, clean vs breath, from the git-tracked cohort summaries (results/<ds>/<arm>.json).
+dataset, clean vs breath, from the git-tracked cohort summaries (metric_results/<ds>/<arm>.json).
 
 The visual read of compare_table's numbers. Reveals the breathing-robustness gap: classical SVR is
-strong on CLEAN input but collapses under BREATHING, while VGGT holds. Pure results/ read — no
-recompute. Writes to figures/<ds>/compare_bars.png (GPFS, gitignored) unless --out overrides.
+strong on CLEAN input but collapses under BREATHING, while VGGT holds. Pure metric_results/ read — no
+recompute. Writes to comparison_figures/<ds>/compare_bars.png (GPFS, gitignored) unless --out overrides.
 
 Run:
-  python evaluation/analysis/compare_bars.py cmrxrecon
-  python evaluation/analysis/compare_bars.py cmrxrecon --arms svrtk3d nesvor \
-      vggt_20260719_1f_gather05_ep99 vggt_20260719_1f_aug_moderate_ep99 vggt_20260719_1f_dino_ft_ep99
+  python evaluation/src/analysis/compare_bars.py cmrx2024
+  python evaluation/src/analysis/compare_bars.py cmrx2024 --arms svrtk3d nesvor vggt_augaggr224hw2_ep300
 """
 import argparse
 import json
@@ -39,7 +38,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dataset", choices=list(paths.DATASETS))
     ap.add_argument("--arms", nargs="*", default=None, help="default: every arm with a results json")
-    ap.add_argument("--out", default=None, help="default: figures/<ds>/compare_bars.png")
+    ap.add_argument("--out", default=None, help="default: comparison_figures/<ds>/compare_bars.png")
     a = ap.parse_args()
 
     rdir = paths.RESULTS / a.dataset
@@ -52,8 +51,13 @@ def main():
         allm = (json.load(open(f)).get("all") or {})
         arms.append(short(f.stem))
         for _, m in METRICS:
-            c = (allm.get(f"clean_{m}") or [np.nan])[0]
-            b = (allm.get(f"breath_{m}") or [np.nan])[0]
+            # A breath-only cohort has no clean mean; aggregate.py encodes that as JSON null, so
+            # normalize both "key absent" and "[null, null]" to NaN — matplotlib skips NaN bars but
+            # raises on None.
+            def _mean(key):
+                v = allm.get(key) or [np.nan]
+                return np.nan if v[0] is None else v[0]
+            c, b = _mean(f"clean_{m}"), _mean(f"breath_{m}")
             data.setdefault(m, ([], []))
             data[m][0].append(c); data[m][1].append(b)
     if not arms:

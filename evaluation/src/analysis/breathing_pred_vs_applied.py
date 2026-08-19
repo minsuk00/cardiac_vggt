@@ -10,12 +10,13 @@ reports how well the model recovers breathing:
                                                     EPE=mean|pred-applied|) — the honest cohort number
   - a pooled scatter PNG (applied vs predicted Δz, y=x + fit line).
 
-Pure disk read (no GPU/model). Writes JSON + PNG under figures/<ds>/ (GPFS, regenerable).
+Pure disk read (no GPU/model). Writes JSON + PNG under comparison_figures/<ds>/ (GPFS, regenerable).
 
-Run: python evaluation/analysis/breathing_pred_vs_applied.py --dataset cmrxrecon --arm vggt_20260719_1f_gather05_ep99
+Run: python evaluation/src/analysis/breathing_pred_vs_applied.py --dataset cmrx2024 --arm vggt_augaggr224hw2_ep300
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -24,7 +25,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import paths  # noqa: E402
 
 
@@ -50,12 +51,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", required=True)
     ap.add_argument("--arm", required=True)
-    ap.add_argument("--out", default=None, help="JSON path (PNG alongside); default figures/<ds>/<arm>_breathing.json")
+    ap.add_argument("--out", default=None, help="JSON path (PNG alongside); default comparison_figures/<ds>/<arm>_breathing.json")
     args = ap.parse_args()
     ds, arm = args.dataset, args.arm
 
     rows, pooled_app, pooled_pred = [], [], []
-    for subj in paths.subjects(ds):
+    # Same split rail as run_vggt/aggregate: a stray train/test bundle in out/ must not join
+    # the citable breathing-slope cohort (paths.filter_by_split contract).
+    split = os.environ.get("SPLIT", "val")
+    keep, dropped = paths.filter_by_split(ds, paths.subjects(ds), split)
+    for subj, why in dropped:
+        print(f"  !! skipping {subj}: {why}", file=sys.stderr)
+    for subj in keep:
         rp = paths.resp_diag(ds, subj, arm)
         if not rp.is_file():
             continue
@@ -76,7 +83,7 @@ def main():
         "pooled": {"slope": p_slope, "corr": p_corr, "epe_mm": p_epe},
         "per_subject": rows,
     }
-    # Cohort-level per-arm summary -> the FIGURES tree (GPFS): figures/<ds>/<arm>_breathing.{json,png}.
+    # Cohort-level per-arm summary -> the FIGURES tree (GPFS): comparison_figures/<ds>/<arm>_breathing.{json,png}.
     out = Path(args.out) if args.out else paths.cohort_fig_dir(ds) / f"{arm}_breathing.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2))
