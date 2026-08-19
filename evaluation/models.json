@@ -1,0 +1,26 @@
+[
+  {
+    "arm": "vggt_augaggr224hw2_ep300",
+    "type": "vggt",
+    "datasets": [
+      "acdc",
+      "cmrx2023",
+      "cmrx2024",
+      "cmrx2025",
+      "miitt",
+      "mnms",
+      "ocmr"
+    ],
+    "epoch": 300,
+    "ckpt_copied": true,
+    "config": null,
+    "regime": null,
+    "frames_per_slice": null,
+    "z_mode": null,
+    "date": null,
+    "git_commit": "f9516f5",
+    "wandb_id": "cfvoed6b",
+    "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
+    "note": ""
+  }
+]

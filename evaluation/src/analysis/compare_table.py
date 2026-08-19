@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """compare_table.py — rank all arms of a dataset by a metric, from the git-tracked cohort summaries.
 
-Reads results/<dataset>/<arm>.json (written by engine/aggregate.py) and prints an arm x metric table
-(mean +/- std), sorted by --metric. No recompute — pure results/ read. Flags any arm whose cohort is
-incomplete (missing subjects, from aggregate's n_expected/missing fields).
+Reads metric_results/<dataset>/<arm>.json (written by src/engine/aggregate.py) and prints an arm x
+metric table (mean +/- std), sorted by --metric. No recompute — pure metric_results/ read. Flags any
+arm whose cohort is incomplete (missing subjects, from aggregate's n_expected/missing fields).
 
 Run:
-  python evaluation/analysis/compare_table.py cmrxrecon --metric breath_psnr
-  python evaluation/analysis/compare_table.py cmrxrecon --arms svrtk3d nesvor vggt_20260713_gather05 --out figures/cmrxrecon/tbl.md
+  python evaluation/src/analysis/compare_table.py cmrx2024 --metric breath_psnr
+  python evaluation/src/analysis/compare_table.py cmrx2024 --arms svrtk3d nesvor vggt_augaggr224hw2_ep300 --out comparison_figures/cmrx2024/tbl.md
 """
 import argparse
 import json
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-ROOT = next(p for p in HERE.parents if (p / "evaluation").is_dir())   # repo root (works from tools/ or evaluation/analysis/)
+ROOT = next(p for p in HERE.parents if (p / "evaluation").is_dir())   # repo root (works from tools/ or evaluation/src/analysis/)
 EVAL = ROOT / "evaluation"
 sys.path.insert(0, str(EVAL))
 import paths  # noqa: E402
@@ -24,8 +24,15 @@ COLS = ["clean_psnr", "breath_psnr", "cost_psnr", "clean_ssim", "breath_ssim", "
 
 
 def cell(v):
-    """summary['all'][col] is [mean, std] (or absent)."""
-    return f"{v[0]:6.2f}±{v[1]:.2f}" if isinstance(v, (list, tuple)) and len(v) == 2 else f"{'—':>11}"
+    """summary['all'][col] is [mean, std], absent, or [null, null].
+
+    The null form is a breath-only cohort: aggregate.py has no `clean` arm to average, and now
+    encodes that as JSON null rather than the bare `NaN` token it used to emit. Both mean "no
+    value", so both take the `—` sentinel — without the None check this renders `nan±nan` (before)
+    or raises on `None.__format__` (after)."""
+    if not (isinstance(v, (list, tuple)) and len(v) == 2) or v[0] is None or v[1] is None:
+        return f"{'—':>11}"
+    return f"{v[0]:6.2f}±{v[1]:.2f}"
 
 
 def main():
@@ -50,7 +57,12 @@ def main():
     if not rows:
         sys.exit(f"no results found under {rdir}")
 
-    rows.sort(key=lambda r: (r.get(a.metric) or [float("-inf")])[0], reverse=True)
+    # A breath-only arm stores clean/cost metrics as [null, null] — a truthy list, so a plain
+    # `or` fallback would keep the None and crash the sort.
+    def sort_key(r):
+        v = r.get(a.metric)
+        return v[0] if v and v[0] is not None else float("-inf")
+    rows.sort(key=sort_key, reverse=True)
 
     w = max(len(r["arm"]) for r in rows)
     hdr = f"{'arm':<{w}}  {'n':>7}  " + "  ".join(f"{c:>11}" for c in COLS)

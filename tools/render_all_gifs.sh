@@ -1,6 +1,6 @@
 #!/bin/bash
 # Batch-render the per-arm GT-vs-recon GIFs (gif_{clean,breath,combined}.gif) for every
-# subject-arm in a worklist, by calling evaluation/engine/assemble_and_gif.py. CPU-only,
+# subject-arm in a worklist, by calling evaluation/src/engine/assemble_and_gif.py. CPU-only,
 # no model: it just reads the already-saved recon volumes. Regenerates metrics.json too
 # (bit-identical values + additive provenance fields), so it is safe to re-run.
 #
@@ -9,7 +9,9 @@
 #   jobs         : parallel workers (default 4)
 #   logdir       : per-task logs + progress (default alongside the worklist)
 set -u
-cd /home/minsukc/vggt
+# THIS tree's root, never a hardcoded one (same rule as sbatch/eval_pooled_val.sh): a hardcoded
+# /home/minsukc/vggt made the worktree run the MAIN tree's copy of assemble_and_gif.py.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 WL="${1:?worklist tsv required}"
 JOBS="${2:-4}"
@@ -24,7 +26,7 @@ echo "rendering $TOTAL subject-arm GIFs with $JOBS workers -> $LOGDIR" | tee -a 
 render_one() {
   local ds="$1" subj="$2" arm="$3"
   local tlog="$LOGDIR/${ds}_${subj}_${arm}.log"
-  if EVAL_DATASET="$ds" python evaluation/engine/assemble_and_gif.py "$subj" "$arm" > "$tlog" 2>&1; then
+  if EVAL_DATASET="$ds" python evaluation/src/engine/assemble_and_gif.py "$subj" "$arm" > "$tlog" 2>&1; then
     echo "OK   $ds $subj $arm" >> "$PROGRESS"
   else
     echo "FAIL $ds $subj $arm  (see $tlog)" >> "$PROGRESS"

@@ -11,17 +11,17 @@ Two steps around one nnU-Net call:
   score <seg_dir>    : read Task114 segs -> per-subject EF(clean/breath/gt) + Dice; aggregate per cohort.
 
 Full chain (all git-tracked; nnU-Net runs in the isolated `nnunet` env, wrapped by run_seg.sh):
-  python evaluation/analysis/ef_dice.py dump  <input_dir> --method <m> --cohorts miitt ocmr acdc
-  bash   evaluation/engine/run_seg.sh         <input_dir> <seg_dir>          # nnU-Net Task114 2d
-  python evaluation/analysis/ef_dice.py score <seg_dir> --input <input_dir> --out <ef.json>
-  python evaluation/analysis/ef_dice.py plot  <ef.json> --out <ef.png>       # EF scatter + Dice bars
+  python evaluation/src/analysis/ef_dice.py dump  <input_dir> --method <m> --cohorts miitt ocmr acdc
+  bash   evaluation/src/engine/run_seg.sh         <input_dir> <seg_dir>      # nnU-Net Task114 2d
+  python evaluation/src/analysis/ef_dice.py score <seg_dir> --input <input_dir> --out <ef.json>
+  python evaluation/src/analysis/ef_dice.py plot  <ef.json> --out <ef.png>   # EF scatter + Dice bars
 """
 import argparse, glob, json, os, shutil, sys
 import numpy as np
 import nibabel as nib
 
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import paths  # noqa: E402
 
 LV, MYO, RV = 1, 2, 3
@@ -38,7 +38,13 @@ def method_dir(cohort, subj, method):
 
 
 def subjects(cohort, method):
-    return [s for s in paths.subjects(cohort) if method_dir(cohort, s, method)]
+    # Same split rail as run_vggt/aggregate: a stray train/test bundle in out/ must not join
+    # the citable EF cohort (paths.filter_by_split contract).
+    split = os.environ.get("SPLIT", "val")
+    keep, dropped = paths.filter_by_split(cohort, paths.subjects(cohort), split)
+    for subj, why in dropped:
+        print(f"  !! {cohort}: skipping {subj}: {why}", file=sys.stderr)
+    return [s for s in keep if method_dir(cohort, s, method)]
 
 
 def dump(args):
@@ -197,7 +203,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("dump"); d.add_argument("input_dir")
-    d.add_argument("--method", default="vggt_20260719_1f_gather05_ep99")
+    d.add_argument("--method", default="vggt_augaggr224hw2_ep300")
     d.add_argument("--cohorts", nargs="+", default=list(paths.DATASETS))
     s = sub.add_parser("score"); s.add_argument("seg_dir")
     s.add_argument("--input", required=True); s.add_argument("--out", required=True)

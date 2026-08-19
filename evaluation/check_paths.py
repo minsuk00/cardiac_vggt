@@ -11,10 +11,10 @@ import json
 import os
 import sys
 
-sys.path.insert(0, "/home/minsukc/vggt/evaluation")
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 import paths  # noqa: E402
 
-VGGT = "/home/minsukc/vggt"
 ok = True
 
 
@@ -33,7 +33,10 @@ def samefiles(a_paths, b_paths):
 
 
 for ds in paths.DATASETS:
-    root = f"{VGGT}/scratch/eval/{ds}/out"
+    # Raw-glob root derived from the SAME symlink paths.py resolves through (realpath crosses it),
+    # not a re-hardcoded scratch/eval: a retargeted volumes symlink would otherwise make every
+    # dataset "skip" and the script exit ALL PASS having checked nothing.
+    root = os.path.realpath(str(paths.dataset_root(ds)))   # volumes/<ds>/out, symlink crossed
     print(f"\n=== {ds} ===  ({root})")
     if not os.path.isdir(root):
         print("  (no out/ — skipping)")
@@ -55,18 +58,25 @@ for ds in paths.DATASETS:
     if not raw_subj or not raw_arms:
         continue
 
-    # probe a (subject, arm) that has recons; verify resolvers against the real files.
-    probe = next(((s, a) for s in paths.subjects(ds) for a in paths.arms(ds, s)
-                  if paths.recon_dir(ds, s, a, "clean").is_dir()), None)
+    # Probe a (subject, arm) that has recons; verify resolvers against the real files.
+    # `breath` is the default arm and `clean` is opt-in (run_vggt --arms clean breath), so a cohort
+    # may legitimately carry only one recon variant. Probe on ANY variant present and check exactly
+    # the ones on disk — requiring `clean` failed the breath-only sources for no reason. The input
+    # BUNDLE is unaffected: build_inputs/pooled.py always writes gt/ + clean/ + breath/.
+    def present_variants(s, a):
+        return [v for v in paths.VARIANTS if paths.recon_dir(ds, s, a, v).is_dir()]
+
+    probe = next(((s, a, vs) for s in paths.subjects(ds) for a in paths.arms(ds, s)
+                  if (vs := present_variants(s, a))), None)
     check("found a probe (subject,arm) with recons", probe is not None)
     if probe:
-        s, a = probe
+        s, a, variants = probe
         T = json.load(open(paths.manifest(ds, s)))["T"]
         check("manifest resolves", paths.manifest(ds, s).is_file())
         for kind in paths.BUNDLE_DIRS:
             check(f"bundle_stack[{kind}] t0 resolves", paths.bundle_stack(ds, s, kind, 0).is_file())
         check("fov_mask resolves", paths.fov_mask(ds, s).is_file())
-        for var in paths.VARIANTS:
+        for var in variants:
             rd = paths.recon_dir(ds, s, a, var)
             raw_vols = glob.glob(f"{rd}/vol_t*.nii.gz")
             p_vols = [paths.recon(ds, s, a, var, t) for t in range(T)]

@@ -1,34 +1,36 @@
 {
   "dataset": "miitt",
   "method": "vggt_augaggr224hw2_ep300",
+  "split": "val",
   "n": 3,
   "n_expected": 3,
   "missing": [],
   "ckpts": [
     "8867644927:1786870036"
   ],
+  "cost_psnr_unverified": [],
   "all": {
     "n": 3,
     "n_clean": 0,
     "clean_psnr": [
-      NaN,
-      NaN
+      null,
+      null
     ],
     "clean_ssim": [
-      NaN,
-      NaN
+      null,
+      null
     ],
     "clean_ncc": [
-      NaN,
-      NaN
+      null,
+      null
     ],
     "breath_psnr": [
       17.551423920525448,
       0.6554228603503987
     ],
     "breath_ssim": [
-      0.8102901445494758,
-      0.06089404225054531
+      0.8103049215343264,
+      0.06087905364624994
     ],
     "breath_ncc": [
       0.8160480989350213,
@@ -39,48 +41,8 @@
       0.632604095014806
     ],
     "cost_psnr": [
-      NaN,
-      NaN
-    ],
-    "breath_disp_mm": [
-      5.78497105814547,
-      2.2392861003869253
-    ]
-  },
-  "volunteer": {
-    "n": 3,
-    "n_clean": 0,
-    "clean_psnr": [
-      NaN,
-      NaN
-    ],
-    "clean_ssim": [
-      NaN,
-      NaN
-    ],
-    "clean_ncc": [
-      NaN,
-      NaN
-    ],
-    "breath_psnr": [
-      17.551423920525448,
-      0.6554228603503987
-    ],
-    "breath_ssim": [
-      0.8102901445494758,
-      0.06089404225054531
-    ],
-    "breath_ncc": [
-      0.8160480989350213,
-      0.058001774937902546
-    ],
-    "breath_psnr_unit_peak": [
-      17.577780299716526,
-      0.632604095014806
-    ],
-    "cost_psnr": [
-      NaN,
-      NaN
+      null,
+      null
     ],
     "breath_disp_mm": [
       5.78497105814547,
@@ -90,7 +52,6 @@
   "per_subject": [
     {
       "subject": "MIITT_Volunteer6",
-      "group": "volunteer",
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -105,17 +66,17 @@
       "cost_psnr": null,
       "breath_disp_mm": 5.802457653396053,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": true
     },
     {
       "subject": "MIITT_Volunteer7",
-      "group": "volunteer",
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
       "breath_ncc": 0.8108805020650228,
       "breath_psnr": 17.946105003356934,
-      "breath_ssim": 0.8049408147732416,
+      "breath_ssim": 0.8049474855264028,
       "breath_psnr_unit_peak": 17.967414379119873,
       "clean_psnr_unit_peak": null,
       "arms": [
@@ -124,17 +85,17 @@
       "cost_psnr": null,
       "breath_disp_mm": 3.0337154044278623,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": true
     },
     {
       "subject": "MIITT_Volunteer8",
-      "group": "volunteer",
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
       "breath_ncc": 0.7477356294790903,
       "breath_psnr": 16.62776470184326,
-      "breath_ssim": 0.7385291655858358,
+      "breath_ssim": 0.7385668257872263,
       "breath_psnr_unit_peak": 16.685524463653564,
       "clean_psnr_unit_peak": null,
       "arms": [
@@ -143,7 +104,8 @@
       "cost_psnr": null,
       "breath_disp_mm": 8.518740116612497,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": true
     }
   ]
 }

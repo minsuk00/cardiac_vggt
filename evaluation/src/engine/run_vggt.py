@@ -49,7 +49,7 @@ entry to `t` and re-extract — the companions are untouched, so it is the same 
 varying query, mirroring the trainer's cardiac-cycle filmstrip.
 
 Run:
-  micromamba run -n svr env PYTHONPATH=training:. python evaluation/engine/run_vggt.py \
+  micromamba run -n svr env PYTHONPATH=training:. python evaluation/src/engine/run_vggt.py \
       --dataset cmrx2024 --ckpt scratch/logs/<run>/ckpts/checkpoint_last.pt \
       --model-name augaggr224hw2_ep300
 """
@@ -67,7 +67,7 @@ import numpy as np
 import nibabel as nib
 import torch
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "training"))
 sys.path.insert(0, os.path.join(ROOT, "evaluation"))
@@ -136,7 +136,7 @@ def make_dataset(cfg, subject_rel, split, tmpdir):
     return MRIDataset(common, data_root, split=split, split_file=sf, **kw)
 
 
-def build_batch(ds, seq_index, phases_bundle, device):
+def build_batch(ds, seq_index, phases_bundle, device, dz_bundle=None):
     """`get_data` -> swap in the frozen pixels -> let the trainer's own code finish the batch."""
     b = ds.get_data(seq_index=seq_index, img_per_seq=ds.num_slices)
     D_ds = int(np.asarray(b["phases"]).shape[1])
@@ -144,6 +144,14 @@ def build_batch(ds, seq_index, phases_bundle, device):
         raise ValueError(f"bundle D={phases_bundle.shape[1]} != dataset D={D_ds}")
     if phases_bundle.shape[0] != np.asarray(b["phases"]).shape[0]:
         raise ValueError(f"bundle T={phases_bundle.shape[0]} != dataset T={np.asarray(b['phases']).shape[0]}")
+    # dz guard: a pitch relabel of the source NIfTIs (has happened twice — docs/27, docs/56)
+    # usually keeps D, so D/T alone can't catch a bundle breathed at one dz being splatted/scored
+    # at another. The manifest froze dz at build time; the dataset carries today's.
+    if dz_bundle is not None:
+        dz_ds = float(np.asarray(b["dz_mm"]).reshape(-1)[0])
+        if abs(dz_ds - float(dz_bundle)) > 1e-3:
+            raise ValueError(f"bundle dz_mm={dz_bundle} != dataset dz_mm={dz_ds} — "
+                             f"rebuild the bundle (pitch changed since it was frozen)")
 
     # Stand in for the trainer's collate (batch size 1). `get_data` returns a mix of ndarrays and
     # python lists — `timesteps`/`slice_indices` are list[int], the per-slot fields are
@@ -181,9 +189,9 @@ def _extract(batch, device):
 
 
 @torch.no_grad()
-def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied):
+def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bundle=None):
     """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack)."""
-    batch = build_batch(ds, seq_index, phases_bundle, device)
+    batch = build_batch(ds, seq_index, phases_bundle, device, dz_bundle=dz_bundle)
     T = phases_bundle.shape[0]
     D = phases_bundle.shape[1]
     grid_shape = (D, 256, 256)
@@ -301,22 +309,8 @@ def check_overwrite(ds_name, subjects, method, ident, overwrite):
 
 
 def check_bundle_split(ds_name, subjects, split):
-    """Drop bundles built for a different split.
-
-    A bundle is a directory; anything that lands under `<source>/out/` joins the cohort just by
-    existing. That is a real failure mode, not a hypothetical: a test build of a TRAIN subject
-    into the val dir would otherwise be scored and averaged in silently. The builder records
-    `split` in each manifest, so honour it.
-    """
-    keep, dropped = [], []
-    for s in subjects:
-        try:
-            m = json.load(open(paths.manifest(ds_name, s)))
-        except (json.JSONDecodeError, OSError):
-            dropped.append((s, "unreadable manifest")); continue
-        if m.get("split", split) != split:
-            dropped.append((s, f"built for split '{m.get('split')}'")); continue
-        keep.append(s)
+    """Drop bundles built for a different split (rule + rationale: paths.filter_by_split)."""
+    keep, dropped = paths.filter_by_split(ds_name, subjects, split)
     for s, why in dropped:
         print(f"[run_vggt] SKIP {s}: {why}", flush=True)
     return keep
@@ -375,7 +369,7 @@ def main():
         "img_size": cfg.get("img_size"), "backbone": cfg.get("backbone") or "dinov2_vitl14_reg",
         "one_frame_per_slice": cfg.get("one_frame_per_slice"),
         "continuous_z": cfg.get("continuous_z"), "reference_slot": cfg.get("reference_slot"),
-        "aug_tier": (cfg.get("data") or {}).get("augmentation", {}).get("tier"),
+        "aug_tier": ((cfg.get("data") or {}).get("augmentation") or {}).get("tier"),
         "protocol_source": "run_meta.jsonl (NOT the live default.yaml)",
         "breathing_source": "frozen (eval bundle breath/ pixels + manifest disp; NOT re-sampled)",
         "geometry": "native-z (docs/58): per-subject D and dz, z_scale=Z_HALF_MM/dz, no 12mm snap",
@@ -395,7 +389,10 @@ def main():
         with tempfile.TemporaryDirectory() as tmpdir:
             dset = make_dataset(cfg, man["rel_path"], args.split, tmpdir)
             seq = name_seed(ds_name, subject)          # name-keyed: cohort-composition independent
-            timing, rdiag = {"model_load_sec": model_load_s}, {}
+            # metadata_draw is filled by the breath arm only (it owns ed_dvf.npz), but metadata.json
+            # is written for EVERY arm — initialise it or `--arms clean` raises UnboundLocalError
+            # AFTER the recons are on disk, leaving an arm with no metadata for check_overwrite.
+            timing, rdiag, metadata_draw = {"model_load_sec": model_load_s}, {}, {}
             for breathing, var in [(b, v) for b, v in ((False, "clean"), (True, "breath"))
                                    if v in args.arms]:
                 rv = str(paths.recon_dir(ds_name, subject, method, var))
@@ -403,13 +400,20 @@ def main():
                 bundle = load_bundle(subj_dir, T, "breath" if breathing else "clean")
                 ts = time.perf_counter()
                 pred_vols, per_phase_ms, ed_pack = reconstruct(
-                    model, dset, seq, bundle, device, disp if breathing else None)
+                    model, dset, seq, bundle, device, disp if breathing else None,
+                    dz_bundle=man["dz_mm"])
                 wall = time.perf_counter() - ts
                 for t in range(T):
                     p = str(paths.recon(ds_name, subject, method, var, t))
                     nib.save(nib.Nifti1Image(
                         np.ascontiguousarray(pred_vols[t].transpose(2, 1, 0).astype(np.float32)),
                         np.diag([INPLANE_MM, INPLANE_MM, man["dz_mm"], 1.0])), p)
+                # Per-variant identity, written AFTER the phases so a crashed variant has no stamp
+                # (unstamped reads as "cannot verify", never as "verified"). See paths.recon_stamp.
+                json.dump({"ckpt": metadata["ckpt"],
+                           "ckpt_fingerprint": metadata["ckpt_fingerprint"],
+                           "git_commit": metadata["git_commit"]},
+                          open(str(paths.recon_stamp(ds_name, subject, method, var)), "w"), indent=2)
                 timing[var] = {"per_phase_ms": per_phase_ms, "total_sec": wall}
                 rdiag[var] = resp_diag(ed_pack, breathing)
                 if breathing:

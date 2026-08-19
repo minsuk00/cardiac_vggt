@@ -1,11 +1,29 @@
 {
   "dataset": "acdc",
   "method": "vggt_augaggr224hw2_ep300",
+  "split": "val",
   "n": 15,
   "n_expected": 15,
   "missing": [],
   "ckpts": [
     "8867644927:1786870036"
+  ],
+  "cost_psnr_unverified": [
+    "ACDC_patient006",
+    "ACDC_patient015",
+    "ACDC_patient020",
+    "ACDC_patient024",
+    "ACDC_patient029",
+    "ACDC_patient035",
+    "ACDC_patient041",
+    "ACDC_patient050",
+    "ACDC_patient060",
+    "ACDC_patient061",
+    "ACDC_patient071",
+    "ACDC_patient075",
+    "ACDC_patient092",
+    "ACDC_patient093",
+    "ACDC_patient094"
   ],
   "all": {
     "n": 15,
@@ -15,8 +33,8 @@
       2.4109146720223977
     ],
     "clean_ssim": [
-      0.8212202409903209,
-      0.07225198678461332
+      0.8217764072948033,
+      0.07252918110147291
     ],
     "clean_ncc": [
       0.8228444023264778,
@@ -27,48 +45,8 @@
       2.097350879057036
     ],
     "breath_ssim": [
-      0.7904034472174114,
-      0.08689727930836776
-    ],
-    "breath_ncc": [
-      0.7944460944996939,
-      0.08236455266855158
-    ],
-    "breath_psnr_unit_peak": [
-      19.373598432540895,
-      2.912789672106924
-    ],
-    "cost_psnr": [
-      0.5381710847218831,
-      1.8682437160962695
-    ],
-    "breath_disp_mm": [
-      5.624017763789362,
-      2.526016680103132
-    ]
-  },
-  "patient": {
-    "n": 15,
-    "n_clean": 15,
-    "clean_psnr": [
-      19.107186762491867,
-      2.4109146720223977
-    ],
-    "clean_ssim": [
-      0.8212202409903209,
-      0.07225198678461332
-    ],
-    "clean_ncc": [
-      0.8228444023264778,
-      0.06839921994445755
-    ],
-    "breath_psnr": [
-      18.56901567776998,
-      2.097350879057036
-    ],
-    "breath_ssim": [
-      0.7904034472174114,
-      0.08689727930836776
+      0.791241917345259,
+      0.08697816432208569
     ],
     "breath_ncc": [
       0.7944460944996939,
@@ -90,24 +68,26 @@
   "per_subject": [
     {
       "subject": "ACDC_patient006",
-      "group": "patient",
       "clean_psnr": 24.65775775909424,
-      "clean_ssim": 0.916041706999143,
+      "clean_ssim": 0.9175040870904922,
       "clean_ncc": 0.9142166376113892,
       "breath_ncc": 0.8582294235626856,
       "breath_psnr": 22.65132999420166,
-      "breath_ssim": 0.8598369807004929,
+      "breath_ssim": 0.8625617076953253,
       "breath_psnr_unit_peak": 25.36901585261027,
       "clean_psnr_unit_peak": 27.375443935394287,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 2.006427764892578,
       "breath_disp_mm": 6.4807443063497825,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient015",
-      "group": "patient",
       "clean_psnr": 19.88317108154297,
       "clean_ssim": 0.8653000791867574,
       "clean_ncc": 0.8645132233699163,
@@ -116,72 +96,84 @@
       "breath_ssim": 0.8530149807532629,
       "breath_psnr_unit_peak": 19.71837027867635,
       "clean_psnr_unit_peak": 19.88317108154297,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.16480080286661902,
       "breath_disp_mm": 5.112039661986704,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient020",
-      "group": "patient",
       "clean_psnr": 20.869126478830974,
-      "clean_ssim": 0.860138808687528,
+      "clean_ssim": 0.8645829061667124,
       "clean_ncc": 0.8585527837276459,
       "breath_ncc": 0.8312635670105616,
       "breath_psnr": 20.381038347880047,
-      "breath_ssim": 0.827825739979744,
+      "breath_ssim": 0.833827351530393,
       "breath_psnr_unit_peak": 25.3377267519633,
       "clean_psnr_unit_peak": 25.825814723968506,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.48808813095092773,
       "breath_disp_mm": 2.715282939918773,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient024",
-      "group": "patient",
       "clean_psnr": 19.154086430867512,
-      "clean_ssim": 0.7789453069368998,
+      "clean_ssim": 0.7793808579444885,
       "clean_ncc": 0.7824205160140991,
       "breath_ncc": 0.6807252168655396,
       "breath_psnr": 17.677681763966877,
-      "breath_ssim": 0.6546170761187872,
+      "breath_ssim": 0.6556552648544312,
       "breath_psnr_unit_peak": 18.305521965026855,
       "clean_psnr_unit_peak": 19.781926314036053,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.4764046669006348,
       "breath_disp_mm": 11.465512464369267,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient029",
-      "group": "patient",
       "clean_psnr": 18.615434964497883,
-      "clean_ssim": 0.7365084985891978,
+      "clean_ssim": 0.7365783999363581,
       "clean_ncc": 0.747943510611852,
       "breath_ncc": 0.6601917843023936,
       "breath_psnr": 17.32790247599284,
       "breath_ssim": 0.6432937880357107,
       "breath_psnr_unit_peak": 17.32790247599284,
       "clean_psnr_unit_peak": 18.615434964497883,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.2875324885050432,
       "breath_disp_mm": 8.557926939246519,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient035",
-      "group": "patient",
       "clean_psnr": 19.709679921468098,
-      "clean_ssim": 0.8091805974642435,
+      "clean_ssim": 0.8092168519894282,
       "clean_ncc": 0.8103728691736857,
       "breath_ncc": 0.8071427295605341,
       "breath_psnr": 19.686284065246582,
-      "breath_ssim": 0.8049748788277308,
+      "breath_ssim": 0.8050126632054647,
       "breath_psnr_unit_peak": 19.7556250890096,
       "clean_psnr_unit_peak": 19.7790207862854,
       "arms": [
@@ -191,17 +183,17 @@
       "cost_psnr": 0.023395856221515743,
       "breath_disp_mm": 2.7582562926090373,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient041",
-      "group": "patient",
       "clean_psnr": 20.456590334574383,
-      "clean_ssim": 0.7965227216482162,
+      "clean_ssim": 0.7968713293472925,
       "clean_ncc": 0.7941164374351501,
       "breath_ncc": 0.8037784993648529,
       "breath_psnr": 20.788628101348877,
-      "breath_ssim": 0.8018107215563456,
+      "breath_ssim": 0.802206888794899,
       "breath_psnr_unit_peak": 21.172149817148846,
       "clean_psnr_unit_peak": 20.840112527211506,
       "arms": [
@@ -211,11 +203,11 @@
       "cost_psnr": -0.33203776677449426,
       "breath_disp_mm": 5.907845261867844,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient050",
-      "group": "patient",
       "clean_psnr": 19.832481066385906,
       "clean_ssim": 0.8975250770648321,
       "clean_ncc": 0.8978317330280939,
@@ -231,11 +223,11 @@
       "cost_psnr": -0.20167366663614672,
       "breath_disp_mm": 2.017440099506954,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient060",
-      "group": "patient",
       "clean_psnr": 18.27310593922933,
       "clean_ssim": 0.861602783203125,
       "clean_ncc": 0.861451173822085,
@@ -251,17 +243,17 @@
       "cost_psnr": -1.0152716636657715,
       "breath_disp_mm": 5.951075734625121,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient061",
-      "group": "patient",
       "clean_psnr": 19.86380942662557,
-      "clean_ssim": 0.8922310372193655,
+      "clean_ssim": 0.8923524568478266,
       "clean_ncc": 0.8919535527626673,
       "breath_ncc": 0.8350288967291514,
       "breath_psnr": 18.226416905721027,
-      "breath_ssim": 0.833898256222407,
+      "breath_ssim": 0.8340979764858881,
       "breath_psnr_unit_peak": 18.669190883636475,
       "clean_psnr_unit_peak": 20.30658260981242,
       "arms": [
@@ -271,17 +263,17 @@
       "cost_psnr": 1.637392520904541,
       "breath_disp_mm": 4.97870550287187,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient071",
-      "group": "patient",
       "clean_psnr": 17.123491764068604,
-      "clean_ssim": 0.8220923195282618,
+      "clean_ssim": 0.8221424520015717,
       "clean_ncc": 0.8236080358425776,
       "breath_ncc": 0.8726786424716314,
       "breath_psnr": 18.693849086761475,
-      "breath_ssim": 0.8715839833021164,
+      "breath_ssim": 0.871598869562149,
       "breath_psnr_unit_peak": 18.693849086761475,
       "clean_psnr_unit_peak": 17.123491764068604,
       "arms": [
@@ -291,17 +283,17 @@
       "cost_psnr": -1.570357322692871,
       "breath_disp_mm": 4.9397288504499155,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient075",
-      "group": "patient",
       "clean_psnr": 20.965447266896565,
-      "clean_ssim": 0.8620049605766932,
+      "clean_ssim": 0.8631678422292074,
       "clean_ncc": 0.8612895309925079,
       "breath_ncc": 0.6898354987303416,
       "breath_psnr": 16.952829996744793,
-      "breath_ssim": 0.6896825830141703,
+      "breath_ssim": 0.6917234261830648,
       "breath_psnr_unit_peak": 19.483242829640705,
       "clean_psnr_unit_peak": 23.495859622955322,
       "arms": [
@@ -311,11 +303,11 @@
       "cost_psnr": 4.012617270151772,
       "breath_disp_mm": 6.657028931212655,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient092",
-      "group": "patient",
       "clean_psnr": 17.2353417078654,
       "clean_ssim": 0.8057010968526205,
       "clean_ncc": 0.8056111584107081,
@@ -331,17 +323,17 @@
       "cost_psnr": 3.005826314290365,
       "breath_disp_mm": 9.04680425594306,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient093",
-      "group": "patient",
       "clean_psnr": 16.31812898317973,
       "clean_ssim": 0.7960267762343088,
       "clean_ncc": 0.7962537656227747,
       "breath_ncc": 0.7501791715621948,
       "breath_psnr": 15.23672366142273,
-      "breath_ssim": 0.7469208240509033,
+      "breath_ssim": 0.746927465001742,
       "breath_psnr_unit_peak": 15.23672366142273,
       "clean_psnr_unit_peak": 16.31812898317973,
       "arms": [
@@ -351,17 +343,17 @@
       "cost_psnr": 1.0814053217569999,
       "breath_disp_mm": 4.982992816498237,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "ACDC_patient094",
-      "group": "patient",
       "clean_psnr": 13.650148312250773,
-      "clean_ssim": 0.61848184466362,
+      "clean_ssim": 0.6186931133270264,
       "clean_ncc": 0.6325311064720154,
       "breath_ncc": 0.8282431612412134,
       "breath_psnr": 17.64213275909424,
-      "breath_ssim": 0.827941432595253,
+      "breath_ssim": 0.8280579149723053,
       "breath_psnr_unit_peak": 17.98261006673177,
       "clean_psnr_unit_peak": 13.990626096725464,
       "arms": [
@@ -371,7 +363,8 @@
       "cost_psnr": -3.9919844468434658,
       "breath_disp_mm": 2.7888823993846894,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     }
   ]
 }

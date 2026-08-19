@@ -2,7 +2,7 @@
 """slice_panels.py — per-arm diagnostic panels for the frozen eval bundles.
 
 Three panels (choose via --panel; default all), written INTO the arm dir beside the gifs
-(volumes/<ds>/out/<subj>/<arm>/) and auto-rendered by engine/assemble_and_gif.py for VGGT arms.
+(volumes/<ds>/out/<subj>/<arm>/) and auto-rendered by ../engine/assemble_and_gif.py for VGGT arms.
 (The old panel_cycle GIF was dropped — it duplicated the engine gif_clean/breath montage.)
 
   panel_input.gif   2 rows (clean / breath input) x N_SLOTS cols, ANIMATED over t. Only the
@@ -10,14 +10,20 @@ Three panels (choose via --panel; default all), written INTO the arm dir beside 
                     their acquired phase — 'the middle slice is the only one moving', the one-frame
                     input contract. Valid on BOTH arms (rows fetch clean and breath directly).
 
-  panel_dvf.png     2 rows (input / predicted Δz map) x N_SLOTS cols, ED only, BREATH ARM ONLY.
-                    Δz = ed_dvf.npz delta[...,2] * MM_PER_NORM[2], diverging, shared scale.
+  panel_dvf.png     4 rows (input / predicted Δx / Δy / Δz map) x N_SLOTS cols, ED only, BREATH
+                    ARM ONLY. Δ = ed_dvf.npz delta[...,{0,1,2}] * MM_PER_NORM[{0,1,2}], diverging;
+                    Δx/Δy share one in-plane color limit, Δz gets its own (very different mm/norm —
+                    ports training's `_log_volume_and_dvf_to_wandb` DVF figure, trainer_viz.py).
                     header z{k|k.k} · t={phase} [REF] · applied +X.X mm, pred vs true below.
 
   panel_lookup.png  round-trip / analysis-by-synthesis (BREATH ARM, ED). ≤4 slot rows x 4 cols:
                     input | V_canon@pred | V_gt@pred | |Δ|@pred, where pred = scanner_coords + Δ
                     (sample_volume). Port of training's _log_lookup_to_wandb: col1≈col2 by
                     construction (renderer blur), col2≈col3 by training (recon error).
+
+All grayscale intensity displays (panel_input, panel_dvf's input row, panel_lookup's 3 gray
+cells) apply the SAME gamma=0.7 curve as training's own panels (`_display_gamma`,
+trainer_viz.py) — ON by default; set GAMMA=0 to restore plain linear display.
 
 N_SLOTS VARIES and is NOT 12: it is this SUBJECT'S OWN D (native-z, docs/58 — 9 to 18 across the
 pooled cohort), and continuous-z keeps fractional z with no collision dedup so slots can share a
@@ -30,7 +36,7 @@ there is no second placement implementation that could drift.
 
 Run:
   PY=/home/minsukc/micromamba/envs/svr/bin/python
-  $PY evaluation/analysis/slice_panels.py                    # hub x 4 cohorts, rep subject
+  $PY evaluation/src/analysis/slice_panels.py                # hub x 4 cohorts, rep subject
   $PY .../slice_panels.py --cohort acdc --subject patient042 --method vggt_20260719_1f_dino_ft_ep99
 """
 import argparse
@@ -46,9 +52,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))                   # evaluation/ (paths.py)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))                   # evaluation/ (paths.py)
 import paths                                                                    # noqa: E402
-sys.path.insert(0, str(paths.EVAL_ROOT / "engine"))                            # evaluation/engine (run_vggt)
+sys.path.insert(0, str(paths.EVAL_ROOT / "src" / "engine"))                    # evaluation/src/engine (run_vggt)
 import run_vggt as R                                                            # noqa: E402
 sys.path.insert(0, str(paths.EVAL_ROOT.parent / "training"))                   # training/ (preprocess)
 from data.preprocess import Z_HALF_MM                                           # noqa: E402
@@ -57,10 +63,19 @@ from data.preprocess import Z_HALF_MM                                           
 # z (docs/58); the retired `MM_PER_NORM[2] = 66.0` encoded the old fixed 12-plane x 12 mm cube.
 MM_PER_NORM = R.MM_PER_NORM
 
-# output dir defaults to paths.figure_dir (figures/<ds>/<subj>/<arm>/ on GPFS); --out overrides
 HUB = "vggt_augaggr224hw2_ep300"
 COHORTS = list(paths.DATASETS)
 FOV_GATE = 0.05                                    # matches run_vggt.resp_diag's `imgs > 0.05`
+
+# Same curve as training/trainer_viz.py:_display_gamma — mid-tones brightened for readability.
+# ON by default (matches training's own panels); GAMMA=0 restores the old linear display.
+GAMMA_ON = os.environ.get("GAMMA", "1") != "0"
+GAMMA_TAG = "  [gamma 0.7]" if GAMMA_ON else ""     # appended to every panel's title, so the
+                                                     # rendered image self-documents its own display mode
+
+
+def display_gamma(image, vmax, gamma=0.7):
+    return np.clip(image / max(float(vmax), 1e-8), 0.0, 1.0) ** gamma
 
 
 def prep_bundle(subj_dir, T, D, dz_mm):
@@ -103,9 +118,15 @@ def rep_subject(cohort, method):
     if not hits:
         raise FileNotFoundError(
             f"no summary json for method '{method}' in cohort '{cohort}' "
-            f"(looked in results/ and out/ for {method}[_contz]). "
+            f"(looked in metric_results/ and out/ for {method}[_contz]). "
             f"That cohort/method pair was never scored — pass --subject explicitly.")
     per = json.loads(hits[0].read_text())["per_subject"]
+    # An unscorable subject is written with breath_psnr null (aggregate's NaN->null contract);
+    # drop those rather than crashing the median.
+    per = [r for r in per if r.get("breath_psnr") is not None]
+    if not per:
+        raise ValueError(f"every per_subject row of {hits[0]} has null breath_psnr — "
+                         f"pass --subject explicitly")
     med = np.median([r["breath_psnr"] for r in per])
     return min(per, key=lambda r: abs(r["breath_psnr"] - med))["subject"]
 
@@ -132,6 +153,8 @@ def load_slots(md, entries, D, dz_mm):
         raise AssertionError(f"npz slot_z {slot_z.tolist()} outside this subject's D={len(entries)}")
     ref_k = order[0]
 
+    dx = npz["delta"][..., 0].astype(np.float32) * MM_PER_NORM[0]               # (S,hw,hw) mm
+    dy = npz["delta"][..., 1].astype(np.float32) * MM_PER_NORM[1]               # (S,hw,hw) mm
     dz = npz["delta"][..., 2].astype(np.float32) * MM_PER_NORM[2]               # (S,hw,hw) mm
     slots = []
     for i, k in enumerate(order):
@@ -145,7 +168,8 @@ def load_slots(md, entries, D, dz_mm):
         slots.append(dict(i=i, k=k, z=entries[k]["z_plane"], z_cont=float(z_cont),
                           z_val=float(entries[k]["z_val"]),   # physical normalized z, carried through
                           slice_idx=entries[k]["slice_idx"], phase=int(npz["slot_t"][i]),
-                          applied=float(npz["applied_disp_mm"][i, 0]), dz=dz[i], is_ref=(i == 0)))
+                          applied=float(npz["applied_disp_mm"][i, 0]),
+                          dx=dx[i], dy=dy[i], dz=dz[i], is_ref=(i == 0)))
     return slots, ref_k
 
 
@@ -289,75 +313,94 @@ def col_header(s):
     return f"{zs} · t={s['phase']}{tag}\n{s['applied']:+.1f} mm"
 
 
-def render_dvf(inputs_ed, cols, out, title):
+def render_dvf(inputs_ed, cols, out, title, vmax):
     """One column per INPUT SLOT (count varies; continuous-z can exceed D_CANON), ordered by true
-    canonical depth. Deliberately decoupled from the GT/RECON gif, which is per-plane."""
-    dz_all = np.concatenate([s["dz"].ravel() for s in cols])
-    lim = float(np.percentile(np.abs(dz_all), 99.5))
-    if not np.isfinite(lim) or lim <= 0:                    # `or 1.0` would pass NaN through
-        lim = 1.0
+    canonical depth. Deliberately decoupled from the GT/RECON gif, which is per-plane.
+
+    4 rows: input intensity, Δx, Δy, Δz — ports training's `_log_volume_and_dvf_to_wandb` DVF
+    figure (trainer_viz.py). Δx/Δy share ONE in-plane color limit and Δz gets its OWN: in-plane
+    (256 vox @ 1.4mm) and through-plane (native D @ dz_mm, via MM_PER_NORM) have very different
+    mm-per-normalized-unit, so a single shared range would make Δz look ~4x bigger than it is
+    (same reasoning as training's fixed IN_PLANE_R/THROUGH_R — kept percentile-based here instead
+    of training's fixed mm range, matching this file's existing style and adapting to whatever
+    displacement scale the eval bundle actually has). `vmax` (input-row intensity ceiling) is
+    caller-supplied — see `build()` — so this panel shares ONE scale with the gifs and every other
+    panel for the same subject, rather than each computing its own independently."""
+    def _lim(vals):
+        lim = float(np.percentile(np.abs(vals), 99.5))
+        return lim if (np.isfinite(lim) and lim > 0) else 1.0   # `or 1.0` would pass NaN through
+
+    lim_xy = _lim(np.concatenate([np.concatenate([s["dx"].ravel(), s["dy"].ravel()]) for s in cols]))
+    lim_z = _lim(np.concatenate([s["dz"].ravel() for s in cols]))
     n = len(cols)
-    fig, axes, W, H = grid(2, n, cell=1.02, top_in=0.70, bot_in=0.34,
+    fig, axes, W, H = grid(4, n, cell=1.02, top_in=0.70, bot_in=0.34,
                            left_in=0.46, right_in=0.62, hgap_in=0.20, wgap_in=0.04, min_w=8.0)
-    # SHARED input-row scale. Per-column `vmax=im.max()` stretches every slot to full white, so a
-    # dim apical/basal slot looks as strong as a mid-ventricular one — hiding exactly the variation
-    # in input quality across depth this panel exists to show — so share one vmax across slots.
-    ivals = np.concatenate([inputs_ed[s["i"]].ravel() for s in cols])
-    ivmax = float(np.percentile(ivals[ivals > 0], 99.5)) if (ivals > 0).any() else 1.0
-    m = None
+    m_xy = m_z = None
     for j, s in enumerate(cols):
-        for r in range(2):
+        for r in range(4):
             axes[r, j].set_xticks([]); axes[r, j].set_yticks([])
         im = inputs_ed[s["i"]]
-        axes[0, j].imshow(im, cmap="gray", origin="lower", vmin=0, vmax=max(ivmax, 1e-3))
-        m = axes[1, j].imshow(s["dz"], cmap="RdBu_r", origin="lower", vmin=-lim, vmax=lim)
+        shown = display_gamma(im, vmax) if GAMMA_ON else im / max(vmax, 1e-3)
+        axes[0, j].imshow(shown, cmap="gray", origin="lower", vmin=0, vmax=1)
+        m_xy = axes[1, j].imshow(s["dx"], cmap="RdBu_r", origin="lower", vmin=-lim_xy, vmax=lim_xy)
+        axes[2, j].imshow(s["dy"], cmap="RdBu_r", origin="lower", vmin=-lim_xy, vmax=lim_xy)
+        m_z = axes[3, j].imshow(s["dz"], cmap="RdBu_r", origin="lower", vmin=-lim_z, vmax=lim_z)
         axes[0, j].set_title(col_header(s), fontsize=5.4,
                              color=("#d2691e" if s["is_ref"] else "0.15"))
         # A slot with no in-FOV pixels has NO estimate — resp_diag drops it. Say so instead of
         # printing an ungated whole-field mean that reads as a catastrophic miss.
         if s["pred"] is None:
-            axes[1, j].set_xlabel(f"no FOV — n/a\ntrue {s['applied']:+.1f}", fontsize=5.2,
+            axes[3, j].set_xlabel(f"no FOV — n/a\ntrue {s['applied']:+.1f}", fontsize=5.2,
                                   color="#b22222")
         else:
-            axes[1, j].set_xlabel(f"pred {s['pred']:+.1f}\ntrue {s['applied']:+.1f}", fontsize=5.2)
+            axes[3, j].set_xlabel(f"pred {s['pred']:+.1f}\ntrue {s['applied']:+.1f}", fontsize=5.2)
     axes[0, 0].set_ylabel("INPUT\n(at ED)", fontsize=6.5)
-    axes[1, 0].set_ylabel("pred Δz\n(mm)", fontsize=6.5)
-    fig.suptitle(f"{title}\npredicted through-plane Δz at ED (breath arm) — "
-                 f"per-pixel, mm; ±{lim:.2f} mm scale (saturating)", fontsize=8,
+    axes[1, 0].set_ylabel("pred Δx\n(mm)", fontsize=6.5)
+    axes[2, 0].set_ylabel("pred Δy\n(mm)", fontsize=6.5)
+    axes[3, 0].set_ylabel("pred Δz\n(mm)", fontsize=6.5)
+    fig.suptitle(f"{title}\npredicted Δ at ED (breath arm) — per-pixel, mm; "
+                 f"±{lim_xy:.2f} mm in-plane, ±{lim_z:.2f} mm through-plane (saturating)"
+                 f"{GAMMA_TAG}", fontsize=8,
                  y=1.0 - 0.05 / H, va="top")
-    if m is not None:                                       # own axes in the reserved right margin
-        p = axes[1, -1].get_position()
-        cax = fig.add_axes([1.0 - 0.42 / W, p.y0, 0.055 / W, p.height])
-        fig.colorbar(m, cax=cax, extend="both").ax.tick_params(labelsize=5)
-    assert_layout(fig, axes)                                # AFTER the colorbar exists
+    if m_xy is not None:                                    # own axes in the reserved right margin
+        p1 = axes[1, -1].get_position()
+        cax1 = fig.add_axes([1.0 - 0.42 / W, p1.y0, 0.055 / W, p1.height])
+        fig.colorbar(m_xy, cax=cax1, extend="both").ax.tick_params(labelsize=5)
+    if m_z is not None:
+        p3 = axes[3, -1].get_position()
+        cax3 = fig.add_axes([1.0 - 0.42 / W, p3.y0, 0.055 / W, p3.height])
+        fig.colorbar(m_z, cax=cax3, extend="both").ax.tick_params(labelsize=5)
+    assert_layout(fig, axes)                                # AFTER the colorbars exist
     fig.savefig(out, dpi=170)
     plt.close(fig)
     print("wrote", out)
 
 
-def render_input(cols, fetch, T, out, title, res):
+def render_input(cols, fetch, T, out, title, res, vmax):
     """The one-frame INPUT the model is fed, animated over the target-phase sweep. Row 1 = clean,
     row 2 = breathing-corrupted; one column per slot (depth-ordered). Only the REFERENCE column
     cycles with t — slot 0 = (t_target, z_mid) — while companion slots stay fixed at their acquired
     phase. So 'the middle slice is the only one moving', exactly the one-frame contract; the breath
-    row shows that reference slice wobbling under the respiratory corruption."""
+    row shows that reference slice wobbling under the respiratory corruption. `vmax` is
+    caller-supplied (see `build()`) so this shares ONE display scale with the gifs and every other
+    panel for the same subject."""
     def img(s, t, breathing):                                # up-sampled model-input grid, [0,1]
         ph = t if s["is_ref"] else s["phase"]                        # only the reference tracks t
         return up_model(fetch(ph, s["slice_idx"], breathing), res)
     n = len(cols)
     ref = next((s for s in cols if s["is_ref"]), cols[0])
-    allpix = np.concatenate([img(s, R.ED_PHASE, b).ravel() for s in cols for b in (False, True)])
-    vmax = float(np.percentile(allpix[allpix > 0], 99.5)) if (allpix > 0).any() else 1.0
+    # gamma applied at DISPLAY time only; vmax is caller-supplied from the raw ROI-masked pixels.
+    disp = ((lambda a: display_gamma(a, vmax)) if GAMMA_ON else (lambda a: a / max(vmax, 1e-8)))
     fig, axes, W, H = grid(2, n, cell=1.02, top_in=0.60, bot_in=0.12,
                            left_in=0.52, right_in=0.10, hgap_in=0.22, wgap_in=0.04)
     handles = {}
     for j, s in enumerate(cols):
         for r in range(2):
             axes[r, j].set_xticks([]); axes[r, j].set_yticks([])
-        handles[("c", j)] = axes[0, j].imshow(img(s, R.ED_PHASE, False), cmap="gray",
-                                              origin="lower", vmin=0, vmax=vmax)
-        handles[("b", j)] = axes[1, j].imshow(img(s, R.ED_PHASE, True), cmap="gray",
-                                              origin="lower", vmin=0, vmax=vmax)
+        handles[("c", j)] = axes[0, j].imshow(disp(img(s, R.ED_PHASE, False)), cmap="gray",
+                                              origin="lower", vmin=0, vmax=1)
+        handles[("b", j)] = axes[1, j].imshow(disp(img(s, R.ED_PHASE, True)), cmap="gray",
+                                              origin="lower", vmin=0, vmax=1)
         axes[0, j].set_title(col_header(s), fontsize=5.4,
                              color=("#d2691e" if s["is_ref"] else "0.15"))
     axes[0, 0].set_ylabel("clean\ninput", fontsize=6.5)
@@ -367,10 +410,10 @@ def render_input(cols, fetch, T, out, title, res):
     for t in range(T):
         for j, s in enumerate(cols):
             if s["is_ref"]:                                          # only the ref changes per frame
-                handles[("c", j)].set_data(img(s, t, False))
-                handles[("b", j)].set_data(img(s, t, True))
+                handles[("c", j)].set_data(disp(img(s, t, False)))
+                handles[("b", j)].set_data(disp(img(s, t, True)))
         sup.set_text(f"{title}\ninput fed to the model — reference plane (z{ref['z']}) at phase "
-                     f"t = {t}/{T - 1}; companions fixed at their acquired phase")
+                     f"t = {t}/{T - 1}; companions fixed at their acquired phase{GAMMA_TAG}")
         if t == T - 1:
             assert_layout(fig, axes)
         fig.canvas.draw()
@@ -380,12 +423,14 @@ def render_input(cols, fetch, T, out, title, res):
     print("wrote", out)
 
 
-def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title, z_scale):
+def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title, z_scale, vmax):
     """Round-trip / analysis-by-synthesis (breath arm, at ED). For ≤4 slots across depth, sample the
     reconstruction V_canon AND the GT volume V_gt back at the model's predicted coords
     p = scanner_coords + Δ, beside the input slice and the |V_canon−V_gt|@p error. Port of training's
     `_log_lookup_to_wandb`: col1≈col2 by construction (renderer blur), col2≈col3 by training (recon
-    error). Reference row (Δ≈0) is the phase-matched control. inputs518 keyed by SLOT index i."""
+    error). Reference row (Δ≈0) is the phase-matched control. inputs518 keyed by SLOT index i.
+    `vmax` (all 3 intensity cells) is caller-supplied (see `build()`) — the same scale as the gifs
+    and every other panel, replacing the old per-call `max(V_canon.max(), V_gt.max())`."""
     import torch
     from vggt.utils.splat import sample_volume
     ref = [s for s in cols if s["is_ref"]]
@@ -401,9 +446,14 @@ def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title, z_scal
     y_norm = (py / (hw - 1) * 2.0 - 1.0).astype(np.float32)
     Vc = torch.as_tensor(np.ascontiguousarray(V_canon))[None].float()   # (1,D,H,W)
     Vg = torch.as_tensor(np.ascontiguousarray(V_gt))[None].float()
-    vmax = float(max(V_canon.max(), V_gt.max(), 1e-3)); ERR = 0.1
+    ERR = 0.1
+    # min_w: 4 columns of 1.35in is only 6.34in wide, narrower than the suptitle for long subject
+    # names — assert_layout then raises and NO panel is written (silently, via assemble_and_gif's
+    # try/except). Measured over the whole 144-subject cohort: the widest real title needs 7.44in
+    # (all 37 cmrx2025 subjects overflowed 6.34; every other source fit). 8.0 matches render_dvf and
+    # leaves ~12 chars of headroom; a longer name still fails loudly rather than cropping silently.
     fig, axes, W, H = grid(len(sel), 4, cell=1.35, top_in=0.92, bot_in=0.10,
-                           left_in=0.66, right_in=0.10, hgap_in=0.12, wgap_in=0.06)
+                           left_in=0.66, right_in=0.10, hgap_in=0.12, wgap_in=0.06, min_w=8.0)
     titles = ["input I", "V_canon @ pred", "V_gt @ pred", "|V_canon−V_gt| @ pred"]
     for r, s in enumerate(sel):
         z_val = s["z_val"]        # physical normalized z, carried from entries (docs/58)
@@ -418,20 +468,25 @@ def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title, z_scal
                  (rc, "gray", 0, vmax), (rg, "gray", 0, vmax),
                  (np.abs(rc - rg), "magma", 0, ERR)]
         for c, (data, cmap, vmin, vm) in enumerate(cells):
+            # gamma on the 3 grayscale intensity cells only, NOT the magma error map
+            if cmap == "gray" and GAMMA_ON:
+                data, vmin, vm = display_gamma(data, vm), 0, 1
             axes[r, c].imshow(data, cmap=cmap, origin="lower", vmin=vmin, vmax=vm)
             axes[r, c].set_xticks([]); axes[r, c].set_yticks([])
             if r == 0:
                 axes[r, c].set_title(titles[c], fontsize=7)
         axes[r, 0].set_ylabel(("REF " if s["is_ref"] else "") + f"slot{s['i']}\nz{s['z']}", fontsize=6.5)
     fig.suptitle(f"{title}\nround-trip @pred (breath, ED): input | V_canon | V_gt | |Δ|  — "
-                 f"col1≈col2 renderer blur, col2≈col3 recon error", fontsize=8, y=1.0 - 0.04 / H, va="top")
+                 f"col1≈col2 renderer blur, col2≈col3 recon error"
+                 + (f"\n{GAMMA_TAG.strip()}" if GAMMA_ON else ""),
+                 fontsize=8, y=1.0 - 0.04 / H, va="top")
     assert_layout(fig, axes)
     fig.savefig(out, dpi=170); plt.close(fig)
     print("wrote", out)
 
 
 # ── driver ───────────────────────────────────────────────────────────────────────────────────
-def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
+def build(cohort, subject, method, arm, outdir=None, panels=("dvf",), vmax=None):
     subj_dir = str(paths.subject_dir(cohort, subject))
     md = method_dir(cohort, subject, method)
     meta = json.load(open(os.path.join(md, "metadata.json")))
@@ -465,6 +520,24 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
         # ungated whole-field mean: it is background-dominated and reads as a huge prediction error.
         s["pred"] = float(s["dz"][g].mean()) if s["has_fov"] else None
 
+    if vmax is None:
+        # STANDALONE fallback only — the wired path (assemble_and_gif) always passes vmax explicitly.
+        # Same SHAPE as the gifs' formula (heart-ROI-masked p99.9) but NOT the same number: this pools
+        # ED input slices, positivity-filtered; the caller pools GT+recon over all T phases, unfiltered.
+        # Measured 0.328 vs 0.344 on CMRx24_Test_P012 (~4.8%). Not unified because the standalone path
+        # has no recon/GT stacks loaded — so a standalone panel is very slightly off the gifs' scale.
+        # Falls back to the FOV mask (heart_mask is optional per-source) or, if every slot's z-plane
+        # happens to miss the ROI entirely, to the unmasked whole-slot pool.
+        heart_p = str(paths.heart_mask(cohort, subject))
+        mask_p = heart_p if os.path.exists(heart_p) else str(paths.fov_mask(cohort, subject))
+        roi3d = R._load_xyz_to_dhw(mask_p) > 0.5                                   # (D,H,W)
+        roi_pool = [im[roi3d[s["slice_idx"]]] for s, im in zip(slots, inputs_ed)
+                   if roi3d[s["slice_idx"]].any()]
+        roi_vals = (np.concatenate(roi_pool) if roi_pool
+                   else np.concatenate([im.ravel() for im in inputs_ed]))
+        roi_vals = roi_vals[roi_vals > 0]
+        vmax = float(np.percentile(roi_vals, 99.9)) if roi_vals.size else 1.0
+
     n_nofov = sum(not s["has_fov"] for s in slots)
     ndup = len(slots) - len({s["z"] for s in slots})
     chk = check_against_resp_diag(md, slots) if breathing else "n/a (clean arm)"
@@ -489,7 +562,7 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
     # panel_input: the model's INPUT animated (clean+breath rows); arm-independent content, so a
     # neutral title (no clean/breath suffix) — the file is the same whichever arm triggered it.
     if "input" in panels:
-        render_input(cols, fetch, T, dst("panel_input.gif"), base, res)
+        render_input(cols, fetch, T, dst("panel_input.gif"), base, res, vmax)
 
     # panel_dvf / panel_lookup need the ED Δ field, which run_vggt dumps ONLY for the breath arm.
     if not breathing:
@@ -497,14 +570,14 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",)):
             print("  [skip] panel_dvf/lookup — ed_dvf.npz is breath-arm only (run_vggt.py:390)")
         return
     if "dvf" in panels:
-        render_dvf(inputs_ed, cols, dst("panel_dvf.png"), ttl)
+        render_dvf(inputs_ed, cols, dst("panel_dvf.png"), ttl, vmax)
     if "lookup" in panels:
         V_canon = R._load_xyz_to_dhw(os.path.join(md, f"recon_{arm}", f"vol_t{R.ED_PHASE:02d}.nii.gz"))
         delta_full = np.load(os.path.join(md, "ed_dvf.npz"))["delta"].astype(np.float32)   # (S,hw,hw,3) norm
         res = int(delta_full.shape[1])                                   # model-input resolution
         inputs518 = [up_model(im, res) for im in inputs_ed]              # keyed by slot i
         render_lookup(inputs518, cols, delta_full, V_canon, gt[R.ED_PHASE],
-                      dst("panel_lookup.png"), ttl, Z_HALF_MM / dz_mm)
+                      dst("panel_lookup.png"), ttl, Z_HALF_MM / dz_mm, vmax)
 
 
 def main():

@@ -1,11 +1,51 @@
 {
   "dataset": "cmrx2025",
   "method": "vggt_augaggr224hw2_ep300",
+  "split": "val",
   "n": 37,
   "n_expected": 37,
   "missing": [],
   "ckpts": [
     "8867644927:1786870036"
+  ],
+  "cost_psnr_unverified": [
+    "CMRx25_R1test_Center001_Siemens_30T_Vida_P004",
+    "CMRx25_R1test_Center001_UIH_30T_umr780_P004",
+    "CMRx25_R1test_Center002_Siemens_30T_CIMAX_P001",
+    "CMRx25_R1test_Center004_Siemens_15T_Aera_P014",
+    "CMRx25_R1test_Center004_UIH_15T_umr680_P051",
+    "CMRx25_R1test_Center005_Siemens_30T_Vida_P021",
+    "CMRx25_R1test_Center006_Siemens_30T_Prisma_P023",
+    "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P003",
+    "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P009",
+    "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P010",
+    "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P011",
+    "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P012",
+    "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P013",
+    "CMRx25_R1val_Center001_UIH_30T_umr780_P045",
+    "CMRx25_R1val_Center001_UIH_30T_umr780_P052",
+    "CMRx25_R1val_Center002_UIH_30T_umr880_P011",
+    "CMRx25_R1val_Center004_Siemens_15T_Aera_P018",
+    "CMRx25_R1val_Center006_Siemens_30T_Prisma_P009",
+    "CMRx25_R2test_Center001_Siemens_30T_Vida_P007",
+    "CMRx25_R2test_Center001_UIH_30T_umr780_P007",
+    "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P008",
+    "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P021",
+    "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P022",
+    "CMRx25_R2test_Center005_UIH_15T_umr670_P007",
+    "CMRx25_R2test_Center006_Siemens_30T_Prisma_P004",
+    "CMRx25_R2test_Center006_UIH_30T_umr790_P024",
+    "CMRx25_R2val_Center004_UIH_15T_umr680_P007",
+    "CMRx25_R2val_Center004_UIH_15T_umr680_P028",
+    "CMRx25_train_Center001_UIH_30T_umr780_P005",
+    "CMRx25_train_Center001_UIH_30T_umr780_P006",
+    "CMRx25_train_Center001_UIH_30T_umr780_P043",
+    "CMRx25_train_Center002_UIH_30T_umr880_P005",
+    "CMRx25_train_Center003_UIH_30T_umr880_P009",
+    "CMRx25_train_Center005_Siemens_30T_Vida_P013",
+    "CMRx25_train_Center006_Siemens_30T_Prisma_P021",
+    "CMRx25_train_Center006_Siemens_30T_Prisma_P032",
+    "CMRx25_train_Center006_Siemens_30T_Prisma_P034"
   ],
   "all": {
     "n": 37,
@@ -15,8 +55,8 @@
       1.9441650127290222
     ],
     "clean_ssim": [
-      0.8756349744560481,
-      0.029424116689903638
+      0.8803854877347345,
+      0.028928695946711016
     ],
     "clean_ncc": [
       0.8744266427852012,
@@ -27,48 +67,8 @@
       1.8509424042287552
     ],
     "breath_ssim": [
-      0.8385643942936045,
-      0.037240692321276955
-    ],
-    "breath_ncc": [
-      0.8408310802670211,
-      0.036383330801148035
-    ],
-    "breath_psnr_unit_peak": [
-      26.08648770564311,
-      2.631988049581441
-    ],
-    "cost_psnr": [
-      0.9008998054641864,
-      0.8551028624778407
-    ],
-    "breath_disp_mm": [
-      6.647411944854823,
-      2.8224880945991244
-    ]
-  },
-  "volunteer": {
-    "n": 37,
-    "n_clean": 37,
-    "clean_psnr": [
-      22.468568685892464,
-      1.9441650127290222
-    ],
-    "clean_ssim": [
-      0.8756349744560481,
-      0.029424116689903638
-    ],
-    "clean_ncc": [
-      0.8744266427852012,
-      0.029507959606718766
-    ],
-    "breath_psnr": [
-      21.56766888042828,
-      1.8509424042287552
-    ],
-    "breath_ssim": [
-      0.8385643942936045,
-      0.037240692321276955
+      0.8454648765089277,
+      0.035699988387911274
     ],
     "breath_ncc": [
       0.8408310802670211,
@@ -90,92 +90,106 @@
   "per_subject": [
     {
       "subject": "CMRx25_R1test_Center001_Siemens_30T_Vida_P004",
-      "group": "volunteer",
       "clean_psnr": 22.213775634765625,
-      "clean_ssim": 0.8931826502084732,
+      "clean_ssim": 0.898391584555308,
       "clean_ncc": 0.8924643894036611,
       "breath_ncc": 0.8797023097674052,
       "breath_psnr": 21.843772411346436,
-      "breath_ssim": 0.877419059475263,
+      "breath_ssim": 0.8837960759798685,
       "breath_psnr_unit_peak": 28.21499840418498,
       "clean_psnr_unit_peak": 28.585001627604168,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.37000322341918945,
       "breath_disp_mm": 4.135503074341162,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center001_UIH_30T_umr780_P004",
-      "group": "volunteer",
       "clean_psnr": 22.021621863047283,
-      "clean_ssim": 0.8751054306825002,
+      "clean_ssim": 0.8788732687632242,
       "clean_ncc": 0.8736478338638941,
       "breath_ncc": 0.7933013687531153,
       "breath_psnr": 20.065311113993328,
-      "breath_ssim": 0.7918047855297724,
+      "breath_ssim": 0.7984907925128937,
       "breath_psnr_unit_peak": 24.52893527348836,
       "clean_psnr_unit_peak": 26.485244274139404,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.956310749053955,
       "breath_disp_mm": 9.029703829471915,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center002_Siemens_30T_CIMAX_P001",
-      "group": "volunteer",
       "clean_psnr": 21.415876070658367,
-      "clean_ssim": 0.9004995028177897,
+      "clean_ssim": 0.9154558132092158,
       "clean_ncc": 0.9000953336556753,
       "breath_ncc": 0.8871031651894251,
       "breath_psnr": 21.005881627400715,
-      "breath_ssim": 0.8849020848671595,
+      "breath_ssim": 0.9030357549587885,
       "breath_psnr_unit_peak": 32.85847854614258,
       "clean_psnr_unit_peak": 33.26847267150879,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.4099944432576521,
       "breath_disp_mm": 4.702173761892138,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center004_Siemens_15T_Aera_P014",
-      "group": "volunteer",
       "clean_psnr": 22.233631769816082,
-      "clean_ssim": 0.8649196028709412,
+      "clean_ssim": 0.8696035295724869,
       "clean_ncc": 0.8635311673084894,
       "breath_ncc": 0.8082167555888494,
       "breath_psnr": 20.87734858194987,
-      "breath_ssim": 0.8059438069661459,
+      "breath_ssim": 0.8136847764253616,
       "breath_psnr_unit_peak": 25.721426328023274,
       "clean_psnr_unit_peak": 27.077709992726643,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.356283187866211,
       "breath_disp_mm": 9.611659064048775,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center004_UIH_15T_umr680_P051",
-      "group": "volunteer",
       "clean_psnr": 22.244722684224445,
-      "clean_ssim": 0.8065236210823059,
+      "clean_ssim": 0.8194533387819926,
       "clean_ncc": 0.8034662107626597,
       "breath_ncc": 0.7651504725217819,
       "breath_psnr": 21.680885314941406,
-      "breath_ssim": 0.7664869725704193,
+      "breath_ssim": 0.7831968267758688,
       "breath_psnr_unit_peak": 27.10940933227539,
       "clean_psnr_unit_peak": 27.673247655232746,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.5638373692830392,
       "breath_disp_mm": 2.9226336590106388,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center005_Siemens_30T_Vida_P021",
-      "group": "volunteer",
       "clean_psnr": 20.658634662628174,
       "clean_ssim": 0.8671446492274603,
       "clean_ncc": 0.8662854979435602,
@@ -184,538 +198,635 @@
       "breath_ssim": 0.8536658982435862,
       "breath_psnr_unit_peak": 20.58763901392619,
       "clean_psnr_unit_peak": 20.658634662628174,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.07099564870198449,
       "breath_disp_mm": 5.451814961072946,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center006_Siemens_30T_Prisma_P023",
-      "group": "volunteer",
       "clean_psnr": 24.326022148132324,
-      "clean_ssim": 0.9171794454256693,
+      "clean_ssim": 0.9207838922739029,
       "clean_ncc": 0.917226105928421,
       "breath_ncc": 0.8963072250286738,
       "breath_psnr": 23.424073696136475,
-      "breath_ssim": 0.8959490756193796,
+      "breath_ssim": 0.9006524036327997,
       "breath_psnr_unit_peak": 28.659441312154133,
       "clean_psnr_unit_peak": 29.561390558878582,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.9019484519958496,
       "breath_disp_mm": 3.087224807177772,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P003",
-      "group": "volunteer",
       "clean_psnr": 21.860841115315754,
-      "clean_ssim": 0.8863409062226614,
+      "clean_ssim": 0.8867955307165781,
       "clean_ncc": 0.8854003846645355,
       "breath_ncc": 0.9050854394833246,
       "breath_psnr": 22.7146798769633,
-      "breath_ssim": 0.9022540201743444,
+      "breath_ssim": 0.9027117341756821,
       "breath_psnr_unit_peak": 23.884087244669598,
       "clean_psnr_unit_peak": 23.030248324076336,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": -0.8538387616475447,
       "breath_disp_mm": 5.735817647574576,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P009",
-      "group": "volunteer",
       "clean_psnr": 21.636093298594158,
-      "clean_ssim": 0.8811984658241272,
+      "clean_ssim": 0.8842166066169739,
       "clean_ncc": 0.8804807513952255,
       "breath_ncc": 0.8666160355011622,
       "breath_psnr": 21.214487234751385,
-      "breath_ssim": 0.8657603015502294,
+      "breath_ssim": 0.8693752139806747,
       "breath_psnr_unit_peak": 25.609207312266033,
       "clean_psnr_unit_peak": 26.030813694000244,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.42160606384277344,
       "breath_disp_mm": 3.7626314573672577,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P010",
-      "group": "volunteer",
       "clean_psnr": 22.30673901240031,
-      "clean_ssim": 0.8778326064348221,
+      "clean_ssim": 0.8812212397654852,
       "clean_ncc": 0.8762120107809702,
       "breath_ncc": 0.8386331597963969,
       "breath_psnr": 21.35506280263265,
-      "breath_ssim": 0.8359588781992594,
+      "breath_ssim": 0.8408108452955881,
       "breath_psnr_unit_peak": 25.433010737101238,
       "clean_psnr_unit_peak": 26.3846861521403,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.9516762097676619,
       "breath_disp_mm": 5.582129746828388,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P011",
-      "group": "volunteer",
       "clean_psnr": 23.53839413324992,
-      "clean_ssim": 0.9159766236941019,
+      "clean_ssim": 0.9185901880264282,
       "clean_ncc": 0.9158356785774231,
       "breath_ncc": 0.8535031229257584,
       "breath_psnr": 20.908875783284504,
-      "breath_ssim": 0.8511799524227778,
+      "breath_ssim": 0.8560206790765127,
       "breath_psnr_unit_peak": 25.76741615931193,
       "clean_psnr_unit_peak": 28.39693609873454,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 2.629518349965416,
       "breath_disp_mm": 7.7884041859467565,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P012",
-      "group": "volunteer",
       "clean_psnr": 21.75668732325236,
-      "clean_ssim": 0.8797668665647507,
+      "clean_ssim": 0.8834175815184911,
       "clean_ncc": 0.8782908320426941,
       "breath_ncc": 0.8634637296199799,
       "breath_psnr": 21.4351749420166,
-      "breath_ssim": 0.8618010779221853,
+      "breath_ssim": 0.8664943625529608,
       "breath_psnr_unit_peak": 26.32440980275472,
       "clean_psnr_unit_peak": 26.64592218399048,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.32151238123575965,
       "breath_disp_mm": 4.024191795978833,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P013",
-      "group": "volunteer",
       "clean_psnr": 19.728135267893474,
-      "clean_ssim": 0.7892847011486689,
+      "clean_ssim": 0.7912265857060751,
       "clean_ncc": 0.7879497855901718,
       "breath_ncc": 0.826862116654714,
       "breath_psnr": 20.82875696818034,
-      "breath_ssim": 0.8233214567104975,
+      "breath_ssim": 0.8250386565923691,
       "breath_psnr_unit_peak": 22.66310739517212,
       "clean_psnr_unit_peak": 21.562486330668133,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": -1.1006217002868652,
       "breath_disp_mm": 9.869009720759184,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1val_Center001_UIH_30T_umr780_P045",
-      "group": "volunteer",
       "clean_psnr": 24.940364837646484,
-      "clean_ssim": 0.8755731185277303,
+      "clean_ssim": 0.8762135157982508,
       "clean_ncc": 0.873472660779953,
       "breath_ncc": 0.8132610470056534,
       "breath_psnr": 23.23395236333211,
-      "breath_ssim": 0.8034759511550268,
+      "breath_ssim": 0.804602175951004,
       "breath_psnr_unit_peak": 23.871416727701824,
       "clean_psnr_unit_peak": 25.577828884124756,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.706412474314373,
       "breath_disp_mm": 7.6525185861734135,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1val_Center001_UIH_30T_umr780_P052",
-      "group": "volunteer",
       "clean_psnr": 22.834366003672283,
-      "clean_ssim": 0.8805505235989889,
+      "clean_ssim": 0.8847293704748154,
       "clean_ncc": 0.8788338651259741,
       "breath_ncc": 0.830055778225263,
       "breath_psnr": 21.44399611155192,
-      "breath_ssim": 0.8293731460968653,
+      "breath_ssim": 0.8357176731030146,
       "breath_psnr_unit_peak": 26.062259833017986,
       "clean_psnr_unit_peak": 27.452630360921223,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.3903698921203613,
       "breath_disp_mm": 6.624169818768439,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1val_Center002_UIH_30T_umr880_P011",
-      "group": "volunteer",
       "clean_psnr": 21.583704312642414,
-      "clean_ssim": 0.8892636348803838,
+      "clean_ssim": 0.8930140733718872,
       "clean_ncc": 0.8889545549949011,
       "breath_ncc": 0.8191327701012293,
       "breath_psnr": 19.682528813680012,
-      "breath_ssim": 0.8114607085784277,
+      "breath_ssim": 0.8185562541087469,
       "breath_psnr_unit_peak": 25.082547346750896,
       "clean_psnr_unit_peak": 26.98372173309326,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.9011754989624023,
       "breath_disp_mm": 9.471848900987732,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1val_Center004_Siemens_15T_Aera_P018",
-      "group": "volunteer",
       "clean_psnr": 20.707000255584717,
-      "clean_ssim": 0.8728074282407761,
+      "clean_ssim": 0.881358340382576,
       "clean_ncc": 0.8717222760121027,
       "breath_ncc": 0.8134907335042953,
       "breath_psnr": 19.269443035125732,
-      "breath_ssim": 0.8145188192526499,
+      "breath_ssim": 0.8275769750277201,
       "breath_psnr_unit_peak": 27.33979018529256,
       "clean_psnr_unit_peak": 28.77734645207723,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.4375572204589844,
       "breath_disp_mm": 12.62644763036829,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R1val_Center006_Siemens_30T_Prisma_P009",
-      "group": "volunteer",
       "clean_psnr": 23.726439476013184,
-      "clean_ssim": 0.8902200609445572,
+      "clean_ssim": 0.8954916248718897,
       "clean_ncc": 0.888143186767896,
       "breath_ncc": 0.8479867180188497,
       "breath_psnr": 22.449443499247234,
-      "breath_ssim": 0.8481850524743398,
+      "breath_ssim": 0.8559610644976298,
       "breath_psnr_unit_peak": 27.57643763224284,
       "clean_psnr_unit_peak": 28.85343583424886,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.2769959767659493,
       "breath_disp_mm": 9.564740798218876,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center001_Siemens_30T_Vida_P007",
-      "group": "volunteer",
       "clean_psnr": 21.753215948740642,
-      "clean_ssim": 0.8690749953190485,
+      "clean_ssim": 0.8757759034633636,
       "clean_ncc": 0.8675354421138763,
       "breath_ncc": 0.8187649051348368,
       "breath_psnr": 20.522431055704754,
-      "breath_ssim": 0.8150536169608434,
+      "breath_ssim": 0.8253646641969681,
       "breath_psnr_unit_peak": 26.704662481943767,
       "clean_psnr_unit_peak": 27.935448169708252,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.2307848930358887,
       "breath_disp_mm": 3.4556261281032867,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center001_UIH_30T_umr780_P007",
-      "group": "volunteer",
       "clean_psnr": 23.28479464848836,
-      "clean_ssim": 0.8550048271814982,
+      "clean_ssim": 0.8589352717002233,
       "clean_ncc": 0.8520441353321075,
       "breath_ncc": 0.8470360338687897,
       "breath_psnr": 23.342759609222412,
-      "breath_ssim": 0.8476929267247518,
+      "breath_ssim": 0.8522083610296249,
       "breath_psnr_unit_peak": 26.57431650161743,
       "clean_psnr_unit_peak": 26.5163516998291,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": -0.05796496073405066,
       "breath_disp_mm": 4.505168204357348,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P008",
-      "group": "volunteer",
       "clean_psnr": 20.374767303466797,
-      "clean_ssim": 0.8386096855004629,
+      "clean_ssim": 0.8501829653978348,
       "clean_ncc": 0.837018758058548,
       "breath_ncc": 0.7538130382696787,
       "breath_psnr": 18.663681825002033,
-      "breath_ssim": 0.7513779153426489,
+      "breath_ssim": 0.7709774027268091,
       "breath_psnr_unit_peak": 26.570339838663738,
       "clean_psnr_unit_peak": 28.28142499923706,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.7110854784647636,
       "breath_disp_mm": 5.676351635453303,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P021",
-      "group": "volunteer",
       "clean_psnr": 21.451719601949055,
-      "clean_ssim": 0.8631250808636347,
+      "clean_ssim": 0.8735842307408651,
       "clean_ncc": 0.8639383961757024,
       "breath_ncc": 0.829188326994578,
       "breath_psnr": 20.62914244333903,
-      "breath_ssim": 0.82345383365949,
+      "breath_ssim": 0.837905615568161,
       "breath_psnr_unit_peak": 28.29961649576823,
       "clean_psnr_unit_peak": 29.122194131215412,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.8225771586100237,
       "breath_disp_mm": 5.3298050726341515,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P022",
-      "group": "volunteer",
       "clean_psnr": 20.299013296763103,
-      "clean_ssim": 0.8568429748217264,
+      "clean_ssim": 0.8602777173121771,
       "clean_ncc": 0.8581380993127823,
       "breath_ncc": 0.8171838720639547,
       "breath_psnr": 19.40024534861247,
-      "breath_ssim": 0.8142996331055959,
+      "breath_ssim": 0.8190184086561203,
       "breath_psnr_unit_peak": 23.924312432607014,
       "clean_psnr_unit_peak": 24.823079109191895,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.8987679481506348,
       "breath_disp_mm": 5.058741299452394,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center005_UIH_15T_umr670_P007",
-      "group": "volunteer",
       "clean_psnr": 22.766092777252197,
-      "clean_ssim": 0.8993561218182246,
+      "clean_ssim": 0.9009249409039816,
       "clean_ncc": 0.8984592656294504,
       "breath_ncc": 0.8359624693791071,
       "breath_psnr": 20.749353885650635,
-      "breath_ssim": 0.8344178348779678,
+      "breath_ssim": 0.8372745414574941,
       "breath_psnr_unit_peak": 23.77203114827474,
       "clean_psnr_unit_peak": 25.788769880930584,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 2.0167388916015625,
       "breath_disp_mm": 13.094433833076291,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center006_Siemens_30T_Prisma_P004",
-      "group": "volunteer",
       "clean_psnr": 21.072895050048828,
-      "clean_ssim": 0.8529961854219437,
+      "clean_ssim": 0.8591144730647405,
       "clean_ncc": 0.8529916554689407,
       "breath_ncc": 0.7792263726393381,
       "breath_psnr": 19.38230498631795,
-      "breath_ssim": 0.773749495546023,
+      "breath_ssim": 0.7837033619483312,
       "breath_psnr_unit_peak": 24.887739022572834,
       "clean_psnr_unit_peak": 26.57832670211792,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.6905900637308768,
       "breath_disp_mm": 8.026229230423805,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2test_Center006_UIH_30T_umr790_P024",
-      "group": "volunteer",
       "clean_psnr": 23.575530846913654,
-      "clean_ssim": 0.8766880085070928,
+      "clean_ssim": 0.878141055504481,
       "clean_ncc": 0.8739331463972727,
       "breath_ncc": 0.8464655379454294,
       "breath_psnr": 22.82349157333374,
-      "breath_ssim": 0.8486516922712326,
+      "breath_ssim": 0.8508948783079783,
       "breath_psnr_unit_peak": 25.142480691274006,
       "clean_psnr_unit_peak": 25.894519170125324,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.7520392735799142,
       "breath_disp_mm": 9.716073107743439,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2val_Center004_UIH_15T_umr680_P007",
-      "group": "volunteer",
       "clean_psnr": 30.7918594678243,
-      "clean_ssim": 0.9372580647468567,
+      "clean_ssim": 0.9464375476042429,
       "clean_ncc": 0.9328747739394506,
       "breath_ncc": 0.8865665942430496,
       "breath_psnr": 28.64444859822591,
-      "breath_ssim": 0.8902985552946726,
+      "breath_ssim": 0.9076323360204697,
       "breath_psnr_unit_peak": 34.22134494781494,
       "clean_psnr_unit_peak": 36.368754069010414,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 2.1474108695983887,
       "breath_disp_mm": 7.202189676336165,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_R2val_Center004_UIH_15T_umr680_P028",
-      "group": "volunteer",
       "clean_psnr": 20.209256807963055,
-      "clean_ssim": 0.8636329819758733,
+      "clean_ssim": 0.877298891544342,
       "clean_ncc": 0.8662868291139603,
       "breath_ncc": 0.8583312680323919,
       "breath_psnr": 20.120228449503582,
-      "breath_ssim": 0.8578823506832123,
+      "breath_ssim": 0.8717881540457407,
       "breath_psnr_unit_peak": 29.957101662953693,
       "clean_psnr_unit_peak": 30.046130021413166,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.08902835845947266,
       "breath_disp_mm": 8.126377573149071,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center001_UIH_30T_umr780_P005",
-      "group": "volunteer",
       "clean_psnr": 22.48670832316081,
-      "clean_ssim": 0.8319681237141291,
+      "clean_ssim": 0.8348099440336227,
       "clean_ncc": 0.8283442904551824,
       "breath_ncc": 0.8118506024281184,
       "breath_psnr": 22.285991668701172,
-      "breath_ssim": 0.8121572832266489,
+      "breath_ssim": 0.8155787189801534,
       "breath_psnr_unit_peak": 24.69217824935913,
       "clean_psnr_unit_peak": 24.892895380655926,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.2007166544596366,
       "breath_disp_mm": 4.994728834529874,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center001_UIH_30T_umr780_P006",
-      "group": "volunteer",
       "clean_psnr": 25.790935516357422,
-      "clean_ssim": 0.9089748958746592,
+      "clean_ssim": 0.9154603779315948,
       "clean_ncc": 0.9060866385698318,
       "breath_ncc": 0.8461431662241617,
       "breath_psnr": 23.88620201746623,
-      "breath_ssim": 0.8429073939720789,
+      "breath_ssim": 0.855605791012446,
       "breath_psnr_unit_peak": 29.426976203918457,
       "clean_psnr_unit_peak": 31.331710656483967,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.9047334988911935,
       "breath_disp_mm": 4.862072546655274,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center001_UIH_30T_umr780_P043",
-      "group": "volunteer",
       "clean_psnr": 23.35069481531779,
-      "clean_ssim": 0.8834016472101212,
+      "clean_ssim": 0.8834223548571268,
       "clean_ncc": 0.8817314902941386,
       "breath_ncc": 0.8744952380657196,
       "breath_psnr": 23.164520581563313,
-      "breath_ssim": 0.87422443429629,
+      "breath_ssim": 0.874247595667839,
       "breath_psnr_unit_peak": 23.173052946726482,
       "clean_psnr_unit_peak": 23.359227180480957,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.18617423375447828,
       "breath_disp_mm": 1.9894666319754617,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center002_UIH_30T_umr880_P005",
-      "group": "volunteer",
       "clean_psnr": 21.489341576894123,
-      "clean_ssim": 0.8425795336564382,
+      "clean_ssim": 0.8514536172151566,
       "clean_ncc": 0.8415025621652603,
       "breath_ncc": 0.8258862594763438,
       "breath_psnr": 21.38610585530599,
-      "breath_ssim": 0.8160858899354935,
+      "breath_ssim": 0.8278666536013285,
       "breath_psnr_unit_peak": 27.529325644175213,
       "clean_psnr_unit_peak": 27.632561524709065,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.10323572158813477,
       "breath_disp_mm": 12.732079323109678,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center003_UIH_30T_umr880_P009",
-      "group": "volunteer",
       "clean_psnr": 21.869022687276203,
-      "clean_ssim": 0.861580029129982,
+      "clean_ssim": 0.8644843945900599,
       "clean_ncc": 0.8615686396757761,
       "breath_ncc": 0.8478130449851354,
       "breath_psnr": 21.529563426971436,
-      "breath_ssim": 0.8426449100176493,
+      "breath_ssim": 0.8462585757176081,
       "breath_psnr_unit_peak": 25.119804700215656,
       "clean_psnr_unit_peak": 25.45926348368327,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.3394592603047677,
       "breath_disp_mm": 5.007059662860049,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center005_Siemens_30T_Vida_P013",
-      "group": "volunteer",
       "clean_psnr": 21.127118746439617,
-      "clean_ssim": 0.8897601117690405,
+      "clean_ssim": 0.8916050394376119,
       "clean_ncc": 0.8893697212139765,
       "breath_ncc": 0.8084490348895391,
       "breath_psnr": 19.006930351257324,
-      "breath_ssim": 0.8029881119728088,
+      "breath_ssim": 0.8066554814577103,
       "breath_psnr_unit_peak": 22.725964228312176,
       "clean_psnr_unit_peak": 24.846150557200115,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 2.120188395182293,
       "breath_disp_mm": 6.792120263095346,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P021",
-      "group": "volunteer",
       "clean_psnr": 21.95690695444743,
-      "clean_ssim": 0.9136026402314504,
+      "clean_ssim": 0.9152404467264811,
       "clean_ncc": 0.9131594002246857,
       "breath_ncc": 0.8840869814157486,
       "breath_psnr": 20.786630789438885,
-      "breath_ssim": 0.8829961766799291,
+      "breath_ssim": 0.8853199183940887,
       "breath_psnr_unit_peak": 25.015268325805664,
       "clean_psnr_unit_peak": 26.18554464975993,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 1.170276165008545,
       "breath_disp_mm": 7.365731053230946,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P032",
-      "group": "volunteer",
       "clean_psnr": 23.272708574930828,
-      "clean_ssim": 0.8782570064067841,
+      "clean_ssim": 0.8787161906560262,
       "clean_ncc": 0.8750916620095571,
       "breath_ncc": 0.8692809740702311,
       "breath_psnr": 23.12120246887207,
-      "breath_ssim": 0.8703035612901052,
+      "breath_ssim": 0.8720962256193161,
       "breath_psnr_unit_peak": 25.235347906748455,
       "clean_psnr_unit_peak": 25.386853218078613,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.1515061060587577,
       "breath_disp_mm": 2.673915803329111,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     },
     {
       "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P034",
-      "group": "volunteer",
       "clean_psnr": 24.681408564249676,
-      "clean_ssim": 0.9124113023281097,
+      "clean_ssim": 0.9124169498682022,
       "clean_ncc": 0.9116983513037363,
       "breath_ncc": 0.9045040905475616,
       "breath_psnr": 24.537200450897217,
-      "breath_ssim": 0.9022359251976013,
+      "breath_ssim": 0.9024155835310618,
       "breath_psnr_unit_peak": 24.934163093566895,
       "clean_psnr_unit_peak": 25.078370571136475,
-      "arms": null,
+      "arms": [
+        "clean",
+        "breath"
+      ],
       "cost_psnr": 0.14420811335245887,
       "breath_disp_mm": 7.703448634126326,
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
-      "ckpt_fingerprint": "8867644927:1786870036"
+      "ckpt_fingerprint": "8867644927:1786870036",
+      "stamps_agree": false
     }
   ]
 }

@@ -7,7 +7,8 @@
 # tmp-file-exchange/, output-metric-*.txt) into its CWD, so parallel phases MUST each run in
 # their OWN working dir or they clobber each other (seen: all died at iteration 0).
 #
-# Usage: [EVAL_DATASET=cmrxrecon|miitt] [MASK_FILE=...] [T=] [THICK=] bash evaluation/engine/run_svrtk3d.sh <subject> <clean|breath> [res_mm] [iters]
+# Usage: EVAL_DATASET=<src> [MASK_FILE=...] [T=] [THICK=] bash evaluation/src/engine/run_svrtk3d.sh <subject> <clean|breath> [res_mm] [iters]
+#        EVAL_DATASET is REQUIRED (cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr).
 set -uo pipefail
 VGGT=/home/minsukc/vggt
 export PATH="$VGGT/baselines/fetal_cmr_4d/bin:$PATH"
@@ -28,7 +29,7 @@ SUBJ="${1:?subject}"; VAR="${2:?clean|breath}"; RES="${3:-1.4}"; ITERS="${4:-4}"
 J="${J:-8}"; T="${T:-12}"; THICK="${THICK:-8}"; METHOD="${METHOD:-svrtk3d}"
 # Layout: <subject>/ holds the SHARED frozen bundle (gt/ clean/ breath/ mask_heart.nii.gz manifest.json,
 # identical for every method); each method writes under <subject>/<METHOD>/ . See README "Directory layout".
-SD="$VGGT/scratch/eval/${EVAL_DATASET:-cmrxrecon}/out/$SUBJ"
+SD="$VGGT/scratch/eval/${EVAL_DATASET:?EVAL_DATASET must name a source dir: cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr}/out/$SUBJ"
 OUT="$SD/$METHOD/recon_$VAR"; mkdir -p "$OUT"
 
 recon_one() {
