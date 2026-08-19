@@ -1,7 +1,7 @@
 # Heavy data lives on GPFS; only code + small results/provenance are tracked.
 /volumes
 /checkpoints
-# regenerable diagnostic figures -> GPFS (evaluation/figures symlink), disposable + rm-safe.
-# (legacy /analysis/out/ retired; kept ignored in case stale files linger on /home)
-/figures
-/analysis/out/
+# regenerable diagnostic figures -> GPFS (evaluation/comparison_figures symlink), disposable + rm-safe.
+# (legacy /src/analysis/out/ retired; kept ignored in case stale files linger on /home)
+/comparison_figures
+/src/analysis/out/
