@@ -139,4 +139,15 @@ _pmean=$(cat "$OUT"/time_t*.sec 2>/dev/null | awk '{s+=$1;n++}END{if(n)printf "%
   echo "                      contention-inflated (concurrent fits share one GPU). For the headline compute";
   echo "                      cost use J=1 per-phase times from a fresh (non-resumed) run.";
 } >> "$OUT/provenance.txt"
-echo "RECON_DONE $SUBJ $VAR  (total ${T_ALL}s this invocation)"
+# Per-variant stamp (paths.recon_stamp): config identity of the run that wrote recon_<VAR>/.
+# Written ONLY when every phase has a valid volume — a partial run stays unstamped, which the
+# scorer reads as "cannot verify", never as "verified". No timestamps: two invocations with an
+# identical config count as the same run, so clean/breath stamps from separate submissions match.
+N_OK=$(ls "$OUT"/vol_t*.nii.gz 2>/dev/null | wc -l)
+if [ "$N_OK" -eq "$T" ]; then
+  printf '{"engine": "nesvor", "thickness_mm": %s, "output_resolution_mm": %s, "registration": "none", "container_id": "%s"}\n' \
+    "$THICK" "$RES" "$(stat -c '%s:%Y' "$SIF_GPFS" 2>/dev/null)" > "$OUT/stamp.json"
+else
+  echo "NOT stamped: only $N_OK/$T phases OK"
+fi
+echo "RECON_DONE $SUBJ $VAR  (total ${T_ALL}s this invocation, $N_OK/$T phases ok)"

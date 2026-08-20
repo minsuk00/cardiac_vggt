@@ -59,12 +59,14 @@ recon_one() {
     echo "t$pp FAIL (see $OUT/log_t${pp}.txt)"
   fi
 }
-# DEBUG=1 (default) → -debug, captures per-slice .dof motion transforms but is ~6x slower in parallel
-#   (13s->81s/phase: writing + concurrent 200MB-intermediate I/O). Recon vol is IDENTICAL either way.
-# DEBUG=0 → no -debug → the FAIR speed-benchmark timing (use this for the compute-cost headline + the
-#   full master run; do a small DEBUG=1 subset only where you need .dof motion analysis).
-OMP="${OMP:-2}"; DBG=""; [ "${DEBUG:-1}" = "1" ] && DBG="-debug"
-export -f recon_one; export OUT SD VAR THICK RES ITERS OMP DBG
+# DEBUG=0 (default) → no -debug → the FAIR speed-benchmark timing (the compute-cost headline + the
+#   full master run). Recon vol is IDENTICAL either way.
+# DEBUG=1 → -debug, captures per-slice .dof motion transforms but is ~6x slower in parallel
+#   (13s->81s/phase: writing + concurrent 200MB-intermediate I/O). For .dof motion analysis run a
+#   small subset under METHOD=svrtk3d_debug — a rerun into an EXISTING arm dir skips every cached
+#   phase (so no .dof appears) while still overwriting provenance.txt/total_wall.sec.
+OMP="${OMP:-2}"; DBG=""; [ "${DEBUG:-0}" = "1" ] && DBG="-debug"
+export -f recon_one; export OUT SD VAR MASK_FILE THICK RES ITERS OMP DBG
 # Provenance (once per subject/variant) — exact engine, command, params, container, AND the hardware
 # + timing needed for a fair speed comparison vs our GPU feed-forward model. See README "What is logged".
 SIF="${FCMR_SIF:-$VGGT/scratch/fetal_cmr_4d/sif/svrtk.sif}"
@@ -88,7 +90,7 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "cpu model       : $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//')"
   echo "SLURM ALLOC     : ${NCPU_ALLOC} CPUs, ${MEM_ALLOC} RAM  (the allocation, NOT the node's 36c/186GB)"
   echo "parallelism     : J=$J phases x OMP=$OMP threads = $((J*OMP)) threads used (of ${NCPU_ALLOC} allocated)"
-  echo "debug_mode      : ${DEBUG:-1}  (1=-debug, needed to emit .dof, much slower ~6x in parallel: 13s->81s/phase; 0=fair speed)"
+  echo "debug_mode      : ${DEBUG:-0}  (1=-debug, needed to emit .dof, much slower ~6x in parallel: 13s->81s/phase; 0=fair speed)"
 } > "$OUT/provenance.txt"
 echo "=== $METHOD : $SUBJ / $VAR : thick=${THICK} res=${RES}mm iters=$ITERS no_robust ${DBG:-nodebug} J=$J ==="
 T_ALL0=$(date +%s)
@@ -99,4 +101,15 @@ echo "$T_ALL" > "$OUT/total_wall.sec"                       # end-to-end wall, a
   echo "total_wall_sec  : $T_ALL   (end-to-end, all $T phases at J=$J on the above hardware)";
   echo "per_phase_sec   : see time_t*.sec (mean $(cat "$OUT"/time_t*.sec 2>/dev/null | awk '{s+=$1;n++}END{if(n)printf "%.0f",s/n}')s)";
 } >> "$OUT/provenance.txt"
-echo "RECON_DONE $SUBJ $VAR  (total ${T_ALL}s)"
+# Per-variant stamp (paths.recon_stamp): config identity of the run that wrote recon_<VAR>/.
+# Written ONLY when every phase has a valid volume — a partial run stays unstamped, which the
+# scorer reads as "cannot verify", never as "verified". No timestamps: two invocations with an
+# identical config count as the same run, so clean/breath stamps from separate submissions match.
+N_OK=$(ls "$OUT"/vol_t*.nii.gz 2>/dev/null | wc -l)
+if [ "$N_OK" -eq "$T" ]; then
+  printf '{"engine": "svrtk3d", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "robust_statistics": "off", "container_id": "%s"}\n' \
+    "$THICK" "$RES" "$ITERS" "$(stat -c '%s:%Y' "$SIF" 2>/dev/null)" > "$OUT/stamp.json"
+else
+  echo "NOT stamped: only $N_OK/$T phases OK"
+fi
+echo "RECON_DONE $SUBJ $VAR  (total ${T_ALL}s, $N_OK/$T phases ok)"
