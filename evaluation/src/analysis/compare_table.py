@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """compare_table.py — rank all arms of a dataset by a metric, from the git-tracked cohort summaries.
 
-Reads metric_results/<dataset>/<arm>.json (written by src/engine/aggregate.py) and prints an arm x
+Reads metric_results/<dataset>/<arm>.json (written by src/score/aggregate.py) and prints an arm x
 metric table (mean +/- std), sorted by --metric. No recompute — pure metric_results/ read. Flags any
 arm whose cohort is incomplete (missing subjects, from aggregate's n_expected/missing fields).
 

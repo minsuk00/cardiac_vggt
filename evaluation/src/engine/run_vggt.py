@@ -2,7 +2,7 @@
 """Score a VGGT-MRI checkpoint on the frozen breathing bundles — the GPU head-to-head vs SVR.
 
 The GPU analog of `engine/run_svrtk3d.sh` / `run_nesvor.sh`: load a checkpoint ONCE, loop subjects,
-write per-subject recons into `<source>/out/<subject>/<arm>/` so the SAME `assemble_and_gif.py`
+write per-subject recons into `<source>/out/<subject>/<arm>/` so the SAME `score/image_metrics.py`
 scorer and `aggregate.py` roll-up consume it identically to the classical baselines.
 
 ## The one idea in this file

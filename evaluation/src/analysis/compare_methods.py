@@ -9,7 +9,7 @@ so classical baselines (svrtk3d, nesvor) and any vggt_* arm compare side by side
   row 1..N   one recon row per --arm, same subject / same native z-planes, animating
   header     z{k} + applied breathing |disp| (mm) per plane (frozen bundle -> identical for every arm)
 
-Pure disk read (CPU, no GPU/model). Reuses assemble_and_gif's loaders + per-method prep_recon, so each
+Pure disk read (CPU, no GPU/model). Reuses image_metrics's loaders + per-method prep_recon, so each
 recon is displayed on exactly the intensity scale it is SCORED on (SVRTK as-is, NeSVoR self-normalized).
 
 Run:
@@ -37,9 +37,11 @@ HERE = Path(__file__).resolve()
 ROOT = next(p for p in HERE.parents if (p / "evaluation").is_dir())   # repo root (works from tools/ or evaluation/src/analysis/)
 EVAL = ROOT / "evaluation"
 sys.path.insert(0, str(EVAL))
-sys.path.insert(0, str(EVAL / "src" / "engine"))
+sys.path.insert(0, str(EVAL / "src" / "score"))
+sys.path.insert(0, str(EVAL / "src" / "analysis"))
 import paths                       # noqa: E402
-import assemble_and_gif as A       # noqa: E402  (subject_grid, load_canon, prep_recon, render_gif)
+import image_metrics as A          # noqa: E402  (subject_grid, load_canon, prep_recon)
+import viz                         # noqa: E402  (render_gif)
 
 
 def resolve_arm_dir(ds, subj, arm):
@@ -54,11 +56,11 @@ def load_recon(ds, subj, arm_real, variant, disp_mask):
     """Load the CANONICAL, already-placed + per-method-normalized recon that assemble scored
     (<arm>/cine_<variant>.nii.gz, shape X,Y,Z,T). Using the placed cine — NOT recon_<variant>/vol_t* —
     is what makes the classical baselines show correctly: SVRTK/NeSVoR reconstruct on their OWN grid
-    (e.g. 78x96x79 at 1.4 mm iso), which assemble_and_gif already resampled onto this subject's GT
+    (e.g. 78x96x79 at 1.4 mm iso), which image_metrics already resampled onto this subject's GT
     grid when it scored them. Reading vol_t* here would re-do that placement in a second place."""
     cine = paths.arm_dir(ds, subj, arm_real) / f"cine_{variant}.nii.gz"
     if not cine.is_file():
-        sys.exit(f"missing {cine} — run assemble_and_gif on this arm first (it writes cine_<variant>)")
+        sys.exit(f"missing {cine} — run image_metrics on this arm first (it writes cine_<variant>)")
     v = np.asarray(nib.load(str(cine)).dataobj, dtype=np.float32)   # (X,Y,Z,T) canonical, prep'd, fov-zeroed
     return np.moveaxis(v, -1, 0) * disp_mask[None]                  # -> (T,X,Y,Z), then display mask
 
@@ -89,12 +91,12 @@ def main():
     manifest = json.load(open(paths.manifest(ds, subj)))
     T = manifest["T"]
     # Native-z (docs/58): the scoring grid belongs to the SUBJECT (its own D and dz), so every load
-    # goes onto that grid — same as assemble_and_gif, which is where these volumes were scored.
+    # goes onto that grid — same as image_metrics, which is where these volumes were scored.
     shape_xyz, aff = A.subject_grid(ds, subj)
     D = shape_xyz[2]
     content = A.load_canon(str(paths.fov_mask(ds, subj)), shape_xyz, aff) > 0.5
     # The heart ROI is optional — build_inputs/pooled.py warns and skips it for sources that ship
-    # no canonical seg. Fall back to the FOV, same as assemble_and_gif, instead of FileNotFound.
+    # no canonical seg. Fall back to the FOV, same as image_metrics, instead of FileNotFound.
     heart_p = str(paths.heart_mask(ds, subj))
     heart = (A.load_canon(heart_p, shape_xyz, aff) > 0.5) if os.path.exists(heart_p) else content
     mask = heart & content
@@ -114,7 +116,7 @@ def main():
         dmag = np.linalg.norm(disp, axis=1)
         # Under native-z every source is indexed the same way — disp has one row per native plane and
         # the display shows those same planes. The length check is a guard against a stale bundle
-        # built before the native-z rebuild (matches assemble_and_gif).
+        # built before the native-z rebuild (matches image_metrics).
         aligned_disp = len(dmag) == D
         if not aligned_disp:
             print(f"  WARNING: manifest disp has {len(dmag)} planes but D={D}; labels suppressed")
@@ -129,7 +131,7 @@ def main():
     roi = "heart ROI" if a.mask else "full FOV"
     title = (f"{ds} / {subj} / {a.variant} ({roi})  —  GT vs {', '.join(r[0] for r in rows[1:])}"
              f"\ncardiac phase t={{t}}/{T - 1}")
-    A.render_gif(out, rows, planes, T, vmax, title, fps=3, plane_disp=plane_disp)
+    viz.render_gif(out, rows, planes, T, vmax, title, fps=3, plane_disp=plane_disp)
     print(f"\n-> {out}  ({len(rows)} rows x {len(planes)} planes, T={T})")
 
 

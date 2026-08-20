@@ -18,7 +18,7 @@
 #
 #   build_inputs/pooled.py   -> the frozen bundle (gt / clean / breath + mask + manifest)
 #   run_vggt.py              -> per-subject recons for both arms
-#   assemble_and_gif.py      -> metrics.json (+ GIFs and diagnostic panels unless SKIP_GIF=1)
+#   score/image_metrics.py   -> metrics.json (+ analysis/viz.py GIFs unless SKIP_GIF=1)
 #   aggregate.py             -> the per-source roll-up
 #
 # The BUILD step is IDEMPOTENT and INCREMENTAL: a subject that already has a manifest.json is
@@ -98,18 +98,27 @@ for S in $SOURCES; do
   # `nullglob` off by default means an empty dir yields the literal pattern -> the -d test skips it
   # and the counter below turns "built nothing" into a loud failure here, where it happened.
   N_SCORED=0
+  N_FAILED=${N_FAILED:-0}
   for SUBJ_DIR in "evaluation/volumes/$S/out"/*/; do
       [ -d "$SUBJ_DIR" ] || continue
       SUBJ="$(basename "$SUBJ_DIR")"
       N_SCORED=$((N_SCORED + 1))
-      EVAL_DATASET="$S" SKIP_GIF="$SKIP_GIF" \
-        $PY evaluation/src/engine/assemble_and_gif.py "$SUBJ" "vggt_$MODEL_NAME" || \
-        echo "  [warn] scoring failed for $SUBJ — continuing"
+      EVAL_DATASET="$S" \
+        $PY evaluation/src/score/image_metrics.py "$SUBJ" "vggt_$MODEL_NAME" || \
+        { echo "  [warn] scoring FAILED for $SUBJ — continuing (job will exit nonzero; the"
+          echo "         aggregate may carry a stale earlier metrics.json for this subject)"
+          N_FAILED=$((N_FAILED + 1)); continue; }
+      # rendering is decoupled from scoring now; SKIP_GIF=1 -> metrics only
+      [ "$SKIP_GIF" = "1" ] || EVAL_DATASET="$S" \
+        $PY evaluation/src/analysis/viz.py "$SUBJ" "vggt_$MODEL_NAME" || \
+        echo "  [warn] gif render failed for $SUBJ — continuing"
   done
   [ "$N_SCORED" -gt 0 ] || { echo "  [fatal] no built subjects under evaluation/volumes/$S/out"; exit 1; }
 
   echo "=== [$S] aggregate ==================================================="
-  $PY evaluation/src/engine/aggregate.py "$S" "vggt_$MODEL_NAME"
+  $PY evaluation/src/score/aggregate.py "$S" "vggt_$MODEL_NAME"
 done
 
 echo "DONE — per-source summaries under evaluation/metric_results/"
+# scoring failures must not read as job success (and their subjects' summaries may hold stale rows)
+[ "${N_FAILED:-0}" -eq 0 ] || { echo "EXIT 1: $N_FAILED subject(s) failed scoring"; exit 1; }
