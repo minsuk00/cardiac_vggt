@@ -17,20 +17,28 @@ evaluation/
 ├── check_paths.py      # read-only self-check: paths.py resolves the real tree
 ├── build_models_table.py  # harvest metadata.json -> models.json (git-tracked registry)
 ├── src/
-│   ├── engine/         # the frozen-bundle harness (run_vggt, run_svrtk3d, run_nesvor, run_seg,
-│   │                   #   assemble_and_gif, aggregate, build_inputs/pooled.py)
-│   └── analysis/       # the standing every-eval analyses (breathing, slice panels, EF/Dice,
+│   ├── engine/         # makes VOLUMES (run_vggt, run_svrtk3d, run_nesvor, run_seg,
+│   │                   #   build_inputs/pooled.py)
+│   ├── score/          # makes NUMBERS: run.py (THE entry point), image_metrics.py (PSNR/SSIM/NCC),
+│   │                   #   ef_dice.py (EF/Dice via nnU-Net), aggregate.py (folds image + breathing
+│   │                   #   resp_diag + timing [+ EF/Dice] into ONE metric_results/<ds>/<arm>.json)
+│   └── analysis/       # makes FIGURES (viz = GT-vs-pred GIF, breathing, slice panels,
 │                       #   compare_methods = multi-arm GIF, compare_table / compare_bars = cross-arm ranking)
 ├── splits/          # split files for sources never trained on (e.g. ocmr_eval.txt)
 ├── metric_results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
+│   ├── _ef/<arm>.json               # EF/Dice chain output (cross-cohort, merged into the above)
+│   └── _archive/                    # pre-restructure summaries (read-only record)
 ├── _archive/        # superseded code + pre-native-z results, incl. the old MODELS.md / models.json
 │
 ├── volumes/     -> GPFS (subject-major PRECIOUS data; gitignored)
 │   └── <dataset>/out/<subject>/
 │       ├── manifest.json  gt/  clean/  breath/  mask*  heart_seg*   # shared frozen bundle
+│       ├── cine_gt.nii.gz                                           # shared 4D GT (written once)
 │       └── <arm>/ recon_clean/ recon_breath/ metrics.json timing.json ed_dvf.npz
-│                  gif_{clean,breath,combined}.gif                   # per-arm renders live WITH the recons
-│                  panel_input.gif  panel_dvf.png  panel_lookup.png  #   (VGGT arms; auto-gen w/ the gifs)
+│                  cine_{clean,breath}.nii.gz                        # scored 4D cines (image_metrics.py)
+│                  gif_{clean,breath}.gif                            # per-arm renders (viz.py) live WITH the recons
+│                  panel_input.gif  panel_dvf.png  panel_lookup.png  #   (VGGT arms; slice_panels, on demand)
+│                  _old_scorer/                                      # pre-2026-08-20 assemble_and_gif record
 ├── comparison_figures/ -> GPFS (DISPOSABLE cross-arm/cohort figures; gitignored, `rm -rf`-safe)
 │   └── <dataset>/  [<subject>/_compare/compare_*.gif]  [<arm>_breathing.{json,png}]  [ef_*.png]
 └── checkpoints/ -> GPFS (COPIED ckpts per arm; gitignored)
@@ -59,7 +67,7 @@ Real-time free-breathing (RTFB) inference is **out of scope** and is archived in
 ## What lives here vs elsewhere (the curation rule)
 
 - **`evaluation/` holds only scripts run on *every* eval** — the core harness (build_inputs,
-  run_*, assemble_and_gif, aggregate) and the standing analysis. Everything here must be
+  run_*, score/) and the standing analysis. Everything here must be
   **simple and 100% correct**; it is not a scratchpad.
 - **One-off / report-specific / exploratory scripts stay in `tools/`.** Do not migrate a
   script into `evaluation/` unless it is re-run on every eval.
@@ -130,13 +138,13 @@ matches a raw glob of the real tree, across every source.
 ## Running the harness
 
 Pipeline per dataset: build the frozen bundle once → reconstruct each method → score →
-aggregate → analysis. The **read/scoring** side (`run_vggt`, `assemble_and_gif`,
-`aggregate`, analysis) resolves every path through `paths.py`; the bundle **builders**
+aggregate → analysis. The **read/scoring** side (`run_vggt`, `src/score/*`, analysis)
+resolves every path through `paths.py`; the bundle **builders**
 and the classical-baseline shells write to the same location via their own `OUT_ROOT`/`SD`
 (verbatim snapshots — see "What lives here").
 
 ```bash
-# 0. everything at once (build -> score -> assemble -> aggregate) — ALL SEVEN sources by default,
+# 0. everything at once (build -> recon -> score -> gifs -> aggregate) — ALL SEVEN sources by default,
 #    each routed to its own split file (pooled.txt / pooled_miitt.txt / evaluation/splits/ocmr_eval.txt).
 #    Narrow with SOURCES="cmrx2024 ocmr"; force one split file for every source with SPLIT_FILE=<path>.
 sbatch sbatch/eval_pooled_val.sh
@@ -151,28 +159,31 @@ python evaluation/src/engine/run_vggt.py --dataset <src> --ckpt <pt> --model-nam
 #    baseline shells take (subject, variant); the arm/method is the METHOD env var, ONE call per variant:
 EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/src/engine/run_svrtk3d.sh <subj> clean
 EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/src/engine/run_svrtk3d.sh <subj> breath
-# 3. score per subject -> <subj>/<arm>/metrics.json (+ gifs)   [<arm> = method dir name]
-EVAL_DATASET=<ds> python evaluation/src/engine/assemble_and_gif.py <subj> <arm>
-# 4. cohort summary -> metric_results/<ds>/<arm>.json  (git-tracked, citable)
-#    summarizes ONLY subjects whose manifest["split"] == $SPLIT (default val)
-SPLIT=val python evaluation/src/engine/aggregate.py <ds> <arm>
+# 3+4. score every subject + cohort summary in one go (THE entry point):
+python evaluation/src/score/run.py --method <arm> [--datasets <ds...>] [--split val]
+#    or per subject / per dataset:
+EVAL_DATASET=<ds> python evaluation/src/score/image_metrics.py <subj> <arm>   # -> <arm>/metrics.json + cine_*
+SPLIT=val python evaluation/src/score/aggregate.py <ds> <arm>                 # -> metric_results/<ds>/<arm>.json
+#    GIFs are decoupled from scoring:
+EVAL_DATASET=<ds> python evaluation/src/analysis/viz.py <subj> <arm>          # reads the cine_* files
 ```
 
 Standing analysis. **Per-arm** panels (`slice_panels` → `panel_input.gif` / `panel_dvf.png` /
 `panel_lookup.png`) write INTO the arm dir (`volumes/<ds>/out/<subj>/<arm>/`, beside the gifs) and
-are **auto-rendered by `assemble_and_gif` for VGGT arms** (SKIP_GIF-gated; baselines lack `ed_dvf.npz`
-so they're skipped). **Cross-arm / cohort** figures write to the gitignored `comparison_figures/` tree on GPFS
-(`compare_methods` → `comparison_figures/<ds>/<subj>/_compare/`; breathing + EF → `comparison_figures/<ds>/`). All are
-render-on-demand for a `--subject` — a metric-only sweep (`SKIP_GIF=1`) persists just `metrics.json`
-+ `metric_results/*.json`.
+render-on-demand (scoring no longer auto-renders them). **Cross-arm / cohort** figures write to the
+gitignored `comparison_figures/` tree on GPFS (`compare_methods` → `comparison_figures/<ds>/<subj>/_compare/`;
+breathing + EF → `comparison_figures/<ds>/`). A metric-only sweep (score/run.py without viz) persists
+just `metrics.json` + `metric_results/*.json`.
 
 ```bash
 python evaluation/src/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
 python evaluation/src/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
-python evaluation/src/analysis/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
+# EF/EDV/ESV/LVM (+RV) + Dice/HD95 — reads the SCORED cine_* files (run score/ first):
+python evaluation/src/score/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
 bash   evaluation/src/engine/run_seg.sh   <dir> <seg_dir>      # nnU-Net Task114 2d (nnunet env, wrapped)
-python evaluation/src/analysis/ef_dice.py score <seg_dir> --input <dir> --out <ef.json>
-python evaluation/src/analysis/ef_dice.py plot  <ef.json> --out <ef.png>    # EF scatter + Dice bars
+python evaluation/src/score/ef_dice.py score <seg_dir> --input <dir>   # -> metric_results/_ef/<arm>.json
+python evaluation/src/score/ef_dice.py plot  metric_results/_ef/<arm>.json --out <ef.png>
+# then re-run score/aggregate.py (or run.py): it folds the _ef file into metric_results/<ds>/<arm>.json
 ```
 
 Cross-method comparison (any mix of arms — classical baselines + vggt — one subject / cohort):
@@ -198,13 +209,13 @@ Cohort numbers live in git at `metric_results/<dataset>/<arm>.json`; per-arm pro
   multiframe dir — a multiframe arm needs new diagnostic code, not just a run.
 - **New baseline method** — write `src/engine/run_<method>.sh` (mirror the `(subject, variant)` +
   `METHOD=` shell contract), score/aggregate are arm-name-agnostic. If its output isn't on the
-  GT `[0,1]` scale, add it to `SELF_NORM_METHODS` / `PURE_SCALE_METHODS` in `assemble_and_gif.py`.
+  GT `[0,1]` scale, add it to `SELF_NORM_METHODS` / `PURE_SCALE_METHODS` in `score/image_metrics.py`.
 - **New dataset/cohort** — no longer the sore spot. It used to need a prep function, a builder
   and an adapter per dataset; the work is now **upstream of this dir**: convert the source to the
   standard 12-phase layout (`tools/convert_*_to_12phase.py` → `<SRC>_sax/`, mirroring
   `ACDC_sax`/`MNMs_sax`) so `MRIDataset` can read it. Inside `evaluation/` only **two** entries
   change: `paths.DATASETS` and `build_inputs/pooled.py:SOURCE_PREFIX`. Everything downstream
-  (`run_vggt`, `assemble_and_gif`, `aggregate`, `slice_panels`, `ef_dice`) is source-agnostic and
+  (`run_vggt`, `score/*`, `slice_panels`, `viz`) is source-agnostic and
   reads geometry per subject from `manifest.json`.
   A source that is never trained on also needs a split file — put it in **`evaluation/splits/`**
   (e.g. `ocmr_eval.txt`), not `training/splits/`, so it cannot be pulled into a training pool by
@@ -212,9 +223,11 @@ Cohort numbers live in git at `metric_results/<dataset>/<arm>.json`; per-arm pro
 
 **contz naming (historical):** existing OOD contz arms are stored *doubled*
 (`vggt_..._contz_contz`) because an old `run_vggt` appended `_contz` twice. `canonical_arm`
-fixes this for **new** runs (single `_contz`), but readers of the **legacy** dirs must try both
-suffixes — `slice_panels.method_dir`, `ef_dice.method_dir`, and `slice_panels.rep_subject` all
-do. New runs are single; don't rename the old doubled dirs.
+fixes this for **new** runs (single `_contz`); `slice_panels.method_dir` / `rep_subject` still
+probe both suffixes for the legacy dirs. `ef_dice.method_dir` deliberately does NOT — it
+requires the exact literal arm name, because a probed suffix would make the
+`metric_results/_ef/<arm>.json` key diverge from the arm name `aggregate.py` joins on and the
+EF block would silently never fold. Dump a contz arm under its full dir name.
 
 ## Why subject-major (the one divergence from MRI2CT)
 

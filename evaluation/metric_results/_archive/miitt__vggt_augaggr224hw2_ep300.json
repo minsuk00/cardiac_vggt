@@ -9,7 +9,6 @@
     "8867644927:1786870036"
   ],
   "cost_psnr_unverified": [],
-  "scorer": "image_metrics.py",
   "all": {
     "n": 3,
     "n_clean": 0,
@@ -48,34 +47,11 @@
     "breath_disp_mm": [
       5.78497105814547,
       2.2392861003869253
-    ],
-    "resp_epe_dz_mm": [
-      0.7860512159394544,
-      0.1225103834812737
-    ],
-    "resp_epe_dz_demeaned_mm": [
-      0.7652213745186666,
-      0.12063444013108496
-    ],
-    "resp_slope": [
-      0.8897899486055927,
-      0.09298899946666195
-    ],
-    "n_resp": 3,
-    "recon_wall_sec": [
-      6.0342439016482485,
-      0.3180798387270831
-    ],
-    "n_timing": 3
+    ]
   },
   "per_subject": [
     {
       "subject": "MIITT_Volunteer6",
-      "resp_epe_dz_mm": 0.9281157368459516,
-      "resp_epe_dz_demeaned_mm": 0.8630291546560573,
-      "resp_slope": 0.8287746194668276,
-      "resp_corr": 0.9881781033450091,
-      "recon_wall_sec": 6.230246739927679,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -89,19 +65,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 5.802457653396053,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "MIITT_Volunteer7",
-      "resp_epe_dz_mm": 0.8009051884679744,
-      "resp_epe_dz_demeaned_mm": 0.8373721449428962,
-      "resp_slope": 0.8194101598406659,
-      "resp_corr": 0.9737577649836082,
-      "recon_wall_sec": 6.286883811000735,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -115,19 +84,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 3.0337154044278623,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "MIITT_Volunteer8",
-      "resp_epe_dz_mm": 0.629132722504437,
-      "resp_epe_dz_demeaned_mm": 0.5952628239570461,
-      "resp_slope": 1.0211850665092843,
-      "resp_corr": 0.9951456241374048,
-      "recon_wall_sec": 5.585601154016331,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -141,8 +103,6 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 8.518740116612497,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true

@@ -16,7 +16,7 @@ The heavy data lives on GPFS, symlinked in at ``evaluation/volumes`` (subject-ma
             metadata.json  provenance.txt
 
 Every path/naming convention the harness uses is built HERE, so a layout change is a
-one-function edit instead of a hunt across run_vggt.py / assemble_and_gif.py / aggregate.py
+one-function edit instead of a hunt across run_vggt.py / src/score/*.py
 and ~15 tools/ scripts. Import standalone:
 
     import sys; sys.path.insert(0, "<repo>/evaluation"); import paths
@@ -133,7 +133,7 @@ def recon_stamp(dataset, subject, arm, variant):
     own default: re-running an arm with `--arms breath` (the default) leaves the previous run's
     `recon_clean/` in place, the scorer discovers variants by `.is_dir()` and scores it, and
     `cost_psnr = clean - breath` then subtracts two DIFFERENT checkpoints. No crash, no warning.
-    One stamp per variant makes that detectable; assemble_and_gif compares them.
+    One stamp per variant makes that detectable; score/image_metrics.py compares them.
     """
     return recon_dir(dataset, subject, arm, variant) / "stamp.json"
 
@@ -169,6 +169,18 @@ def metrics(dataset, subject, arm):
     return arm_dir(dataset, subject, arm) / "metrics.json"
 
 
+def cine(dataset, subject, arm, variant):
+    """4D canonical-grid cine of a method's recon as scored by src/score/image_metrics.py
+    (post gauge/pose/PSF) — what viz.py and the seg chain consume."""
+    assert variant in VARIANTS, variant
+    return arm_dir(dataset, subject, arm) / f"cine_{variant}.nii.gz"
+
+
+def cine_gt(dataset, subject):
+    """Shared 4D GT cine (method-independent). image_metrics.py writes it only if absent."""
+    return subject_dir(dataset, subject) / "cine_gt.nii.gz"
+
+
 def metadata(dataset, subject, arm):
     return arm_dir(dataset, subject, arm) / "metadata.json"
 
@@ -201,6 +213,13 @@ def cohort_fig_dir(dataset):
 def summary(dataset, arm):
     """Git-tracked cohort summary (the citable numbers)."""
     return RESULTS / dataset / f"{arm}.json"
+
+
+def ef_summary(arm):
+    """The EF/Dice chain's output for one arm (ef_dice.py score; ALL cohorts in one file —
+    the chain runs cross-cohort around a single nnU-Net call). src/score/aggregate.py reads
+    this to fold the biventricular block into each dataset's summary."""
+    return RESULTS / "_ef" / f"{arm}.json"
 
 
 def legacy_summary(dataset, arm):

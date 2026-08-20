@@ -9,7 +9,6 @@
     "8867644927:1786870036"
   ],
   "cost_psnr_unverified": [],
-  "scorer": "image_metrics.py",
   "all": {
     "n": 8,
     "n_clean": 0,
@@ -48,34 +47,11 @@
     "breath_disp_mm": [
       6.403136491389022,
       2.2974158667814466
-    ],
-    "resp_epe_dz_mm": [
-      1.0653025944075152,
-      0.5606033698037994
-    ],
-    "resp_epe_dz_demeaned_mm": [
-      1.0521020085223807,
-      0.6084280265351181
-    ],
-    "resp_slope": [
-      0.9712251587483013,
-      0.1146479236751254
-    ],
-    "n_resp": 8,
-    "recon_wall_sec": [
-      4.920505477930419,
-      1.3186750946425385
-    ],
-    "n_timing": 8
+    ]
   },
   "per_subject": [
     {
       "subject": "OCMR_fs_0012_3T",
-      "resp_epe_dz_mm": 0.489436860103025,
-      "resp_epe_dz_demeaned_mm": 0.47772557075191596,
-      "resp_slope": 0.9638378067996487,
-      "resp_corr": 0.9947719521964765,
-      "recon_wall_sec": 7.382353062974289,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -89,19 +65,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 4.696795009454658,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0045_3T",
-      "resp_epe_dz_mm": 0.6264149386381449,
-      "resp_epe_dz_demeaned_mm": 0.586911074364083,
-      "resp_slope": 0.9051773948888372,
-      "resp_corr": 0.9896807116994593,
-      "recon_wall_sec": 4.246113929897547,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -115,19 +84,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 2.7468930035926573,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0053_1_5T",
-      "resp_epe_dz_mm": 1.2310133257880806,
-      "resp_epe_dz_demeaned_mm": 1.134155903607607,
-      "resp_slope": 0.7168948326850232,
-      "resp_corr": 0.9908688021206031,
-      "recon_wall_sec": 3.0458481090608984,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -141,19 +103,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 4.5252914896808365,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0060_1_5T",
-      "resp_epe_dz_mm": 1.1502957787700627,
-      "resp_epe_dz_demeaned_mm": 1.1502957787700627,
-      "resp_slope": 1.0362735043406759,
-      "resp_corr": 0.9878376056579579,
-      "recon_wall_sec": 4.928244072012603,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -167,19 +122,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 8.381858418147077,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0063_1_5T",
-      "resp_epe_dz_mm": 1.0027030859715664,
-      "resp_epe_dz_demeaned_mm": 0.8973993626616057,
-      "resp_slope": 1.024533537549285,
-      "resp_corr": 0.9810891918152058,
-      "recon_wall_sec": 4.298798313131556,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -193,19 +141,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 9.269814509412958,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0068_1_5T",
-      "resp_epe_dz_mm": 0.8466350398348368,
-      "resp_epe_dz_demeaned_mm": 0.8331612142702972,
-      "resp_slope": 1.0755117497754363,
-      "resp_corr": 0.9915212747508978,
-      "recon_wall_sec": 6.523742051096633,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -219,19 +160,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 7.39982422529449,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0069_1_5T",
-      "resp_epe_dz_mm": 0.7641878451375987,
-      "resp_epe_dz_demeaned_mm": 0.7834777939933639,
-      "resp_slope": 0.9444821171887466,
-      "resp_corr": 0.9770697375186054,
-      "recon_wall_sec": 4.9781886481214315,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -245,19 +179,12 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 5.063351111888294,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true
     },
     {
       "subject": "OCMR_fs_0074_1_5T",
-      "resp_epe_dz_mm": 2.411733881016806,
-      "resp_epe_dz_demeaned_mm": 2.5536893697601104,
-      "resp_slope": 1.103090326758757,
-      "resp_corr": 0.8810138771269375,
-      "recon_wall_sec": 3.960755637148395,
       "clean_psnr": null,
       "clean_ssim": null,
       "clean_ncc": null,
@@ -271,8 +198,6 @@
       ],
       "cost_psnr": null,
       "breath_disp_mm": 9.141264163641209,
-      "pose": "none",
-      "psf": "none",
       "ckpt": "scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt",
       "ckpt_fingerprint": "8867644927:1786870036",
       "stamps_agree": true

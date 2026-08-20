@@ -2,7 +2,7 @@
 # Step 2/3 — NeSVoR (INR SVR) per-phase reconstruct for one subject/variant, GPU.
 # GPU sibling of run_svrtk3d.sh: SAME env/positional contract, SAME output layout
 # (<subject>/<METHOD>/recon_<var>/vol_tNN.nii.gz), SAME idempotency + atomic-move, so
-# assemble_and_gif.py / aggregate.py consume it unchanged. Only the recon engine differs
+# score/image_metrics.py / score/aggregate.py consume it unchanged. Only the recon engine differs
 # (CPU mirtk -> GPU Singularity `nesvor reconstruct`).
 #
 # Each cardiac phase = one independent NeSVoR fit on the single gated stack. NeSVoR needs a
@@ -20,7 +20,7 @@
 #   --output-resolution 1.4 : match SVRTK; both resampled to canonical to score.
 #   everything else NeSVoR default (--n-iter 6000, --n-samples 256, bias off, variances on).
 # Output is stored RAW (NeSVoR's ~700-mean scale); the scorer self-percentile-normalizes it
-# to [0,1] at load time (per-method rule, assemble_and_gif.py).
+# to [0,1] at load time (per-method rule, score/image_metrics.py).
 #
 # Usage: EVAL_DATASET=<src> [MASK_FILE=...] [T=] [THICK=] [J=] \
 #          bash evaluation/src/engine/run_nesvor.sh <subject> <clean|breath> [res_mm]

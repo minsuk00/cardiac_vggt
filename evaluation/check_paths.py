@@ -83,7 +83,18 @@ for ds in paths.DATASETS:
             check(f"recon[{var}] resolves all T={T} & matches glob ({a})",
                   all(p.is_file() for p in p_vols) and samefiles(p_vols, raw_vols),
                   f"(paths={len(p_vols)} raw={len(raw_vols)})")
-        check("metrics.json resolves", paths.metrics(ds, s, a).is_file())
+        # An arm can hold recons but no metrics yet (generation and scoring are decoupled —
+        # the probe arm is often an unscored baseline). Verify the RESOLVER against whatever
+        # metrics files really exist on this subject, rather than demanding the probe arm be
+        # scored; skip when nothing is scored yet.
+        raw_metrics = sorted(glob.glob(f"{paths.subject_dir(ds, s)}/*/metrics.json"))
+        if raw_metrics:
+            resolved = sorted(str(paths.metrics(ds, s, x)) for x in paths.arms(ds, s)
+                              if paths.metrics(ds, s, x).is_file())
+            check("metrics.json resolver matches glob", resolved == raw_metrics,
+                  f"(resolved={len(resolved)} raw={len(raw_metrics)})")
+        else:
+            print("  [SKIP] metrics.json — no arm scored on the probe subject yet")
         # metadata.json only for vggt_* arms
         vggt_arm = next((x for x in paths.arms(ds, s) if x.startswith("vggt_")), None)
         if vggt_arm:

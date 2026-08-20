@@ -2,7 +2,8 @@
 """slice_panels.py — per-arm diagnostic panels for the frozen eval bundles.
 
 Three panels (choose via --panel; default all), written INTO the arm dir beside the gifs
-(volumes/<ds>/out/<subj>/<arm>/) and auto-rendered by ../engine/assemble_and_gif.py for VGGT arms.
+(volumes/<ds>/out/<subj>/<arm>/); run standalone (the old auto-render hook lived in the retired
+_archive/assemble_and_gif.py).
 (The old panel_cycle GIF was dropped — it duplicated the engine gif_clean/breath montage.)
 
   panel_input.gif   2 rows (clean / breath input) x N_SLOTS cols, ANIMATED over t. Only the
@@ -448,8 +449,9 @@ def render_lookup(inputs518, cols, delta_full, V_canon, V_gt, out, title, z_scal
     Vg = torch.as_tensor(np.ascontiguousarray(V_gt))[None].float()
     ERR = 0.1
     # min_w: 4 columns of 1.35in is only 6.34in wide, narrower than the suptitle for long subject
-    # names — assert_layout then raises and NO panel is written (silently, via assemble_and_gif's
-    # try/except). Measured over the whole 144-subject cohort: the widest real title needs 7.44in
+    # names — assert_layout then raises and NO panel is written (silently, under the retired
+    # assemble_and_gif auto-render hook; standalone runs fail loudly). Measured over the whole
+    # 144-subject cohort: the widest real title needs 7.44in
     # (all 37 cmrx2025 subjects overflowed 6.34; every other source fit). 8.0 matches render_dvf and
     # leaves ~12 chars of headroom; a longer name still fails loudly rather than cropping silently.
     fig, axes, W, H = grid(len(sel), 4, cell=1.35, top_in=0.92, bot_in=0.10,
@@ -521,7 +523,7 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",), vmax=None)
         s["pred"] = float(s["dz"][g].mean()) if s["has_fov"] else None
 
     if vmax is None:
-        # STANDALONE fallback only — the wired path (assemble_and_gif) always passes vmax explicitly.
+        # STANDALONE fallback (the retired assemble_and_gif hook used to pass vmax explicitly).
         # Same SHAPE as the gifs' formula (heart-ROI-masked p99.9) but NOT the same number: this pools
         # ED input slices, positivity-filtered; the caller pools GT+recon over all T phases, unfiltered.
         # Measured 0.328 vs 0.344 on CMRx24_Test_P012 (~4.8%). Not unified because the standalone path
