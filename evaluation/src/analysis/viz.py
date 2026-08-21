@@ -36,7 +36,7 @@ def display_gamma(image, vmax, gamma=0.7):
     return np.clip(image / max(float(vmax), 1e-8), 0.0, 1.0) ** gamma
 
 
-def render_gif(out_path, rows, planes, T, vmax, titles, fps=3, plane_disp=None, ref_z=None):
+def render_gif(out_path, rows, planes, T, vmax, titles, fps=6, plane_disp=None, ref_z=None):
     """rows: list of (label, cine[T,X,Y,Z]); one animation frame per cardiac phase t,
     each frame = len(rows) x len(planes) montage. plane_disp: optional per-z applied breathing
     |disp| (mm) under each z-label. ref_z: reference-slice plane -> red starred z-label."""

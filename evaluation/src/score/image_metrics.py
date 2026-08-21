@@ -89,39 +89,36 @@ def clip_sentinel(rec):
 # self-normalizing them LOSES ~1.9 dB of real reconstruction signal (29.85→27.93). This is a
 # per-method rule keyed on measured scale-preservation, NOT a blanket uniform rescale.
 SELF_NORM_METHODS = {"nesvor", "niftymic"}
-# Of the self-norm methods, those whose gauge is a PURE global SCALE (offset≈0) — measured on
-# CMRx24_Train_P053: NeSVoR pred≈2065·gt (offset/scale≈0.012). For these, subtracting the in-ROI p0.5 would
-# inject a small ARTIFICIAL offset (the heart floor is not the true zero) and *under*-score the recon
-# by ~0.3 dB (conservative but wrong-direction: it flatters our own method). Divide-only is the
-# GT-consistent map (a perfect pure-scale recon → GT exactly). Methods with a real additive pedestal
-# (NiftyMIC: c≈+1.0) are NOT here — they genuinely need the subtraction.
-PURE_SCALE_METHODS = {"nesvor"}
 
 
-def prep_recon(rec, method, roi):
-    """Bring a method's recon onto the GT [0,1] scale for scoring, per-method:
-      - scale-preserving (SVRTK): clip the -1 sentinel, score AS-IS.
-      - pure-scale gauge (NeSVoR): divide by the recon's OWN in-ROI p99.9, clamp[0,1] (NO subtract).
-      - offset+scale gauge (NiftyMIC): subtract in-ROI p0.5, divide by (p99.9-p0.5), clamp[0,1].
-    All self-referenced (recon's OWN percentiles, NO GT → no leak). One global scale over all phases
-    (keeps real phase-to-phase contrast, removes the arbitrary gauge). This is a GT-FREE APPROXIMATION
-    of GT's normalization (preprocess.py: 0.5/99.9 over the non-zero FOV + clamp[0,1]) — we use the
-    heart&FOV scoring ROI, not the full FOV, so it doesn't EXACTLY reproduce GT's affine, but the
-    residual is ~0.3 dB on our data (GT heart p0.5≈0.013≈0). For a scale-INVARIANT read that sidesteps
-    this entirely, use the ncc() metric (which needs no normalization)."""
+def prep_recon(rec, method, content, stacks=None):
+    """Bring a method's recon onto the GT [0,1] scale for scoring, per-method (docs/88):
+      - scale-preserving (SVRTK, VGGT): clip the -1 sentinel, score AS-IS.
+      - self-norm methods (NeSVoR, NiftyMIC): ONE uniform two-point map anchoring the recon to
+        its own INPUT stacks — (recon_p0.5, recon_p99.9) → (stack_p0.5, stack_p99.9), percentiles
+        over the recon's coverage region (∩ content FOV), then clamp[0,1].
+    The anchor is GT-free (the stacks are data the method already received) and restores exactly
+    the input scale the method discarded. It replaces the old recon-only self-norm, which was
+    REFUTED (docs/88 §2): the baselines reconstruct a heart-centered crop (~6% of the FOV), so a
+    recon-only percentile maps heart-max→1.0 while GT's heart peaks at ~0.35 of the FOV-normalized
+    scale → NeSVoR ~3× too bright, 6 dB PSNR at healthy NCC. For a no-offset method the two-point
+    map degenerates to pure scale (both floors ≈0, measured 20.60≈20.51 dB), so no divide-only
+    special case. One global map over all phases (keeps real phase-to-phase contrast). For a
+    scale-INVARIANT read that sidesteps gauges entirely, use the ncc() metric."""
     rec = np.nan_to_num(rec, nan=0.0, posinf=0.0, neginf=0.0)  # harden: a NaN/Inf in the recon would
     # else make np.percentile return NaN and silently poison this method's whole PSNR/SSIM/NCC mean.
     if method not in SELF_NORM_METHODS:
         return clip_sentinel(rec)
-    if not np.asarray(roi).any():           # empty ROI: no voxels to self-normalize against, and
-        return np.clip(rec, 0.0, 1.0)       # np.percentile would IndexError on the zero-size slice.
-    #                                         Scoring then NaNs on the empty mask (psnr/ssim/ncc guard it).
-    vals = rec[:, roi] if rec.ndim == 4 else rec[roi]
-    hi = np.percentile(vals, 99.9)
-    if method in PURE_SCALE_METHODS:
-        return np.clip(rec / max(hi, 1e-6), 0.0, 1.0)                # pure scale → divide only
-    lo = np.percentile(vals, 0.5)
-    return np.clip((rec - lo) / max(hi - lo, 1e-6), 0.0, 1.0)        # offset+scale → subtract then divide
+    if stacks is None:   # a missed call site must crash, not silently score on the wrong scale
+        raise ValueError(f"prep_recon: {method} is a self-norm method and needs its input stacks")
+    cov = ((rec.max(axis=0) if rec.ndim == 4 else rec) > 1e-6) & content
+    if not cov.any():                       # recon has no data in the FOV: nothing to anchor
+        return np.clip(rec, 0.0, 1.0)      # against; scoring then reflects the empty volume.
+    rv = rec[:, cov] if rec.ndim == 4 else rec[cov]
+    sv = stacks[:, cov] if stacks.ndim == 4 else stacks[cov]
+    rlo, rhi = np.percentile(rv, [0.5, 99.9])
+    slo, shi = np.percentile(sv, [0.5, 99.9])
+    return np.clip((rec - rlo) * (shi - slo) / max(rhi - rlo, 1e-6) + slo, 0.0, 1.0)
 
 
 def psnr(a, b, m):
@@ -263,7 +260,11 @@ def score_subject(ds, subj, method):
     for var in present:
         rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)), shape_xyz, aff)
                         for t in range(T)])
-        rec = prep_recon(rec, method, mask)
+        # Self-norm methods anchor to the input stacks of THIS variant (breath recon → breath
+        # stacks); loaded lazily so scale-preserving arms (VGGT, SVRTK) never pay the I/O.
+        stacks = np.stack([load_canon(str(paths.bundle_stack(ds, subj, var, t)), shape_xyz, aff)
+                           for t in range(T)]) if method in SELF_NORM_METHODS else None
+        rec = prep_recon(rec, method, content, stacks=stacks)
         rec = rec * content[None]        # zero the recon in no-data planes (score mask ⊆ content,
         #                                  and GT is already 0 there — display consistency only)
         pv, sv, nv, uv = [], [], [], []
