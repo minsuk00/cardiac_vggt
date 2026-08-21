@@ -433,7 +433,14 @@ loss:
     tv_weight: 0.0
     # L2 diffusion (Tikhonov) smoothness ‖∇u‖² on the DVF (VoxelMorph-style). 0.0 ⇒ no-op.
     # DVF is in normalized [-1,1] coords ⇒ gradients are tiny, so a meaningful penalty is
-    # O(10-1000). At 1000 a 1e-2 14-px ripple contributes ~1e-2 vs loss_volume ~0.25 (~4%).
+    # O(10-1000). MEASURED, not estimated (2026-08-21, run 213110090_augaggr224hw2_miitt_
+    # pooled1337, mean over epochs 290-299): at 1000 the term is 2.9e-4 against an objective
+    # of 0.110 — i.e. **0.26%**, not the ~4% an earlier hand-estimate in this comment claimed
+    # (it was ~30x too large). Since the penalty is ‖∇u‖², scaling the whole DVF by α scales
+    # it by α²: recovering the ~25% missing contraction amplitude (α≈1.30) costs 0.22% of the
+    # objective. So this term is NOT the binding constraint on contraction amplitude — do not
+    # reason about amplitude/EF from its weight. NB an arm with diffusion_weight=0 has never
+    # actually been trained, so "small in the objective" is strong evidence, not proof.
     diffusion_weight: 1000.0
     # Coverage-free gather-placement AUXILIARY (docs/37, docs/38): |sample_volume(V_gt, p) −
     # input_I|, a "pull" term restoring the sharp through-plane placement gradient the splat
