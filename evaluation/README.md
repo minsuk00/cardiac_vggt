@@ -18,7 +18,8 @@ evaluation/
 ├── build_models_table.py  # harvest metadata.json -> models.json (git-tracked registry)
 ├── src/
 │   ├── engine/         # makes VOLUMES (run_vggt, run_svrtk3d, run_nesvor, run_seg,
-│   │                   #   build_inputs/pooled.py)
+│   │                   #   build_inputs/pooled.py; run_vggt_rt = real MIITT real-time
+│   │                   #   free-breathing recon, qualitative only — docs/87)
 │   ├── score/          # makes NUMBERS: run.py (THE entry point), image_metrics.py (PSNR/SSIM/NCC),
 │   │                   #   ef_dice.py (EF/Dice via nnU-Net), aggregate.py (folds image + breathing
 │   │                   #   resp_diag + timing [+ EF/Dice] into ONE metric_results/<ds>/<arm>.json)
