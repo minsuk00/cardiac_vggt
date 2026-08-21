@@ -110,6 +110,9 @@ class ComposedDataset(Dataset, ABC):
             sample["content_mask"] = torch.from_numpy(batch["content_mask"].astype(np.uint8))
         if "heart_roi_canonical" in batch:
             sample["heart_roi_canonical"] = torch.from_numpy(batch["heart_roi_canonical"].astype(np.uint8))
+        if "heart_seg_t" in batch:
+            # ARM corseg-dice: per-phase GT labels at t_target (0/1/2/3), (D, H, W).
+            sample["heart_seg_t"] = torch.from_numpy(batch["heart_seg_t"].astype(np.uint8))
         if "phases" in batch:
             # Full (T, D, H, W) canonical bundle in float16. Used by GPU aug
             # (Phase 4); inert under aug-off. Kept as float16 to keep batch
