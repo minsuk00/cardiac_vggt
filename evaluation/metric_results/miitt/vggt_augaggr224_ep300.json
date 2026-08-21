@@ -1,0 +1,259 @@
+{
+  "dataset": "miitt",
+  "method": "vggt_augaggr224_ep300",
+  "split": "val",
+  "n": 3,
+  "n_expected": 3,
+  "missing": [],
+  "ckpts": [
+    "8867644927:1786864582"
+  ],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": {
+    "n": 3,
+    "breath_ef_slope": -0.01381222541174883,
+    "breath_ef_spearman": -0.5,
+    "breath_ef_mae_pct": 11.622806016681928,
+    "breath_edv_mae_ml": 14.138132851791388,
+    "breath_esv_mae_ml": 9.7346663351059,
+    "breath_lvm_mae_g": 4.280639854202268,
+    "breath_rv_ef_mae_pct": 12.437210591373733,
+    "breath_rv_edv_mae_ml": 28.112932375812562,
+    "breath_rv_esv_mae_ml": 2.175599925899507,
+    "breath_dice_LV_ED": 0.8875220565154062,
+    "breath_hd95_LV_ED": 7.599999984105428,
+    "breath_dice_LV_ES": 0.8285861756457108,
+    "breath_hd95_LV_ES": 7.422311434384594,
+    "breath_dice_MYO_ED": 0.7536395054195384,
+    "breath_hd95_MYO_ED": 7.710165038395897,
+    "breath_dice_MYO_ES": 0.8037656273229729,
+    "breath_hd95_MYO_ES": 7.599999984105428,
+    "breath_dice_RV_ED": 0.8109706720936757,
+    "breath_hd95_RV_ED": 13.333333333333334,
+    "breath_dice_RV_ES": 0.8369262434321536,
+    "breath_hd95_RV_ES": 5.949257217334275
+  },
+  "all": {
+    "n": 3,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      17.460801336500378,
+      0.6532631470940005
+    ],
+    "breath_ssim": [
+      0.806890004211002,
+      0.06117164686296314
+    ],
+    "breath_ncc": [
+      0.8126090914011002,
+      0.05823789145194095
+    ],
+    "breath_psnr_unit_peak": [
+      17.487157609727646,
+      0.6323508001385392
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      5.78497105814547,
+      2.2392861003869253
+    ],
+    "resp_epe_dz_mm": [
+      0.7957897087855293,
+      0.3953608719477838
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      0.710028399948028,
+      0.3119214352623514
+    ],
+    "resp_slope": [
+      0.9427593092527609,
+      0.12245752308268021
+    ],
+    "n_resp": 3,
+    "recon_wall_sec": [
+      2.377119764996072,
+      0.18743380928848266
+    ],
+    "n_timing": 3
+  },
+  "per_subject": [
+    {
+      "subject": "MIITT_Volunteer6",
+      "resp_epe_dz_mm": 1.340617114045704,
+      "resp_epe_dz_demeaned_mm": 1.1419092224635088,
+      "resp_slope": 0.7719539817707475,
+      "resp_corr": 0.9914989254658538,
+      "ef_gt": 60.45758250658027,
+      "edv_gt": 96.80439670286185,
+      "esv_gt": 38.27879869623187,
+      "lvm_gt": 64.82699779200559,
+      "rv_ef_gt": 37.81280467988301,
+      "rv_edv_gt": 120.61839589176186,
+      "rv_esv_gt": 75.00919744520192,
+      "ef_breath": 46.70418006430868,
+      "edv_breath": 97.52959667816168,
+      "esv_breath": 51.97919822959903,
+      "lvm_breath": 66.16469774644379,
+      "rv_ef_breath": 26.338246702870443,
+      "rv_edv_breath": 101.05759655799872,
+      "rv_esv_breath": 74.44079746456151,
+      "dice_breath_LV_ED": 0.9347453353504791,
+      "dice_breath_LV_ES": 0.7717698154180239,
+      "hd95_breath_LV_ED": 2.799999952316284,
+      "hd95_breath_LV_ES": 10.0,
+      "dice_breath_MYO_ED": 0.7522388059701492,
+      "dice_breath_MYO_ES": 0.7307625799757911,
+      "hd95_breath_MYO_ED": 3.1304951151876907,
+      "hd95_breath_MYO_ES": 10.0,
+      "dice_breath_RV_ED": 0.8224050968940801,
+      "dice_breath_RV_ES": 0.8923278688524591,
+      "hd95_breath_RV_ED": 10.0,
+      "hd95_breath_RV_ES": 2.799999952316284,
+      "recon_wall_sec": 2.5524278881493956,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.88360067208608,
+      "breath_psnr": 17.82427104314168,
+      "breath_ssim": 0.880883201956749,
+      "breath_psnr_unit_peak": 17.82427104314168,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.802457653396053,
+      "pose": "none",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "/home/minsukc/vggt/scratch/logs/213340611_mri_volume_dpt_augaggr224_dynamic_axial_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786864582",
+      "stamps_agree": true
+    },
+    {
+      "subject": "MIITT_Volunteer7",
+      "resp_epe_dz_mm": 0.4145750297854344,
+      "resp_epe_dz_demeaned_mm": 0.41629538607473177,
+      "resp_slope": 1.0034047009885692,
+      "resp_corr": 0.9919044698544487,
+      "ef_gt": 57.67575322812052,
+      "edv_gt": 122.95079581232079,
+      "esv_gt": 52.03799822759632,
+      "lvm_gt": 100.57445657445437,
+      "rv_ef_gt": 61.15572350810896,
+      "rv_edv_gt": 124.47959576025018,
+      "rv_esv_gt": 48.353198353099856,
+      "ef_breath": 54.44826961406052,
+      "edv_breath": 108.17239631567007,
+      "esv_breath": 49.27439832172397,
+      "lvm_breath": 93.1656568267966,
+      "rv_ef_breath": 50.40345280540439,
+      "rv_edv_breath": 104.44839644250877,
+      "rv_esv_breath": 51.80279823560718,
+      "dice_breath_LV_ED": 0.8690637720488467,
+      "dice_breath_LV_ES": 0.913909847165796,
+      "hd95_breath_LV_ED": 10.0,
+      "hd95_breath_LV_ES": 2.2669343031537803,
+      "dice_breath_MYO_ED": 0.7586573188867644,
+      "dice_breath_MYO_ES": 0.8757782389564186,
+      "hd95_breath_MYO_ED": 10.0,
+      "hd95_breath_MYO_ES": 2.799999952316284,
+      "dice_breath_RV_ED": 0.875513698630137,
+      "dice_breath_RV_ES": 0.7563860792045259,
+      "hd95_breath_RV_ED": 10.0,
+      "hd95_breath_RV_ES": 10.0,
+      "recon_wall_sec": 2.1172813668381423,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8132743934790293,
+      "breath_psnr": 18.014625072479248,
+      "breath_ssim": 0.8087097754081091,
+      "breath_psnr_unit_peak": 18.035934289296467,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 3.0337154044278623,
+      "pose": "none",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "/home/minsukc/vggt/scratch/logs/213340611_mri_volume_dpt_augaggr224_dynamic_axial_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786864582",
+      "stamps_agree": true
+    },
+    {
+      "subject": "MIITT_Volunteer8",
+      "resp_epe_dz_mm": 0.6321769825254495,
+      "resp_epe_dz_demeaned_mm": 0.5718805913058436,
+      "resp_slope": 1.0529192449989657,
+      "resp_corr": 0.9968296827501509,
+      "ef_gt": 69.81157837247406,
+      "edv_gt": 143.5503951107026,
+      "esv_gt": 43.33559852399829,
+      "lvm_gt": 116.93555601719865,
+      "rv_ef_gt": 58.462518581439795,
+      "rv_edv_gt": 184.59279371280684,
+      "rv_esv_gt": 76.6751973884583,
+      "ef_breath": 51.92404637875987,
+      "edv_breath": 116.63959602727898,
+      "esv_breath": 56.07559809007648,
+      "lvm_breath": 112.84013615668782,
+      "rv_ef_breath": 43.377715487035736,
+      "rv_edv_breath": 139.8459952368737,
+      "rv_esv_breath": 79.1839973030091,
+      "dice_breath_LV_ED": 0.8587570621468926,
+      "dice_breath_LV_ES": 0.8000788643533123,
+      "hd95_breath_LV_ED": 10.0,
+      "hd95_breath_LV_ES": 10.0,
+      "dice_breath_MYO_ED": 0.7500223914017018,
+      "dice_breath_MYO_ES": 0.8047560630367085,
+      "hd95_breath_MYO_ED": 10.0,
+      "hd95_breath_MYO_ES": 10.0,
+      "dice_breath_RV_ED": 0.7349932207568101,
+      "dice_breath_RV_ES": 0.8620647822394759,
+      "hd95_breath_RV_ED": 20.0,
+      "hd95_breath_RV_ES": 5.047771699686543,
+      "recon_wall_sec": 2.461650040000677,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7409522086381912,
+      "breath_psnr": 16.543507893880207,
+      "breath_ssim": 0.7310770352681478,
+      "breath_psnr_unit_peak": 16.601267496744793,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 8.518740116612497,
+      "pose": "none",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "/home/minsukc/vggt/scratch/logs/213340611_mri_volume_dpt_augaggr224_dynamic_axial_pooled1337/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "8867644927:1786864582",
+      "stamps_agree": true
+    }
+  ]
+}
