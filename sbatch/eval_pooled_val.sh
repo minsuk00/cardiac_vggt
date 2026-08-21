@@ -117,6 +117,12 @@ for S in $SOURCES; do
       [ "$SKIP_GIF" = "1" ] || EVAL_DATASET="$S" \
         $PY evaluation/src/analysis/viz.py "$SUBJ" "vggt_$MODEL_NAME" || \
         echo "  [warn] gif render failed for $SUBJ — continuing"
+      # panel_dvf.png (predicted Δx/Δy/Δz at ED) is breath-arm-only and needs ed_dvf.npz, which
+      # run_vggt writes only for `breath` — SKIP_DVF=1 to opt out (~24s/subject, mostly I/O).
+      [ "$SKIP_DVF" = "1" ] || [[ " $ARMS " != *" breath "* ]] || EVAL_DATASET="$S" \
+        $PY evaluation/src/analysis/slice_panels.py --cohort "$S" --subject "$SUBJ" \
+          --method "vggt_$MODEL_NAME" --arm breath --panel dvf || \
+        echo "  [warn] dvf panel failed for $SUBJ — continuing"
   done
   [ "$N_SCORED" -gt 0 ] || { echo "  [fatal] no built subjects under evaluation/volumes/$S/out"; exit 1; }
 
