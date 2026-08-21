@@ -1,0 +1,25 @@
+# ARM corseg-dice sweep — replicates the awrobewn baseline config
+# (213340611_mri_volume_dpt_augaggr224_dynamic_axial_pooled1337: img 224, aggressive aug,
+# 300 epochs, heart_weight 0.5, diffusion 1000, tv 0 — the last three are already the
+# default) and adds ONLY the CorSeg soft-Dice term. corseg_weight is set per arm on the
+# command line; the corseg_weight=0 arm is the same-code control (bit-identical to no term,
+# needed because 11 training/ commits landed since awrobewn was trained).
+# Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
+#        --config exp_corseg loss.volume.corseg_weight=<W>
+
+defaults:
+  - default
+  - _self_
+
+exp_name: "${rev_ts:}_mri_volume_corseg_w${loss.volume.corseg_weight}_${mri_data_mode}_${mri_mode}_${dataset_name}"
+config_name: "mri_volume_corseg"
+
+img_size: 224
+max_epochs: 300
+
+data:
+  augmentation:
+    tier: "aggressive"
+
+logging:
+  filmstrip_every_n_val_epochs: 3

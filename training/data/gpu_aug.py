@@ -94,9 +94,11 @@ def build_gpu_transforms(aug_cfg=None):
     # augmented gt_target_volume, and an unwarped ROI is misaligned with the rotated heart
     # (moderate tier rotates ±180°). batchaug tolerates missing keys (base.py `if key in d`),
     # so subjects without an ROI pass through unchanged. Photometric ops stay phases-only.
-    keys = ["phases", "content_mask", "heart_roi_canonical"]
+    # ARM corseg-dice: `heart_seg_t` (per-phase GT labels at t_target) is likewise a
+    # train-time loss input and must ride the same affine (nearest keeps integer labels).
+    keys = ["phases", "content_mask", "heart_roi_canonical", "heart_seg_t"]
     mode_dict = {"phases": "bilinear", "content_mask": "nearest",
-                 "heart_roi_canonical": "nearest"}
+                 "heart_roi_canonical": "nearest", "heart_seg_t": "nearest"}
 
     if tier == "conservative":
         # Conservative tier — IN-DISTRIBUTION-PRIORITY (mild). Broadens the natural orientation
@@ -445,6 +447,11 @@ def gpu_augment_batch(batch, transforms, device,
         if heart_roi is not None:
             aug_dict["heart_roi_canonical"] = heart_roi.to(
                 device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
+        # ARM corseg-dice: warp the per-phase GT labels with the same affine (nearest).
+        heart_seg = batch.get("heart_seg_t")
+        if heart_seg is not None:
+            aug_dict["heart_seg_t"] = heart_seg.to(
+                device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
         try:
             aug_dict = transforms(aug_dict)
             # Aggressive tier only: docs/63 acquisition-artifact post-ops (isotropic
@@ -482,6 +489,11 @@ def gpu_augment_batch(batch, transforms, device,
             if heart_roi is not None and "heart_roi_canonical" in aug_dict:
                 batch["heart_roi_canonical"] = (
                     aug_dict["heart_roi_canonical"].squeeze(1) > 0.5).to(torch.uint8)
+            # ARM corseg-dice: write the warped labels back (nearest interp keeps them
+            # integral; round+clamp is cheap insurance, labels are 0..3).
+            if heart_seg is not None and "heart_seg_t" in aug_dict:
+                batch["heart_seg_t"] = (
+                    aug_dict["heart_seg_t"].squeeze(1).round().clamp(0, 3).to(torch.uint8))
             batch["gt_target_volume"] = gt_target_volume
             batch["anatomy_bbox"] = bboxes
             affine_applied = True

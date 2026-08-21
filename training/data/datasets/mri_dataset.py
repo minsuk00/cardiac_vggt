@@ -632,6 +632,32 @@ class MRIDataset(Dataset):
                     f"pre-native-z ROI; skipping (heart_roi_canonical metric omitted this sample)."
                 )
 
+        # ARM corseg-dice: per-phase GT labels at THIS sample's t_target, for the CorSeg
+        # soft-Dice loss (training/corseg_dice.py). On-disk (X, Y, Z, T=12) uint8, labels
+        # 1=LV_cav / 2=LV_myo / 3=RV (nnU-Net convention — corseg_dice remaps). Same
+        # (D, H, W) splat-order transpose and same warn-and-skip shape policy as the ROI
+        # above; the loss raises when corseg_weight > 0 and the key is absent.
+        heart_seg_path = os.path.join(sub_dir, "heart_seg_canonical.nii.gz")
+        heart_seg_np = None
+        if os.path.exists(heart_seg_path):
+            seg_xyzt = np.asarray(nib.load(heart_seg_path).dataobj)
+            if seg_xyzt.ndim == 4 and t_target < seg_xyzt.shape[3]:
+                seg_candidate = np.ascontiguousarray(
+                    np.transpose(seg_xyzt[..., t_target], (2, 1, 0))).astype(np.uint8)  # (D, H, W)
+                if seg_candidate.shape == (D, H_can, W_can):
+                    heart_seg_np = seg_candidate
+                else:
+                    logging.warning(
+                        f"MRIDataset: heart_seg_canonical phase shape {seg_candidate.shape} != "
+                        f"expected ({D}, {H_can}, {W_can}) for {sub_dir} — skipping "
+                        f"(heart_seg_t omitted this sample)."
+                    )
+            else:
+                logging.warning(
+                    f"MRIDataset: heart_seg_canonical ndim/T unexpected "
+                    f"(shape {seg_xyzt.shape}, t_target {t_target}) for {sub_dir} — skipping."
+                )
+
         rel_path = os.path.relpath(sub_dir, self.data_root)
         seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
 
@@ -651,6 +677,7 @@ class MRIDataset(Dataset):
             "anatomy_bbox": anatomy_bbox,
             "content_mask": content_mask_np,
             **({"heart_roi_canonical": heart_roi_np} if heart_roi_np is not None else {}),
+            **({"heart_seg_t": heart_seg_np} if heart_seg_np is not None else {}),
             "phases": phases_full,
             # This subject's own native z spacing (mm) and the derived voxel-index scale
             # (z_scale = Z_HALF_MM / dz) — required by splat.py's push/pull, loss.py's direct

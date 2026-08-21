@@ -75,7 +75,8 @@ class MultitaskLoss(torch.nn.Module):
             vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]
                         + vol_loss_dict.get("loss_diffusion", 0.0)
                         + vol_loss_dict.get("loss_gather", 0.0)
-                        + vol_loss_dict.get("loss_heart", 0.0)) * self.volume["weight"]
+                        + vol_loss_dict.get("loss_heart", 0.0)
+                        + vol_loss_dict.get("loss_corseg", 0.0)) * self.volume["weight"]
             total_loss = total_loss + vol_loss
             loss_dict.update(vol_loss_dict)
 
@@ -169,7 +170,7 @@ def _splat_preds_native(predictions, batch, grid_shape, z_scale):
 
 def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                                   diffusion_weight=0.0, gather_weight=0.0,
-                                  heart_weight=0.0, **kwargs):
+                                  heart_weight=0.0, corseg_weight=0.0, **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -274,6 +275,33 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         # heart_weight is then a straight relative weight.
         loss_heart = ((V_canon - V_gt).abs() * roi).sum() / roi.sum().clamp(min=1) * heart_weight
 
+    # ── ARM corseg-dice (docs/69 follow-up): ADDITIVE soft-Dice through a frozen CorSeg ──
+    # Rewards placing the endocardial BOUNDARY correctly (what contraction amplitude is),
+    # complementing the intensity-fidelity heart-L1 above. Full mechanism, label remap,
+    # preprocessing provenance and hygiene rules: training/corseg_dice.py docstring.
+    # `heart_seg_t` = heart_seg_canonical[..., t_target], loaded by get_data and co-warped
+    # with `phases` by the train-time affine aug (nearest) — same alignment contract as
+    # heart_roi_canonical. Raise-not-skip on a missing key: a weight that is asked for but
+    # cannot be applied is a bug (same policy as loss_heart above).
+    loss_corseg = pos_pred.new_zeros(())
+    corseg_sat = None
+    if corseg_weight > 0:
+        if "heart_seg_t" not in batch:
+            raise RuntimeError(
+                "loss.volume.corseg_weight > 0 but batch has no 'heart_seg_t'. The key is "
+                "dropped per-sample when heart_seg_canonical.nii.gz is absent or its on-disk "
+                "shape != the canonical grid (see MRIDataset.get_data). Use subjects with "
+                "per-phase segmentation, or set corseg_weight=0."
+            )
+        import corseg_dice
+        # Weight applied INSIDE (so the per-voxel grad clamp is in absolute units — see
+        # corseg_dice.py's post-mortem note on the job-57023101 dead-ReLU collapse).
+        loss_corseg = corseg_dice.corseg_dice_loss(V_canon, batch["heart_seg_t"], corseg_weight)
+        # Clamp-saturation fraction from the PREVIOUS backward (the hook fires after this
+        # step's scalars are logged — one-step lag, fine for a tuning diagnostic).
+        if corseg_dice.LAST_SAT is not None:
+            corseg_sat = corseg_dice.LAST_SAT
+
     # Plain TV on pos_pred — mean absolute difference between H/W neighbors. fp32-forced
     # so the reduction stays accurate under autocast(bf16).
     with torch.amp.autocast("cuda", enabled=False):
@@ -322,6 +350,10 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         "loss_diffusion": loss_diffusion,
         "loss_gather": loss_gather,
         "loss_heart": loss_heart,   # ARM heart-L1 (already scaled by heart_weight)
+        "loss_corseg": loss_corseg,  # ARM corseg-dice (already scaled by corseg_weight)
+        # Emitted only when the corseg term is active AND a backward has run (train-only in
+        # practice — val never backwards). _update_and_log_scalars skips absent keys.
+        **({"corseg_sat_frac": corseg_sat} if corseg_sat is not None else {}),
         "V_canon": V_canon,
         "V_gt": V_gt,
         "coverage": coverage,
