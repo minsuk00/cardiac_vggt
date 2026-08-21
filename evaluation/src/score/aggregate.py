@@ -207,6 +207,7 @@ def aggregate(dataset, method, split, exclude=()):
         ep = stat([r.get("resp_epe_dz_mm", float("nan")) for r in subset])
         ed = stat([r.get("resp_epe_dz_demeaned_mm", float("nan")) for r in subset])
         sl = stat([r.get("resp_slope", float("nan")) for r in subset])
+        co = stat([r.get("resp_corr", float("nan")) for r in subset])
         ws = stat([r["recon_wall_sec"] if r["recon_wall_sec"] is not None else float("nan")
                    for r in subset])
         print(f"\n[{label}]  n={bp[2]}")
@@ -221,7 +222,8 @@ def aggregate(dataset, method, split, exclude=()):
             print(f"  |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm   (no clean arm -> no breathing-cost delta)")
         if ep[2]:
             print(f"  breathing motion: EPE {ep[0]:.2f} +- {ep[1]:.2f} mm  "
-                  f"(demeaned {ed[0]:.2f} +- {ed[1]:.2f} mm)   slope {sl[0]:.2f} +- {sl[1]:.2f}  [n={ep[2]}]")
+                  f"(demeaned {ed[0]:.2f} +- {ed[1]:.2f} mm)   slope {sl[0]:.2f} +- {sl[1]:.2f}   "
+                  f"corr {co[0]:.2f} +- {co[1]:.2f}  [n={ep[2]}]")
         if ws[2]:
             print(f"  recon wall-clock: {ws[0]:.1f} +- {ws[1]:.1f} s per 12-phase cine  [n={ws[2]}]")
         # n keys off the BREATH count: the deliverable arm and the only one always present.
@@ -231,7 +233,7 @@ def aggregate(dataset, method, split, exclude=()):
                 "breath_psnr_unit_peak": bu[:2],
                 "cost_psnr": ct[:2], "breath_disp_mm": dz[:2],
                 "resp_epe_dz_mm": ep[:2], "resp_epe_dz_demeaned_mm": ed[:2],
-                "resp_slope": sl[:2], "n_resp": ep[2],
+                "resp_slope": sl[:2], "resp_corr": co[:2], "n_resp": ep[2],
                 "recon_wall_sec": ws[:2], "n_timing": ws[2]}
 
     summary = {"dataset": dataset, "method": method, "split": split, "n": len(rows),

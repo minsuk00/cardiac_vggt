@@ -40,7 +40,9 @@ set -euo pipefail
 
 # Derived from THIS script's location, so running the copy in a worktree evaluates the worktree's
 # code. It used to hardcode /home/minsukc/vggt, which silently ran main-tree code from anywhere.
-REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+# Under sbatch the script runs from SLURM's spool copy, so BASH_SOURCE points at
+# /var/spool/... — use the submit dir there; the dirname fallback covers `bash <path>`.
+REPO=${REPO:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}
 CKPT=${CKPT:-$REPO/scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt}
 MODEL_NAME=${MODEL_NAME:-augaggr224hw2_ep300}
 SPLIT=${SPLIT:-val}
@@ -102,6 +104,9 @@ for S in $SOURCES; do
   for SUBJ_DIR in "evaluation/volumes/$S/out"/*/; do
       [ -d "$SUBJ_DIR" ] || continue
       SUBJ="$(basename "$SUBJ_DIR")"
+      # off-split bundles share this tree; run_vggt skips them (no arm dir), so scoring them can
+      # only fail — skip here too, keeping failures on reconned subjects loud.
+      [ -d "$SUBJ_DIR/vggt_$MODEL_NAME" ] || { echo "  skip $SUBJ (no recon for this arm — off-split)"; continue; }
       N_SCORED=$((N_SCORED + 1))
       EVAL_DATASET="$S" \
         $PY evaluation/src/score/image_metrics.py "$SUBJ" "vggt_$MODEL_NAME" || \
