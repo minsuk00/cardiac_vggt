@@ -161,6 +161,8 @@ logging:
         - loss_diffusion
         - loss_gather
         - loss_heart
+        - loss_corseg
+        - corseg_sat_frac   # grad-clamp saturation (one-step lag; absent when corseg_weight=0)
         # Full-volume metrics (averaged over all D·H·W voxels; D is this subject's own
         # native slice count under native-z, so the voxel count VARIES per subject).
         - metric_mae_3d_full
@@ -186,6 +188,7 @@ logging:
         - loss_diffusion
         - loss_gather
         - loss_heart
+        - loss_corseg
         - metric_mae_3d_full
         - metric_mse_3d_full
         - metric_psnr_3d_full
@@ -464,6 +467,17 @@ loss:
     # Watch the V_canon-V_gt panel for ghost blobs (near-masked regime); fall back to
     # 0.05-0.10 if they appear, per the scale table above.
     heart_weight: 0.5
+
+    # ── ARM corseg-dice (docs/69 follow-up) ─────────────────────────────────────────────
+    # ADDITIVE soft-Dice through a frozen CorSeg-CineSAX (MedNeXt-L) on every z-slice of
+    # V_canon vs heart_seg_canonical[..., t_target]. Rewards endocardial BOUNDARY placement
+    # (= contraction amplitude) rather than ROI intensity fidelity. Mechanism, label remap,
+    # preprocessing and hygiene (re-score decisive ckpts with nnU-Net — amp_ratio is
+    # CorSeg-derived): training/corseg_dice.py. Needs per-phase heart_seg_canonical on the
+    # canonical grid; loss raises if the key is missing while the weight is on.
+    # The Dice term is O(1) while loss_volume is ~0.01 — the per-voxel grad clamp inside
+    # corseg_dice_loss bounds its pull regardless of this weight (see its docstring).
+    corseg_weight: 0.0
 
 # ── Optimizer ─────────────────────────────────────────────────────────────────────────────
 # AGGREGATOR FINETUNE (aggft) — required for reference-slice conditioning. Reference
