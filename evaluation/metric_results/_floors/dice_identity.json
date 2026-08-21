@@ -1,0 +1,1213 @@
+{
+ "meta": {
+  "what": "Identity Dice floors: LV Dice of the UNCORRECTED input vs target-phase GT. 'cardiac' = each plane's GT seg at its own randomly-drawn cardiac phase (no breathing); 'full' = the same plus the frozen per-plane breathing shift = the actual do-nothing input. Model-free (label arithmetic only). An arm's Dice minus 'full' is its motion-correction credit. See docs/86.",
+  "ed_es": "argmax/argmin of GT LV voxel-count curve (ef_dice.py convention)",
+  "sources": "heart_seg.nii.gz + manifest.breath.disp_dhw_mm + slot_t/slot_z from any arm's ed_dvf.npz (name-seeded draw, identical across arms)",
+  "generator": "evaluation/src/score/dice_floors.py"
+ },
+ "aggregate": {
+  "acdc": {
+   "n": 15,
+   "cardiac_ED": 0.8753100487741425,
+   "cardiac_ES": 0.7613948718986957,
+   "full_ED": 0.8044800753844459,
+   "full_ES": 0.7101718098780267
+  },
+  "cmrx2023": {
+   "n": 19,
+   "cardiac_ED": 0.8126532426057402,
+   "cardiac_ES": 0.7289500135050527,
+   "full_ED": 0.723485368846238,
+   "full_ES": 0.6450429450661257
+  },
+  "cmrx2024": {
+   "n": 29,
+   "cardiac_ED": 0.7991774424837584,
+   "cardiac_ES": 0.733685129012565,
+   "full_ED": 0.7125538297315018,
+   "full_ES": 0.6487647612592911
+  },
+  "cmrx2025": {
+   "n": 37,
+   "cardiac_ED": 0.8073516728185267,
+   "cardiac_ES": 0.7787791966656957,
+   "full_ED": 0.7196990500997715,
+   "full_ES": 0.6771574331174727
+  },
+  "miitt": {
+   "n": 3,
+   "cardiac_ED": 0.8435077371290137,
+   "cardiac_ES": 0.7121940774676085,
+   "full_ED": 0.7383325972531063,
+   "full_ES": 0.6492430085254571
+  },
+  "mnms": {
+   "n": 33,
+   "cardiac_ED": 0.8469443378454468,
+   "cardiac_ES": 0.7303236694458558,
+   "full_ED": 0.7295208696450626,
+   "full_ES": 0.6521907659008007
+  },
+  "ocmr": {
+   "n": 8,
+   "cardiac_ED": 0.8720260206610151,
+   "cardiac_ES": 0.7323339458500226,
+   "full_ED": 0.7587183769788964,
+   "full_ES": 0.6694720084433419
+  }
+ },
+ "per_subject": [
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient006",
+   "cardiac_ED": 0.8857964808991771,
+   "full_ED": 0.8447476828012358,
+   "cardiac_ES": 0.9119963818640938,
+   "full_ES": 0.8497312118916188
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient015",
+   "cardiac_ED": 0.9177662713657369,
+   "full_ED": 0.8869948069541658,
+   "cardiac_ES": 0.903540735647989,
+   "full_ES": 0.8078321678321678
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient020",
+   "cardiac_ED": 0.9354277340172192,
+   "full_ED": 0.9165387047240539,
+   "cardiac_ES": 0.8988832179493658,
+   "full_ES": 0.8801194326947002
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient024",
+   "cardiac_ED": 0.8587718256324979,
+   "full_ED": 0.8256642903434868,
+   "cardiac_ES": 0.7338357794525981,
+   "full_ES": 0.5897830172561079
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient029",
+   "cardiac_ED": 0.9017258222077499,
+   "full_ED": 0.7138543641598203,
+   "cardiac_ES": 0.5155963302752293,
+   "full_ES": 0.5645708322462822
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient035",
+   "cardiac_ED": 0.8273766778986908,
+   "full_ED": 0.7926766077494386,
+   "cardiac_ES": 0.7830093833780161,
+   "full_ES": 0.6898768077129084
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient041",
+   "cardiac_ED": 0.8959291728148598,
+   "full_ED": 0.8850139825629215,
+   "cardiac_ES": 0.849772382397572,
+   "full_ES": 0.7933388498138187
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient050",
+   "cardiac_ED": 0.9347915806851012,
+   "full_ED": 0.8762196455917742,
+   "cardiac_ES": 0.8909039387928591,
+   "full_ES": 0.953280468710541
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient060",
+   "cardiac_ED": 0.9028281363306744,
+   "full_ED": 0.8153143805768832,
+   "cardiac_ES": 0.9198088842975206,
+   "full_ES": 0.8217104411954975
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient061",
+   "cardiac_ED": 0.8785992863662767,
+   "full_ED": 0.811770761839396,
+   "cardiac_ES": 0.7051057523912165,
+   "full_ES": 0.744735344336938
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient071",
+   "cardiac_ED": 0.8907919978076185,
+   "full_ED": 0.8527563645786098,
+   "cardiac_ES": 0.6312561603329317,
+   "full_ES": 0.571021571021571
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient075",
+   "cardiac_ED": 0.8770353733857383,
+   "full_ED": 0.7362367334134993,
+   "cardiac_ES": 0.7930556568677511,
+   "full_ES": 0.6853242320819113
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient092",
+   "cardiac_ED": 0.8169014084507042,
+   "full_ED": 0.7495723729832185,
+   "cardiac_ES": 0.6921772826350205,
+   "full_ES": 0.5630876554443434
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient093",
+   "cardiac_ED": 0.8247032513332186,
+   "full_ED": 0.6358964598401218,
+   "cardiac_ES": 0.5571605447791993,
+   "full_ES": 0.5166639570801496
+  },
+  {
+   "dataset": "acdc",
+   "subject": "ACDC_patient094",
+   "cardiac_ED": 0.7812057124168756,
+   "full_ED": 0.7239439726480644,
+   "cardiac_ES": 0.6348206474190726,
+   "full_ES": 0.6215011588518452
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Test_P002",
+   "cardiac_ED": 0.8555678059536935,
+   "full_ED": 0.7189101071262226,
+   "cardiac_ES": 0.7420196747641036,
+   "full_ES": 0.658157602663707
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P022",
+   "cardiac_ED": 0.6990505630381982,
+   "full_ED": 0.6935898377267053,
+   "cardiac_ES": 0.8071182548794489,
+   "full_ES": 0.7225714285714285
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P023",
+   "cardiac_ED": 0.8915780466935582,
+   "full_ED": 0.8276750175602904,
+   "cardiac_ES": 0.601135867190913,
+   "full_ES": 0.5551731119659851
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P033",
+   "cardiac_ED": 0.8201438848920863,
+   "full_ED": 0.7019204007792931,
+   "cardiac_ES": 0.699601593625498,
+   "full_ES": 0.5591964432735057
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P039",
+   "cardiac_ED": 0.8951663527934715,
+   "full_ED": 0.571195335276968,
+   "cardiac_ES": 0.7962852007189934,
+   "full_ES": 0.4522236113591713
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P054",
+   "cardiac_ED": 0.8300720906282183,
+   "full_ED": 0.7553655874863586,
+   "cardiac_ES": 0.628974050524145,
+   "full_ES": 0.5852624714704924
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P069",
+   "cardiac_ED": 0.7902390438247012,
+   "full_ED": 0.5566628994143635,
+   "cardiac_ES": 0.6877440952203832,
+   "full_ES": 0.42445759368836294
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P070",
+   "cardiac_ED": 0.7936895483143958,
+   "full_ED": 0.7598533455545371,
+   "cardiac_ES": 0.7504046617028165,
+   "full_ES": 0.7165708961018792
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P092",
+   "cardiac_ED": 0.7445101351351351,
+   "full_ED": 0.7118000632711168,
+   "cardiac_ES": 0.8335233751425314,
+   "full_ES": 0.7804131599081867
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Train_P099",
+   "cardiac_ED": 0.8112835462573952,
+   "full_ED": 0.7287609856970533,
+   "cardiac_ES": 0.7691667821988077,
+   "full_ES": 0.7269398676242783
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P009",
+   "cardiac_ED": 0.9022028904167251,
+   "full_ED": 0.8295704845814978,
+   "cardiac_ES": 0.6619135234590616,
+   "full_ES": 0.5948581560283688
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P016",
+   "cardiac_ED": 0.8870138686839297,
+   "full_ED": 0.8204208738322166,
+   "cardiac_ES": 0.6238532110091743,
+   "full_ES": 0.5549318364073778
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P020",
+   "cardiac_ED": 0.7170764567194342,
+   "full_ED": 0.6903954173850175,
+   "cardiac_ES": 0.8638034436061134,
+   "full_ES": 0.8477867682056164
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P030",
+   "cardiac_ED": 0.8227267380308199,
+   "full_ED": 0.8097595473833098,
+   "cardiac_ES": 0.6022338728060178,
+   "full_ES": 0.5624713958810069
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P032",
+   "cardiac_ED": 0.7506573682405396,
+   "full_ED": 0.6926605504587156,
+   "cardiac_ES": 0.7658841266422571,
+   "full_ES": 0.6594454072790294
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P043",
+   "cardiac_ED": 0.8583708555055259,
+   "full_ED": 0.6601941747572816,
+   "cardiac_ES": 0.635848711858213,
+   "full_ES": 0.5515985430999595
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P047",
+   "cardiac_ED": 0.7272050614067733,
+   "full_ED": 0.7016902695294656,
+   "cardiac_ES": 0.8421567030460987,
+   "full_ES": 0.7705176767676768
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P050",
+   "cardiac_ED": 0.8926451187335093,
+   "full_ED": 0.7729711022668282,
+   "cardiac_ES": 0.7045876425351366,
+   "full_ES": 0.7452667814113597
+  },
+  {
+   "dataset": "cmrx2023",
+   "subject": "CMRx23_Val_P058",
+   "cardiac_ED": 0.7512122342409548,
+   "full_ED": 0.7428260079912823,
+   "cardiac_ES": 0.833795465666286,
+   "full_ES": 0.7879732045489952
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P012",
+   "cardiac_ED": 0.8047102959566486,
+   "full_ED": 0.6440408626560726,
+   "cardiac_ES": 0.7711631108052306,
+   "full_ES": 0.8181456426581775
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P020",
+   "cardiac_ED": 0.9214344030647491,
+   "full_ED": 0.7689085686931546,
+   "cardiac_ES": 0.7057697827959047,
+   "full_ES": 0.5346181299072091
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P023",
+   "cardiac_ED": 0.689289501590668,
+   "full_ED": 0.6901579586877278,
+   "cardiac_ES": 0.8732040229885057,
+   "full_ES": 0.7628096369189006
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P025",
+   "cardiac_ED": 0.8290598290598291,
+   "full_ED": 0.7836990595611285,
+   "cardiac_ES": 0.7465753424657534,
+   "full_ES": 0.6890306122448979
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P028",
+   "cardiac_ED": 0.8426525877929766,
+   "full_ED": 0.7437568780157454,
+   "cardiac_ES": 0.6841960352422908,
+   "full_ES": 0.581601466992665
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P044",
+   "cardiac_ED": 0.7252492464641781,
+   "full_ED": 0.38055964653902796,
+   "cardiac_ES": 0.2561576354679803,
+   "full_ES": 0.5148514851485149
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P054",
+   "cardiac_ED": 0.7204940875197711,
+   "full_ED": 0.6227480089693034,
+   "cardiac_ES": 0.920814479638009,
+   "full_ES": 0.7431968295904887
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P063",
+   "cardiac_ED": 0.9120060218291306,
+   "full_ED": 0.8895374943870678,
+   "cardiac_ES": 0.625,
+   "full_ES": 0.602119804692152
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P064",
+   "cardiac_ED": 0.7359336661308064,
+   "full_ED": 0.711282999831848,
+   "cardiac_ES": 0.8367377818126797,
+   "full_ES": 0.77737881508079
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Test_P068",
+   "cardiac_ED": 0.8279407317810704,
+   "full_ED": 0.6667396780199321,
+   "cardiac_ES": 0.6539017341040463,
+   "full_ES": 0.7201854193004635
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P011",
+   "cardiac_ED": 0.8150832686167918,
+   "full_ED": 0.8314341183421964,
+   "cardiac_ES": 0.7135102533172497,
+   "full_ES": 0.6653120464441219
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P034",
+   "cardiac_ED": 0.7562895508566136,
+   "full_ED": 0.5242406542056075,
+   "cardiac_ES": 0.7545827633378933,
+   "full_ES": 0.3775303643724696
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P035",
+   "cardiac_ED": 0.7661657363675397,
+   "full_ED": 0.7171447631754503,
+   "cardiac_ES": 0.7300525561395127,
+   "full_ES": 0.6453365529731361
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P053",
+   "cardiac_ED": 0.9214987582334521,
+   "full_ED": 0.8339404328262267,
+   "cardiac_ES": 0.6081253415922755,
+   "full_ES": 0.5296655879180151
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P074",
+   "cardiac_ED": 0.7541926209870627,
+   "full_ED": 0.7334558823529411,
+   "cardiac_ES": 0.8185887870390108,
+   "full_ES": 0.7049732514364969
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P091",
+   "cardiac_ED": 0.7954736968821476,
+   "full_ED": 0.6380987563107992,
+   "cardiac_ES": 0.6601008887821282,
+   "full_ES": 0.3252879868348875
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P113",
+   "cardiac_ED": 0.7315794073944585,
+   "full_ED": 0.7211655906473565,
+   "cardiac_ES": 0.7716688227684346,
+   "full_ES": 0.7466839210611452
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P120",
+   "cardiac_ED": 0.8920290576176734,
+   "full_ED": 0.8298327499027616,
+   "cardiac_ES": 0.6631494804156675,
+   "full_ES": 0.5796119494918386
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P127",
+   "cardiac_ED": 0.7801929260450161,
+   "full_ED": 0.732063657709366,
+   "cardiac_ES": 0.7274554132127606,
+   "full_ES": 0.677732379979571
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P130",
+   "cardiac_ED": 0.8044271160860269,
+   "full_ED": 0.672484727590076,
+   "cardiac_ES": 0.8035095820826599,
+   "full_ES": 0.5435128379913656
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P132",
+   "cardiac_ED": 0.8601968103155752,
+   "full_ED": 0.7348270995059986,
+   "cardiac_ES": 0.701882551278449,
+   "full_ES": 0.6741504854368932
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P141",
+   "cardiac_ED": 0.7423952720319833,
+   "full_ED": 0.659425248032843,
+   "cardiac_ES": 0.8744698897370653,
+   "full_ES": 0.6738946775556182
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P142",
+   "cardiac_ED": 0.6896059903726154,
+   "full_ED": 0.6857347157668932,
+   "cardiac_ES": 0.837785645317026,
+   "full_ES": 0.8001293661060802
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P145",
+   "cardiac_ED": 0.9123582265429371,
+   "full_ED": 0.6895699456253089,
+   "cardiac_ES": 0.7286010249700142,
+   "full_ES": 0.6231142594778959
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P175",
+   "cardiac_ED": 0.8383610101208607,
+   "full_ED": 0.7079996044694947,
+   "cardiac_ES": 0.7396149949341438,
+   "full_ES": 0.6602936155684535
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Train_P178",
+   "cardiac_ED": 0.7995726495726496,
+   "full_ED": 0.7847388427425032,
+   "cardiac_ES": 0.7958600999286224,
+   "full_ES": 0.7627158189454036
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Val_P048",
+   "cardiac_ED": 0.759592795614722,
+   "full_ED": 0.7553918990005261,
+   "cardiac_ES": 0.8273381294964028,
+   "full_ES": 0.7432675044883303
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Val_P054",
+   "cardiac_ED": 0.8104320747372519,
+   "full_ED": 0.761148129164531,
+   "cardiac_ES": 0.6836345125986256,
+   "full_ES": 0.6145057128663686
+  },
+  {
+   "dataset": "cmrx2024",
+   "subject": "CMRx24_Val_P055",
+   "cardiac_ED": 0.7379284924437891,
+   "full_ED": 0.7499330894816665,
+   "cardiac_ES": 0.7634180790960452,
+   "full_ES": 0.722521915037087
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center001_Siemens_30T_Vida_P004",
+   "cardiac_ED": 0.8123947457056248,
+   "full_ED": 0.7416046319272126,
+   "cardiac_ES": 0.6458692585044677,
+   "full_ES": 0.6255119065675717
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center001_UIH_30T_umr780_P004",
+   "cardiac_ED": 0.8103287358705797,
+   "full_ED": 0.6382882882882883,
+   "cardiac_ES": 0.8206356812010861,
+   "full_ES": 0.6980720261913423
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center002_Siemens_30T_CIMAX_P001",
+   "cardiac_ED": 0.7233060312732688,
+   "full_ED": 0.6766776835752263,
+   "cardiac_ES": 0.9060469765117442,
+   "full_ES": 0.8181818181818182
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center004_Siemens_15T_Aera_P014",
+   "cardiac_ED": 0.6578714187260017,
+   "full_ED": 0.5321553318265873,
+   "cardiac_ES": 0.715513342379014,
+   "full_ES": 0.5646411602900725
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center004_UIH_15T_umr680_P051",
+   "cardiac_ED": 0.9068933729386459,
+   "full_ED": 0.8887556221889056,
+   "cardiac_ES": 0.6823369102367569,
+   "full_ES": 0.6356944217241943
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center005_Siemens_30T_Vida_P021",
+   "cardiac_ED": 0.8930999161933141,
+   "full_ED": 0.828985775842098,
+   "cardiac_ES": 0.9154057771664375,
+   "full_ES": 0.8507947359425739
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center006_Siemens_30T_Prisma_P023",
+   "cardiac_ED": 0.9175486514168658,
+   "full_ED": 0.8864457678017,
+   "cardiac_ES": 0.9504985896468158,
+   "full_ES": 0.9178820232480117
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P003",
+   "cardiac_ED": 0.8336725414627809,
+   "full_ED": 0.7848653270628474,
+   "cardiac_ES": 0.8477041602465332,
+   "full_ES": 0.7683946998839837
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P009",
+   "cardiac_ED": 0.8045271698370492,
+   "full_ED": 0.6999865464819051,
+   "cardiac_ES": 0.8794736317416011,
+   "full_ES": 0.7440860215053764
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P010",
+   "cardiac_ED": 0.8348390380455528,
+   "full_ED": 0.7774099318403116,
+   "cardiac_ES": 0.712912661930631,
+   "full_ES": 0.630521654606329
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P011",
+   "cardiac_ED": 0.9136919315403423,
+   "full_ED": 0.8321257146351158,
+   "cardiac_ES": 0.9044443643441589,
+   "full_ES": 0.8219385547382085
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P012",
+   "cardiac_ED": 0.7172159483752016,
+   "full_ED": 0.706089082435633,
+   "cardiac_ES": 0.8,
+   "full_ES": 0.7949978923703808
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P013",
+   "cardiac_ED": 0.698825831702544,
+   "full_ED": 0.6000564493367203,
+   "cardiac_ES": 0.8380698073621972,
+   "full_ES": 0.5838803792851933
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1val_Center001_UIH_30T_umr780_P045",
+   "cardiac_ED": 0.6597829522705722,
+   "full_ED": 0.6728647323252963,
+   "cardiac_ES": 0.8049119555143651,
+   "full_ES": 0.703121540845694
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1val_Center001_UIH_30T_umr780_P052",
+   "cardiac_ED": 0.6474654377880185,
+   "full_ED": 0.5788518266394372,
+   "cardiac_ES": 0.8647540983606558,
+   "full_ES": 0.6699072028281042
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1val_Center002_UIH_30T_umr880_P011",
+   "cardiac_ED": 0.7808925204274042,
+   "full_ED": 0.6849251479633283,
+   "cardiac_ES": 0.6840390879478827,
+   "full_ES": 0.5114979583064689
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1val_Center004_Siemens_15T_Aera_P018",
+   "cardiac_ED": 0.8922885350884995,
+   "full_ED": 0.7895294789203294,
+   "cardiac_ES": 0.7059156524200396,
+   "full_ES": 0.5813664596273292
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R1val_Center006_Siemens_30T_Prisma_P009",
+   "cardiac_ED": 0.745744490234725,
+   "full_ED": 0.6039903264812576,
+   "cardiac_ES": 0.746401644962303,
+   "full_ES": 0.5912758741667641
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center001_Siemens_30T_Vida_P007",
+   "cardiac_ED": 0.7776955673639604,
+   "full_ED": 0.7556084971213024,
+   "cardiac_ES": 0.8912820512820513,
+   "full_ES": 0.8435061036621974
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center001_UIH_30T_umr780_P007",
+   "cardiac_ED": 0.8414233223747825,
+   "full_ED": 0.8020872865275143,
+   "cardiac_ES": 0.6023884791008078,
+   "full_ES": 0.4609981515711645
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P008",
+   "cardiac_ED": 0.8527309122104662,
+   "full_ED": 0.7780380399138012,
+   "cardiac_ES": 0.7352674524025385,
+   "full_ES": 0.6908823529411765
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P021",
+   "cardiac_ED": 0.767016008292065,
+   "full_ED": 0.754401604635614,
+   "cardiac_ES": 0.6940509915014165,
+   "full_ES": 0.6463441572785509
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P022",
+   "cardiac_ED": 0.8286808976464148,
+   "full_ED": 0.7510766580534023,
+   "cardiac_ES": 0.43710215216732345,
+   "full_ES": 0.47818735204599255
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center005_UIH_15T_umr670_P007",
+   "cardiac_ED": 0.8266637187707274,
+   "full_ED": 0.6204811689129613,
+   "cardiac_ES": 0.8503958883178219,
+   "full_ES": 0.646477132262052
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center006_Siemens_30T_Prisma_P004",
+   "cardiac_ED": 0.7941539728283245,
+   "full_ED": 0.7148283721251467,
+   "cardiac_ES": 0.7305084745762712,
+   "full_ES": 0.5926016359418874
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2test_Center006_UIH_30T_umr790_P024",
+   "cardiac_ED": 0.7271792234507586,
+   "full_ED": 0.5780240073868883,
+   "cardiac_ES": 0.7167808219178082,
+   "full_ES": 0.6336198281031381
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2val_Center004_UIH_15T_umr680_P007",
+   "cardiac_ED": 0.9499669593127537,
+   "full_ED": 0.8980983135988518,
+   "cardiac_ES": 0.9712602823194881,
+   "full_ES": 0.9055752806832358
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_R2val_Center004_UIH_15T_umr680_P028",
+   "cardiac_ED": 0.7641975308641975,
+   "full_ED": 0.6191950464396285,
+   "cardiac_ES": 0.8190338860850757,
+   "full_ES": 0.6016320474777448
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center001_UIH_30T_umr780_P005",
+   "cardiac_ED": 0.8896132760408949,
+   "full_ED": 0.7766701383722661,
+   "cardiac_ES": 0.6359493670886076,
+   "full_ES": 0.6308006119326874
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center001_UIH_30T_umr780_P006",
+   "cardiac_ED": 0.9075646164042036,
+   "full_ED": 0.8566086763634059,
+   "cardiac_ES": 0.9396844123285651,
+   "full_ES": 0.8910869082018227
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center001_UIH_30T_umr780_P043",
+   "cardiac_ED": 0.9275958290497871,
+   "full_ED": 0.8126829268292682,
+   "cardiac_ES": 0.6911834040546911,
+   "full_ES": 0.5927993301702484
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center002_UIH_30T_umr880_P005",
+   "cardiac_ED": 0.8080104484109708,
+   "full_ED": 0.455288192501399,
+   "cardiac_ES": 0.7845123937036367,
+   "full_ES": 0.4762988244216913
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center003_UIH_30T_umr880_P009",
+   "cardiac_ED": 0.574885145482389,
+   "full_ED": 0.5581324844626345,
+   "cardiac_ES": 0.8172964550058434,
+   "full_ES": 0.7000759301442673
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center005_Siemens_30T_Vida_P013",
+   "cardiac_ED": 0.8108057580856235,
+   "full_ED": 0.6563162970106076,
+   "cardiac_ES": 0.8124031007751938,
+   "full_ES": 0.7494469842206164
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P021",
+   "cardiac_ED": 0.9072179596476272,
+   "full_ED": 0.8018387553041019,
+   "cardiac_ES": 0.6032115429369328,
+   "full_ES": 0.5409153952843273
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P032",
+   "cardiac_ED": 0.8063291139240506,
+   "full_ED": 0.7812803103782735,
+   "cardiac_ES": 0.7251965959280405,
+   "full_ES": 0.6746166950596252
+  },
+  {
+   "dataset": "cmrx2025",
+   "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P034",
+   "cardiac_ED": 0.8598923652284959,
+   "full_ED": 0.7346004121822761,
+   "cardiac_ES": 0.9323889246619447,
+   "full_ES": 0.7871939736346516
+  },
+  {
+   "dataset": "miitt",
+   "subject": "MIITT_Volunteer6",
+   "cardiac_ED": 0.9251908396946565,
+   "full_ED": 0.7949873584698253,
+   "cardiac_ES": 0.6583808044191265,
+   "full_ES": 0.49351572215313555
+  },
+  {
+   "dataset": "miitt",
+   "subject": "MIITT_Volunteer7",
+   "cardiac_ED": 0.7719058317866563,
+   "full_ED": 0.7518226888305628,
+   "cardiac_ES": 0.8386264710623892,
+   "full_ES": 0.83991683991684
+  },
+  {
+   "dataset": "miitt",
+   "subject": "MIITT_Volunteer8",
+   "cardiac_ED": 0.8334265399057282,
+   "full_ED": 0.6681877444589309,
+   "cardiac_ES": 0.6395749569213096,
+   "full_ES": 0.6142964635063958
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_A5C2D2",
+   "cardiac_ED": 0.9285714285714286,
+   "full_ED": 0.7173740579135264,
+   "cardiac_ES": 0.6633355840648211,
+   "full_ES": 0.6294627383015597
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_A9F3T5",
+   "cardiac_ED": 0.8490284005979073,
+   "full_ED": 0.7998662058200469,
+   "cardiac_ES": 0.6210804684548545,
+   "full_ES": 0.589292130794107
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_B0H7V0",
+   "cardiac_ED": 0.9249972706430365,
+   "full_ED": 0.9039804086406666,
+   "cardiac_ES": 0.8419646148175451,
+   "full_ES": 0.8222757598220904
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_C4E9I1",
+   "cardiac_ED": 0.7547703180212014,
+   "full_ED": 0.5685585838718741,
+   "cardiac_ES": 0.7864364981504316,
+   "full_ES": 0.5361681329423265
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_C5L0R0",
+   "cardiac_ED": 0.8976778349059269,
+   "full_ED": 0.8479646381578947,
+   "cardiac_ES": 0.8047668559545709,
+   "full_ES": 0.7064516129032258
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_C6E0F9",
+   "cardiac_ED": 0.8981743182339011,
+   "full_ED": 0.6331406883464159,
+   "cardiac_ES": 0.7325981264081585,
+   "full_ES": 0.65465032444124
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_C8I7P7",
+   "cardiac_ED": 0.9076898118105127,
+   "full_ED": 0.671142038477282,
+   "cardiac_ES": 0.6976744186046512,
+   "full_ES": 0.6503352243424445
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D1H6U2",
+   "cardiac_ED": 0.8219080007159477,
+   "full_ED": 0.8190611833125631,
+   "cardiac_ES": 0.6701581648685451,
+   "full_ES": 0.6638995538030508
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D1R0Y5",
+   "cardiac_ED": 0.6989205560301313,
+   "full_ED": 0.6791954647821697,
+   "cardiac_ES": 0.8711048158640227,
+   "full_ES": 0.8512747875354107
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D1S5T8",
+   "cardiac_ED": 0.8450770682604593,
+   "full_ED": 0.7004256058368801,
+   "cardiac_ES": 0.8767582049564635,
+   "full_ES": 0.7456846950517837
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D2U0V0",
+   "cardiac_ED": 0.8462383305875892,
+   "full_ED": 0.7815847249018695,
+   "cardiac_ES": 0.8426051560379919,
+   "full_ES": 0.7546958228202971
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D5G3W8",
+   "cardiac_ED": 0.9071062271062271,
+   "full_ED": 0.8221476510067114,
+   "cardiac_ES": 0.6645606645606645,
+   "full_ES": 0.5840790238233585
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D6N7Q8",
+   "cardiac_ED": 0.7937057672037344,
+   "full_ED": 0.7216133942161339,
+   "cardiac_ES": 0.753112582781457,
+   "full_ES": 0.5103047895500725
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D7M8P9",
+   "cardiac_ED": 0.8507244967421959,
+   "full_ED": 0.525262532197345,
+   "cardiac_ES": 0.6429562803608605,
+   "full_ES": 0.5596412556053811
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D7T3V8",
+   "cardiac_ED": 0.8755161443173357,
+   "full_ED": 0.8150437241107239,
+   "cardiac_ES": 0.7200662320190417,
+   "full_ES": 0.6820477274977721
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_D8O0W2",
+   "cardiac_ED": 0.8404654654654654,
+   "full_ED": 0.7890566037735849,
+   "cardiac_ES": 0.5881344307270233,
+   "full_ES": 0.5775623268698061
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_E1L8Y4",
+   "cardiac_ED": 0.8733999260081391,
+   "full_ED": 0.8124179473318403,
+   "cardiac_ES": 0.7218289427875131,
+   "full_ES": 0.6255123587132033
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_E3F2U7",
+   "cardiac_ED": 0.8481041059008302,
+   "full_ED": 0.8161049217317726,
+   "cardiac_ES": 0.8170165745856354,
+   "full_ES": 0.7096643342460197
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_E4O8P3",
+   "cardiac_ED": 0.9129895201323773,
+   "full_ED": 0.7489456513089838,
+   "cardiac_ES": 0.5034947261405516,
+   "full_ES": 0.6574511126095752
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_F6J9L9",
+   "cardiac_ED": 0.7282840236686391,
+   "full_ED": 0.7012119152791936,
+   "cardiac_ES": 0.817968916329572,
+   "full_ES": 0.7568951930654059
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_G7Q2W0",
+   "cardiac_ED": 0.9282600664942741,
+   "full_ED": 0.7898000310029453,
+   "cardiac_ES": 0.6526415317338377,
+   "full_ES": 0.5512902811657465
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_H3R6S9",
+   "cardiac_ED": 0.9023549118139719,
+   "full_ED": 0.7391147524089247,
+   "cardiac_ES": 0.7173202614379085,
+   "full_ES": 0.7344309234073013
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_H6P7T1",
+   "cardiac_ED": 0.8841757135667553,
+   "full_ED": 0.7604433077578857,
+   "cardiac_ES": 0.6849191084964362,
+   "full_ES": 0.7339544513457557
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_I4L4V7",
+   "cardiac_ED": 0.7926892950391645,
+   "full_ED": 0.7254755940694604,
+   "cardiac_ES": 0.8883542919628212,
+   "full_ES": 0.7407337008173351
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_I7W4Y8",
+   "cardiac_ED": 0.7404082814535978,
+   "full_ED": 0.5028994845360825,
+   "cardiac_ES": 0.7493044822256569,
+   "full_ES": 0.4011670313639679
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_J6M5O2",
+   "cardiac_ED": 0.858154593282072,
+   "full_ED": 0.7186039264568401,
+   "cardiac_ES": 0.6734330484330484,
+   "full_ES": 0.6194029850746269
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_K3R0Y7",
+   "cardiac_ED": 0.8036643459142543,
+   "full_ED": 0.6848902281532501,
+   "cardiac_ES": 0.6951885912301746,
+   "full_ES": 0.6069779374037968
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_K5K6N1",
+   "cardiac_ED": 0.9203318348241183,
+   "full_ED": 0.709060762703599,
+   "cardiac_ES": 0.7416661099605852,
+   "full_ES": 0.5460216145644448
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_K5M7V5",
+   "cardiac_ED": 0.7540065534703604,
+   "full_ED": 0.7229557843731073,
+   "cardiac_ES": 0.9061846429638483,
+   "full_ES": 0.8682986349424235
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_K9N0W0",
+   "cardiac_ED": 0.866131621187801,
+   "full_ED": 0.6422525171522766,
+   "cardiac_ES": 0.748829558395546,
+   "full_ES": 0.7026702670267027
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_N2O7U5",
+   "cardiac_ED": 0.7740034124398946,
+   "full_ED": 0.753105430653937,
+   "cardiac_ES": 0.7435218460374503,
+   "full_ES": 0.7311245916938871
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_O7Q7U3",
+   "cardiac_ED": 0.8833896668276195,
+   "full_ED": 0.8248684371557948,
+   "cardiac_ES": 0.5438322551862592,
+   "full_ES": 0.42929061784897027
+  },
+  {
+   "dataset": "mnms",
+   "subject": "MNMs_P8V0Y7",
+   "cardiac_ED": 0.8382438376628766,
+   "full_ED": 0.6266205008454787,
+   "cardiac_ES": 0.7178631051752922,
+   "full_ES": 0.5895833333333333
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0012_3T",
+   "cardiac_ED": 0.8764254613311218,
+   "full_ED": 0.7633023648648649,
+   "cardiac_ES": 0.6605783866057838,
+   "full_ES": 0.6774699424986932
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0045_3T",
+   "cardiac_ED": 0.9267613108663925,
+   "full_ED": 0.831362431018419,
+   "cardiac_ES": 0.6178684411475946,
+   "full_ES": 0.6974894357444693
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0053_1_5T",
+   "cardiac_ED": 0.9033937122631689,
+   "full_ED": 0.8576721210250077,
+   "cardiac_ES": 0.7578137028483449,
+   "full_ES": 0.7129881925522252
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0060_1_5T",
+   "cardiac_ED": 0.8221374045801527,
+   "full_ED": 0.7327433628318584,
+   "cardiac_ES": 0.8558894903864103,
+   "full_ES": 0.7663865546218488
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0063_1_5T",
+   "cardiac_ED": 0.8783132530120482,
+   "full_ED": 0.6525017889580008,
+   "cardiac_ES": 0.8084910013844024,
+   "full_ES": 0.6216386224249095
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0068_1_5T",
+   "cardiac_ED": 0.8730412901749971,
+   "full_ED": 0.7480355606538572,
+   "cardiac_ES": 0.7213573552562533,
+   "full_ES": 0.652713728272437
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0069_1_5T",
+   "cardiac_ED": 0.8496862084800245,
+   "full_ED": 0.7595203981600182,
+   "cardiac_ES": 0.6816828478964402,
+   "full_ES": 0.6277798957936206
+  },
+  {
+   "dataset": "ocmr",
+   "subject": "OCMR_fs_0074_1_5T",
+   "cardiac_ED": 0.8464495245802145,
+   "full_ED": 0.7246089883191448,
+   "cardiac_ES": 0.7549903412749517,
+   "full_ES": 0.5993096956385315
+  }
+ ]
+}
