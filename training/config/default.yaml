@@ -163,6 +163,7 @@ logging:
         - loss_heart
         - loss_corseg
         - corseg_sat_frac   # grad-clamp saturation (one-step lag; absent when corseg_weight=0)
+        - loss_diff         # ARM twophase-diff (train-only term; absent when diff_weight=0)
         # Full-volume metrics (averaged over all D·H·W voxels; D is this subject's own
         # native slice count under native-z, so the voxel count VARIES per subject).
         - metric_mae_3d_full
@@ -478,6 +479,18 @@ loss:
     # The Dice term is O(1) while loss_volume is ~0.01 — the per-voxel grad clamp inside
     # corseg_dice_loss bounds its pull regardless of this weight (see its docstring).
     corseg_weight: 0.0
+
+    # ── ARM twophase-diff ───────────────────────────────────────────────────────────────
+    # Between-phase difference loss: per train step render a SECOND target phase
+    # t2 = (t1 + T//2) % T (second reference slice, identical companion slots, same
+    # breath — gpu_aug.build_twophase_inputs) and add heart-ROI L1 on
+    # (V_canon(t1)−V_canon(t2)) − (V_gt(t1)−V_gt(t2)). Rationale: every other term is
+    # single-phase and rewards hedging the ED−ES swing toward the temporal mean under
+    # phase uncertainty (measured SV ratio ~0.71, EF ~12 pts low; Dice sweep refuted
+    # per-phase boundary losses as the fix); this is the only gradient path that
+    # penalizes an under-sized swing directly. Train-only (val bit-identical to
+    # baseline); ~2× forward cost per step when on. 0.0 (default) = fully inert.
+    diff_weight: 0.0
 
 # ── Optimizer ─────────────────────────────────────────────────────────────────────────────
 # AGGREGATOR FINETUNE (aggft) — required for reference-slice conditioning. Reference

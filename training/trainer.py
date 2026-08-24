@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 from hydra.utils import instantiate
 from iopath.common.file_io import g_pathmgr
-from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
+from data.gpu_aug import build_gpu_transforms, build_twophase_inputs, gpu_augment_batch
 from data.respiratory import RespiratoryConfig
 from train_utils.checkpoint import CheckpointSaver
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
@@ -1073,6 +1073,10 @@ class Trainer(TrainerVizMixin):
                 batch, self.gpu_transforms, self.device,
                 respiratory_cfg=self.respiratory_cfg, train=True,
                 resp_generator=self.resp_generator)
+            # ARM twophase-diff: build the second-render inputs (t2 reference slice,
+            # shared companion slots, same breath) — train-only, inert at diff_weight=0.
+            if float((self.loss.volume or {}).get("diff_weight", 0.0) or 0.0) > 0:
+                batch = build_twophase_inputs(batch, self.device)
             if _aug_log:
                 self._log_augmentation_to_wandb(_orig_images, batch.get("images"), self.steps["train"])
             if data_iter == 0:
@@ -1202,8 +1206,16 @@ class Trainer(TrainerVizMixin):
         # Forward pass
         y_hat = model(images=batch["images"], batch=batch)
 
+        # ARM twophase-diff: second forward at t2 (only `images` differs — the model
+        # reads no other phase-dependent batch key). Train-only: `images_2` is built
+        # by build_twophase_inputs in train_epoch, so val never enters this branch.
+        y_hat2 = None
+        if phase == "train" and "images_2" in batch:
+            y_hat2 = model(images=batch["images_2"], batch=batch)
+
         # Loss computation
-        loss_dict = self.loss(y_hat, batch)
+        loss_dict = (self.loss(y_hat, batch, predictions_2=y_hat2)
+                     if y_hat2 is not None else self.loss(y_hat, batch))
         loss_dict["loss_objective"] = loss_dict["objective"]
 
         # Combine all data for logging

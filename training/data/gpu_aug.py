@@ -554,3 +554,45 @@ def gpu_augment_batch(batch, transforms, device,
         if affine_applied or "images" not in batch:
             batch["images"] = _resize_to_model_res(native, R)
     return batch
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ARM twophase-diff: second-render inputs for the two-phase difference loss
+# ──────────────────────────────────────────────────────────────────────────────
+def build_twophase_inputs(batch, device):
+    """Build render-2 inputs at a second target phase t2 = (t1 + T//2) % T.
+
+    Must run AFTER `gpu_augment_batch` (reads its post-aug `phases`/`images_splat`).
+    The two renders share slots 1..S-1 (the SAME tensors — identical by construction,
+    not by re-extraction); only slot 0 (the reference slice, which carries the target
+    phase per the camera-token contract) is re-extracted at t2, applying the SAME
+    respiratory displacement as render 1 (`resp_disp_mm[:, :1]`) so the two renders
+    see one breath. Emits: `images_2`, `images_splat_2`, `gt_target_volume_2`,
+    `t_target_2`. Train-only by call-site gating; everything derives from post-aug
+    GPU state, so no dataset/collate changes are involved.
+    """
+    if "images_splat" not in batch:
+        raise RuntimeError("build_twophase_inputs must run after gpu_augment_batch "
+                           "(batch['images_splat'] missing).")
+    phases = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
+    B, T = phases.shape[0], phases.shape[1]
+    t1 = batch["t_target"].reshape(-1).long().to(phases.device)
+    t2 = (t1 + T // 2) % T
+    z0 = batch["slice_indices"][:, :1]
+    H = phases.shape[-1]
+    disp = batch.get("resp_disp_mm")
+    if disp is not None:
+        dz = float(batch["dz_mm"].reshape(-1)[0])
+        native0 = extract_slices_with_respiratory_vec(
+            phases, t2.view(B, 1), z0, disp[:, :1],
+            spacing=(dz, 1.4, 1.4), out_size=H)[..., 0] / 255.0
+    else:
+        native0 = extract_slices_from_phases(
+            phases, t2.view(B, 1), z0, out_size=H)[..., 0] / 255.0
+    R = batch["images"].shape[-1]
+    batch["images_splat_2"] = torch.cat([native0, batch["images_splat"][:, 1:]], dim=1)
+    batch["images_2"] = torch.cat(
+        [_resize_to_model_res(native0, R), batch["images"][:, 1:]], dim=1)
+    batch["gt_target_volume_2"] = phases[torch.arange(B, device=phases.device), t2]
+    batch["t_target_2"] = t2.view(B, 1)
+    return batch
