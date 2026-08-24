@@ -55,13 +55,16 @@ class MultitaskLoss(torch.nn.Module):
         # Volume-intensity loss configuration (the only active task).
         self.volume = volume
 
-    def forward(self, predictions, batch) -> torch.Tensor:
+    def forward(self, predictions, batch, predictions_2=None) -> torch.Tensor:
         """
         Compute the total multi-task loss.
 
         Args:
             predictions: Dict containing model predictions for different tasks
             batch: Dict containing ground truth data and masks
+            predictions_2: ARM twophase-diff — optional second-render predictions at
+                t2 (see gpu_aug.build_twophase_inputs). None (val + every
+                diff_weight=0 run) leaves the output bit-identical to pre-arm.
 
         Returns:
             Dict containing individual losses and total objective
@@ -77,6 +80,38 @@ class MultitaskLoss(torch.nn.Module):
                         + vol_loss_dict.get("loss_gather", 0.0)
                         + vol_loss_dict.get("loss_heart", 0.0)
                         + vol_loss_dict.get("loss_corseg", 0.0)) * self.volume["weight"]
+
+            # ── ARM twophase-diff: between-phase difference term ─────────────────
+            # Every other term is single-phase and thus rewards hedging the swing
+            # toward the temporal mean under phase uncertainty; this is the only
+            # gradient path that penalizes "(V(t1) − V(t2)) is too small". Heart-ROI
+            # L1 on the swing error, same normalization/branchless policy as
+            # loss_heart. Render 2's world_points must stay attached (no detach).
+            diff_weight = float(self.volume.get("diff_weight", 0.0) or 0.0)
+            if predictions_2 is not None and diff_weight > 0:
+                if "images_splat_2" not in batch:
+                    raise RuntimeError(
+                        "diff_weight > 0 with predictions_2 but batch has no "
+                        "'images_splat_2' — build_twophase_inputs did not run; the "
+                        "model-res splat fallback would silently mis-render t2.")
+                if "heart_roi_canonical" not in batch:
+                    raise RuntimeError(
+                        "loss.volume.diff_weight > 0 but batch has no "
+                        "'heart_roi_canonical' (same policy as heart_weight).")
+                V_canon = vol_loss_dict["V_canon"]
+                grid_shape = tuple(V_canon.shape[1:])
+                z_scale = float(batch["z_scale"].reshape(-1)[0])
+                V_canon_2, _ = _splat_preds_native(
+                    predictions_2, {**batch, "images_splat": batch["images_splat_2"]},
+                    grid_shape, z_scale)
+                roi = batch["heart_roi_canonical"].bool()
+                dC = V_canon - V_canon_2
+                dG = batch["gt_target_volume"].float() - batch["gt_target_volume_2"].float()
+                loss_diff = ((dC - dG).abs() * roi).sum() / roi.sum().clamp(min=1) \
+                    * diff_weight
+                vol_loss = vol_loss + loss_diff * self.volume["weight"]
+                vol_loss_dict["loss_diff"] = loss_diff
+
             total_loss = total_loss + vol_loss
             loss_dict.update(vol_loss_dict)
 
