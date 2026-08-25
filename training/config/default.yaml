@@ -77,6 +77,13 @@ z_jitter: 0.5
 # native-z the bbox spans the whole stack ⇒ S == D (5-21 per subject). Set false for the
 # legacy fixed-S multi-frame sampler (full coverage + random extras up to the img_nums budget).
 one_frame_per_slice: true
+# Burst sampling (2026-08-25): k > 1 gives every in-bbox plane a burst of k temporally
+# SEQUENTIAL frames (t0 random per plane, mod-T wrap) instead of one random frame —
+# simulating a short real-time acquisition burst per slice. S = 1 + k*D; raise img_nums AND
+# num_slices (both budget checks) to 1 + k*21 alongside. Overrides the one_frame_per_slice
+# sampler when > 1; default 1 = bit-identical to it. Same-burst breathing coherence comes
+# from respiratory group_by_burst (already true). Incompatible with continuous_z.
+burst_k: 1
 # 935 pooled train subjects = one exact pass per epoch. TRUE as of 2026-08-01, when
 # `inside_random` was removed: the sampler's seeded permutation is now honoured, so an epoch
 # visits each subject EXACTLY once (verified: 935 draws, 935 unique, reshuffled per epoch).
@@ -284,6 +291,7 @@ data:
           reference_slot: ${reference_slot}
           continuous_z: ${continuous_z}
           one_frame_per_slice: ${one_frame_per_slice}
+          burst_k: ${burst_k}
           z_jitter: ${z_jitter}
           intensity_percentiles: ${intensity_percentiles}
           # The trainer's gpu_augment_batch re-extracts every input slice on GPU, so building
@@ -316,6 +324,7 @@ data:
           reference_slot: ${reference_slot}
           continuous_z: ${continuous_z}
           one_frame_per_slice: ${one_frame_per_slice}
+          burst_k: ${burst_k}
           z_jitter: ${z_jitter}
           intensity_percentiles: ${intensity_percentiles}
           # NOT deferred on val (deliberately — see the train block). 12 scripts across

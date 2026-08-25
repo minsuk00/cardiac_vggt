@@ -116,6 +116,7 @@ class MRIDataset(Dataset):
         reference_slot=False,
         continuous_z=False,
         one_frame_per_slice=False,
+        burst_k=1,
         z_jitter=0.5,
         cache_dir=None,
         ef_val_sweep=False,
@@ -183,6 +184,20 @@ class MRIDataset(Dataset):
         # multi-frame sampler (bit-identical to before). Composes with reference_slot (slot 0 =
         # target-phase z_mid = that plane's one frame) and continuous_z (per-plane off-grid jitter).
         self.one_frame_per_slice = bool(one_frame_per_slice)
+        # Burst sampling (2026-08-25): when burst_k > 1, every in-bbox z-plane contributes a
+        # BURST of `burst_k` temporally SEQUENTIAL frames (t0, t0+1, ..., t0+k-1 mod T; t0
+        # random per plane — ungated across slices), simulating a short real-time acquisition
+        # burst per slice; S = ref + burst_k * n_planes, replacing the one-frame/coverage
+        # sampler entirely. Slot 0 (reference_slot) is unchanged. Breathing coherence within a
+        # burst comes from respiratory `group_by_burst` (one breath phase per z-plane) — no
+        # coupling needed here. Default 1 → bit-identical to the existing samplers.
+        self.burst_k = int(burst_k)
+        if self.burst_k < 1:
+            raise ValueError(f"burst_k must be >= 1, got {burst_k}")
+        if self.burst_k > 1 and self.continuous_z:
+            # Independent per-slot z jitter would break the same-plane grouping that gives a
+            # burst its shared breathing draw (group_ids = slice_indices.round()).
+            raise ValueError("burst_k > 1 requires continuous_z=false")
         self.z_jitter = float(z_jitter)
         if self.t_target_phases is not None and len(self.t_target_phases) == 0:
             raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
@@ -422,72 +437,100 @@ class MRIDataset(Dataset):
         z_mid = (bbox_z0 + bbox_z1) // 2
         in_bbox_z = list(range(bbox_z0, bbox_z1)) or [z_mid]   # guard degenerate/empty bbox
 
-        if self.reference_slot:
-            z_sequence = [z_mid]                                # slot 0 = target-phase reference
-            coverage = [z for z in in_bbox_z if z != z_mid]     # cover the remaining planes once
-        else:
-            z_sequence = []
-            coverage = list(in_bbox_z)                          # cover all planes once
-
-        if self.one_frame_per_slice:
-            # Force S to the in-FOV plane count → every plane covered exactly once, n_extra=0
-            # (the sparse one-frame-per-slice extreme). Ignores the incoming budget S.
-            #
-            # ⚠️ CONSEQUENCE (docs/59 F9): under native-z, z is never zero-padded, so
-            # `anatomy_bbox` z-range is always [0, D) ⇒ **S == D exactly**. That makes
-            # `num_slices` / `img_nums` stale as descriptions of the slot budget, and — the
-            # operationally important part — the memory budget is no longer a knob at all:
-            # `max_img_per_gpu` was DELETED (docs/59 F9) and batch size is pinned to 1 in
-            # dynamic_dataloader, because under native-z two subjects with the same D but
-            # different pitch collate SILENTLY and would share one z_scale. To cut memory, cut
-            # D (or the model). `img_nums` survives as the S cap enforced just below.
+        if self.burst_k > 1:
+            # ── BURST SAMPLING (burst_k > 1; see the __init__ comment) ────
+            # Every in-bbox plane (INCLUDING z_mid — the reference is an extra observation,
+            # the burst is the acquisition) gets burst_k sequential frames starting at a
+            # random phase (mod-T wrap: cine is one closed R-R cycle). Replaces the
+            # one-frame/coverage/extras sampler AND its iid-t block entirely. Same rng
+            # conventions (train → global random, val → private Random(seq_index)); the
+            # n_forced_target ablation hook does not apply here.
+            z_sequence = [z_mid] if self.reference_slot else []
+            t_sequence = [t_target] if self.reference_slot else []
+            planes = list(in_bbox_z)
+            rng.shuffle(planes)                                 # order irrelevant (set attention)
+            for z in planes:
+                t0 = rng.randrange(T_total)
+                for j in range(self.burst_k):
+                    z_sequence.append(z)
+                    t_sequence.append(t_target if self.mode == "static" else (t0 + j) % T_total)
             budget = S
-            S = len(z_sequence) + len(coverage)
-            # docs/59 F19: S is now set by the DATA, so nothing else bounds it. Max D in the
-            # current train/val split is 18, but the pool holds D=19/20/21 subjects (all in
-            # test today) — a re-seeded split would silently request more slots than the
-            # memory budget was sized for. Fail loudly instead of OOM-ing mysteriously.
-            #
-            # Gated on `img_per_seq is not None`, i.e. only when the REAL dataloader supplied
-            # the budget (from img_nums). Standalone construction — tools, tests, the identity
-            # gate — falls back to `self.num_slices`, whose default (12) is NOT the training
-            # budget (20), so enforcing it there would reject perfectly valid D>12 subjects.
+            S = len(z_sequence)
+            # Same fail-loudly budget guard as one_frame_per_slice (docs/59 F19), sized for
+            # S = ref + burst_k * D. Gated on img_per_seq for the same standalone-caller reason.
             if img_per_seq is not None and S > budget:
                 raise ValueError(
-                    f"one_frame_per_slice needs S={S} slots for this subject (D={S}), "
-                    f"exceeding the configured budget of {budget} (img_nums). Raise img_nums, "
-                    f"or exclude the subject."
+                    f"burst_k={self.burst_k} needs S={S} slots for this subject "
+                    f"(D={len(planes)}, reference={self.reference_slot}), exceeding the "
+                    f"configured budget of {budget} (img_nums). Raise img_nums."
                 )
-
-        room = S - len(z_sequence)
-        if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < bbox_z_size)
-            rng.shuffle(coverage)
-            coverage = coverage[: max(0, room)]                 # can't fully cover; subsample
-        n_extra = max(0, room - len(coverage))
-
-        # Extra frames: uniform random over the in-bbox planes (with replacement). LOCAL rng →
-        # val deterministic, global RNG stream never perturbed.
-        extras = rng.choices(in_bbox_z, k=n_extra) if n_extra else []
-
-        tail = coverage + extras
-        rng.shuffle(tail)                                       # order is irrelevant to the
-        z_sequence += tail                                      # set-attention model; keeps val
-        #                                                         inputs varying per seq_index and
-        #                                                         interleaves extras with coverage.
-        # len(z_sequence) == S; slot 0 (if reference) stays the z_mid anchor.
-
-        # ── t per slot (extraction-only; never a model conditioning input) ──
-        if self.mode == "static":
-            t_sequence = [t_target] * S
         else:
-            t_sequence = [rng.randrange(T_total) for _ in range(S)]
-        # ABLATION HOOK (gated, default no-op): force the first n_forced_target slots
-        # to OBSERVE the target phase. Inference-only; training never passes it.
-        _n_forced = int(kwargs.get("n_forced_target", 0))
-        for _i in range(min(_n_forced, S)):
-            t_sequence[_i] = t_target
-        if self.reference_slot:
-            t_sequence[0] = t_target                            # slot 0 observes the target phase
+            if self.reference_slot:
+                z_sequence = [z_mid]                                # slot 0 = target-phase reference
+                coverage = [z for z in in_bbox_z if z != z_mid]     # cover the remaining planes once
+            else:
+                z_sequence = []
+                coverage = list(in_bbox_z)                          # cover all planes once
+
+            if self.one_frame_per_slice:
+                # Force S to the in-FOV plane count → every plane covered exactly once, n_extra=0
+                # (the sparse one-frame-per-slice extreme). Ignores the incoming budget S.
+                #
+                # ⚠️ CONSEQUENCE (docs/59 F9): under native-z, z is never zero-padded, so
+                # `anatomy_bbox` z-range is always [0, D) ⇒ **S == D exactly**. That makes
+                # `num_slices` / `img_nums` stale as descriptions of the slot budget, and — the
+                # operationally important part — the memory budget is no longer a knob at all:
+                # `max_img_per_gpu` was DELETED (docs/59 F9) and batch size is pinned to 1 in
+                # dynamic_dataloader, because under native-z two subjects with the same D but
+                # different pitch collate SILENTLY and would share one z_scale. To cut memory, cut
+                # D (or the model). `img_nums` survives as the S cap enforced just below.
+                budget = S
+                S = len(z_sequence) + len(coverage)
+                # docs/59 F19: S is now set by the DATA, so nothing else bounds it. Max D in the
+                # current train/val split is 18, but the pool holds D=19/20/21 subjects (all in
+                # test today) — a re-seeded split would silently request more slots than the
+                # memory budget was sized for. Fail loudly instead of OOM-ing mysteriously.
+                #
+                # Gated on `img_per_seq is not None`, i.e. only when the REAL dataloader supplied
+                # the budget (from img_nums). Standalone construction — tools, tests, the identity
+                # gate — falls back to `self.num_slices`, whose default (12) is NOT the training
+                # budget (20), so enforcing it there would reject perfectly valid D>12 subjects.
+                if img_per_seq is not None and S > budget:
+                    raise ValueError(
+                        f"one_frame_per_slice needs S={S} slots for this subject (D={S}), "
+                        f"exceeding the configured budget of {budget} (img_nums). Raise img_nums, "
+                        f"or exclude the subject."
+                    )
+
+            room = S - len(z_sequence)
+            if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < bbox_z_size)
+                rng.shuffle(coverage)
+                coverage = coverage[: max(0, room)]                 # can't fully cover; subsample
+            n_extra = max(0, room - len(coverage))
+
+            # Extra frames: uniform random over the in-bbox planes (with replacement). LOCAL rng →
+            # val deterministic, global RNG stream never perturbed.
+            extras = rng.choices(in_bbox_z, k=n_extra) if n_extra else []
+
+            tail = coverage + extras
+            rng.shuffle(tail)                                       # order is irrelevant to the
+            z_sequence += tail                                      # set-attention model; keeps val
+            #                                                         inputs varying per seq_index and
+            #                                                         interleaves extras with coverage.
+            # len(z_sequence) == S; slot 0 (if reference) stays the z_mid anchor.
+
+            # ── t per slot (extraction-only; never a model conditioning input) ──
+            if self.mode == "static":
+                t_sequence = [t_target] * S
+            else:
+                t_sequence = [rng.randrange(T_total) for _ in range(S)]
+            # ABLATION HOOK (gated, default no-op): force the first n_forced_target slots
+            # to OBSERVE the target phase. Inference-only; training never passes it.
+            _n_forced = int(kwargs.get("n_forced_target", 0))
+            for _i in range(min(_n_forced, S)):
+                t_sequence[_i] = t_target
+            if self.reference_slot:
+                t_sequence[0] = t_target                            # slot 0 observes the target phase
 
         # ── Continuous physical z (gated; default OFF → integer planes) ────
         # Jitter each non-reference slot's nominal integer plane into a CONTINUOUS physical z
