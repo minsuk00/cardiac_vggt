@@ -439,9 +439,13 @@ loss:
     # (it was ~30x too large). Since the penalty is ‖∇u‖², scaling the whole DVF by α scales
     # it by α²: recovering the ~25% missing contraction amplitude (α≈1.30) costs 0.22% of the
     # objective. So this term is NOT the binding constraint on contraction amplitude — do not
-    # reason about amplitude/EF from its weight. NB an arm with diffusion_weight=0 has never
-    # actually been trained, so "small in the objective" is strong evidence, not proof.
-    diffusion_weight: 1000.0
+    # reason about amplitude/EF from its weight.
+    # 0.0 = NO-REG, the default since 2026-08-28: the docs/90-corseg sweep (branch
+    # arm/corseg-dice) trained the diffusion=0 arm and it WON on per-patient EF ranking
+    # (r 0.792→0.837, bootstrap CI [+0.005,+0.082]) with bias/SV unchanged; the TD-loss arm
+    # failed the pre-registered rule (docs/91 §6 on arm/twophase-diff) — no-reg is the paper
+    # model. Set 1000.0 to reproduce the pre-2026-08-28 diffusion arm.
+    diffusion_weight: 0.0
     # Coverage-free gather-placement AUXILIARY (docs/37, docs/38): |sample_volume(V_gt, p) −
     # input_I|, a "pull" term restoring the sharp through-plane placement gradient the splat
     # ÷coverage flattens. Same [0,1] intensity scale as the primary L1 ⇒ a direct ratio.
