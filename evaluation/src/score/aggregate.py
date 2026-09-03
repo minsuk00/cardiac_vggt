@@ -163,7 +163,10 @@ def aggregate(dataset, method, split, exclude=()):
     # whole). One keying mode for the whole cohort: fingerprints only if EVERY ckpt-bearing row
     # has one, else realpath (mirrors run_vggt._same_ckpt).
     ckpt_rows = [r for r in rows if r.get("ckpt")]
-    use_fp = bool(ckpt_rows) and all(r.get("ckpt_fingerprint") for r in ckpt_rows)
+    # ... and only if they are all the same format (legacy size:mtime vs v2 content ids are not
+    # comparable — paths.same_fingerprint).
+    use_fp = bool(ckpt_rows) and all(r.get("ckpt_fingerprint") for r in ckpt_rows) and \
+        len({str(r["ckpt_fingerprint"]).startswith("v2:") for r in ckpt_rows}) == 1
     def _ckpt_key(r):
         if not r.get("ckpt"):
             return None

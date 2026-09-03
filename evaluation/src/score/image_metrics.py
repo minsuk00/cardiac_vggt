@@ -281,19 +281,28 @@ def score_subject(ds, subj, method):
         _save_nifti(rec, aff, paths.cine(ds, subj, method, var))
 
     # Shared 4D GT cine: deterministic from the read-only gt_t* files. Refresh when missing OR
-    # older than the bundle's gt_t00 — a plain skip-if-exists went permanently stale whenever a
+    # derived from a different gt bundle — a plain skip-if-exists went permanently stale whenever a
     # bundle was rebuilt (has happened: the native-z rebuild), showing viz/seg consumers a GT
-    # different from the one scored. The write bypasses _guarded_write_path deliberately: the
-    # content is derived, byte-reproducible, and staler-than-source — the one legitimate refresh
-    # of a pre-existing file. tmp+os.replace keeps it atomic, which also makes two arms of the
-    # same subject scoring in parallel (render_all_gifs -P4) a benign identical overwrite
-    # instead of a race.
-    cgt = paths.cine_gt(ds, subj)
-    gt0_mtime = os.path.getmtime(paths.bundle_stack(ds, subj, "gt", 0))
-    if not cgt.exists() or os.path.getmtime(cgt) < gt0_mtime:
+    # different from the one scored. Freshness is keyed on the gt_t00 CONTENT hash recorded in the
+    # cine_gt.src.json sidecar, not on mtimes (GPFS purge-avoidance `touch`es rewrite every mtime).
+    # The write bypasses _guarded_write_path deliberately: the content is derived,
+    # byte-reproducible, and staler-than-source — the one legitimate refresh of a pre-existing
+    # file. tmp+os.replace keeps it atomic, which also makes two arms of the same subject scoring
+    # in parallel (render_all_gifs -P4) a benign identical overwrite instead of a race. Cine first,
+    # sidecar second: a sidecar that matches implies the cine beside it is already current.
+    cgt, cgt_src = paths.cine_gt(ds, subj), paths.cine_gt_src(ds, subj)
+    gt_sha = paths.gt_sha256(ds, subj)
+    try:
+        cgt_fresh = cgt.exists() and json.load(open(cgt_src)).get("gt_sha256") == gt_sha
+    except (OSError, json.JSONDecodeError):
+        cgt_fresh = False
+    if not cgt_fresh:
         tmp = f"{cgt}.tmp{os.getpid()}.nii.gz"
         nib.save(nib.Nifti1Image(np.moveaxis(gt, 0, -1), aff), tmp)
         os.replace(tmp, cgt)
+        tmp = f"{cgt_src}.tmp{os.getpid()}"
+        json.dump({"gt_sha256": gt_sha}, open(tmp, "w"), indent=2)
+        os.replace(tmp, cgt_src)
 
     # Provenance: tie this metrics.json to the recon it scored (aggregate's mix checks).
     meta_path = str(paths.metadata(ds, subj, method))
@@ -304,6 +313,9 @@ def score_subject(ds, subj, method):
     metrics["ckpt_fingerprint"] = arm_meta.get("ckpt_fingerprint")
     metrics["regime"] = arm_meta.get("regime")
     metrics["git_commit"] = arm_meta.get("git_commit")
+    # Which gt bundle the cine_{clean,breath} beside this file were scored against; ef_dice.py
+    # compares it to the live bundle instead of cine-vs-gt_t00 mtimes.
+    metrics["gt_sha256"] = gt_sha
     metrics["recon_mtime"] = max((os.path.getmtime(f) for f in recon_files if os.path.exists(f)), default=0.0)
 
     out = _guarded_write_path(paths.metrics(ds, subj, method))

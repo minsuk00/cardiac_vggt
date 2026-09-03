@@ -105,8 +105,12 @@ def load_bundle(subj_dir, T, kind):
                      for t in range(T)])
 
 
-def make_dataset(cfg, subject_rel, split, tmpdir):
+def make_dataset(cfg, subject_rel, split, tmpdir, burst_k=None):
     """A ONE-SUBJECT MRIDataset, built with the run's own knobs.
+
+    `burst_k` (optional) overrides the run's frames-per-slice regime for a cross-regime arm
+    (a k=1 model fed 5-frame bursts, or a burst model fed 1 frame). The slot budget is raised
+    to fit S = 1 + burst_k * D for the largest pooled D (21) so the sampler's guard never fires.
 
     One subject per dataset is what decouples the slot draw from cohort composition.
     `get_data` uses `seq_index` for BOTH the subject index (`seq_index % len(subjects)`) and the
@@ -133,6 +137,9 @@ def make_dataset(cfg, subject_rel, split, tmpdir):
     # queried phase, so the COMPANION slots stay fixed across the sweep (same inputs, varying query).
     kw["t_target_fixed"] = 0
     kw["t_target_phases"] = None
+    if burst_k is not None:
+        kw["burst_k"] = int(burst_k)
+        kw["num_slices"] = max(int(kw.get("num_slices", 0)), 1 + int(burst_k) * 21)
     return MRIDataset(common, data_root, split=split, split_file=sf, **kw)
 
 
@@ -264,17 +271,15 @@ def _wandb_id(ckpt):
 
 
 def _ckpt_fingerprint(ckpt):
-    try:
-        st = os.stat(ckpt)
-        return f"{st.st_size}:{int(st.st_mtime)}"
-    except OSError:
-        return None
+    # Content-keyed (paths.ckpt_fingerprint): the legacy size:int(mtime) id was invalidated by
+    # any `touch` (GPFS purge-avoidance refreshes rewrite every mtime).
+    return paths.ckpt_fingerprint(ckpt)
 
 
 def _same_ckpt(prev, ident):
-    pf, cf = prev.get("ckpt_fingerprint"), ident.get("ckpt_fingerprint")
-    if pf and cf:
-        return pf == cf
+    same = paths.same_fingerprint(prev.get("ckpt_fingerprint"), ident.get("ckpt_fingerprint"))
+    if same is not None:
+        return same
     return os.path.realpath(prev.get("ckpt") or "") == os.path.realpath(ident.get("ckpt") or "")
 
 
@@ -341,6 +346,9 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--note", default="")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--burst-k", type=int, default=None,
+                    help="override the run's frames-per-slice regime (cross-regime arm); "
+                         "default: the run's own burst_k from run_meta.jsonl")
     args = ap.parse_args()
 
     method = paths.canonical_arm(args.model_name, date=args.date)
@@ -368,6 +376,8 @@ def main():
         "exp_name": cfg.get("exp_name"), "wandb_id": _wandb_id(args.ckpt),
         "img_size": cfg.get("img_size"), "backbone": cfg.get("backbone") or "dinov2_vitl14_reg",
         "one_frame_per_slice": cfg.get("one_frame_per_slice"),
+        "burst_k_trained": cfg.get("burst_k") or 1,
+        "burst_k_eval": args.burst_k if args.burst_k is not None else (cfg.get("burst_k") or 1),
         "continuous_z": cfg.get("continuous_z"), "reference_slot": cfg.get("reference_slot"),
         "aug_tier": ((cfg.get("data") or {}).get("augmentation") or {}).get("tier"),
         "protocol_source": "run_meta.jsonl (NOT the live default.yaml)",
@@ -387,7 +397,7 @@ def main():
         os.makedirs(md, exist_ok=True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            dset = make_dataset(cfg, man["rel_path"], args.split, tmpdir)
+            dset = make_dataset(cfg, man["rel_path"], args.split, tmpdir, burst_k=args.burst_k)
             seq = name_seed(ds_name, subject)          # name-keyed: cohort-composition independent
             # metadata_draw is filled by the breath arm only (it owns ed_dvf.npz), but metadata.json
             # is written for EVERY arm — initialise it or `--arms clean` raises UnboundLocalError

@@ -70,6 +70,20 @@ export -f recon_one; export OUT SD VAR MASK_FILE THICK RES ITERS OMP DBG
 # Provenance (once per subject/variant) — exact engine, command, params, container, AND the hardware
 # + timing needed for a fair speed comparison vs our GPU feed-forward model. See README "What is logged".
 SIF="${FCMR_SIF:-$VGGT/scratch/fetal_cmr_4d/sif/svrtk.sif}"
+# Content id of the container, "v2:<size>:<sha256 of first+last 64 MiB>[:16]" — the same format
+# as evaluation/paths.py ckpt_fingerprint. NOT size:mtime: GPFS purge-avoidance `touch`es rewrite
+# every mtime and would make clean/breath stamps from the same config disagree.
+container_id() {
+  local f=$1 size edge=$((64 << 20))
+  size=$(stat -c %s "$f" 2>/dev/null) || return 0
+  local sha
+  sha=$( { head -c "$edge" "$f"
+           if [ "$size" -gt "$edge" ]; then
+             local off=$(( size - edge > edge ? size - edge : edge ))
+             tail -c +$((off + 1)) "$f" | head -c "$edge"
+           fi; } | sha256sum | cut -c1-16 )
+  echo "v2:$size:$sha"
+}
 # SLURM ALLOCATION (what our job actually got) — NOT the node total. scontrol TRES has both cpu & mem.
 JINFO=$(scontrol show job "${SLURM_JOB_ID:-none}" 2>/dev/null | grep -oE 'cpu=[0-9]+,mem=[0-9]+[MG]' | head -1)
 NCPU_ALLOC=$(echo "$JINFO" | grep -oE 'cpu=[0-9]+' | cut -d= -f2); NCPU_ALLOC=${NCPU_ALLOC:-$(nproc)}
@@ -108,7 +122,7 @@ echo "$T_ALL" > "$OUT/total_wall.sec"                       # end-to-end wall, a
 N_OK=$(ls "$OUT"/vol_t*.nii.gz 2>/dev/null | wc -l)
 if [ "$N_OK" -eq "$T" ]; then
   printf '{"engine": "svrtk3d", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "robust_statistics": "off", "container_id": "%s"}\n' \
-    "$THICK" "$RES" "$ITERS" "$(stat -c '%s:%Y' "$SIF" 2>/dev/null)" > "$OUT/stamp.json"
+    "$THICK" "$RES" "$ITERS" "$(container_id "$SIF")" > "$OUT/stamp.json"
 else
   echo "NOT stamped: only $N_OK/$T phases OK"
 fi

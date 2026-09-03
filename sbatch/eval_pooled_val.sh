@@ -50,6 +50,7 @@ SOURCES=${SOURCES:-"cmrx2023 cmrx2024 cmrx2025 acdc mnms miitt ocmr"}
 SKIP_GIF=${SKIP_GIF:-0}          # 1 = metrics only (GIF rendering dominates wall-clock)
 ARMS=${ARMS:-breath}             # `breath` = the deliverable. Add `clean` ("clean breath") only
                                  # for the no-breathing PSNR ceiling; it ~doubles scoring time.
+RUN_VGGT_EXTRA=${RUN_VGGT_EXTRA:-}   # extra run_vggt.py flags, e.g. "--burst-k 5" (cross-regime arm)
 
 # Each source names its own split file — there is NO single file listing all seven, and forcing one
 # was why this driver could reach only 5 of the 7 committed results (miitt/ocmr had to be built by
@@ -90,7 +91,7 @@ for S in $SOURCES; do
 
   echo "=== [$S] score ======================================================="
   $PY evaluation/src/engine/run_vggt.py \
-      --dataset "$S" --ckpt "$CKPT" --model-name "$MODEL_NAME" --split "$SPLIT" --arms $ARMS
+      --dataset "$S" --ckpt "$CKPT" --model-name "$MODEL_NAME" --split "$SPLIT" --arms $ARMS $RUN_VGGT_EXTRA
 
   echo "=== [$S] assemble + metrics =========================================="
   # Scores every built subject; aggregate.py is the step that enforces $SPLIT, so an off-split
