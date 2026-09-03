@@ -48,6 +48,7 @@ MODEL_NAME=${MODEL_NAME:-augaggr224hw2_ep300}
 SPLIT=${SPLIT:-val}
 SOURCES=${SOURCES:-"cmrx2023 cmrx2024 cmrx2025 acdc mnms miitt ocmr"}
 SKIP_GIF=${SKIP_GIF:-0}          # 1 = metrics only (GIF rendering dominates wall-clock)
+SKIP_DVF=${SKIP_DVF:-0}          # 1 = skip the per-subject panel_dvf.png (breath arm only)
 ARMS=${ARMS:-breath}             # `breath` = the deliverable. Add `clean` ("clean breath") only
                                  # for the no-breathing PSNR ceiling; it ~doubles scoring time.
 RUN_VGGT_EXTRA=${RUN_VGGT_EXTRA:-}   # extra run_vggt.py flags, e.g. "--burst-k 5" (cross-regime arm)
