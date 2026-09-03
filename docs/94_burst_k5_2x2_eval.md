@@ -94,6 +94,40 @@ cmrx2024 −13.9→−6.2) while NCC drops in 6/7.
    is still there, and burst5@1 fr addresses it better than burst5@5 fr does — the two cells win
    on different halves of the EF error.
 
+## 3b. Is the NCC gain a coverage effect? No. (`tools/burst_coverage_check.py`, n=144)
+
+Hole fraction inside the scoring ROI and NCC re-scored on the voxels covered by ALL four arms
+(`ncc_common`) — same subjects, same voxels:
+
+| arm | hole_frac | NCC (ROI) | NCC (common voxels) | NCC (own covered) |
+|---|---|---|---|---|
+| burst5 @5 fr | 0.000 | 0.870 | **0.876** | 0.871 |
+| burst5 @1 fr | 0.015 | 0.809 | 0.840 | 0.841 |
+| noreg @1 fr (base) | 0.000 | 0.831 | 0.843 | 0.839 |
+| noreg @5 fr | 0.000 | 0.844 | 0.854 | 0.846 |
+
+The burst5@5 fr gain over the baseline is unchanged on equal-coverage voxels (+0.033 vs +0.037),
+so it lives in the rendered intensities, not in fewer holes. The one coverage story is burst5@1 fr:
+its 1.5% holes explain most of its ROI-NCC deficit (0.809 → 0.840 on common voxels, i.e. at parity
+with the baseline's 0.843) — at 1 frame the burst model tears small coverage holes, which the
+in-run `hole_frac_heart` (0.08 at 5 frames) never saw because training always fed 5 frames.
+
+## 3c. Predicted displacement magnitude (ED DVFs, cmrx2024 val n=29, mm, medians)
+
+| arm | whole-plane shift | heart local Δxy | tissue local Δxy | background Δxy | heart local Δz |
+|---|---|---|---|---|---|
+| noreg @1 fr | 2.44 | 1.18 | 0.28 | 0.46 | 1.36 |
+| burst5 @5 fr | 2.57 | **1.75** | 0.41 | 10.6 | **1.96** |
+| burst5 @1 fr | 2.52 | 1.80 | 0.39 | 10.6 | 1.78 |
+| noreg @5 fr | 2.53 | 0.85 | 0.22 | 0.46 | 1.01 |
+
+Whole-plane shift = breathing correction, identical across arms (slope vs applied AP shift
+1.0–1.1 for all). Inside the heart the burst model predicts ~1.5× more local in-plane and ~1.4×
+more through-plane motion than the baseline; the 1-frame model fed 5 frames predicts LESS (0.85),
+i.e. it averages instead of moving. The burst model also emits ~10 mm garbage Δ on background
+pixels (gated out of the splat by `intensity > 1e-3`; harmless, but it makes the raw
+`panel_dvf.png` and whole-image means misleading — restrict to tissue when quoting Δ).
+
 ## 4. Provenance / files
 
 - Checkpoints: `scratch/logs/212280371_burst5noreg224_pooled1337/ckpts/checkpoint_last.pt`
