@@ -39,6 +39,20 @@ OUT="$SD/$METHOD/recon_$VAR"; mkdir -p "$OUT"
 # Stage the 5.3GB .sif to node-local /tmp so container-internal torch/CUDA reads don't hit GPFS
 # (mirrors baselines/nesvor/run_nesvor.sh + the project's monai-cache pattern). Durable copy stays on GPFS.
 SIF_GPFS="$VGGT/scratch/nesvor/sif/nesvor.sif"
+# Content id of the container, "v2:<size>:<sha256 of first+last 64 MiB>[:16]" — the same format
+# as evaluation/paths.py ckpt_fingerprint. NOT size:mtime: GPFS purge-avoidance `touch`es rewrite
+# every mtime and would make clean/breath stamps from the same config disagree.
+container_id() {
+  local f=$1 size edge=$((64 << 20))
+  size=$(stat -c %s "$f" 2>/dev/null) || return 0
+  local sha
+  sha=$( { head -c "$edge" "$f"
+           if [ "$size" -gt "$edge" ]; then
+             local off=$(( size - edge > edge ? size - edge : edge ))
+             tail -c +$((off + 1)) "$f" | head -c "$edge"
+           fi; } | sha256sum | cut -c1-16 )
+  echo "v2:$size:$sha"
+}
 LOCAL_SIF="/tmp/vggt-nesvor_${USER}/nesvor.sif"
 mkdir -p "$(dirname "$LOCAL_SIF")"
 # ATOMIC + integrity-checked staging: flock serializes concurrent same-node jobs (e.g. a SLURM array
@@ -146,7 +160,7 @@ _pmean=$(cat "$OUT"/time_t*.sec 2>/dev/null | awk '{s+=$1;n++}END{if(n)printf "%
 N_OK=$(ls "$OUT"/vol_t*.nii.gz 2>/dev/null | wc -l)
 if [ "$N_OK" -eq "$T" ]; then
   printf '{"engine": "nesvor", "thickness_mm": %s, "output_resolution_mm": %s, "registration": "none", "container_id": "%s"}\n' \
-    "$THICK" "$RES" "$(stat -c '%s:%Y' "$SIF_GPFS" 2>/dev/null)" > "$OUT/stamp.json"
+    "$THICK" "$RES" "$(container_id "$SIF_GPFS")" > "$OUT/stamp.json"
 else
   echo "NOT stamped: only $N_OK/$T phases OK"
 fi

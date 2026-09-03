@@ -25,6 +25,7 @@ and ~15 tools/ scripts. Import standalone:
             v = paths.recon("cmrx2024", subj, arm, "clean", 0)
 """
 import json
+import os
 from pathlib import Path
 
 EVAL_ROOT = Path(__file__).resolve().parent
@@ -179,6 +180,58 @@ def cine(dataset, subject, arm, variant):
 def cine_gt(dataset, subject):
     """Shared 4D GT cine (method-independent). image_metrics.py writes it only if absent."""
     return subject_dir(dataset, subject) / "cine_gt.nii.gz"
+
+
+def cine_gt_src(dataset, subject):
+    """Sidecar recording WHICH gt bundle `cine_gt.nii.gz` was derived from ({"gt_sha256": ...}).
+    Freshness is content-keyed, never mtime-keyed: GPFS purge-avoidance `touch`es rewrite every
+    mtime and must not make a cine look stale (or fresh)."""
+    return subject_dir(dataset, subject) / "cine_gt.src.json"
+
+
+def gt_sha256(dataset, subject):
+    """Content id of the gt bundle = sha256 of gt_t00 (the same single file the old mtime rule
+    keyed on; a bundle rebuild rewrites every phase, so phase 0 stands for the set)."""
+    return file_sha256(bundle_stack(dataset, subject, "gt", 0))
+
+
+def file_sha256(path, chunk=1 << 22):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for blk in iter(lambda: fh.read(chunk), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def ckpt_fingerprint(path, edge=64 << 20):
+    """Content id of a checkpoint: "v2:<size>:<sha256 of first+last 64 MiB>[:16]". Replaces the
+    legacy "<size>:<int(mtime)>" (which any `touch` invalidated). Head+tail rather than the full
+    ~9 GB file: a training checkpoint differs from every other in its tensor bytes at both ends, and
+    a full GPFS read would cost ~1-2 min per invocation. None if unreadable."""
+    import hashlib
+    try:
+        size = os.path.getsize(path)
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            h.update(fh.read(edge))
+            if size > edge:
+                fh.seek(max(edge, size - edge))
+                h.update(fh.read(edge))
+        return f"v2:{size}:{h.hexdigest()[:16]}"
+    except OSError:
+        return None
+
+
+def same_fingerprint(a, b):
+    """Equality across fingerprint formats: two v2 (or two legacy) ids compare directly; a legacy
+    vs v2 pair cannot be compared -> None (caller falls back to path identity)."""
+    if not a or not b:
+        return None
+    va, vb = str(a).startswith("v2:"), str(b).startswith("v2:")
+    if va != vb:
+        return None
+    return a == b
 
 
 def metadata(dataset, subject, arm):
