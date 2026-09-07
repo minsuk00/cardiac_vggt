@@ -417,11 +417,20 @@ loss:
     # grid_shape is not a config param — compute_volume_intensity_loss derives it from
     # batch["gt_target_volume"].shape[1:] (D varies per subject, native-z, docs/58).
     #
-    # Note: the splat always renders NATIVE 256² slice content (batch["images_splat"],
-    # docs/73) — the predicted field is resampled to the native grid in the loss. Not a
-    # knob; series break vs pre-2026-08-13 runs: ~0.1 dB PSNR at 518, and coverage-derived
-    # metrics (metric_coverage_*, hole_frac_heart's absolute 0.5 threshold) see ~4.1× fewer
-    # splatted points at 518 — never compare hole_frac/coverage across the port.
+    # Note: the splat renders NATIVE 256² slice content (batch["images_splat"], docs/73) —
+    # the predicted field is resampled to the native grid in the loss. Series break vs
+    # pre-2026-08-13 runs: ~0.1 dB PSNR at 518, and coverage-derived metrics
+    # (metric_coverage_*, hole_frac_heart's absolute 0.5 threshold) see ~4.1× fewer splatted
+    # points at 518 — never compare hole_frac/coverage across the port.
+    #
+    # splat_res — TRAINING-TIME point density of the splat. null (default) = native 256²
+    # points per slice. An int R resamples BOTH the field and the native slice to R² before
+    # scattering (bilinear, align_corners=True), so R == img_size reproduces the pre-docs/73
+    # model-res splat (what the old 518 arm jyctv2mm trained against: 518² up-sampled points).
+    # Added 2026-09-06 to test whether that arm's EF/Dice edge over 224/336 came from the
+    # denser training splat rather than input resolution (the native-splat 518 replicate
+    # tracks 224/336). Does not change the rendered grid or the eval render.
+    splat_res: null
     #
     # WARP REGULARIZER = L2 DIFFUSION, not L1 TV (default as of 2026-08-01). Every recent
     # experiment — the whole docs/46 series of 100-epoch arms (control0/nogather, gather05,
