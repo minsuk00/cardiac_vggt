@@ -23,6 +23,20 @@ shopt -s nullglob   # empty globs expand to nothing (not a literal), so the coun
 
 _in=("$IN"/*_0000.nii.gz)
 [ "${#_in[@]}" -gt 0 ] || { echo "run_seg: no *_0000.nii.gz in $IN — run ef_dice.py dump first" >&2; exit 1; }
+
+# Tie the seg_dir to THIS dump (ef_dice.py score checks <SEG>/ef_dump_id against the manifest's
+# dump_id — content-keyed, so GPFS mtime refreshes can't fake or break freshness). A seg_dir
+# already stamped with a different id holds segs from another dump: refuse, don't mix.
+DUMP_ID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['meta']['dump_id'])" "$IN/ef_manifest.json") \
+  || { echo "run_seg: $IN/ef_manifest.json has no meta.dump_id — re-run ef_dice.py dump" >&2; exit 1; }
+if [ -f "$SEG/ef_dump_id" ] && [ "$(cat "$SEG/ef_dump_id")" != "$DUMP_ID" ]; then
+  echo "run_seg: $SEG belongs to dump $(cat "$SEG/ef_dump_id"), not $DUMP_ID — use a fresh seg_dir" >&2; exit 1
+fi
+_old=("$SEG"/*.nii.gz)
+if [ ! -f "$SEG/ef_dump_id" ] && [ "${#_old[@]}" -gt 0 ]; then
+  echo "run_seg: $SEG already holds ${#_old[@]} unstamped segs — use a fresh seg_dir" >&2; exit 1
+fi
+echo "$DUMP_ID" > "$SEG/ef_dump_id"
 echo "[run_seg] Task114 2d nnUNetTrainerV2_MMS   in=$IN (${#_in[@]} vols)  out=$SEG"
 
 micromamba run -n nnunet bash -c "source '$ENV_SH' && \

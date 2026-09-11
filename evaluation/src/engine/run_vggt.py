@@ -264,17 +264,15 @@ def _wandb_id(ckpt):
 
 
 def _ckpt_fingerprint(ckpt):
-    try:
-        st = os.stat(ckpt)
-        return f"{st.st_size}:{int(st.st_mtime)}"
-    except OSError:
-        return None
+    # Content-keyed (paths.ckpt_fingerprint): the legacy size:int(mtime) id was invalidated by
+    # any `touch` (GPFS purge-avoidance refreshes rewrite every mtime).
+    return paths.ckpt_fingerprint(ckpt)
 
 
 def _same_ckpt(prev, ident):
-    pf, cf = prev.get("ckpt_fingerprint"), ident.get("ckpt_fingerprint")
-    if pf and cf:
-        return pf == cf
+    same = paths.same_fingerprint(prev.get("ckpt_fingerprint"), ident.get("ckpt_fingerprint"))
+    if same is not None:
+        return same
     return os.path.realpath(prev.get("ckpt") or "") == os.path.realpath(ident.get("ckpt") or "")
 
 

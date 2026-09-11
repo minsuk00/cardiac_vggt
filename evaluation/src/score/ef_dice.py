@@ -24,7 +24,7 @@ Full chain (all git-tracked; nnU-Net runs in the isolated `nnunet` env, wrapped 
   python evaluation/src/score/ef_dice.py plot  metric_results/_ef/<m>.json --out <ef.png>
 Then re-run score/aggregate.py (or run.py) to fold the _ef file into metric_results/<ds>/<m>.json.
 """
-import argparse, glob, json, os, sys
+import argparse, glob, json, os, sys, uuid
 import numpy as np
 import nibabel as nib
 
@@ -54,6 +54,21 @@ def subjects(cohort, method):
     return [s for s in keep if method_dir(cohort, s, method)]
 
 
+def _json_field(path, key):
+    """One field of a JSON file; None if the file is missing/unreadable or lacks the key."""
+    try:
+        return json.load(open(path)).get(key)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _read_text(path):
+    try:
+        return open(path).read().strip()
+    except OSError:
+        return None
+
+
 def _dump_cine(cine_path, input_dir, cohort, sidx, arm):
     """Slice one 4D cine (X,Y,Z,T) into per-phase _0000.nii.gz for nnU-Net. Returns T or 0."""
     if not os.path.isfile(cine_path):
@@ -74,26 +89,35 @@ def dump(args):
         sys.exit(f"dump: {args.input_dir} already contains .nii.gz files from an earlier dump — "
                  f"sidx-keyed names would mis-attribute leftovers to the wrong subject. Use a fresh dir.")
     os.makedirs(args.input_dir, exist_ok=True)
-    manifest, meta = [], {"method": args.method}
+    # dump_id ties a seg_dir to THIS dump: run_seg.sh copies it to <seg_dir>/ef_dump_id and score()
+    # refuses a seg_dir whose id differs (stale segs from an earlier dump with a different sidx
+    # numbering). Content-keyed, not mtime-keyed — see the freshness note below.
+    manifest, meta = [], {"method": args.method, "dump_id": uuid.uuid4().hex}
     for cohort in args.cohorts:
         for sidx, subj in enumerate(subjects(cohort, args.method)):
             md = method_dir(cohort, subj, args.method)
             # Segment the SCORED volumes, not the raw recons: cine_* carries the exact
             # gauge/pose/PSF treatment image_metrics scored. Missing cine => that arm was
             # never scored — skip it rather than silently falling back to raw recons.
-            gt0_mtime = os.path.getmtime(paths.bundle_stack(cohort, subj, "gt", 0))
+            # Freshness is CONTENT-keyed (paths.gt_sha256 of gt_t00 vs the hash image_metrics
+            # recorded when it wrote the cine), never mtime-keyed: GPFS purge-avoidance `touch`es
+            # rewrite every mtime. A cine scored BEFORE a bundle rebuild would otherwise be
+            # segmented against the rebuilt GT (the T-count guard can't see a same-T rebuild).
+            gt_sha = paths.gt_sha256(cohort, subj)
+            if _json_field(paths.cine_gt_src(cohort, subj), "gt_sha256") != gt_sha:
+                print(f"  !! {cohort}/{subj}: cine_gt.nii.gz is missing or from a different gt bundle "
+                      f"(rebuilt since scoring?) — re-run score/image_metrics.py; skipped", file=sys.stderr)
+                continue
             T = _dump_cine(paths.cine_gt(cohort, subj), args.input_dir, cohort, sidx, "gt")
             if T == 0:
                 print(f"  !! {cohort}/{subj}: no cine_gt.nii.gz — run score/image_metrics.py first; skipped",
                       file=sys.stderr)
                 continue
+            arm_gt_sha = _json_field(f"{md}/metrics.json", "gt_sha256")
             for arm in ("clean", "breath"):
                 cine = f"{md}/cine_{arm}.nii.gz"
-                # Freshness: a cine scored BEFORE a bundle rebuild would be segmented against
-                # the rebuilt GT (the T-count guard can't see a same-T rebuild). Same mtime
-                # rule image_metrics uses for cine_gt.
-                if os.path.isfile(cine) and os.path.getmtime(cine) < gt0_mtime:
-                    print(f"  !! {cohort}/{subj} [{arm}]: cine_{arm} is OLDER than the gt bundle "
+                if os.path.isfile(cine) and arm_gt_sha != gt_sha:
+                    print(f"  !! {cohort}/{subj} [{arm}]: cine_{arm} was scored against a different gt bundle "
                           f"(rebuilt since scoring?) — re-run image_metrics; arm skipped", file=sys.stderr)
                     continue
                 n = _dump_cine(cine, args.input_dir, cohort, sidx, arm)
@@ -183,17 +207,21 @@ def score(args):
         sys.exit("score: --out required (legacy manifest carries no method for the default path)")
     from scipy import stats
     # Leftover segs from an EARLIER dump into the same seg_dir carry sidx's from a different
-    # subject enumeration — they would be silently attributed to the wrong subject. Segs must
-    # postdate the manifest that names them.
-    man_mtime = os.path.getmtime(f"{args.input}/ef_manifest.json")
+    # subject enumeration — they would be silently attributed to the wrong subject. The seg_dir
+    # must carry THIS dump's id (run_seg.sh writes <seg_dir>/ef_dump_id from the manifest and
+    # refuses a dir stamped with another id). Content-keyed, not mtime-keyed — a legacy manifest
+    # without dump_id cannot be verified and is refused outright.
+    dump_id = meta.get("dump_id")
+    if not dump_id:
+        sys.exit("score: manifest carries no dump_id (legacy dump) — re-run `ef_dice.py dump` on a fresh dir.")
+    seg_id = _read_text(f"{args.seg_dir}/ef_dump_id")
+    if seg_id != dump_id:
+        sys.exit(f"score: {args.seg_dir}/ef_dump_id is {seg_id!r} but the manifest's dump_id is {dump_id!r} — "
+                 f"segs are from another dump (or run_seg.sh was bypassed). Re-run run_seg.sh on a fresh seg_dir.")
     per_cohort = {}
     rows = []
     for m in subj_list:
         c, sidx, subj, T = m["cohort"], m["sidx"], m["subject"], m["T"]
-        for f in glob.glob(seg_path(args.seg_dir, c, sidx, "*", 0).replace("t00", "t*")):
-            if os.path.getmtime(f) < man_mtime:
-                sys.exit(f"score: {f} predates the dump manifest — stale seg from an earlier "
-                         f"dump with a different subject numbering. Re-run run_seg.sh on a fresh seg_dir.")
         gt, gtvox = curve(args.seg_dir, c, sidx, "gt", T)
         if gt is None:
             print(f"  !! {c}/{subj}: GT LV seg missing/empty — subject dropped from the EF cohort",
