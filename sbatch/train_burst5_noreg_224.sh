@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=5
-#SBATCH --mem=48g
+#SBATCH --mem=60g
 #SBATCH --time=14-00:00:00
 #SBATCH --mail-user=minsukc@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE,TIME_LIMIT
@@ -83,7 +83,7 @@ AUG_OVERRIDES="data.augmentation.enable=true data.augmentation.tier=aggressive"
 VARIANT_TAG="burst5noreg224${VARIANT_SUFFIX:-}"
 # --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
 # RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
-RESUME_FROM=""
+RESUME_FROM="./scratch/logs/212280371_burst5noreg224_pooled1337"
 # CKPT_ONLY: load weights from a checkpoint into a fresh exp dir. EMPTY here on purpose →
 # fresh-from-base (the config's base-weights resume path is used). Ignored if RESUME_FROM set.
 CKPT_ONLY=""
