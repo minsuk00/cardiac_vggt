@@ -34,7 +34,7 @@ from vggt.utils.splat import splat_to_volume  # noqa: E402
 
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 DATA = "scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT = "training/splits/random_8_1_1.txt"
+SPLIT = "training/splits/_archive/random_8_1_1.txt"
 TAU = 0.05
 
 

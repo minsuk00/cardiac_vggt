@@ -25,7 +25,7 @@ from data.datasets.mri_dataset import MRIDataset  # noqa: E402
 from omegaconf import OmegaConf  # noqa: E402
 
 DATA_ROOT = f"{VGGT}/scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT_FILE = f"{VGGT}/training/splits/random_8_1_1.txt"
+SPLIT_FILE = f"{VGGT}/training/splits/_archive/random_8_1_1.txt"
 COMMON = OmegaConf.create({"img_size": 518, "patch_size": 14, "rescale": True,
                            "rescale_aug": False, "landscape_check": False,
                            "augs": {"scales": [1.0, 1.0]}})

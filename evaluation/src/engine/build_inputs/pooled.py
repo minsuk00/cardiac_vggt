@@ -82,7 +82,7 @@ from data.respiratory import RespiratoryConfig, sample_resp_disp, reslice_volume
 import evaluation.paths as paths                                               # noqa: E402
 
 DATA_ROOT = os.path.join(ROOT, "scratch/data")
-DEFAULT_SPLIT_FILE = os.path.join(ROOT, "training/splits/pooled.txt")
+DEFAULT_SPLIT_FILE = os.path.join(ROOT, "training/splits/pooled_curated_v2.txt")  # docs/97; miitt/ocmr use their *_eval.txt
 DEFAULT_CFG = os.path.join(ROOT, "training/config/default.yaml")
 INPLANE_MM = 1.4          # canonical in-plane spacing; must match preprocess.TARGET_SPACING
 

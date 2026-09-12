@@ -41,7 +41,7 @@ def build_dataset():
     })
     return MRIDataset(
         common_conf, os.path.join(REPO, "scratch/data"),
-        split="val", split_file=os.path.join(REPO, "training/splits/cmrx24only.txt"),
+        split="val", split_file=os.path.join(REPO, "training/splits/_archive/cmrx24only.txt"),
         mode="dynamic", mri_mode="axial", num_slices=20, target_size=518,
         reference_slot=True, one_frame_per_slice=True, continuous_z=False,
         t_target_fixed=None, defer_input_images=False,

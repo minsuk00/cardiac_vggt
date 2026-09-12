@@ -195,3 +195,10 @@ GEMINI.md
 # Upstream clone, used unmodified as the EF segmentation backend (docs/57).
 # github.com/RunhaoXu2003/CorSeg @ b006956 — has its own nested .git; we edit nothing in it.
 /CorSeg/
+
+# NeSVoR upstream clone at v0.5.0 (own nested .git, bind-mounted over the image; docs/90)
+/baselines/nesvor/NeSVoR/
+
+# GPFS symlinks for reports / SLURM logs
+/_html
+/slurm_logs

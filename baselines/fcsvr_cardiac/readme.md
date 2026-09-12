@@ -255,7 +255,7 @@ The copied `models/flow_SNet4.py`, `models/losses.py`, and
 all native z planes are used once, and no cached file is rewritten by this fork.
 
 The default root is `/home/minsukc/vggt/scratch/data`; the default split is
-`training/splits/cmrx24only.txt`. These are command-line overrides, not copied
+`training/splits/_archive/cmrx24only.txt`. These are command-line overrides, not copied
 or edited data. This first protocol is valid only for the asserted CMR24 pitch
 of 12 mm. The loader returns each subject's `dz_mm`; the pipeline uses that
 value when running the respiratory reslicer and rendering, but this experiment

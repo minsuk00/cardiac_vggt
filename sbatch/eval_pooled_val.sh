@@ -56,15 +56,16 @@ RUN_VGGT_EXTRA=${RUN_VGGT_EXTRA:-}   # extra run_vggt.py flags, e.g. "--burst-k 
 # Each source names its own split file — there is NO single file listing all seven, and forcing one
 # was why this driver could reach only 5 of the 7 committed results (miitt/ocmr had to be built by
 # hand). pooled.txt carries the five trained-on sources; MIITT rides in pooled_miitt.txt (pooled.txt
-# VERBATIM + 13 MIITT lines, 5 train / 3 val / 5 test); OCMR is eval-only so its split lives under
-# evaluation/splits/ precisely so it can never be pulled into a training pool.
+# VERBATIM + 13 MIITT lines, 5 train / 3 val / 5 test — the docs/78 series only). Since the v2 series
+# MIITT and OCMR are both EVAL-ONLY held-out datasets (miitt_eval.txt / ocmr_eval.txt, all subjects
+# under [val], never in a training pool). All split files live in training/splits/ (docs/97).
 # Setting SPLIT_FILE overrides the lookup for EVERY source (the old single-file behaviour).
 split_file_for() {
   if [ -n "${SPLIT_FILE:-}" ]; then echo "$SPLIT_FILE"; return; fi
   case "$1" in
-    miitt) echo "$REPO/training/splits/pooled_miitt.txt" ;;
-    ocmr)  echo "$REPO/evaluation/splits/ocmr_eval.txt" ;;
-    *)     echo "$REPO/training/splits/pooled.txt" ;;
+    miitt) echo "$REPO/training/splits/miitt_eval.txt" ;;
+    ocmr)  echo "$REPO/training/splits/ocmr_eval.txt" ;;
+    *)     echo "$REPO/training/splits/pooled_curated_v2.txt" ;;
   esac
 }
 
