@@ -488,6 +488,14 @@ loss:
     # Watch the V_canon-V_gt panel for ghost blobs (near-masked regime); fall back to
     # 0.05-0.10 if they appear, per the scale table above.
     heart_weight: 0.5
+    # ── ARM motion-weighted L1 (docs/92) ────────────────────────────────────────────────
+    # λ>0 replaces the uniform full-volume mean with a temporal-swing-weighted mean:
+    # w = 1 + λ·clamp(swing/q99.5, 0, 1), swing = per-voxel max−min over the 12 phases.
+    # Graded, annulus-focused — targets the docs/92 mis-rendered wall band + ED pool that
+    # the binary 11× heart_weight failed to fix. 0.0 ⇒ exact .mean() (bit-identical).
+    # Reference at λ=10 (CMRx24_Train_P113): mean w annulus ~7.7, heart ~5.3, static ~1.9.
+    # Real-EF verdict (pooled1337, ep300, nnU-Net): λ=10 MAE 12.89→11.33, r 0.837→0.791.
+    motion_l1_weight: 0.0
 
 # ── Optimizer ─────────────────────────────────────────────────────────────────────────────
 # AGGREGATOR FINETUNE (aggft) — required for reference-slice conditioning. Reference

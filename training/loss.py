@@ -191,7 +191,8 @@ def _splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res=None)
 
 def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                                   diffusion_weight=0.0, gather_weight=0.0,
-                                  heart_weight=0.0, splat_res=None, **kwargs):
+                                  heart_weight=0.0, splat_res=None, motion_l1_weight=0.0,
+                                  **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -247,7 +248,31 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
     # valid = (V_gt > 1e-3).float()
     # denom = valid.sum().clamp(min=1.0)
     # loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
-    loss_volume = (V_canon - V_gt).abs().mean()
+    #
+    # ── ARM motion-weighted L1 (docs/92) ──
+    # motion_l1_weight=λ>0 replaces the uniform mean with a temporal-swing-weighted mean:
+    # w = 1 + λ·clamp(swing/q99.5, 0, 1), swing = per-voxel max−min over the 12 phases
+    # (the compute_motion_mask map WITHOUT its threshold — graded, not binary). Targets the
+    # docs/92 failure: the contraction annulus (wall band + ED blood pool) carries the EF
+    # error but is a tiny fraction of voxels; the binary 11× heart_weight already failed to
+    # fix it, hence the graded annulus-focused map. λ=0 keeps the exact .mean() (bit-identical).
+    # Post-aug batch["phases"] is required so the swing map matches the augmented V_gt.
+    if motion_l1_weight > 0:
+        if "phases" not in batch:
+            raise RuntimeError(
+                "loss.volume.motion_l1_weight > 0 but batch has no 'phases'. The swing map "
+                "needs the full (B, T, D, H, W) phase bundle (post-aug); batches built "
+                "outside the trainer must include it or set motion_l1_weight=0."
+            )
+        with torch.amp.autocast("cuda", enabled=False):
+            # amax/amin in the input dtype first (exact selections, fp16-safe — same idiom
+            # as compute_motion_mask), then upcast only the small (B, D, H, W) swing.
+            swing = (batch["phases"].amax(dim=1) - batch["phases"].amin(dim=1)).float()
+            swing_norm = (swing / torch.quantile(swing, 0.995).clamp(min=1e-6)).clamp(0, 1)
+            w = 1.0 + motion_l1_weight * swing_norm
+            loss_volume = (w * (V_canon.float() - V_gt.float()).abs()).sum() / w.sum()
+    else:
+        loss_volume = (V_canon - V_gt).abs().mean()
 
     # ── ARM heart-L1 (docs/69 follow-up): ADDITIVE heart-ROI L1 on top of the full L1 ──
     # Motivation: the full-volume L1 above averages over a volume in which the heart is only
