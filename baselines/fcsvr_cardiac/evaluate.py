@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint")
     parser.add_argument("--data-root", default="/home/minsukc/vggt/scratch/data")
-    parser.add_argument("--split-file", default="training/splits/cmrx24only.txt")
+    parser.add_argument("--split-file", default="training/splits/_archive/cmrx24only.txt")
     parser.add_argument("--output", default=str(DEFAULT_RUN_DIR / "evaluation.json"))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--limit", type=positive_int)

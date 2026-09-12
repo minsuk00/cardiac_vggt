@@ -29,7 +29,7 @@ from loss import compute_volume_intensity_loss
 
 CKPT = "/home/minsukc/vggt/scratch/logs/217721337_mri_volume_reference_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
+SPLIT_FILE = "/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt"
 CANON_SPACING = (1.4, 1.4, 12.0)  # canonical Z relabeled 8->12mm true pitch (docs/27)
 T = 12
 

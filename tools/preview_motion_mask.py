@@ -25,7 +25,7 @@ from data.datasets.mri_dataset import MRIDataset
 from data.datasets.mri_dataset import compute_geometric_bbox
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
+SPLIT_FILE = "/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt"
 OUT_DIR = "/home/minsukc/vggt/result/motion_mask_preview"
 SUBJECTS = [0, 7]               # which val subjects to render
 TAU_OVERLAY = 0.05             # threshold used for the overlay column (matches MOTION_MASK_TAU)

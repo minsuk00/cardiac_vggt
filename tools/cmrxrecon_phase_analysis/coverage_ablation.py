@@ -23,7 +23,7 @@ from loss import compute_volume_intensity_loss
 
 CKPT = "/home/minsukc/vggt/scratch/logs/218643188_mri_volume_noresp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt"
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
+SPLIT_FILE = "/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt"
 CANON_SPACING = (1.4, 1.4, 8.0); T = 12
 FORCE_LEVELS = [1, 6, 12]
 

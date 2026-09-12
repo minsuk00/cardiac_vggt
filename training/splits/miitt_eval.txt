@@ -1,0 +1,20 @@
+# MIITT gated SAX — EVAL-ONLY cohort (docs/97). U-Michigan paired gated + real-time free-breathing
+# cine (docs/78, tools/convert_miitt_to_12phase.py). All 13 subjects sit under [val]: MIITT is a
+# HELD-OUT dataset for the pooled_curated_v2 series and must never be added to a training pool.
+# (The earlier pooled_miitt.txt put Volunteer1-5 in train / 6-8 val / 9-10 + 3 patients test, so
+# checkpoints from THAT series are only clean on Volunteer6-10 + the patients; v2-trained models
+# are clean on all 13.) Same pattern as ocmr_eval.txt.
+[val]
+MIITT_sax/MIITT_Volunteer1
+MIITT_sax/MIITT_Volunteer2
+MIITT_sax/MIITT_Volunteer3
+MIITT_sax/MIITT_Volunteer4
+MIITT_sax/MIITT_Volunteer5
+MIITT_sax/MIITT_Volunteer6
+MIITT_sax/MIITT_Volunteer7
+MIITT_sax/MIITT_Volunteer8
+MIITT_sax/MIITT_Volunteer9
+MIITT_sax/MIITT_Volunteer10
+MIITT_sax/MIITT_Patient_2023Sep23_ARVC
+MIITT_sax/MIITT_Patient_2024Feb08_HCM
+MIITT_sax/MIITT_Patient_2024Jan04_Cardiomyopathy_AFib

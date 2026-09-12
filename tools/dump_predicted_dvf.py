@@ -35,7 +35,7 @@ from vggt.models.vggt import VGGT  # noqa: E402
 
 CKPT = str(ROOT / "scratch/logs/218747856_mri_volume_resp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt")
 DATA_ROOT = str(ROOT / "scratch/data/CMRxRecon2024/Cine_combined")
-SPLIT_FILE = str(ROOT / "training/splits/random_8_1_1.txt")
+SPLIT_FILE = str(ROOT / "training/splits/_archive/random_8_1_1.txt")
 OUT_PNG = str(ROOT / "result/predicted_dvf_ranges.png")
 NUM_SLICES = 12
 IN_PLANE_MM = (256 - 1) / 2.0 * 1.4      # 178.5
