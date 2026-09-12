@@ -371,9 +371,9 @@ data:
                                 # 2026-08-01. (docs/05's "aggressive aug hurts in-dist" was
                                 # measured on the AGGRESSIVE tier at 294 subjects; the default
                                 # here is moderate and the cohort is 1337.)
-    tier: "moderate"            # DEFAULT as of 2026-08-01: docs/46 §3 C2 is the shipped arm —
-                                # a robust OOD winner (+0.41 dB pooled OOD, p<0.001; MIITT
-                                # +0.48, ACDC +0.47) at a small in-dist cost (−0.13 dB).
+    tier: "aggressive"          # DEFAULT as of 2026-09-11: every arm since 2026-08-12 (the paper
+                                # recipe default_224, all pooled/curated sbatch scripts) trains
+                                # aggressive; moderate was the 2026-08-01 docs/46 §3 C2 default.
     respiratory:
       enable: true              # the proven "resp, z-only" recipe (docs/05)
       # SI breath-depth mean/jitter from Burger & Meintjes, "Elliptical Subject-Specific

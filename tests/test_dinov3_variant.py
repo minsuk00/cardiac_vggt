@@ -51,7 +51,7 @@ def test_default_and_dinov3_config_contracts():
     assert default.model.backbone == default.backbone
     assert default.model.img_size == default.img_size
     assert default.model.patch_size == default.patch_size
-    assert list(default.logging.wandb_writer.tags) == ["dinov2", "aug_mod", 518]
+    assert list(default.logging.wandb_writer.tags) == ["dinov2", "aug_agg", 518]
 
     dinov3 = _compose("exp_dinov3")
     assert (dinov3.backbone, dinov3.img_size, dinov3.patch_size) == (
@@ -63,7 +63,7 @@ def test_default_and_dinov3_config_contracts():
     assert dinov3.checkpoint.resume_checkpoint_path.endswith("vggt1b_dinov3_vitl16_seed.pt")
     assert dinov3.data.train.dataset.dataset_configs[0].patch_size == 16
     assert dinov3.data.val.dataset.dataset_configs[0].patch_size == 16
-    assert list(dinov3.logging.wandb_writer.tags) == ["dinov3", "aug_mod", 256]
+    assert list(dinov3.logging.wandb_writer.tags) == ["dinov3", "aug_agg", 256]
 
 
 def test_wandb_augmentation_tags_follow_overrides():
@@ -79,8 +79,8 @@ def test_wandb_augmentation_tags_follow_overrides():
 
     assert list(aggressive.logging.wandb_writer.tags) == ["dinov2", "aug_agg", 518]
     assert list(disabled.logging.wandb_writer.tags) == ["dinov2", "noaug", 518]
-    assert list(res224.logging.wandb_writer.tags) == ["dinov2", "aug_mod", 224]
-    assert list(res336.logging.wandb_writer.tags) == ["dinov2", "aug_mod", 336]
+    assert list(res224.logging.wandb_writer.tags) == ["dinov2", "aug_agg", 224]
+    assert list(res336.logging.wandb_writer.tags) == ["dinov2", "aug_agg", 336]
 
 
 def test_dinov3_special_token_removal_and_grid_validation():
