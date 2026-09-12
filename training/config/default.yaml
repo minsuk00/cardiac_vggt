@@ -433,7 +433,10 @@ loss:
     # model-res splat (what the old 518 arm jyctv2mm trained against: 518² up-sampled points).
     # Added 2026-09-06 to test whether that arm's EF/Dice edge over 224/336 came from the
     # denser training splat rather than input resolution (the native-splat 518 replicate
-    # tracks 224/336). Does not change the rendered grid or the eval render.
+    # tracks 224/336). Does not change the rendered grid. Applies to train AND the in-run
+    # val metrics / identity baseline / filmstrip (all splat the same point set); the
+    # offline `evaluation/` render stays native. Coverage/hole_frac are NOT comparable
+    # between splat_res arms and native arms (same series break as docs/73).
     splat_res: null
     #
     # WARP REGULARIZER = L2 DIFFUSION, not L1 TV (default as of 2026-08-01). Every recent

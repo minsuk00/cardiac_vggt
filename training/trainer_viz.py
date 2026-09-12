@@ -41,6 +41,12 @@ def _display_gamma(image, vmax: float, gamma: float = 0.7):
 class TrainerVizMixin:
     """Visualisation / diagnostic logging methods mixed into :class:`Trainer`."""
 
+    def _loss_splat_res(self):
+        """`loss.volume.splat_res` as the val step uses it, so the identity baseline and the
+        filmstrip splat the same point set as the val metrics (None = native)."""
+        vol = getattr(self.loss_conf, "volume", None)
+        return None if vol is None else vol.get("splat_res")
+
     def _subject_device_batch(self, data, seq_index):
         """The `get_data(...) numpy dict` → batched GPU tensors conversion, ONE copy.
 
@@ -168,7 +174,8 @@ class TrainerVizMixin:
                     respiratory_cfg=self.respiratory_cfg, train=False)
                 # Identity world_points = scanner_coords (Δ = 0).
                 preds = {"world_points": batch["scanner_coords"]}
-                out = compute_volume_intensity_loss(preds, batch, tv_weight=0.0)
+                out = compute_volume_intensity_loss(preds, batch, tv_weight=0.0,
+                                                    splat_res=self._loss_splat_res())
                 t = int(data["t_target"].item() if data["t_target"].ndim == 0 else data["t_target"].flatten()[0].item())
                 if "metric_psnr_3d_full" in out:
                     per_phase_full[t].append(out["metric_psnr_3d_full"].item())
@@ -423,7 +430,7 @@ class TrainerVizMixin:
                     preds = model(batch["images"], batch=batch)
                     out = compute_volume_intensity_loss(
                         {"world_points": preds["world_points"].float()},
-                        batch, tv_weight=0.0,
+                        batch, tv_weight=0.0, splat_res=self._loss_splat_res(),
                     )
                 V_canon = out["V_canon"][0].float().cpu().numpy()
                 V_gt = out["V_gt"][0].float().cpu().numpy()
