@@ -381,7 +381,9 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         # V_canon≈0) padded voxels that inflate PSNR — see `_bbox` companion below.
         mse_full = ((V_canon - V_gt) ** 2).mean()
         psnr_full = 10.0 * torch.log10(torch.tensor(1.0, device=mse_full.device) / mse_full.clamp(min=1e-10))
-        out["metric_mae_3d_full"] = loss_volume.detach()
+        # Plain (unweighted) MAE so the metric keeps its meaning when motion_l1_weight > 0
+        # turns loss_volume into a swing-weighted mean. At λ=0 this equals loss_volume.
+        out["metric_mae_3d_full"] = (V_canon - V_gt).abs().mean().detach()
         out["metric_mse_3d_full"] = mse_full
         out["metric_psnr_3d_full"] = psnr_full
         out["metric_gt_coverage_frac"] = (V_gt > 1e-3).float().mean()  # data property
