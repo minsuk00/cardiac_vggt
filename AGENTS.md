@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repo.
 
 ## Project
 
-VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D MRI slice-to-volume reconstruction** on CMRxRecon2024 (`Cine_combined`, 301 subjects split 240/30/31 train/val/test via `training/splits/random_8_1_1.txt`).
+VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D MRI slice-to-volume reconstruction** on CMRxRecon2024 (`Cine_combined`, 301 subjects split 240/30/31 train/val/test via `training/splits/_archive/random_8_1_1.txt`; the live split is now `training/splits/pooled_curated_v2.txt`, see `training/splits/README.md`).
 
 **Research goal:** real-time free-breathing cine — reconstruct the full 3D heart at any target cardiac phase from a few scattered single-frame-per-slice acquisitions. No real-time training data exists, so we **simulate** the sparse scattered acquisition from gated cine + motion aug and aim to generalize to true real-time cine. **Information contract:** the model may know only `z` per input slice — input cardiac `t` and respiratory `r` are unavailable (design stance, not fully implemented) — `docs/04`. Full statement: docs/65.
 

@@ -145,7 +145,7 @@ copy `curated_sev5mm.txt` over `pooled_curated_v1.txt`.
   (Canon, 50 subj) and CMRx25 Center012 (Philips, 12) have **zero train subjects** (val/test only), and
   most CMRx25 centres have 1–7 val/test subjects, so per-centre evaluation on them is not meaningful.
   A centre-stratified re-split would fix this at the cost of comparability with every existing run.
-  Deferred by the user until the curation was signed off; the curation is now signed off.
+  **DONE 2026-09-11 → `pooled_curated_v2.txt` (docs/97)**; v1 is now the pre-re-split record only.
 - 38 subjects have `weak_step_evidence` (every scored pair zeroed as a seg/img contradiction); their
   score rests on spike alone. Flagged in `subjects_v3.csv`, not acted on.
 - The `include` decisions keep 90 moderate/severe-scored subjects; if the docs/38 ablation shows the

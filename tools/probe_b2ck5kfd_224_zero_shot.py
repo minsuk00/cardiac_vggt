@@ -15,7 +15,7 @@ from loss import compute_volume_intensity_loss
 
 CKPT = os.path.join(REPO, "scratch/logs/213520194_mri_volume_heartl1_w050_dynamic_axial_cmrx24only/ckpts/checkpoint_best.pt")
 ROOT = os.path.join(REPO, "scratch/data")
-SPLIT = os.path.join(REPO, "training/splits/cmrx24only.txt")
+SPLIT = os.path.join(REPO, "training/splits/_archive/cmrx24only.txt")
 OUT_DIR = os.path.join(REPO, "result", "resolution_experiments")
 
 def stack(data, key, device, dtype=np.float32):

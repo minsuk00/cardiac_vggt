@@ -44,17 +44,21 @@ seed_value: 42
 num_workers: 4
 
 # ── Cohort ────────────────────────────────────────────────────────────────────────────────
-# Pooled multi-dataset cohort (docs/58 §13): 1337 subjects across CMRxRecon2023/2024/2025 +
-# ACDC + M&Ms-1, split 935/133/269 (69.9:9.9:20.1). 6 source-shipped duplicate subjects are
-# excluded (docs/59 F3), which is why this is 1337 and not 1343. data_root is the shared
-# parent, and split-file lines are relative paths under it (e.g.
-# `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`) — MRIDataset._find_subjects joins them
-# directly. The old CMRxRecon2024-only pair was:
+# Curated pooled cohort (docs/96 + docs/97): 898 subjects across CMRxRecon2023/2024/2025 +
+# ACDC + M&Ms-1 after inter-slice-misalignment curation of the 1337-subject pool (docs/58 §13),
+# re-split 628/90/180 (69.9:10.0:20.0) so train/val/test share one (source, vendor, centre,
+# pathology) composition; Canon + CMRx25 Center012 are unseen-vendor holdouts (val/test only).
+# Uncurated ablation arm: `split_file=training/splits/pooled_uncurated_ablation.txt
+# dataset_name=uncurated1067 limit_train_batches=1067` (v2 + the 439 curated-out subjects back in
+# train; val/test identical to v2). The pre-curation `pooled.txt` (935/133/269) is history only —
+# its train overlaps v2's val/test. See training/splits/README.md. data_root is the shared parent, and
+# split-file lines are relative paths under it (e.g. `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`)
+# — MRIDataset._find_subjects joins them directly. The old CMRxRecon2024-only pair was:
 #   data_root: ".../scratch/data/CMRxRecon2024/Cine_combined"
-#   split_file: "training/splits/random_8_1_1.txt"   (deprecated)
+#   split_file: "training/splits/_archive/random_8_1_1.txt"   (deprecated, dead ids)
 data_root: "/home/minsukc/vggt/scratch/data"
-split_file: "training/splits/pooled.txt"
-dataset_name: "pooled1337"
+split_file: "training/splits/pooled_curated_v2.txt"
+dataset_name: "curated898"
 # NATIVE SAX z-slicing (not anatomical axial). Only decorates `seq_name`.
 mri_mode: "axial"
 mri_data_mode: "dynamic"   # "static" or "dynamic"
@@ -83,13 +87,13 @@ one_frame_per_slice: true
 # Previously the index was discarded and a subject drawn at random, i.e. draws WITH
 # replacement (~37% of subjects unseen per epoch), so this line did not mean what it said.
 # Keep it equal to the train-split size: LOWER truncates the pass (a seed-dependent subset
-# each epoch); HIGHER is harmless but pointless — the sampler is exhausted at 935 and the
-# epoch simply ends there.
-limit_train_batches: 935
-# 133 pooled val subjects x {ED, ES} = 266 entries under ef_val_sweep — one full deterministic
-# pass. Was 200, sized for the 100-val-subject plan; at 200 the last ~68 ES entries would
-# never be evaluated.
-limit_val_batches: 266
+# each epoch); HIGHER is harmless but pointless — the sampler is exhausted at the split size
+# and the epoch simply ends there. 628 = pooled_curated_v2 train (was 935 for pooled.txt).
+limit_train_batches: 628
+# 90 curated val subjects x {ED, ES} = 180 entries under ef_val_sweep — one full deterministic
+# pass (was 266 for pooled.txt's 133 val subjects). Sized to the split: too LOW silently skips
+# the tail of the ES entries.
+limit_val_batches: 180
 max_epochs: 200
 val_epoch_freq: 1
 # Target-phase control. null = uniform sampling per call (multi-phase). Set to an int (e.g. 0)
@@ -121,8 +125,8 @@ logging:
   log_level_secondary: WARNING
   all_ranks: False
   log_visual_frequency:
-    train: 935  # once per epoch (matches limit_train_batches = train-split size)
-    val: 200    # once per val epoch
+    train: 628  # once per epoch (matches limit_train_batches = train-split size)
+    val: 200    # UNUSED: val visuals log at fixed subject indices (trainer_viz._log_visuals_to_wandb), not by step
   # Nine source/vendor cardiac-cycle GIFs (12 forwards each) are expensive, so log less often.
   filmstrip_every_n_val_epochs: 5
   # Cheaper ED/ES and augmentation panels retain their original cadence.
