@@ -49,8 +49,9 @@ num_workers: 4
 # re-split 628/90/180 (69.9:10.0:20.0) so train/val/test share one (source, vendor, centre,
 # pathology) composition; Canon + CMRx25 Center012 are unseen-vendor holdouts (val/test only).
 # Uncurated ablation arm: `split_file=training/splits/pooled_uncurated_ablation.txt
-# dataset_name=uncurated1067 limit_train_batches=1067` (v2 + the 439 curated-out subjects back in
-# train; val/test identical to v2). The pre-curation `pooled.txt` (935/133/269) is history only —
+# dataset_name=uncurated1066 limit_train_batches=1066` (v2 + 438 of the 439 curated-out subjects back
+# in train — ACDC_patient124 is D=21 > img_nums cap; val/test identical to v2). The pre-curation
+# `pooled.txt` (935/133/269) is history only —
 # its train overlaps v2's val/test. See training/splits/README.md. data_root is the shared parent, and
 # split-file lines are relative paths under it (e.g. `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`)
 # — MRIDataset._find_subjects joins them directly. The old CMRxRecon2024-only pair was:

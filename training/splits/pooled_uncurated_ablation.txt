@@ -3,8 +3,11 @@
 # so a model trained on this file is scored on exactly the same subjects as the curated arm and the ONLY
 # difference is whether misaligned-GT subjects are in the training set. Do NOT use plain pooled.txt for
 # this: its train section contains 6 of v2's val and 52 of v2's test subjects (re-split moved them).
-# Use with: split_file=training/splits/pooled_uncurated_ablation.txt dataset_name=uncurated1067 limit_train_batches=1067
-# 1067/90/180 train/val/test. Generated 2026-09-11 (set algebra over pooled.txt and pooled_curated_v2.txt).
+# Use with: split_file=training/splits/pooled_uncurated_ablation.txt dataset_name=uncurated1066 limit_train_batches=1066
+# 1066/90/180 train/val/test. Generated 2026-09-11 (set algebra over pooled.txt and pooled_curated_v2.txt).
+# MINUS ACDC_sax/ACDC_patient124 (438 of the 439 dropped subjects are back): it has D=21 slices, over the
+# img_nums=[20,20] slot cap, so one_frame_per_slice raises on it. It was in pooled.txt's [test] and was
+# therefore never trained on by any run; excluding it here keeps the cap unchanged (job 61000433 crashed on it).
 
 [train]
 ACDC_sax/ACDC_patient001
@@ -951,7 +954,6 @@ ACDC_sax/ACDC_patient117
 ACDC_sax/ACDC_patient119
 ACDC_sax/ACDC_patient120
 ACDC_sax/ACDC_patient123
-ACDC_sax/ACDC_patient124
 ACDC_sax/ACDC_patient127
 ACDC_sax/ACDC_patient129
 ACDC_sax/ACDC_patient132

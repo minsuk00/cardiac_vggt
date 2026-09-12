@@ -105,9 +105,11 @@ script with `--dry-run`.
 - **Curated-vs-uncurated ablation (docs/38 rule)**: two runs, identical config, same seed and epoch
   budget, differing only in the training set:
   - curated arm: `default.yaml` as is (train = v2's 628);
-  - uncurated arm: `split_file=training/splits/pooled_uncurated_ablation.txt dataset_name=uncurated1067
-    limit_train_batches=1067` — v2 **plus the 439 curated-out subjects back in `[train]`**, `[val]`/`[test]`
-    byte-identical to v2. **Not plain `pooled.txt`**: its train section holds 6 of v2's val and 52 of
+  - uncurated arm: `split_file=training/splits/pooled_uncurated_ablation.txt dataset_name=uncurated1066
+    limit_train_batches=1066` — v2 **plus 438 of the 439 curated-out subjects back in `[train]`**
+    (`ACDC_patient124` has D=21 slices, over the `img_nums=[20,20]` slot cap; it sat in `pooled.txt`'s
+    test section so no run ever trained on it, and the first uncurated submission, job 61000433, crashed
+    on it at epoch 0), `[val]`/`[test]` byte-identical to v2. **Not plain `pooled.txt`**: its train section holds 6 of v2's val and 52 of
     v2's test subjects (moved by the re-split), so that arm would be scored on subjects it trained on.
   Score both with the eval harness on v2 val (90); compare `recov_frac`↑, `psnr_motion`↑, `hole_frac`
   not ↑, plus the EF chain. In-training val curves are comparable too (same 90 subjects), but the
