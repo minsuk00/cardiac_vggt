@@ -1,0 +1,37 @@
+# CURATED-vs-UNCURATED ABLATION (docs/96, docs/97 §5). The paper recipe (default_224: 224 no-reg,
+# gather 0.5, heart-L1 0.5, aggressive aug, 300 epochs) with ONE change: the cosine decay is replaced
+# by warmup -> CONSTANT 5e-5. Reason: the two arms have different epoch sizes (curated 628 vs
+# uncurated 1066 steps/epoch), and with a cosine tied to `where = epoch/max_epochs` no single run can
+# be compared BOTH at equal steps and at equal epochs. With a constant LR every checkpoint is
+# comparable at either, so one run per arm gives both readings:
+#   equal epochs : curated ep300 (188,400 steps)  vs uncurated ep300 (319,800 steps)
+#   equal steps  : curated ep300                   vs uncurated ep177 (188,682 steps)
+# Absolute numbers are NOT comparable to cosine-trained runs; read the curated-vs-uncurated delta.
+#
+# Arms (sbatch/train_curation_ablation.sh, ARM=curated|uncurated):
+#   curated   : this file as is (split_file = pooled_curated_v2.txt, 628/90/180)
+#   uncurated : split_file=training/splits/pooled_uncurated_ablation.txt dataset_name=uncurated1066
+#               limit_train_batches=1066  (v2 + 438 of the 439 curated-out subjects back in [train] —
+#               ACDC_patient124 has D=21 > the img_nums cap of 20 and is left out;
+#               [val]/[test] byte-identical to v2, so both arms are scored on the same 90 subjects)
+#               + lengths=[0.02946,0.97054] so the warmup is the same 9,420 STEPS as the curated arm
+#               + checkpoint.save_freq=59 so an archive lands on epoch 177 (the equal-step point).
+# Run: PYTHONPATH=training:. python training/launch.py --config exp_curation_ablation [overrides]
+
+defaults:
+  - default_224
+  - _self_
+
+optim:
+  options:
+    lr:
+      - scheduler:
+          _target_: fvcore.common.param_scheduler.CompositeParamScheduler
+          schedulers:
+            - _target_: fvcore.common.param_scheduler.LinearParamScheduler
+              start_value: 1e-8
+              end_value: 5e-5
+            - _target_: fvcore.common.param_scheduler.ConstantParamScheduler
+              value: 5e-5
+          lengths: [0.05, 0.95]
+          interval_scaling: ['rescaled', 'rescaled']
