@@ -1,0 +1,9 @@
+# OVERFIT split — ONE subject in both [train] and [val], for overfit / pipeline sanity runs only
+# (e.g. `--config default split_file=training/splits/overfit_1.txt limit_train_batches=1 limit_val_batches=2`).
+# Subject is a v2 TRAIN member (never a val/test one), so a smoke run can't leak eval subjects.
+# Replaces the dead pre-pooling _archive/overfit_p001.txt (bare ids no longer resolve on disk).
+[train]
+CMRxRecon2024/Cine_combined/CMRx24_Test_P005
+
+[val]
+CMRxRecon2024/Cine_combined/CMRx24_Test_P005

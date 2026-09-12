@@ -39,7 +39,7 @@ from loss import compute_volume_intensity_loss, compute_motion_mask    # noqa: E
 
 CKPT = os.path.join(REPO, "scratch/logs/218643188_mri_volume_noresp_allphases_aggft_z_no_t/ckpts/checkpoint_last.pt")
 DATA_ROOT = os.path.join(REPO, "scratch/data/CMRxRecon2024/Cine_combined")
-SPLIT = os.path.join(REPO, "training/splits/random_8_1_1.txt")
+SPLIT = os.path.join(REPO, "training/splits/_archive/random_8_1_1.txt")
 OUT = os.path.join(REPO, "result", "limits_eval"); T = 12; GRID = (T, 256, 256)
 MINVOX = 20
 

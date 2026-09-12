@@ -32,7 +32,7 @@ DEFAULT_OUTPUT = (
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", default="/home/minsukc/vggt/scratch/data")
-    parser.add_argument("--split-file", default="training/splits/cmrx24only.txt")
+    parser.add_argument("--split-file", default="training/splits/_archive/cmrx24only.txt")
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     parser.add_argument("--steps", type=positive_int, default=256_000)
     parser.add_argument("--lr", type=float, default=1e-4)

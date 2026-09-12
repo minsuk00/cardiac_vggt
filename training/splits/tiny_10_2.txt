@@ -1,16 +1,20 @@
-# CMRxRecon2024 tiny split: 10 train, 2 val — for fast iteration/sanity checking
+# TINY split — 10 train / 2 val CMRxRecon2024 subjects, for fast iteration / sanity checking
+# (`split_file=training/splits/tiny_10_2.txt limit_train_batches=10 limit_val_batches=4`).
+# All 12 are pooled_curated_v2.txt members in the SAME section they hold there (train stay train,
+# val stay val), so nothing here leaks a v2 val/test subject into training.
+# Replaces the dead pre-pooling _archive/tiny_10_2.txt (same name, bare ids that no longer resolve).
 [train]
-CMRx24_Train_P140
-CMRx24_Train_P010
-CMRx24_Train_P191
-CMRx24_Train_P098
-CMRx24_Train_P139
-CMRx24_Train_P199
-CMRx24_Train_P061
-CMRx24_Train_P184
-CMRx24_Train_P092
-CMRx24_Train_P169
+CMRxRecon2024/Cine_combined/CMRx24_Test_P005
+CMRxRecon2024/Cine_combined/CMRx24_Test_P006
+CMRxRecon2024/Cine_combined/CMRx24_Test_P007
+CMRxRecon2024/Cine_combined/CMRx24_Test_P008
+CMRxRecon2024/Cine_combined/CMRx24_Test_P009
+CMRxRecon2024/Cine_combined/CMRx24_Test_P010
+CMRxRecon2024/Cine_combined/CMRx24_Test_P011
+CMRxRecon2024/Cine_combined/CMRx24_Test_P015
+CMRxRecon2024/Cine_combined/CMRx24_Test_P021
+CMRxRecon2024/Cine_combined/CMRx24_Test_P024
 
 [val]
-CMRx24_Val_P044
-CMRx24_Val_P015
+CMRxRecon2024/Cine_combined/CMRx24_Test_P012
+CMRxRecon2024/Cine_combined/CMRx24_Test_P020

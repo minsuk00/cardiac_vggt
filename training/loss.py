@@ -148,14 +148,36 @@ def _resize_field(wp, Hn, Wn):
     return x.reshape(B, S, 3, Hn, Wn).permute(0, 1, 3, 4, 2)
 
 
-def _splat_preds_native(predictions, batch, grid_shape, z_scale):
+def _splat_inputs(batch, splat_res=None):
+    """The (B, S, R, R) [0,1] intensities the splat scatters, or None when the batch has no
+    `images_splat` (offline harness batches -> model-res fallback). splat_res=None keeps the
+    native grid (default, docs/73); an int R resamples the native slices to R² (bilinear,
+    align_corners=True — the same convention `extract_slices_from_phases` uses to build the
+    model input, so splat_res == img_size reproduces the pre-docs/73 model-res splat up to
+    float rounding)."""
+    imsp = batch.get("images_splat")
+    if imsp is None or splat_res is None or int(splat_res) == imsp.shape[-1]:
+        return imsp
+    B, S, H, W = imsp.shape
+    R = int(splat_res)
+    x = F.interpolate(imsp.reshape(B * S, 1, H, W).float(), size=(R, R),
+                      mode="bilinear", align_corners=True)
+    return x.view(B, S, R, R)
+
+
+def _splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res=None):
     """Native-render splat: resample the predicted point field to the native canonical
     resolution and splat batch["images_splat"] (pre-model-resize slice content,
     resp-corrupted where resp is on). Resampling the smooth FIELD is ~free (−0.12 dB,
     docs/72 §3); resampling the IMAGE is lossy for img_size < 256. Falls back to the
     model-resolution splat when images_splat is absent (batches built outside
-    gpu_augment_batch, e.g. the offline eval harnesses)."""
-    imsp = batch.get("images_splat")
+    gpu_augment_batch, e.g. the offline eval harnesses).
+
+    splat_res (loss.volume.splat_res): None = native grid; int R = splat R² points per
+    slice instead (field + native image both resampled to R). Training-time knob only —
+    it changes how many points feed the coverage-weighted average (and hence the loss
+    surface), not the rendered volume's grid. See `_splat_inputs`."""
+    imsp = _splat_inputs(batch, splat_res)
     if imsp is None:
         return splat_predictions(predictions, batch, grid_shape, z_scale)
     Hn, Wn = imsp.shape[-2:]
@@ -169,7 +191,8 @@ def _splat_preds_native(predictions, batch, grid_shape, z_scale):
 
 def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
                                   diffusion_weight=0.0, gather_weight=0.0,
-                                  heart_weight=0.0, **kwargs):
+                                  heart_weight=0.0, splat_res=None, motion_l1_weight=0.0,
+                                  **kwargs):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -208,7 +231,7 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         )
     z_scale = float(batch["z_scale"].reshape(-1)[0])
 
-    V_canon, coverage = _splat_preds_native(predictions, batch, grid_shape, z_scale)
+    V_canon, coverage = _splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res)
 
     if V_gt.shape != V_canon.shape:
         raise RuntimeError(f"gt_target_volume {tuple(V_gt.shape)} must match V_canon {tuple(V_canon.shape)}")
@@ -225,7 +248,31 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
     # valid = (V_gt > 1e-3).float()
     # denom = valid.sum().clamp(min=1.0)
     # loss_volume = ((V_canon - V_gt).abs() * valid).sum() / denom
-    loss_volume = (V_canon - V_gt).abs().mean()
+    #
+    # ── ARM motion-weighted L1 (docs/92) ──
+    # motion_l1_weight=λ>0 replaces the uniform mean with a temporal-swing-weighted mean:
+    # w = 1 + λ·clamp(swing/q99.5, 0, 1), swing = per-voxel max−min over the 12 phases
+    # (the compute_motion_mask map WITHOUT its threshold — graded, not binary). Targets the
+    # docs/92 failure: the contraction annulus (wall band + ED blood pool) carries the EF
+    # error but is a tiny fraction of voxels; the binary 11× heart_weight already failed to
+    # fix it, hence the graded annulus-focused map. λ=0 keeps the exact .mean() (bit-identical).
+    # Post-aug batch["phases"] is required so the swing map matches the augmented V_gt.
+    if motion_l1_weight > 0:
+        if "phases" not in batch:
+            raise RuntimeError(
+                "loss.volume.motion_l1_weight > 0 but batch has no 'phases'. The swing map "
+                "needs the full (B, T, D, H, W) phase bundle (post-aug); batches built "
+                "outside the trainer must include it or set motion_l1_weight=0."
+            )
+        with torch.amp.autocast("cuda", enabled=False):
+            # amax/amin in the input dtype first (exact selections, fp16-safe — same idiom
+            # as compute_motion_mask), then upcast only the small (B, D, H, W) swing.
+            swing = (batch["phases"].amax(dim=1) - batch["phases"].amin(dim=1)).float()
+            swing_norm = (swing / torch.quantile(swing, 0.995).clamp(min=1e-6)).clamp(0, 1)
+            w = 1.0 + motion_l1_weight * swing_norm
+            loss_volume = (w * (V_canon.float() - V_gt.float()).abs()).sum() / w.sum()
+    else:
+        loss_volume = (V_canon - V_gt).abs().mean()
 
     # ── ARM heart-L1 (docs/69 follow-up): ADDITIVE heart-ROI L1 on top of the full L1 ──
     # Motivation: the full-volume L1 above averages over a volume in which the heart is only
@@ -464,13 +511,14 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
             try:
                 heart = compute_motion_mask(batch["phases"])            # (B,D,H,W) bool
                 # identity splat (Δ=0, real corrupted input content) — exact forward path
-                V_id, _ = _splat_preds_native({"world_points": batch["scanner_coords"]}, batch, grid_shape, z_scale)
+                V_id, _ = _splat_preds_native({"world_points": batch["scanner_coords"]}, batch, grid_shape, z_scale, splat_res)
                 # oracle splat (Δ=0, TRUE target-phase content sampled at each pixel's home) —
                 # the recoverable ceiling; the model→oracle gap is the appearance wall (docs 19-21).
                 # Same point set / weight gate as V_id and V_canon (native when images_splat
-                # exists), so the recov_frac ratio compares one splat pipeline throughout.
-                if "images_splat" in batch:
-                    imsp = batch["images_splat"]
+                # exists, at splat_res when set), so the recov_frac ratio compares one splat
+                # pipeline throughout.
+                imsp = _splat_inputs(batch, splat_res)
+                if imsp is not None:
                     sc = _resize_field(batch["scanner_coords"], *imsp.shape[-2:])
                     scan_flat = sc.reshape(B, -1, 3)
                     w = (imsp.float().reshape(B, -1) > 1e-3).float()

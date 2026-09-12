@@ -20,7 +20,7 @@ from data.datasets.mri_dataset import MRIDataset
 from loss import compute_volume_intensity_loss
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
+SPLIT_FILE = "/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt"
 CANON_SPACING = (1.4, 1.4, 8.0); T = 12
 
 

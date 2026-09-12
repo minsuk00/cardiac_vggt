@@ -23,7 +23,7 @@ from vggt.models.vggt import VGGT
 from loss import compute_volume_intensity_loss, compute_motion_mask
 
 DATA_ROOT = "scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT = "training/splits/random_8_1_1.txt"
+SPLIT = "training/splits/_archive/random_8_1_1.txt"
 DEV = "cuda"
 T_TARGET = 0  # ED
 

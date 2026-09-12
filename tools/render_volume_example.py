@@ -23,7 +23,7 @@ from loss import compute_volume_intensity_loss
 
 CKPT = "/home/minsukc/vggt/scratch/logs/221086300_mri_volume_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
-SPLIT_FILE = "/home/minsukc/vggt/training/splits/random_8_1_1.txt"
+SPLIT_FILE = "/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt"
 OUT_PNG = "/home/minsukc/vggt/result/nprlshyj_example_volume.png"
 OUT_PNG_GRAD = "/home/minsukc/vggt/result/nprlshyj_example_gradients.png"
 SEQ_IDX = 0

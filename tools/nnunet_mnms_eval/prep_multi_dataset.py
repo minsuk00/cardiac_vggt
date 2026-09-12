@@ -30,7 +30,7 @@ def prep_cmrx(n_extra=8, start=6):
     from data.preprocess import build_data_dicts, get_canonical_transforms
     # val subjects, in split order; the existing seg covered indices 0..5
     val = []
-    with open("/home/minsukc/vggt/training/splits/random_8_1_1.txt") as f:
+    with open("/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt") as f:
         f_on = False
         for line in f:
             s = line.strip()

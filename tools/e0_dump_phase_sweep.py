@@ -15,7 +15,7 @@ Usage (current tree, CMRx24 val):
       --tree /home/minsukc/vggt --config default \
       --ckpt scratch/logs/<run>/ckpts/checkpoint_last.pt \
       --out result/e0_dumps/<name> --limit-val-batches 29 \
-      --override split_file=training/splits/cmrx24only.txt \
+      --override split_file=training/splits/_archive/cmrx24only.txt \
       --override dataset_name=cmrx24only \
       --override ef_val_sweep=false --override logging.ef_eval_enable=false
 

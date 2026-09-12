@@ -214,5 +214,56 @@ inside the container (NeSVoR's `makedirs` walks the output path up to the missin
 Status: faithfulness + concurrency validated on Train_P053; single-subject visual check → then cohorts
 (inline per user, gated on the visual). See `scratch/eval/README.md` for layout + breathing determinism.
 
+---
+
+## 7. Source clone — `baselines/nesvor/NeSVoR` (added 2026-08-27)
+
+**We were ALWAYS running NeSVoR's real upstream code** — the pinned image ships the full source and
+we invoke its `nesvor reconstruct` entrypoint (§3). Nothing was reimplemented. What we lacked was a
+*readable/editable* copy. That is now fixed **without touching the container or any env**.
+
+**The key fact:** inside the image NeSVoR is an **editable install**
+(`/usr/local/lib/python3.10/dist-packages/nesvor.egg-link → /usr/local/NeSVoR`,
+plus `easy-install.pth`). So **bind-mounting a host clone over `/usr/local/NeSVoR` makes
+`import nesvor` resolve to the clone**, while python 3.10 / torch 1.13.1+cu117 / tiny-cuda-nn /
+the two prebuilt CUDA extensions all still come from the image.
+
+**Layout**
+- `baselines/nesvor/NeSVoR/` — `git clone https://github.com/daviddmc/NeSVoR`, checked out at tag
+  **`v0.5.0`** (`730ddaa`) to match the image. (`master` is `0.6.0rc1` — do NOT use it for runs that
+  must be comparable to published numbers.) ~16 MB.
+- Vendored into the clone (extracted from the image, **not** in upstream git, excluded via
+  `.git/info/exclude`): `nesvor/slice_acq_cuda*.so`, `nesvor/transform_convert_cuda*.so`,
+  `nesvor.egg-info/`, `install.sh`. Master copies: `scratch/nesvor/blobs_v050/`.
+- The 1.3 GB of fetal-brain checkpoints (`SVoRT_v2.pt`, seg, IQA) were **deliberately not extracted** —
+  they are only reachable via `--registration svort` / seg / IQA commands, none of which we run.
+  If a command ever needs them, copy `/usr/local/NeSVoR/nesvor/checkpoints` out of the image to
+  `scratch/` (never `$HOME`) and bind it in.
+- `nesvor_src.sh` — thin wrapper: stages the `.sif` to node-local `/tmp` (same flock'd, size-checked
+  logic as `evaluation/src/engine/run_nesvor.sh`), adds the source bind, forwards args:
+  `bash baselines/nesvor/nesvor_src.sh --bind "$SD:/data" -- reconstruct --input-stacks /data/... `
+
+**Verified 2026-08-27** (A40, `gl1512`):
+1. `diff -rq` container `/usr/local/NeSVoR` vs upstream `v0.5.0` → **identical** (only extra file is the
+   Dockerfile-generated `install.sh`). So the clone reproduces exactly what produced our results.
+2. With the bind, `nesvor.__file__` → `baselines/nesvor/NeSVoR/nesvor`, `__version__ == 0.5.0`;
+   `tinycudann` imports; `slice_acq_cuda` / `transform_convert_cuda` import after `torch`.
+3. **Edits are live** — a marker `print()` in `nesvor/cli/commands.py:main` appeared *with* the bind and
+   was absent *without* it. (Marker reverted; the clone is clean at `v0.5.0`.)
+4. Full `nesvor reconstruct --n-iter 300` on a real bundle (`CMRx24_Test_P012`, breath `t00`) ran
+   end-to-end and wrote a valid volume (`temp/nesvor_srcmode_smoke/`).
+
+**Why NOT a native conda env.** It would need python 3.10 + **torch 1.13.1+cu117** (four years behind
+the `svr` stack — a separate env is mandatory, `svr` must not be touched) plus a from-source build of
+**tiny-cuda-nn** and NeSVoR's two CUDA extensions against that old torch. Doable, and it is the ONLY
+way to fix the measured **2.4× A40 penalty** (the shipped tinycudann is compiled for cc70/V100; §5) by
+rebuilding for `sm_86`. But it changes the binaries under our published numbers and buys nothing for
+source reading/editing, which the bind already gives. Recommended order: use the bind for everything;
+only build a native env if we decide to pay for an `sm_86` tinycudann rebuild.
+
+**Nothing in the existing pipeline changed** — `evaluation/src/engine/run_nesvor.sh` still runs the
+in-image source and is untouched. Add `--bind $CLONE:/usr/local/NeSVoR` to it only when we
+deliberately want to run modified NeSVoR, and re-stamp those recons under a different `METHOD` name.
+
 Companion docs: `docs/32` (first run + bugs), `docs/31` (baseline roster + single-orientation limit),
 `docs/29` (NiftyMIC + the calibration ⚠️), `docs/36` (SVRTK), `scratch/eval/README.md` (the harness).

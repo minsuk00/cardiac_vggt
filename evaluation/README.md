@@ -25,7 +25,6 @@ evaluation/
 │   │                   #   resp_diag + timing [+ EF/Dice] into ONE metric_results/<ds>/<arm>.json)
 │   └── analysis/       # makes FIGURES (viz = GT-vs-pred GIF, breathing, slice panels,
 │                       #   compare_methods = multi-arm GIF, compare_table / compare_bars = cross-arm ranking)
-├── splits/          # split files for sources never trained on (e.g. ocmr_eval.txt)
 ├── metric_results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
 │   ├── _ef/<arm>.json               # EF/Dice chain output (cross-cohort, merged into the above)
 │   └── _archive/                    # pre-restructure summaries (read-only record)
@@ -146,13 +145,13 @@ and the classical-baseline shells write to the same location via their own `OUT_
 
 ```bash
 # 0. everything at once (build -> recon -> score -> gifs -> aggregate) — ALL SEVEN sources by default,
-#    each routed to its own split file (pooled.txt / pooled_miitt.txt / evaluation/splits/ocmr_eval.txt).
+#    each routed to its own split file under training/splits/ (pooled_curated_v2.txt / miitt_eval.txt / ocmr_eval.txt).
 #    Narrow with SOURCES="cmrx2024 ocmr"; force one split file for every source with SPLIT_FILE=<path>.
 sbatch sbatch/eval_pooled_val.sh
 # 1. build the frozen breathing bundle — ONE builder for every source; idempotent and
 #    incremental (a subject with a manifest.json is skipped unless --overwrite)
 python evaluation/src/engine/build_inputs/pooled.py --source <src> \
-       --split-file training/splits/pooled.txt --split val [--subjects A,B]
+       --split-file training/splits/pooled_curated_v2.txt --split val [--subjects A,B]
 # 2. reconstruct — VGGT [GPU], or a classical baseline. The model protocol (img_size,
 #    backbone, sampling knobs) comes from the ckpt's OWN run_meta.jsonl, so there are no
 #    --regime / --continuous-z / --refiner flags to get wrong.
@@ -218,9 +217,10 @@ Cohort numbers live in git at `metric_results/<dataset>/<arm>.json`; per-arm pro
   change: `paths.DATASETS` and `build_inputs/pooled.py:SOURCE_PREFIX`. Everything downstream
   (`run_vggt`, `score/*`, `slice_panels`, `viz`) is source-agnostic and
   reads geometry per subject from `manifest.json`.
-  A source that is never trained on also needs a split file — put it in **`evaluation/splits/`**
-  (e.g. `ocmr_eval.txt`), not `training/splits/`, so it cannot be pulled into a training pool by
-  accident.
+  A source that is never trained on also needs a split file — put it in `training/splits/` (the
+  single home for every split, docs/97) with all subjects under `[val]` and a header saying it is
+  eval-only (e.g. `ocmr_eval.txt`). Nothing enters training unless `default.yaml`'s `split_file`
+  names the file, so placement alone protects nothing; the header + README do.
 
 **contz naming (historical):** existing OOD contz arms are stored *doubled*
 (`vggt_..._contz_contz`) because an old `run_vggt` appended `_contz` twice. `canonical_arm`

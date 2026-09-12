@@ -1,0 +1,16 @@
+# CMRxRecon2024 tiny split: 10 train, 2 val — for fast iteration/sanity checking
+[train]
+CMRx24_Train_P140
+CMRx24_Train_P010
+CMRx24_Train_P191
+CMRx24_Train_P098
+CMRx24_Train_P139
+CMRx24_Train_P199
+CMRx24_Train_P061
+CMRx24_Train_P184
+CMRx24_Train_P092
+CMRx24_Train_P169
+
+[val]
+CMRx24_Val_P044
+CMRx24_Val_P015

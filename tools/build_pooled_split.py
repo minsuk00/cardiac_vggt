@@ -9,7 +9,7 @@ Per-source rule (decided with the user 2026-07-31):
            respecting the official split buys a free unseen-vendor test.)
   CMRx2023/2024 — random 8:1:1, independently per year (single-vendor, single/near-single-
            centre, healthy cohorts — nothing to stratify by). 2024 additionally soft-
-           preserves membership from the deprecated training/splits/random_8_1_1.txt where
+           preserves membership from the deprecated training/splits/_archive/random_8_1_1.txt where
            those subjects still exist on disk, so continuity isn't gratuitously broken.
   CMRx2025 — the 12 Philips subjects are PINNED out of train entirely (split across
            val/test) because Philips is otherwise absent from train/val entirely (see
@@ -45,7 +45,7 @@ from collections import defaultdict
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(REPO, "training", "splits", "manifest.csv")
-LEGACY_2024_SPLIT = os.path.join(REPO, "training", "splits", "random_8_1_1.txt")
+LEGACY_2024_SPLIT = os.path.join(REPO, "training", "splits", "_archive", "random_8_1_1.txt")
 SEED = 42
 
 # Byte-identical duplicate pairs shipped by the SOURCE datasets (docs/59 F3). Each entry is
