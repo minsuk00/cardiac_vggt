@@ -57,13 +57,20 @@ ARMS=${ARMS:-breath}             # `breath` = the deliverable. Add `clean` ("cle
 # VERBATIM + 13 MIITT lines, 5 train / 3 val / 5 test — the docs/78 series only). Since the v2 series
 # MIITT and OCMR are both EVAL-ONLY held-out datasets (miitt_eval.txt / ocmr_eval.txt, all subjects
 # under [val], never in a training pool). All split files live in training/splits/ (docs/97).
-# Setting SPLIT_FILE overrides the lookup for EVERY source (the old single-file behaviour).
+# Setting SPLIT_FILE overrides the lookup for the pooled-cohort sources only (cmrx*/acdc/mnms);
+# miitt/ocmr always keep their own dedicated file regardless (see split_file_for below).
 split_file_for() {
-  if [ -n "${SPLIT_FILE:-}" ]; then echo "$SPLIT_FILE"; return; fi
+  # miitt/ocmr are EVAL-ONLY held-out datasets with their own dedicated split file, always —
+  # SPLIT_FILE (the "score the pooled cohort against a specific split" override) must not
+  # reach them: it names a pooled-cohort split file (e.g. pooled.txt / pooled_curated_v2.txt)
+  # that has no miitt/ocmr subjects at all, so overriding them raises `no <source> subjects
+  # in <file> [val]` (build_inputs/pooled.py) and, under `set -euo pipefail`, kills the whole
+  # job right after the other sources finished scoring. Bug found + fixed 2026-09-12: an
+  # earlier version applied SPLIT_FILE to every source unconditionally.
   case "$1" in
     miitt) echo "$REPO/training/splits/miitt_eval.txt" ;;
     ocmr)  echo "$REPO/training/splits/ocmr_eval.txt" ;;
-    *)     echo "$REPO/training/splits/pooled_curated_v2.txt" ;;
+    *)     echo "${SPLIT_FILE:-$REPO/training/splits/pooled_curated_v2.txt}" ;;
   esac
 }
 
