@@ -28,6 +28,7 @@
 #   ARM=motion10      + loss.volume.motion_l1_weight=10         (pooled1337: MAE 12.9->11.3, r -0.05)
 #   ARM=hw2           + loss.volume.heart_weight=2.0            (pooled1337: MAE 13.0->11.7, r held)
 #   ARM=motion10_hw2  + both
+#   ARM=nogather      loss.volume.gather_weight=0.0                (gather-loss ablation vs base)
 # Score with sbatch/eval_pooled_val.sh (v2 val is the default split) -> sbatch/eval_ef_dice.sh.
 # Submit: ARM=<arm> bash $0  (from a login node, or `unset ${!SLURM_@}` first inside an
 # interactive job). ~30 min/epoch on an L40S at 518/518 -> ~6 days per arm.
@@ -47,7 +48,8 @@ case "$ARM" in
   motion10)     ARM_OVERRIDES="loss.volume.motion_l1_weight=10.0" ;;
   hw2)          ARM_OVERRIDES="loss.volume.heart_weight=2.0" ;;
   motion10_hw2) ARM_OVERRIDES="loss.volume.motion_l1_weight=10.0 loss.volume.heart_weight=2.0" ;;
-  *) echo "ERROR: ARM must be base|diff1000|motion10|hw2|motion10_hw2 (got '$ARM')"; exit 1 ;;
+  nogather)     ARM_OVERRIDES="loss.volume.gather_weight=0.0" ;;
+  *) echo "ERROR: ARM must be base|diff1000|motion10|hw2|motion10_hw2|nogather (got '$ARM')"; exit 1 ;;
 esac
 
 # The full base recipe is spelled out (even where it equals default.yaml) so it persists
@@ -73,12 +75,12 @@ AUG_OVERRIDES="data.augmentation.enable=true data.augmentation.tier=aggressive"
 VARIANT_TAG="final518_${ARM}${VARIANT_SUFFIX:-}"
 # --- Resume settings (leave BOTH empty for the fresh-from-base reference run) ---
 # RESUME_FROM: continue a previous run's exp dir + same wandb run (crash recovery).
-RESUME_FROM=""
+RESUME_FROM="${RESUME_FROM:-}"
 # CKPT_ONLY: load weights from a checkpoint into a fresh exp dir. EMPTY here on purpose →
 # fresh-from-base (the config's base-weights resume path is used). Ignored if RESUME_FROM set.
 # GOTCHA (docs/37): a full checkpoint_last.pt is a FULL resume (optimizer + prev_epoch), strip
 # to {"model": ...} for a real warm-start.
-CKPT_ONLY=""
+CKPT_ONLY="${CKPT_ONLY:-}"
 
 # --- Self-Submission Logic ---
 if [ -z "$SLURM_JOB_ID" ]; then
