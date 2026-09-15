@@ -49,7 +49,8 @@ case "$ARM" in
   hw2)          ARM_OVERRIDES="loss.volume.heart_weight=2.0" ;;
   motion10_hw2) ARM_OVERRIDES="loss.volume.motion_l1_weight=10.0 loss.volume.heart_weight=2.0" ;;
   nogather)     ARM_OVERRIDES="loss.volume.gather_weight=0.0" ;;
-  *) echo "ERROR: ARM must be base|diff1000|motion10|hw2|motion10_hw2|nogather (got '$ARM')"; exit 1 ;;
+  diff1000_nogather) ARM_OVERRIDES="loss.volume.diffusion_weight=1000.0 loss.volume.gather_weight=0.0" ;;
+  *) echo "ERROR: ARM must be base|diff1000|motion10|hw2|motion10_hw2|nogather|diff1000_nogather (got '$ARM')"; exit 1 ;;
 esac
 
 # The full base recipe is spelled out (even where it equals default.yaml) so it persists
