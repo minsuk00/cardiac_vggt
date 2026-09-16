@@ -39,9 +39,9 @@ FIGURES = EVAL_ROOT / "comparison_figures"   # -> GPFS (subject-major DISPOSABLE
 # so they differ by provenance, not by regime. Keys match `build_inputs/pooled.py`'s --source.
 DATASETS = ("cmrx2023", "cmrx2024", "cmrx2025", "acdc", "mnms", "miitt", "ocmr")
 VARIANTS = ("clean", "breath")           # the two recon conditions (both in one metrics.json)
-BUNDLE_DIRS = ("gt", "clean", "breath")  # input-bundle subdirs; NOT arms
-# input-bundle phase-stack filename prefix per subdir: gt/ -> gt_t*, clean|breath/ -> stack_t*
-_STACK_PREFIX = {"gt": "gt", "clean": "stack", "breath": "stack"}
+BUNDLE_DIRS = ("gt", "clean", "breath", "scatter")  # input-bundle subdirs; NOT arms
+# input-bundle phase-stack filename prefix per subdir: gt/ -> gt_t*, clean|breath|scatter/ -> stack_t*
+_STACK_PREFIX = {"gt": "gt", "clean": "stack", "breath": "stack", "scatter": "stack"}
 
 
 # --- roots -----------------------------------------------------------------
@@ -73,8 +73,8 @@ def filter_by_split(dataset, subject_list, split):
 
     A bundle is a directory; anything that lands under `<source>/out/` joins the cohort just by
     existing. That is a real failure mode, not a hypothetical: a build of a TEST or TRAIN subject
-    into the same dir would otherwise be reconstructed, scored and AVERAGED IN silently — neither
-    the bundle dir nor `metric_results/<ds>/<arm>.json` is split-keyed. The builder records `split` in
+    into the same dir would otherwise be reconstructed, scored and AVERAGED IN silently — the
+    bundle dir is not split-keyed. The builder records `split` in
     every manifest, so every consumer that defines a cohort must honour it. `dropped` is a list of
     (subject, reason) so the caller can report what it excluded.
     """
@@ -145,8 +145,9 @@ def manifest(dataset, subject):
 
 
 def bundle_stack(dataset, subject, kind, phase):
-    """One input-bundle phase stack.  kind in {'gt','clean','breath'} (gt/ uses the
-    gt_t* prefix; clean/ and breath/ use stack_t*)."""
+    """One input-bundle phase stack.  kind in {'gt','clean','breath','scatter'} (gt/ uses the
+    gt_t* prefix; the others use stack_t*). scatter/ = the same-input stack VGGT sees (built
+    from breath/ by build_inputs/pooled.py add_scatter)."""
     assert kind in BUNDLE_DIRS, kind
     return subject_dir(dataset, subject) / kind / f"{_STACK_PREFIX[kind]}_t{phase:02d}.nii.gz"
 
@@ -180,6 +181,12 @@ def cine(dataset, subject, arm, variant):
 def cine_gt(dataset, subject):
     """Shared 4D GT cine (method-independent). image_metrics.py writes it only if absent."""
     return subject_dir(dataset, subject) / "cine_gt.nii.gz"
+
+
+def seg_gt_dir(dataset, subject):
+    """Cache of the GT cine's nnU-Net segs (seg_t{00..T-1}.nii.gz + src.json {"gt_sha256", "crop"}),
+    written by ef_dice.py score and reused by later dumps so GT is segmented once, not per arm."""
+    return subject_dir(dataset, subject) / "seg_gt"
 
 
 def cine_gt_src(dataset, subject):
@@ -263,16 +270,17 @@ def cohort_fig_dir(dataset):
 
 
 # --- cohort summary --------------------------------------------------------
-def summary(dataset, arm):
-    """Git-tracked cohort summary (the citable numbers)."""
-    return RESULTS / dataset / f"{arm}.json"
+def summary(dataset, arm, split):
+    """Git-tracked cohort summary (the citable numbers). Split-keyed, no default: the val and
+    test runs of one arm must never write the same file."""
+    return RESULTS / split / dataset / f"{arm}.json"
 
 
-def ef_summary(arm):
+def ef_summary(arm, split):
     """The EF/Dice chain's output for one arm (ef_dice.py score; ALL cohorts in one file —
     the chain runs cross-cohort around a single nnU-Net call). src/score/aggregate.py reads
-    this to fold the biventricular block into each dataset's summary."""
-    return RESULTS / "_ef" / f"{arm}.json"
+    this to fold the biventricular block into each dataset's summary. Split-keyed like summary()."""
+    return RESULTS / split / "_ef" / f"{arm}.json"
 
 
 def legacy_summary(dataset, arm):

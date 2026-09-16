@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """compare_bars.py — bar-figure companion to compare_table.py: PSNR/SSIM/NCC across arms of a
-dataset, clean vs breath, from the git-tracked cohort summaries (metric_results/<ds>/<arm>.json).
+dataset, clean vs breath, from the git-tracked cohort summaries (metric_results/<split>/<ds>/<arm>.json).
 
 The visual read of compare_table's numbers. Reveals the breathing-robustness gap: classical SVR is
 strong on CLEAN input but collapses under BREATHING, while VGGT holds. Pure metric_results/ read — no
@@ -39,9 +39,10 @@ def main():
     ap.add_argument("dataset", choices=list(paths.DATASETS))
     ap.add_argument("--arms", nargs="*", default=None, help="default: every arm with a results json")
     ap.add_argument("--out", default=None, help="default: comparison_figures/<ds>/compare_bars.png")
+    ap.add_argument("--split", default="val")
     a = ap.parse_args()
 
-    rdir = paths.RESULTS / a.dataset
+    rdir = paths.RESULTS / a.split / a.dataset
     files = ([rdir / f"{arm}.json" for arm in a.arms] if a.arms else sorted(rdir.glob("*.json")))
     arms, data = [], {}                                            # data[metric] = ([clean...],[breath...])
     for f in files:

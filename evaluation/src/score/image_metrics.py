@@ -3,7 +3,7 @@
 Successor to the scoring half of _archive/assemble_and_gif.py (the metric/gauge functions below
 are copied VERBATIM from it so this dir stands alone); rendering lives in analysis/viz.py.
 Other metric families live beside this file: ef_dice.py (function/seg), aggregate.py (folds
-image + EF/Dice + breathing resp_diag + timing into ONE metric_results/<ds>/<arm>.json).
+image + EF/Dice + breathing resp_diag + timing into ONE metric_results/<split>/<ds>/<arm>.json).
 
 READ-ONLY CONTRACT: every input (bundles, recons, stamps) is opened read-only. This script
 writes ONLY its own outputs:
@@ -14,9 +14,12 @@ writes ONLY its own outputs:
 (The pre-restructure assemble_and_gif records were archived to <arm>/_old_scorer/ first, so
 these clean names collide with nothing.)
 
-Pose correction + PSF downsampling for the classical baselines (docs/83) hook into the load
-step (`load_canon`) in a later phase; the VGGT path is anchored by construction (predicts off
-absolute scanner_coords) so it loads untouched and records pose="none", psf="none".
+Every arm is loaded through pose_psf.py (docs/83): PSF-blurred on its own grid when the method
+is a deconvolver (`pose_psf.PSF_METHODS`), then 6-DOF rigid-registered to GT per phase by NCC
+inside the scoring ROI, then resampled onto the subject grid. That registered read is the
+headline (`{var}_psnr_mean` ...) and is what `cine_<var>` holds. The plain unregistered,
+unblurred read is scored alongside as `{var}_*_raw_mean` so the gauge penalty each method
+would otherwise pay stays visible. metrics.json records the per-phase poses.
 
 Run: EVAL_DATASET=<ds> micromamba run -n svr python evaluation/src/score/image_metrics.py <subject> <method>
 Cohort sweeps: evaluation/src/score/run.py. Paths/naming go through evaluation/paths.py.
@@ -31,7 +34,9 @@ import nibabel.processing as nibproc
 
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
+import pose_psf  # noqa: E402
 
 # Basenames this scorer is allowed to (over)write; everything else on disk is history.
 _WRITABLE = {"metrics.json", "cine_clean.nii.gz", "cine_breath.nii.gz"}
@@ -91,7 +96,29 @@ def clip_sentinel(rec):
 SELF_NORM_METHODS = {"nesvor", "niftymic"}
 
 
-def prep_recon(rec, method, content, stacks=None):
+def norm_map(rec, method, content, stacks):
+    """The self-norm two-point map (rlo, rhi, slo, shi) for a self-norm method, from the RAW
+    (unregistered, unblurred) recon's own coverage — see prep_recon. None for other methods.
+    Computed once per variant and applied to both the raw and the registered read, so they share
+    one gauge: deriving it from the PSF-blurred volume instead was measured to inflate NeSVoR
+    1.6x (the blur spreads coverage into bright non-heart stack voxels: stack p99.9 0.49->0.69,
+    PSNR 19.9 -> 15.2 dB at P028) while pose-only sat at 21.7 dB."""
+    if pose_psf.base_method(method) not in SELF_NORM_METHODS:
+        return None
+    if stacks is None:   # a missed call site must crash, not silently score on the wrong scale
+        raise ValueError(f"norm_map: {method} is a self-norm method and needs its input stacks")
+    rec = np.nan_to_num(rec, nan=0.0, posinf=0.0, neginf=0.0)
+    cov = ((rec.max(axis=0) if rec.ndim == 4 else rec) > 1e-6) & content
+    if not cov.any():                       # recon has no data in the FOV: nothing to anchor
+        return None                         # against; prep_recon then just clamps.
+    rv = rec[:, cov] if rec.ndim == 4 else rec[cov]
+    sv = stacks[:, cov] if stacks.ndim == 4 else stacks[cov]
+    rlo, rhi = np.percentile(rv, [0.5, 99.9])
+    slo, shi = np.percentile(sv, [0.5, 99.9])
+    return float(rlo), float(rhi), float(slo), float(shi)
+
+
+def prep_recon(rec, method, content, stacks=None, nmap=None):
     """Bring a method's recon onto the GT [0,1] scale for scoring, per-method (docs/88):
       - scale-preserving (SVRTK, VGGT): clip the -1 sentinel, score AS-IS.
       - self-norm methods (NeSVoR, NiftyMIC): ONE uniform two-point map anchoring the recon to
@@ -104,20 +131,17 @@ def prep_recon(rec, method, content, stacks=None):
     scale → NeSVoR ~3× too bright, 6 dB PSNR at healthy NCC. For a no-offset method the two-point
     map degenerates to pure scale (both floors ≈0, measured 20.60≈20.51 dB), so no divide-only
     special case. One global map over all phases (keeps real phase-to-phase contrast). For a
-    scale-INVARIANT read that sidesteps gauges entirely, use the ncc() metric."""
+    scale-INVARIANT read that sidesteps gauges entirely, use the ncc() metric.
+    `nmap` = a precomputed norm_map() (from the raw read); when omitted it is derived from `rec`."""
     rec = np.nan_to_num(rec, nan=0.0, posinf=0.0, neginf=0.0)  # harden: a NaN/Inf in the recon would
     # else make np.percentile return NaN and silently poison this method's whole PSNR/SSIM/NCC mean.
-    if method not in SELF_NORM_METHODS:
+    if pose_psf.base_method(method) not in SELF_NORM_METHODS:
         return clip_sentinel(rec)
-    if stacks is None:   # a missed call site must crash, not silently score on the wrong scale
-        raise ValueError(f"prep_recon: {method} is a self-norm method and needs its input stacks")
-    cov = ((rec.max(axis=0) if rec.ndim == 4 else rec) > 1e-6) & content
-    if not cov.any():                       # recon has no data in the FOV: nothing to anchor
+    if nmap is None:
+        nmap = norm_map(rec, method, content, stacks)
+    if nmap is None:                        # recon has no data in the FOV: nothing to anchor
         return np.clip(rec, 0.0, 1.0)      # against; scoring then reflects the empty volume.
-    rv = rec[:, cov] if rec.ndim == 4 else rec[cov]
-    sv = stacks[:, cov] if stacks.ndim == 4 else stacks[cov]
-    rlo, rhi = np.percentile(rv, [0.5, 99.9])
-    slo, shi = np.percentile(sv, [0.5, 99.9])
+    rlo, rhi, slo, shi = nmap
     return np.clip((rec - rlo) * (shi - slo) / max(rhi - rlo, 1e-6) + slo, 0.0, 1.0)
 
 
@@ -145,20 +169,27 @@ def psnr_unit_peak(a, b, m):
 
 
 def ssim(a, b, m):
-    """Global (whole-ROI) SSIM on the fixed [0,1] data range — NOT windowed, so not comparable to
-    skimage's default. `L` is pinned to 1.0 rather than derived from the data: a data-derived range
-    makes c1/c2 method-dependent (one bright outlier widens L and *raises* SSIM while PSNR falls);
-    the inputs are normalized to [0,1] by construction, so the fixed range is the honest one.
-    """
-    a, b = a[m], b[m]
-    if a.size < 2:
+    """Standard windowed SSIM (Wang et al. 2004: 11x11 Gaussian window, sigma 1.5), computed 2D
+    per SAX slice and averaged over the ROI voxels of all slices. 2D, not 3D: the grid is 1.4 mm
+    in-plane but 12 mm through-plane, so a 3D window would span ~80 mm in z. `data_range` is
+    pinned to 1.0 rather than derived from the data: a data-derived range makes c1/c2
+    method-dependent (one bright outlier widens it and *raises* SSIM while PSNR falls); the
+    inputs are normalized to [0,1] by construction, so the fixed range is the honest one.
+    (Replaced the harness's earlier single global-statistics SSIM over the ROI pool, which was
+    not comparable to the standard definition and blind to local blur/misalignment.)"""
+    from skimage.metrics import structural_similarity
+    vals = []
+    for z in range(a.shape[2]):
+        mz = m[:, :, z]
+        if not mz.any():
+            continue
+        smap = structural_similarity(a[:, :, z].astype(np.float64), b[:, :, z].astype(np.float64),
+                                     data_range=1.0, gaussian_weights=True, sigma=1.5,
+                                     use_sample_covariance=False, full=True)[1]
+        vals.append(smap[mz])
+    if not vals:
         return float("nan")
-    mu_a, mu_b, va, vb = a.mean(), b.mean(), a.var(), b.var()
-    cov = ((a - mu_a) * (b - mu_b)).mean()
-    L = 1.0
-    c1, c2 = (0.01 * L) ** 2, (0.03 * L) ** 2
-    return float(((2 * mu_a * mu_b + c1) * (2 * cov + c2)) /
-                 ((mu_a ** 2 + mu_b ** 2 + c1) * (va + vb + c2)))
+    return float(np.concatenate(vals).mean())
 
 
 def ncc(a, b, m):
@@ -219,6 +250,43 @@ def _save_nifti(arr_txyz, affine, path):
     os.replace(tmp, path)
 
 
+def ensure_cine_gt(ds, subj, gt=None, aff=None):
+    """Write `<subject>/cine_gt.nii.gz` (+ its gt_sha256 sidecar) if missing or stale; returns gt_sha.
+
+    Shared 4D GT cine: deterministic from the read-only gt_t* files. Refresh when missing OR
+    derived from a different gt bundle — a plain skip-if-exists went permanently stale whenever a
+    bundle was rebuilt (has happened: the native-z rebuild), showing viz/seg consumers a GT
+    different from the one scored. Freshness is keyed on the gt_t00 CONTENT hash recorded in the
+    cine_gt.src.json sidecar, not on mtimes (GPFS purge-avoidance `touch`es rewrite every mtime).
+    The write bypasses _guarded_write_path deliberately: the content is derived,
+    byte-reproducible, and staler-than-source — the one legitimate refresh of a pre-existing
+    file. tmp+os.replace keeps it atomic, which also makes two arms of the same subject scoring
+    in parallel (render_all_gifs -P4) a benign identical overwrite instead of a race. Cine first,
+    sidecar second: a sidecar that matches implies the cine beside it is already current.
+
+    `gt`/`aff` may be passed by score_subject (already loaded); otherwise (ef_dice --gt-only)
+    they are read from the bundle here."""
+    cgt, cgt_src = paths.cine_gt(ds, subj), paths.cine_gt_src(ds, subj)
+    gt_sha = paths.gt_sha256(ds, subj)
+    try:
+        cgt_fresh = cgt.exists() and json.load(open(cgt_src)).get("gt_sha256") == gt_sha
+    except (OSError, json.JSONDecodeError):
+        cgt_fresh = False
+    if not cgt_fresh:
+        if gt is None:
+            shape_xyz, aff = subject_grid(ds, subj)
+            T = json.load(open(paths.manifest(ds, subj)))["T"]
+            gt = np.stack([load_canon(str(paths.bundle_stack(ds, subj, "gt", t)), shape_xyz, aff)
+                           for t in range(T)])
+        tmp = f"{cgt}.tmp{os.getpid()}.nii.gz"
+        nib.save(nib.Nifti1Image(np.moveaxis(gt, 0, -1), aff), tmp)
+        os.replace(tmp, cgt)
+        tmp = f"{cgt_src}.tmp{os.getpid()}"
+        json.dump({"gt_sha256": gt_sha}, open(tmp, "w"), indent=2)
+        os.replace(tmp, cgt_src)
+    return gt_sha
+
+
 def score_subject(ds, subj, method):
     """Score one (subject, method); returns the metrics dict (also written to metrics.json)."""
     manifest = json.load(open(paths.manifest(ds, subj)))
@@ -247,8 +315,9 @@ def score_subject(ds, subj, method):
                "dz_mm": float(abs(aff[2, 2])), "scoring_roi": "heart&FOV" if has_heart else "FOV",
                "breath_mean_disp_mm": float(disp_mag.mean()), "breath_max_disp_mm": float(disp_mag.max()),
                "breath_mean_dz_mm": float(dz.mean()), "breath_max_dz_mm": float(dz.max()),
-               "breath_disp_per_plane_mm": disp_mag.tolist(), "per_phase": {},
-               "scorer": "image_metrics.py", "pose": "none", "psf": "none"}
+               "breath_disp_per_plane_mm": disp_mag.tolist(), "per_phase": {}, "poses": {},
+               "scorer": "image_metrics.py", "pose": "rigid6_ncc_per_phase",
+               "psf": "gauss_thickness" if pose_psf.needs_psf(method) else "none"}
     # `clean` is opt-in (run_vggt --arms; default is breath only, the deliverable). Score whichever
     # arms exist; `breath` is required.
     present = [v for v in ("clean", "breath") if paths.recon_dir(ds, subj, method, v).is_dir()]
@@ -258,51 +327,51 @@ def score_subject(ds, subj, method):
     metrics["stamps_agree"] = check_variant_stamps(ds, subj, method, present)
 
     for var in present:
-        rec = np.stack([load_canon(str(paths.recon(ds, subj, method, var, t)), shape_xyz, aff)
-                        for t in range(T)])
-        # Self-norm methods anchor to the input stacks of THIS variant (breath recon → breath
-        # stacks); loaded lazily so scale-preserving arms (VGGT, SVRTK) never pay the I/O.
-        stacks = np.stack([load_canon(str(paths.bundle_stack(ds, subj, var, t)), shape_xyz, aff)
-                           for t in range(T)]) if method in SELF_NORM_METHODS else None
-        rec = prep_recon(rec, method, content, stacks=stacks)
-        rec = rec * content[None]        # zero the recon in no-data planes (score mask ⊆ content,
-        #                                  and GT is already 0 there — display consistency only)
-        pv, sv, nv, uv = [], [], [], []
+        thick = pose_psf.stamp_thickness(ds, subj, method, var) if pose_psf.needs_psf(method) else None
+        # Registered read (headline): PSF-blur on the recon's own grid (deconvolvers only), fit a
+        # 6-DOF pose per phase by NCC inside the scoring ROI, resample onto the subject grid.
+        # Raw read: the plain anchored trilinear resample, no blur, no pose.
+        rec, raw, poses = [], [], []
         for t in range(T):
-            pv.append(psnr(rec[t], gt[t], mask)); sv.append(ssim(rec[t], gt[t], mask))
-            nv.append(ncc(rec[t], gt[t], mask)); uv.append(psnr_unit_peak(rec[t], gt[t], mask))
-        metrics["per_phase"][var] = {"psnr": pv, "ssim": sv, "ncc": nv, "psnr_unit_peak": uv}
-        metrics[f"{var}_psnr_mean"] = float(np.nanmean(pv))   # nanmean so a degenerate phase drops
-        metrics[f"{var}_ssim_mean"] = float(np.nanmean(sv))   # consistently across all metrics
-        metrics[f"{var}_ncc_mean"] = float(np.nanmean(nv))
-        metrics[f"{var}_psnr_unit_peak_mean"] = float(np.nanmean(uv))
-        print(f"  {var}: PSNR {np.nanmean(pv):.2f} dB (unit-peak {np.nanmean(uv):.2f})  "
-              f"SSIM {np.nanmean(sv):.3f}  NCC {np.nanmean(nv):.3f}")
-        _save_nifti(rec, aff, paths.cine(ds, subj, method, var))
+            rp = paths.recon(ds, subj, method, var, t)
+            vol_t, vaff = pose_psf.load_blurred(rp, thick, float(abs(aff[0, 0])))
+            pose = pose_psf.fit_rigid(vol_t, vaff, gt[t], mask, aff)
+            rec.append(pose_psf.resample(vol_t, vaff, shape_xyz, aff, pose))
+            raw.append(load_canon(str(rp), shape_xyz, aff))
+            poses.append(pose.record())
+        metrics["poses"][var] = poses
+        # Self-norm methods anchor to the input stacks the method ACTUALLY received: this
+        # variant's gated stack, or scatter/ for a *_scatter arm (measured: breath vs scatter
+        # heart p99.9 differ 5-7% -> a ±0.5 dB scale gauge if the wrong one is used). Loaded
+        # lazily so scale-preserving arms (VGGT, SVRTK) never pay the I/O.
+        stack_kind = "scatter" if method.endswith("_scatter") else var
+        stacks = np.stack([load_canon(str(paths.bundle_stack(ds, subj, stack_kind, t)), shape_xyz, aff)
+                           for t in range(T)]) if pose_psf.base_method(method) in SELF_NORM_METHODS else None
+        raw = np.stack(raw)
+        nmap = norm_map(raw, method, content, stacks)   # one gauge for both reads (see norm_map)
+        per = {}
+        for tag, vol in (("", np.stack(rec)), ("_raw", raw)):
+            vol = prep_recon(vol, method, content, stacks=stacks, nmap=nmap)
+            vol = vol * content[None]    # zero the recon in no-data planes (score mask ⊆ content,
+            #                              and GT is already 0 there — display consistency only)
+            pv, sv, nv, uv = [], [], [], []
+            for t in range(T):
+                pv.append(psnr(vol[t], gt[t], mask)); sv.append(ssim(vol[t], gt[t], mask))
+                nv.append(ncc(vol[t], gt[t], mask)); uv.append(psnr_unit_peak(vol[t], gt[t], mask))
+            per.update({f"psnr{tag}": pv, f"ssim{tag}": sv, f"ncc{tag}": nv, f"psnr_unit_peak{tag}": uv})
+            metrics[f"{var}_psnr{tag}_mean"] = float(np.nanmean(pv))   # nanmean so a degenerate phase
+            metrics[f"{var}_ssim{tag}_mean"] = float(np.nanmean(sv))   # drops consistently
+            metrics[f"{var}_ncc{tag}_mean"] = float(np.nanmean(nv))
+            metrics[f"{var}_psnr_unit_peak{tag}_mean"] = float(np.nanmean(uv))
+            if tag == "":
+                _save_nifti(vol, aff, paths.cine(ds, subj, method, var))
+        metrics["per_phase"][var] = per
+        print(f"  {var}: PSNR {metrics[f'{var}_psnr_mean']:.2f} dB (raw {metrics[f'{var}_psnr_raw_mean']:.2f})  "
+              f"SSIM {metrics[f'{var}_ssim_mean']:.3f}  NCC {metrics[f'{var}_ncc_mean']:.3f} "
+              f"(raw {metrics[f'{var}_ncc_raw_mean']:.3f})  "
+              f"z-shift mm {[p['shift_mm_xyz'][2] for p in poses]}")
 
-    # Shared 4D GT cine: deterministic from the read-only gt_t* files. Refresh when missing OR
-    # derived from a different gt bundle — a plain skip-if-exists went permanently stale whenever a
-    # bundle was rebuilt (has happened: the native-z rebuild), showing viz/seg consumers a GT
-    # different from the one scored. Freshness is keyed on the gt_t00 CONTENT hash recorded in the
-    # cine_gt.src.json sidecar, not on mtimes (GPFS purge-avoidance `touch`es rewrite every mtime).
-    # The write bypasses _guarded_write_path deliberately: the content is derived,
-    # byte-reproducible, and staler-than-source — the one legitimate refresh of a pre-existing
-    # file. tmp+os.replace keeps it atomic, which also makes two arms of the same subject scoring
-    # in parallel (render_all_gifs -P4) a benign identical overwrite instead of a race. Cine first,
-    # sidecar second: a sidecar that matches implies the cine beside it is already current.
-    cgt, cgt_src = paths.cine_gt(ds, subj), paths.cine_gt_src(ds, subj)
-    gt_sha = paths.gt_sha256(ds, subj)
-    try:
-        cgt_fresh = cgt.exists() and json.load(open(cgt_src)).get("gt_sha256") == gt_sha
-    except (OSError, json.JSONDecodeError):
-        cgt_fresh = False
-    if not cgt_fresh:
-        tmp = f"{cgt}.tmp{os.getpid()}.nii.gz"
-        nib.save(nib.Nifti1Image(np.moveaxis(gt, 0, -1), aff), tmp)
-        os.replace(tmp, cgt)
-        tmp = f"{cgt_src}.tmp{os.getpid()}"
-        json.dump({"gt_sha256": gt_sha}, open(tmp, "w"), indent=2)
-        os.replace(tmp, cgt_src)
+    gt_sha = ensure_cine_gt(ds, subj, gt, aff)
 
     # Provenance: tie this metrics.json to the recon it scored (aggregate's mix checks).
     meta_path = str(paths.metadata(ds, subj, method))

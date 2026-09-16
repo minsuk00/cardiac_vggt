@@ -138,6 +138,70 @@ def read_split(split_file, split, prefix):
     return out
 
 
+def draw_scatter(rel_path, split, seed, D, T):
+    """VGGT's one-frame-per-slice slot draw for this subject -> (phase_per_plane (D,), ref_plane).
+
+    Reproduces EXACTLY what run_vggt.py's make_dataset + get_data draw: a ONE-subject MRIDataset
+    (so `seq_index` is only the RNG seed), reference_slot + one_frame_per_slice + integer z, seeded
+    with the same name hash. The draw depends only on (seed, D, T) — every plane appears once, slot 0
+    is the mid-ventricular reference at the target phase, every other plane gets an independent
+    random phase. Frozen into manifest["scatter"] so every consumer (VGGT arms AND the classical
+    baselines' scatter input) sees the same scattered acquisition."""
+    import tempfile
+    common = OmegaConf.create({"img_size": 518, "patch_size": 14, "rescale": True,
+                               "rescale_aug": False, "landscape_check": False,
+                               "augs": {"scales": [1.0, 1.0]}})
+    with tempfile.TemporaryDirectory() as td:
+        sf = os.path.join(td, "one_subject.txt")
+        with open(sf, "w") as f:
+            f.write(f"[{split}]\n{rel_path}\n")
+        ds = MRIDataset(common, DATA_ROOT, split=split, split_file=sf, mode="dynamic",
+                        mri_mode="axial", num_slices=D, target_size=518, t_target_fixed=0,
+                        reference_slot=True, one_frame_per_slice=True, continuous_z=False)
+        b = ds.get_data(seq_index=seed, img_per_seq=D)
+    z = [int(round(float(v))) for v in b["slice_indices"]]
+    t = [int(v) for v in b["timesteps"]]
+    if sorted(z) != list(range(D)) or len(z) != D:
+        raise RuntimeError(f"{rel_path}: scatter draw covers planes {sorted(z)}, expected 0..{D-1}")
+    if any(v < 0 or v >= T for v in t):
+        raise RuntimeError(f"{rel_path}: scatter draw phase out of range: {t}")
+    phase_per_plane = [None] * D
+    for zi, ti in zip(z, t):
+        phase_per_plane[zi] = ti
+    return phase_per_plane, z[0]
+
+
+def add_scatter(subj_dir, source, name, split, rel_path):
+    """Write <subj_dir>/scatter/stack_t{k}: the SAME-INPUT stack for the classical baselines —
+    what VGGT actually sees when queried at phase k. Plane z = breath/stack_t{p_z}[z] with p_z
+    the frozen random phase for that plane; the reference plane = breath/stack_t{k}[ref]. Pure
+    re-assembly of the breath bundle (breathing is per plane and phase-independent), so it is
+    deterministic and can be added to an existing bundle. Records the draw in manifest.json."""
+    mpath = os.path.join(subj_dir, "manifest.json")
+    man = json.load(open(mpath))
+    T, D = man["T"], man["D"]
+    seed = man["seed"]
+    assert seed == name_seed(source, name), (seed, name_seed(source, name))
+    phase_per_plane, ref = draw_scatter(rel_path, split, seed, D, T)
+    breath = [nib.load(os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz")) for t in range(T)]
+    arrs = [np.asarray(im.dataobj, dtype=np.float32) for im in breath]     # (X,Y,Z) each
+    affine = breath[0].affine
+    os.makedirs(os.path.join(subj_dir, "scatter"), exist_ok=True)
+    for k in range(T):
+        out = np.empty_like(arrs[0])
+        for z in range(D):
+            out[:, :, z] = arrs[k if z == ref else phase_per_plane[z]][:, :, z]
+        nib.save(nib.Nifti1Image(out, affine), os.path.join(subj_dir, "scatter", f"stack_t{k:02d}.nii.gz"))
+    man["scatter"] = {"phase_per_plane": phase_per_plane, "ref_plane": int(ref),
+                      "draw": "MRIDataset one_frame_per_slice+reference_slot, integer z, seq_index=seed",
+                      "note": "scatter/stack_t{k}: plane z from breath/stack_t{phase_per_plane[z]}, "
+                              "ref_plane from breath/stack_t{k}"}
+    tmp = f"{mpath}.tmp{os.getpid()}"
+    json.dump(man, open(tmp, "w"), indent=1)
+    os.replace(tmp, mpath)
+    return phase_per_plane, ref
+
+
 def build_subject(rel_path, source, rcfg, rcfg_dump, out_root, split_file, split, overwrite):
     """-> (name, status) where status is 'built' | 'skipped'."""
     name = os.path.basename(rel_path)
@@ -225,6 +289,7 @@ def build_subject(rel_path, source, rcfg, rcfg_dump, out_root, split_file, split
         },
     }
     json.dump(manifest, open(os.path.join(subj_dir, "manifest.json"), "w"), indent=1)
+    add_scatter(subj_dir, source, name, split, rel_path)
     return name, "built"
 
 
@@ -241,6 +306,9 @@ def main():
     ap.add_argument("--overwrite", action="store_true",
                     help="rebuild subjects that already have a manifest.json (default: skip them, "
                          "which is what makes adding val subjects an incremental no-op)")
+    ap.add_argument("--add-scatter", action="store_true",
+                    help="only add scatter/ (+ manifest['scatter']) to EXISTING bundles that lack it; "
+                         "gt/clean/breath untouched")
     a = ap.parse_args()
 
     rcfg, rcfg_dump = load_respiratory_config(a.config)
@@ -259,6 +327,20 @@ def main():
     out_root = str(paths.dataset_root(a.source))
     os.makedirs(out_root, exist_ok=True)
     print(f"{a.source}: {len(rels)} subjects [{a.split}] -> {out_root}")
+    if a.add_scatter:
+        n = {"added": 0, "skipped": 0, "failed": 0}
+        for rel in rels:
+            name = os.path.basename(rel); sd = os.path.join(out_root, name)
+            if not os.path.exists(os.path.join(sd, "manifest.json")):
+                print(f"  no bundle for {name} — build it first", flush=True); n["failed"] += 1; continue
+            if "scatter" in json.load(open(os.path.join(sd, "manifest.json"))):
+                n["skipped"] += 1; continue
+            try:
+                add_scatter(sd, a.source, name, a.split, rel); n["added"] += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"  FAIL {name}: {type(e).__name__}: {e}", flush=True); n["failed"] += 1
+        print(f"add-scatter: {n}")
+        return
     print(f"  breathing from {os.path.relpath(a.config, ROOT)}: amp={rcfg.amplitude_mm}"
           f"+/-{rcfg.amplitude_jitter}mm ap={rcfg.ap_ratio} burst={rcfg.group_by_burst} "
           f"tilt=({rcfg.tilt_min_deg},{rcfg.tilt_max_deg})", flush=True)

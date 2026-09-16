@@ -14,7 +14,7 @@ scorer and `aggregate.py` roll-up consume it identically to the classical baseli
     batch.pop("images")                         # force re-extraction from the swapped phases
     batch = gpu_augment_batch(batch, None, device, respiratory_cfg=None, train=False)
     preds = model(batch["images"], batch=batch)
-    V, cov = _splat_preds_native(preds, batch, grid_shape, z_scale)
+    V, cov = _splat_preds_native(preds, batch, grid_shape, z_scale, splat_res=run_splat_res)
 
 That is `trainer.val_epoch` with breathing supplied by frozen pixels instead of re-sampled ones.
 Everything geometric — `scanner_coords`, `z_indices`, `dz_mm`, `z_scale`, the one-frame-per-slice
@@ -188,10 +188,42 @@ def _extract(batch, device):
     return gpu_augment_batch(batch, None, device, respiratory_cfg=None, train=False)
 
 
+def pin_scatter(batch, ds, scatter):
+    """Force the companion slots' phases to the bundle's frozen scatter draw (manifest['scatter'])
+    so VGGT's input is byte-identical to the baselines' scatter/stack_t{k} — the SAME-INPUT
+    contract. The dataset's own draw reproduces it for the default sampler, but an arm with a
+    different sampler (multi-frame, continuous z) would not, so the bundle is the authority.
+    Returns the number of slots whose phase differed from the dataset's own draw (0 expected)."""
+    if not (ds.one_frame_per_slice and ds.reference_slot) or ds.continuous_z:
+        raise ValueError("same-input scatter needs one_frame_per_slice + reference_slot + integer z; "
+                         f"this arm has one_frame_per_slice={ds.one_frame_per_slice} "
+                         f"reference_slot={ds.reference_slot} continuous_z={ds.continuous_z}")
+    ppp, ref = scatter["phase_per_plane"], int(scatter["ref_plane"])
+    z = [int(round(float(v))) for v in batch["slice_indices"][0].tolist()]
+    if z[0] != ref or sorted(z) != list(range(len(ppp))):
+        raise ValueError(f"slot planes {z} do not match the bundle's scatter draw (ref {ref}, D {len(ppp)})")
+    changed = 0
+    for i in range(1, len(z)):
+        want = int(ppp[z[i]])
+        if int(batch["timesteps"][0, i]) != want:
+            changed += 1
+        batch["timesteps"][0, i] = want
+    return changed
+
+
 @torch.no_grad()
-def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bundle=None):
-    """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack)."""
+def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bundle=None, scatter=None,
+                splat_res=None, gated=False):
+    """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack).
+    `splat_res`: the run's own loss.volume.splat_res — render with the point density it trained on.
+    `gated` (DIAGNOSTIC ONLY, default off): every companion slot is pinned to the queried phase `t`
+    (the same-phase stack SVRTK-gated receives), removing phase scatter as an information limit.
+    Breathing stays the frozen bundle's. Not a deployable input regime — a ceiling row only."""
     batch = build_batch(ds, seq_index, phases_bundle, device, dz_bundle=dz_bundle)
+    if scatter is not None:
+        n = pin_scatter(batch, ds, scatter)
+        if n:
+            print(f"    !! {n} companion slot phase(s) re-pinned to the bundle's scatter draw", flush=True)
     T = phases_bundle.shape[0]
     D = phases_bundle.shape[1]
     grid_shape = (D, 256, 256)
@@ -200,12 +232,14 @@ def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bu
     pred_vols, per_phase_ms, ed_pack = [], [], None
     for t in range(T):
         batch["timesteps"][0, 0] = int(t)            # slot 0 = the reference at the queried phase
+        if gated:
+            batch["timesteps"][0, :] = int(t)        # diagnostic: all companions at the queried phase too
         _extract(batch, device)
         torch.cuda.synchronize(); t0 = time.perf_counter()
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         wp = preds["world_points"].float()
-        V, _cov = _splat_preds_native({"world_points": wp}, batch, grid_shape, z_scale)
+        V, _cov = _splat_preds_native({"world_points": wp}, batch, grid_shape, z_scale, splat_res=splat_res)
         torch.cuda.synchronize(); per_phase_ms.append((time.perf_counter() - t0) * 1e3)
         pred_vols.append(V[0].float().cpu().numpy())
         if t == ED_PHASE:
@@ -335,6 +369,12 @@ def main():
                          "displacement slots, and slope is regressed against VARYING applied "
                          "displacement inside the breath arm, so a constant-dz model already "
                          "scores slope~0 there without any clean run.")
+    ap.add_argument("--input", default="scatter", choices=["scatter", "gated"],
+                    help="companion-slot phases. DEFAULT `scatter` = the bundle's frozen same-input "
+                         "draw (the deliverable). `gated` = DIAGNOSTIC ONLY: every companion at the "
+                         "queried phase (what SVRTK-gated sees) — a ceiling row isolating phase "
+                         "scatter as an information limit, never a proposed regime. Requires "
+                         "'gated' in --model-name so it can never overwrite a scatter arm.")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all built subjects")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--note", default="")
@@ -342,6 +382,10 @@ def main():
     args = ap.parse_args()
 
     method = paths.canonical_arm(args.model_name, date=args.date)
+    gated = args.input == "gated"
+    if gated and "gated" not in args.model_name:
+        sys.exit("--input gated is a diagnostic arm: put 'gated' in --model-name "
+                 "(e.g. <slug>_gated_diag) so it cannot overwrite the scatter arm")
     ds_name = args.dataset
     root = paths.dataset_root(ds_name)
     subjects = args.subjects or paths.subjects(ds_name)
@@ -360,6 +404,7 @@ def main():
     t0 = time.perf_counter()
     model, cfg = load_model_from_run(args.ckpt, device=device)
     model_load_s = time.perf_counter() - t0
+    splat_res = ((cfg.get("loss") or {}).get("volume") or {}).get("splat_res")   # None = native 256²
     metadata = {
         "method": method, "model_name": args.model_name, "date": args.date,
         "ckpt": args.ckpt, "ckpt_fingerprint": _ckpt_fingerprint(args.ckpt),
@@ -368,6 +413,8 @@ def main():
         "one_frame_per_slice": cfg.get("one_frame_per_slice"),
         "continuous_z": cfg.get("continuous_z"), "reference_slot": cfg.get("reference_slot"),
         "aug_tier": ((cfg.get("data") or {}).get("augmentation") or {}).get("tier"),
+        "splat_res": splat_res,
+        "input": args.input,   # 'scatter' (deliverable) | 'gated' (diagnostic ceiling, see --input)
         "protocol_source": "run_meta.jsonl (NOT the live default.yaml)",
         "breathing_source": "frozen (eval bundle breath/ pixels + manifest disp; NOT re-sampled)",
         "geometry": "native-z (docs/58): per-subject D and dz, z_scale=Z_HALF_MM/dz, no 12mm snap",
@@ -379,6 +426,9 @@ def main():
     for subject in subjects:
         subj_dir = str(paths.subject_dir(ds_name, subject))
         man = json.load(open(paths.manifest(ds_name, subject)))
+        if "scatter" not in man:      # before any dir is created: a bare recon_<var>/ would read as an arm
+            raise KeyError(f"{subject}: manifest has no 'scatter' draw — rebuild the bundle "
+                           f"(pooled.py --add-scatter) so VGGT and the baselines share one input")
         T = man["T"]
         disp = np.asarray(man["breath"]["disp_dhw_mm"], dtype=np.float64)   # (D,3) per z-plane
         md = str(paths.arm_dir(ds_name, subject, method))
@@ -399,7 +449,8 @@ def main():
                 ts = time.perf_counter()
                 pred_vols, per_phase_ms, ed_pack = reconstruct(
                     model, dset, seq, bundle, device, disp if breathing else None,
-                    dz_bundle=man["dz_mm"])
+                    dz_bundle=man["dz_mm"], scatter=man["scatter"], splat_res=splat_res,
+                    gated=gated)
                 wall = time.perf_counter() - ts
                 for t in range(T):
                     p = str(paths.recon(ds_name, subject, method, var, t))

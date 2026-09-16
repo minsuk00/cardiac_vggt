@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """compare_table.py — rank all arms of a dataset by a metric, from the git-tracked cohort summaries.
 
-Reads metric_results/<dataset>/<arm>.json (written by src/score/aggregate.py) and prints an arm x
+Reads metric_results/<split>/<dataset>/<arm>.json (written by src/score/aggregate.py) and prints an arm x
 metric table (mean +/- std), sorted by --metric. No recompute — pure metric_results/ read. Flags any
 arm whose cohort is incomplete (missing subjects, from aggregate's n_expected/missing fields).
 
@@ -41,9 +41,10 @@ def main():
     ap.add_argument("--metric", default="breath_psnr", choices=COLS)
     ap.add_argument("--arms", nargs="*", default=None, help="default: every arm with a results json")
     ap.add_argument("--out", default=None, help="also write the table to this path (markdown/plain)")
+    ap.add_argument("--split", default="val")
     a = ap.parse_args()
 
-    rdir = paths.RESULTS / a.dataset
+    rdir = paths.RESULTS / a.split / a.dataset
     files = ([rdir / f"{arm}.json" for arm in a.arms] if a.arms else sorted(rdir.glob("*.json")))
     rows = []
     for f in files:

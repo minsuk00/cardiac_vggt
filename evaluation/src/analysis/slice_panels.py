@@ -113,7 +113,8 @@ def method_dir(cohort, subject, method):
 
 def rep_subject(cohort, method):
     """Subject closest to the cohort's median breath PSNR (same choice docs/46 makes)."""
-    cands = [paths.summary(cohort, method), paths.summary(cohort, method + "_contz"),
+    split = os.environ.get("SPLIT", "val")
+    cands = [paths.summary(cohort, method, split), paths.summary(cohort, method + "_contz", split),
              paths.legacy_summary(cohort, method), paths.legacy_summary(cohort, method + "_contz")]
     hits = [p for p in cands if p.is_file()]
     if not hits:

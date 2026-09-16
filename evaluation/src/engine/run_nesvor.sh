@@ -3,7 +3,9 @@
 # GPU sibling of run_svrtk3d.sh: SAME env/positional contract, SAME output layout
 # (<subject>/<METHOD>/recon_<var>/vol_tNN.nii.gz), SAME idempotency + atomic-move, so
 # score/image_metrics.py / score/aggregate.py consume it unchanged. Only the recon engine differs
-# (CPU mirtk -> GPU Singularity `nesvor reconstruct`).
+# (CPU mirtk -> GPU `nesvor reconstruct` from the NATIVE `nesvor-t2` env, docs/90: upstream v0.5.0 +
+# a 10-line torch-2 CUDA port, compiled for sm_86/sm_89 — same code the retired .sif container ran,
+# but 2.8x faster on the same GPU because the container's CUDA was built for V100 only).
 #
 # Each cardiac phase = one independent NeSVoR fit on the single gated stack. NeSVoR needs a
 # CUDA device, so phases share ONE GPU: J = concurrent fits on that GPU (default 1; a smoke-
@@ -27,45 +29,31 @@
 #        EVAL_DATASET is REQUIRED (cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr).
 set -uo pipefail
 VGGT=/home/minsukc/vggt
-module load singularity 2>/dev/null || true
+NESVOR_BIN="${NESVOR_BIN:-/home/minsukc/micromamba/envs/nesvor-t2/bin/nesvor}"   # native env (docs/90)
+NESVOR_SRC="$VGGT/baselines/nesvor/NeSVoR"                                          # editable install it runs
 
 SUBJ="${1:?subject}"; VAR="${2:?clean|breath}"; RES="${3:-1.4}"
-J="${J:-1}"; T="${T:-12}"; THICK="${THICK:-8}"; METHOD="${METHOD:-nesvor}"
+J="${J:-1}"; T="${T:-12}"; THICK="${THICK:-8}"
+# INPUT = which bundle stack feeds the recon (see run_svrtk3d.sh): default = the variant's own
+# gated stack; INPUT=scatter = the SAME-INPUT arm (scatter/stack_tNN, what VGGT sees), landing
+# under <METHOD>_scatter with the usual recon_<VAR>/ layout.
+INPUT="${INPUT:-$VAR}"
+if [ "$INPUT" = scatter ]; then METHOD="${METHOD:-nesvor_scatter}"; else METHOD="${METHOD:-nesvor}"; fi
 # Layout: <subject>/ holds the SHARED frozen bundle (gt/ clean/ breath/ mask_heart.nii.gz manifest.json,
 # identical for every method); each method writes under <subject>/<METHOD>/ . See README "Directory layout".
 SD="$VGGT/scratch/eval/${EVAL_DATASET:?EVAL_DATASET must name a source dir: cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr}/out/$SUBJ"
 OUT="$SD/$METHOD/recon_$VAR"; mkdir -p "$OUT"
 
-# Stage the 5.3GB .sif to node-local /tmp so container-internal torch/CUDA reads don't hit GPFS
-# (mirrors baselines/nesvor/run_nesvor.sh + the project's monai-cache pattern). Durable copy stays on GPFS.
-SIF_GPFS="$VGGT/scratch/nesvor/sif/nesvor.sif"
-# Content id of the container, "v2:<size>:<sha256 of first+last 64 MiB>[:16]" — the same format
-# as evaluation/paths.py ckpt_fingerprint. NOT size:mtime: GPFS purge-avoidance `touch`es rewrite
-# every mtime and would make clean/breath stamps from the same config disagree.
-container_id() {
-  local f=$1 size edge=$((64 << 20))
-  size=$(stat -c %s "$f" 2>/dev/null) || return 0
-  local sha
-  sha=$( { head -c "$edge" "$f"
-           if [ "$size" -gt "$edge" ]; then
-             local off=$(( size - edge > edge ? size - edge : edge ))
-             tail -c +$((off + 1)) "$f" | head -c "$edge"
-           fi; } | sha256sum | cut -c1-16 )
-  echo "v2:$size:$sha"
+[ -x "$NESVOR_BIN" ] || { echo "FATAL: $NESVOR_BIN missing — build the nesvor-t2 env (docs/90)"; exit 1; }
+# Engine identity for the stamp: the source commit + a content hash of the working-tree diff
+# (the torch-2 port), so two invocations of the same code agree and any edit to the source changes it.
+engine_id() {
+  local head diff
+  head=$(git -C "$NESVOR_SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)
+  diff=$(git -C "$NESVOR_SRC" diff 2>/dev/null | sha256sum | cut -c1-12)
+  echo "native:nesvor-t2:${head}+${diff}"
 }
-LOCAL_SIF="/tmp/vggt-nesvor_${USER}/nesvor.sif"
-mkdir -p "$(dirname "$LOCAL_SIF")"
-# ATOMIC + integrity-checked staging: flock serializes concurrent same-node jobs (e.g. a SLURM array
-# landing two subjects on one node); stage to a temp path then atomic `mv`; re-stage if the cached size
-# != the GPFS master (guards a TRUNCATED copy left by an interrupted prior `cp`). Without this, a
-# poisoned node-local .sif silently fails every phase forever until /tmp is cleared.
-exec 9>"${LOCAL_SIF}.lock"; flock 9
-_want=$(stat -c %s "$SIF_GPFS" 2>/dev/null || echo 0)
-if [ ! -f "$LOCAL_SIF" ] || [ "$(stat -c %s "$LOCAL_SIF" 2>/dev/null || echo -1)" != "$_want" ]; then
-    _tmp="${LOCAL_SIF}.tmp.$$"
-    cp "$SIF_GPFS" "$_tmp" && mv -f "$_tmp" "$LOCAL_SIF" || { rm -f "$_tmp"; echo "FATAL: sif staging failed"; exit 1; }
-fi
-exec 9>&-
+mkdir -p "/tmp/vggt-nesvor_${USER}"
 
 recon_one() {
   set -u   # xargs spawns a fresh shell that does NOT inherit the parent's set -u; re-arm it here so a
@@ -74,29 +62,20 @@ recon_one() {
   local final="$OUT/vol_t${pp}.nii.gz"
   if [ -f "$final" ] && gzip -t "$final" 2>/dev/null; then echo "t$pp cached"; return; fi
   local wd="$OUT/work_t${pp}"; rm -rf "$wd"; mkdir -p "$wd"
-  # Per-phase torch/tinycudann scratch on NODE-LOCAL /tmp (singularity auto-mounts /tmp), not the GPFS
-  # work dir — consistent with staging the sif to /tmp. Per-phase path so J>1 fits never share it.
+  # Per-phase torch/tinycudann scratch on NODE-LOCAL /tmp, not the GPFS work dir. Per-phase path
+  # so J>1 fits never share it.
   local scr="/tmp/vggt-nesvor_${USER}/scr_${VAR}_t${pp}"; rm -rf "$scr"; mkdir -p "$scr"
   local t0; t0=$(date +%s)
-  # Bind the SUBJECT dir to a SIMPLE container path (/data) — NOT the host absolute path, which
-  # contains the `scratch`->/gpfs symlink that doesn't resolve inside the container (NeSVoR's
-  # makedirs walks the output path up to the missing symlink and dies). Mirrors baselines/nesvor/
-  # run_nesvor.sh's /data bind. COUT = the per-method output dir as seen inside the container.
-  local COUT="/data/$METHOD/recon_$VAR"
-  singularity exec --nv \
-      --bind "$SD:/data" \
-      --env "TMPDIR=$scr" \
-      "$LOCAL_SIF" \
-      nesvor reconstruct \
-      --input-stacks  "/data/$VAR/stack_t${pp}.nii.gz" \
-      --stack-masks   "/data/${MASK_FILE:-mask_heart.nii.gz}" \
-      --sample-mask   "/data/${MASK_FILE:-mask_heart.nii.gz}" \
+  TMPDIR="$scr" "$NESVOR_BIN" reconstruct \
+      --input-stacks  "$SD/$INPUT/stack_t${pp}.nii.gz" \
+      --stack-masks   "$SD/${MASK_FILE:-mask_heart.nii.gz}" \
+      --sample-mask   "$SD/${MASK_FILE:-mask_heart.nii.gz}" \
       --thicknesses   "$THICK" \
       --registration  none \
       --output-resolution "$RES" \
-      --output-volume "$COUT/work_t${pp}/vol.nii.gz" \
-      --output-model  "$COUT/model_t${pp}.pt" \
-      --output-slices "$COUT/slices_t${pp}" \
+      --output-volume "$wd/vol.nii.gz" \
+      --output-model  "$OUT/model_t${pp}.pt" \
+      --output-slices "$OUT/slices_t${pp}" \
       --device 0 > "$wd/log.txt" 2>&1
       # --output-slices persists the per-slice motion-corrected NIfTIs; EACH slice's affine encodes its
       # estimated 6DOF pose (nesvor transformation2affine) — this is how we record NeSVoR's registration
@@ -115,7 +94,7 @@ recon_one() {
     echo "t$pp FAIL (see $OUT/log_t${pp}.txt)"
   fi
 }
-export -f recon_one; export OUT SD VAR METHOD MASK_FILE THICK RES LOCAL_SIF
+export -f recon_one; export OUT SD VAR INPUT METHOD MASK_FILE THICK RES NESVOR_BIN
 
 # Provenance (once per subject/variant) — engine, command, params, container identity, hardware
 # (GPU + SLURM allocation), parallelism, timing. Mirrors run_svrtk3d.sh's block.
@@ -123,15 +102,15 @@ JINFO=$(scontrol show job "${SLURM_JOB_ID:-none}" 2>/dev/null | grep -oE 'cpu=[0
 GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
 {
   echo "engine          : NeSVoR 'nesvor reconstruct' (INR SVR, single gated stack, per-phase)"
-  echo "command         : nesvor reconstruct --input-stacks <VAR/stack_tNN.nii.gz> \\"
+  echo "command         : nesvor reconstruct --input-stacks <$INPUT/stack_tNN.nii.gz> \\"
   echo "                    --stack-masks ${MASK_FILE:-mask_heart.nii.gz} --sample-mask ${MASK_FILE:-mask_heart.nii.gz} \\"
   echo "                    --thicknesses $THICK --registration none --output-resolution $RES --device 0"
   echo "params          : thickness_mm=$THICK output_resolution_mm=$RES registration=none \\"
   echo "                    n_iter=6000(default) n_samples=256(default) bias=off(default) variance=on(default)"
-  echo "container(sif)  : $SIF_GPFS"
-  echo "container_id    : $(stat -c '%s bytes, mtime %y' "$SIF_GPFS" 2>/dev/null)"
+  echo "engine build    : native env $NESVOR_BIN  (source $NESVOR_SRC, docs/90)"
+  echo "engine_id       : $(engine_id)"
   echo "method          : $METHOD"
-  echo "subject/variant : $SUBJ / $VAR   phases(T)=$T   mask=${MASK_FILE:-mask_heart.nii.gz}"
+  echo "subject/variant : $SUBJ / $VAR   phases(T)=$T   mask=${MASK_FILE:-mask_heart.nii.gz}   input_stack=$INPUT"
   echo "--- hardware / parallelism (for the compute-cost comparison) ---"
   echo "host            : $(hostname)   SLURM job ${SLURM_JOB_ID:-none}"
   echo "gpu             : ${GPU:-unknown}   SLURM alloc: ${JINFO:-unknown}"
@@ -159,8 +138,8 @@ _pmean=$(cat "$OUT"/time_t*.sec 2>/dev/null | awk '{s+=$1;n++}END{if(n)printf "%
 # identical config count as the same run, so clean/breath stamps from separate submissions match.
 N_OK=$(ls "$OUT"/vol_t*.nii.gz 2>/dev/null | wc -l)
 if [ "$N_OK" -eq "$T" ]; then
-  printf '{"engine": "nesvor", "thickness_mm": %s, "output_resolution_mm": %s, "registration": "none", "container_id": "%s"}\n' \
-    "$THICK" "$RES" "$(container_id "$SIF_GPFS")" > "$OUT/stamp.json"
+  printf '{"engine": "nesvor", "input_stack": "%s", "thickness_mm": %s, "output_resolution_mm": %s, "registration": "none", "container_id": "%s"}\n' \
+    "$([ "$INPUT" = scatter ] && echo scatter || echo gated)" "$THICK" "$RES" "$(engine_id)" > "$OUT/stamp.json"
 else
   echo "NOT stamped: only $N_OK/$T phases OK"
 fi

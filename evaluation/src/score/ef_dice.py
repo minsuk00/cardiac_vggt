@@ -20,9 +20,10 @@ Full chain (all git-tracked; nnU-Net runs in the isolated `nnunet` env, wrapped 
   python evaluation/src/score/ef_dice.py dump  <input_dir> --method <m> --cohorts miitt ocmr acdc
   bash   evaluation/src/engine/run_seg.sh         <input_dir> <seg_dir>      # nnU-Net Task114 2d
   python evaluation/src/score/ef_dice.py score <seg_dir> --input <input_dir>
-                                       # -> metric_results/_ef/<m>.json (per-cohort merge on re-runs)
-  python evaluation/src/score/ef_dice.py plot  metric_results/_ef/<m>.json --out <ef.png>
-Then re-run score/aggregate.py (or run.py) to fold the _ef file into metric_results/<ds>/<m>.json.
+                                       # -> metric_results/<split>/_ef/<m>.json (per-cohort merge on re-runs)
+  python evaluation/src/score/ef_dice.py plot  metric_results/<split>/_ef/<m>.json --out <ef.png>
+Then re-run score/aggregate.py (or run.py) to fold the _ef file into metric_results/<split>/<ds>/<m>.json.
+<split> = $SPLIT (default val) at dump time, recorded in the manifest so score writes the same split.
 """
 import argparse, glob, json, os, sys, uuid
 import numpy as np
@@ -69,16 +70,48 @@ def _read_text(path):
         return None
 
 
-def _dump_cine(cine_path, input_dir, cohort, sidx, arm):
-    """Slice one 4D cine (X,Y,Z,T) into per-phase _0000.nii.gz for nnU-Net. Returns T or 0."""
+def _dump_cine(cine_path, input_dir, cohort, sidx, arm, roi):
+    """Slice one 4D cine (X,Y,Z,T) into per-phase _0000.nii.gz for nnU-Net, multiplied by the
+    heart ROI `roi` (X,Y,Z bool). Returns T or 0.
+
+    Every volume — GT, VGGT, and the classical baselines — is cropped to the SAME heart ROI
+    before segmentation. The baselines reconstruct only inside that ROI (their published
+    protocol), and nnU-Net is measurably worse on a black-exterior crop than on a full FOV
+    (ACDC vs expert labels: LV/MYO/RV ED Dice 0.952/0.871/0.918 -> 0.936/0.818/0.868, with
+    tail failures) — so segmenting GT/VGGT full-FOV would hand them a segmenter advantage
+    unrelated to reconstruction. Cropping all arms identically makes the seg metrics fair;
+    absolute Dice/EF are therefore lower than full-FOV literature numbers for every method."""
     if not os.path.isfile(cine_path):
         return 0
     img = nib.load(str(cine_path))
     vol = np.asarray(img.dataobj, dtype=np.float32)
+    if roi.shape != vol.shape[:3]:
+        sys.exit(f"{cine_path}: heart ROI {roi.shape} does not match cine {vol.shape[:3]}")
     for t in range(vol.shape[3]):
-        nib.save(nib.Nifti1Image(vol[..., t], img.affine),
+        nib.save(nib.Nifti1Image(vol[..., t] * roi, img.affine),
                  f"{input_dir}/{cohort}__s{sidx:03d}__{arm}__t{t:02d}_0000.nii.gz")
     return vol.shape[3]
+
+
+def _heart_roi(cohort, subj):
+    p = paths.heart_mask(cohort, subj)
+    if not os.path.isfile(p):
+        sys.exit(f"{cohort}/{subj}: no mask_heart.nii.gz — seg metrics are ROI-cropped for every arm "
+                 f"and cannot be computed without it")
+    return np.asarray(nib.load(str(p)).dataobj) > 0.5
+
+
+def _roi_sha(cohort, subj):
+    return paths.file_sha256(paths.heart_mask(cohort, subj))
+
+
+def _gt_seg_cached(cohort, subj, gt_sha):
+    """True when <subject>/seg_gt/ holds segs of THIS gt bundle cropped by THIS heart ROI
+    (content-keyed on gt_sha256 AND the ROI's sha: an ROI regenerated under an unchanged GT
+    must not reuse segs cropped by the old one)."""
+    src = paths.seg_gt_dir(cohort, subj) / "src.json"
+    return (_json_field(src, "gt_sha256") == gt_sha
+            and _json_field(src, "roi_sha256") == _roi_sha(cohort, subj))
 
 
 def dump(args):
@@ -92,7 +125,28 @@ def dump(args):
     # dump_id ties a seg_dir to THIS dump: run_seg.sh copies it to <seg_dir>/ef_dump_id and score()
     # refuses a seg_dir whose id differs (stale segs from an earlier dump with a different sidx
     # numbering). Content-keyed, not mtime-keyed — see the freshness note below.
-    manifest, meta = [], {"method": args.method, "dump_id": uuid.uuid4().hex}
+    manifest, meta = [], {"method": args.method, "split": os.environ.get("SPLIT", "val"),
+                          "dump_id": uuid.uuid4().hex}
+    if args.gt_only:
+        # Pre-warm <subject>/seg_gt/ for every subject in the split BEFORE any arm exists
+        # (GT is method-independent). Writes cine_gt itself (normally image_metrics does) and
+        # dumps only the cropped GT; `score --gt-only` then populates the cache.
+        import image_metrics
+        meta["method"] = "__gt_only__"
+        for cohort in args.cohorts:
+            split = os.environ.get("SPLIT", "val")
+            keep, _ = paths.filter_by_split(cohort, paths.subjects(cohort), split)
+            for sidx, subj in enumerate(keep):
+                gt_sha = image_metrics.ensure_cine_gt(cohort, subj)
+                if _gt_seg_cached(cohort, subj, gt_sha):
+                    continue
+                T = _dump_cine(paths.cine_gt(cohort, subj), args.input_dir, cohort, sidx,
+                               "gt", _heart_roi(cohort, subj))
+                manifest.append({"cohort": cohort, "sidx": sidx, "subject": subj, "T": T,
+                                 "gt_sha256": gt_sha, "gt_cached": False})
+        json.dump({"meta": meta, "subjects": manifest}, open(f"{args.input_dir}/ef_manifest.json", "w"), indent=2)
+        print(f"dumped GT for {len(manifest)} uncached subjects -> {args.input_dir}")
+        return
     for cohort in args.cohorts:
         for sidx, subj in enumerate(subjects(cohort, args.method)):
             md = method_dir(cohort, subj, args.method)
@@ -108,7 +162,15 @@ def dump(args):
                 print(f"  !! {cohort}/{subj}: cine_gt.nii.gz is missing or from a different gt bundle "
                       f"(rebuilt since scoring?) — re-run score/image_metrics.py; skipped", file=sys.stderr)
                 continue
-            T = _dump_cine(paths.cine_gt(cohort, subj), args.input_dir, cohort, sidx, "gt")
+            roi = _heart_roi(cohort, subj)
+            # GT is method-independent: segment it once per gt bundle. score() fills
+            # <subject>/seg_gt/ from the first seg_dir that has it; later dumps skip GT and
+            # score() copies the cached segs back into the seg_dir under this dump's sidx.
+            gt_cached = _gt_seg_cached(cohort, subj, gt_sha)
+            if gt_cached:
+                T = int(_json_field(paths.seg_gt_dir(cohort, subj) / "src.json", "T"))
+            else:
+                T = _dump_cine(paths.cine_gt(cohort, subj), args.input_dir, cohort, sidx, "gt", roi)
             if T == 0:
                 print(f"  !! {cohort}/{subj}: no cine_gt.nii.gz — run score/image_metrics.py first; skipped",
                       file=sys.stderr)
@@ -120,10 +182,11 @@ def dump(args):
                     print(f"  !! {cohort}/{subj} [{arm}]: cine_{arm} was scored against a different gt bundle "
                           f"(rebuilt since scoring?) — re-run image_metrics; arm skipped", file=sys.stderr)
                     continue
-                n = _dump_cine(cine, args.input_dir, cohort, sidx, arm)
+                n = _dump_cine(cine, args.input_dir, cohort, sidx, arm, roi)
                 if n not in (0, T):
                     sys.exit(f"{cohort}/{subj} [{arm}]: cine has {n} phases but GT has {T} — stale cine?")
-            manifest.append({"cohort": cohort, "sidx": sidx, "subject": subj, "T": T})
+            manifest.append({"cohort": cohort, "sidx": sidx, "subject": subj, "T": T,
+                             "gt_sha256": gt_sha, "gt_cached": gt_cached})
     json.dump({"meta": meta, "subjects": manifest}, open(f"{args.input_dir}/ef_manifest.json", "w"), indent=2)
     print(f"dumped {len(manifest)} subjects -> {args.input_dir}")
 
@@ -197,13 +260,46 @@ def hd95(seg_dir, cohort, sidx, arm, t, gt_t, lab):
     return float(np.percentile(np.concatenate([da, db]), 95))
 
 
+def _sync_gt_seg_cache(seg_dir, cohort, sidx, subj, T, m):
+    """GT segs flow between <seg_dir> (sidx-named, per dump) and <subject>/seg_gt/ (the cache).
+    Cached at dump time -> copy the cache INTO seg_dir so curve/dice/hd95 find them unchanged.
+    Not cached -> this seg_dir just segmented GT: populate the cache (src.json written LAST, so
+    a partial copy is never mistaken for a valid cache). Legacy manifests without gt_sha256
+    are left alone (GT was dumped, nothing to sync)."""
+    import shutil
+    gt_sha = m.get("gt_sha256")
+    if not gt_sha:
+        return
+    cache = paths.seg_gt_dir(cohort, subj)
+    if m.get("gt_cached"):
+        for t in range(T):
+            dst = seg_path(seg_dir, cohort, sidx, "gt", t)
+            if not os.path.isfile(dst):
+                shutil.copyfile(cache / f"seg_t{t:02d}.nii.gz", dst)
+        return
+    if _gt_seg_cached(cohort, subj, gt_sha):
+        return
+    srcs = [seg_path(seg_dir, cohort, sidx, "gt", t) for t in range(T)]
+    if not all(os.path.isfile(p) for p in srcs):
+        return                                   # GT seg incomplete here — score() reports it
+    # tmp + os.replace: two arms of one subject scoring in parallel both populate the cache;
+    # a reader must never see a half-copied seg (identical bytes, so the last replace is benign).
+    os.makedirs(cache, exist_ok=True)
+    for t, p in enumerate(srcs):
+        tmp = cache / f".seg_t{t:02d}.{os.getpid()}.tmp.nii.gz"
+        shutil.copyfile(p, tmp); os.replace(tmp, cache / f"seg_t{t:02d}.nii.gz")
+    tmp = cache / f".src.{os.getpid()}.tmp.json"
+    json.dump({"gt_sha256": gt_sha, "roi_sha256": _roi_sha(cohort, subj), "T": T, "crop": "mask_heart"},
+              open(tmp, "w")); os.replace(tmp, cache / "src.json")
+
+
 def score(args):
     man = json.load(open(f"{args.input}/ef_manifest.json"))
     # dump() writes {"meta": {...}, "subjects": [...]}; a legacy dump is a bare list.
     meta = man.get("meta", {}) if isinstance(man, dict) else {}
     subj_list = man["subjects"] if isinstance(man, dict) else man
-    out = args.out or (str(paths.ef_summary(meta["method"])) if meta.get("method") else None)
-    if not out:
+    out = args.out or (str(paths.ef_summary(meta["method"], meta["split"])) if meta.get("method") else None)
+    if not out and meta.get("method") != "__gt_only__":
         sys.exit("score: --out required (legacy manifest carries no method for the default path)")
     from scipy import stats
     # Leftover segs from an EARLIER dump into the same seg_dir carry sidx's from a different
@@ -218,10 +314,20 @@ def score(args):
     if seg_id != dump_id:
         sys.exit(f"score: {args.seg_dir}/ef_dump_id is {seg_id!r} but the manifest's dump_id is {dump_id!r} — "
                  f"segs are from another dump (or run_seg.sh was bypassed). Re-run run_seg.sh on a fresh seg_dir.")
+    if meta.get("method") == "__gt_only__":
+        # `dump --gt-only` manifest: only populate <subject>/seg_gt/, no arm metrics.
+        n = 0
+        for m in subj_list:
+            c, sidx, subj, T = m["cohort"], m["sidx"], m["subject"], m["T"]
+            _sync_gt_seg_cache(args.seg_dir, c, sidx, subj, T, m)
+            n += _gt_seg_cached(c, subj, m["gt_sha256"])
+        print(f"seg_gt cache populated for {n}/{len(subj_list)} subjects")
+        return
     per_cohort = {}
     rows = []
     for m in subj_list:
         c, sidx, subj, T = m["cohort"], m["sidx"], m["subject"], m["T"]
+        _sync_gt_seg_cache(args.seg_dir, c, sidx, subj, T, m)
         gt, gtvox = curve(args.seg_dir, c, sidx, "gt", T)
         if gt is None:
             print(f"  !! {c}/{subj}: GT LV seg missing/empty — subject dropped from the EF cohort",
@@ -383,10 +489,13 @@ if __name__ == "__main__":
     d = sub.add_parser("dump"); d.add_argument("input_dir")
     d.add_argument("--method", default="vggt_augaggr224hw2_ep300")
     d.add_argument("--cohorts", nargs="+", default=list(paths.DATASETS))
+    d.add_argument("--gt-only", action="store_true",
+                   help="dump only the cropped GT for every split subject lacking a seg_gt cache "
+                        "(no arm needed); pair with `score` on the resulting seg_dir to fill the cache")
     s = sub.add_parser("score"); s.add_argument("seg_dir")
     s.add_argument("--input", required=True)
     s.add_argument("--out", default=None,
-                   help="default: paths.ef_summary(<method from the dump manifest>) — the "
+                   help="default: paths.ef_summary(<method>, <split> from the dump manifest) — the "
                         "location score/aggregate.py merges from")
     pl = sub.add_parser("plot"); pl.add_argument("input", help="a score() output json")
     pl.add_argument("--arm", choices=["clean", "breath", "both"], default="both")
