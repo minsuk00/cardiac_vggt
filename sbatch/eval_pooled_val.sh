@@ -46,8 +46,10 @@ REPO=${REPO:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 CKPT=${CKPT:-$REPO/scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt}
 MODEL_NAME=${MODEL_NAME:-augaggr224hw2_ep300}
 SPLIT=${SPLIT:-val}
+INPUT=${INPUT:-scatter}          # scatter (deliverable) | gated (diagnostic ceiling; MODEL_NAME must contain 'gated')
 SOURCES=${SOURCES:-"cmrx2023 cmrx2024 cmrx2025 acdc mnms miitt ocmr"}
 SKIP_GIF=${SKIP_GIF:-0}          # 1 = metrics only (GIF rendering dominates wall-clock)
+SKIP_DVF=${SKIP_DVF:-0}          # 1 = skip the per-subject DVF panel (was unbound under set -u)
 ARMS=${ARMS:-breath}             # `breath` = the deliverable. Add `clean` ("clean breath") only
                                  # for the no-breathing PSNR ceiling; it ~doubles scoring time.
 
@@ -87,10 +89,13 @@ echo "arm         : vggt_$MODEL_NAME"
 echo "split       : [$SPLIT] ${SPLIT_FILE:-per-source (see split_file_for)}"
 echo "sources     : $SOURCES"
 echo "arms        : $ARMS"
+echo "input       : $INPUT"
 # The MODEL protocol (img_size, backbone, sampling knobs) is read from the ckpt's own
 # run_meta.jsonl, never from the live default.yaml — see inference/load_run.py for why.
 
 for S in $SOURCES; do
+  # miitt/ocmr are val-only held-out datasets: a test run has nothing to do there (and would die).
+  [ "$SPLIT" = val ] || case "$S" in miitt|ocmr) echo "=== [$S] skipped: val-only dataset"; continue ;; esac
   SF=$(split_file_for "$S")
   echo "=== [$S] build bundles  (split file: ${SF#$REPO/}) ===================="
   $PY evaluation/src/engine/build_inputs/pooled.py \
@@ -98,11 +103,13 @@ for S in $SOURCES; do
 
   echo "=== [$S] score ======================================================="
   $PY evaluation/src/engine/run_vggt.py \
-      --dataset "$S" --ckpt "$CKPT" --model-name "$MODEL_NAME" --split "$SPLIT" --arms $ARMS
+      --dataset "$S" --ckpt "$CKPT" --model-name "$MODEL_NAME" --split "$SPLIT" --arms $ARMS \
+      --input "$INPUT"
 
   echo "=== [$S] assemble + metrics =========================================="
-  # Scores every built subject; aggregate.py is the step that enforces $SPLIT, so an off-split
-  # bundle sharing this tree costs scoring time but never enters the summary.
+  # Scores only this job's $SPLIT subjects (aggregate.py enforces it again). The val and test jobs of
+  # one arm share the arm dirs, so without the split check below each would rewrite the other's
+  # metrics.json while the other's aggregate.py reads it.
   # Glob, not $(ls ...): a command substitution that fails does NOT trip `set -e` in a for-list, so a
   # missing/empty out/ dir would silently score nothing and only surface later at aggregate.py.
   # `nullglob` off by default means an empty dir yields the literal pattern -> the -d test skips it
@@ -115,6 +122,8 @@ for S in $SOURCES; do
       # off-split bundles share this tree; run_vggt skips them (no arm dir), so scoring them can
       # only fail — skip here too, keeping failures on reconned subjects loud.
       [ -d "$SUBJ_DIR/vggt_$MODEL_NAME" ] || { echo "  skip $SUBJ (no recon for this arm — off-split)"; continue; }
+      [ "$($PY -c 'import json,sys; print(json.load(open(sys.argv[1]))["split"])' "$SUBJ_DIR/manifest.json")" = "$SPLIT" ] \
+        || { echo "  skip $SUBJ (split != $SPLIT)"; continue; }
       N_SCORED=$((N_SCORED + 1))
       EVAL_DATASET="$S" \
         $PY evaluation/src/score/image_metrics.py "$SUBJ" "vggt_$MODEL_NAME" || \
@@ -138,6 +147,6 @@ for S in $SOURCES; do
   $PY evaluation/src/score/aggregate.py "$S" "vggt_$MODEL_NAME"
 done
 
-echo "DONE — per-source summaries under evaluation/metric_results/"
+echo "DONE — per-source summaries under evaluation/metric_results/$SPLIT/"
 # scoring failures must not read as job success (and their subjects' summaries may hold stale rows)
 [ "${N_FAILED:-0}" -eq 0 ] || { echo "EXIT 1: $N_FAILED subject(s) failed scoring"; exit 1; }

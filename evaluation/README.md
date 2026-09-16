@@ -17,23 +17,23 @@ evaluation/
 ├── check_paths.py      # read-only self-check: paths.py resolves the real tree
 ├── build_models_table.py  # harvest metadata.json -> models.json (git-tracked registry)
 ├── src/
-│   ├── engine/         # makes VOLUMES (run_vggt, run_svrtk3d, run_nesvor, run_seg,
+│   ├── engine/         # makes VOLUMES (run_vggt, run_svrtk3d, run_nesvor, run_dangi, run_seg,
 │   │                   #   build_inputs/pooled.py; run_vggt_rt = real MIITT real-time
 │   │                   #   free-breathing recon, qualitative only — docs/87)
 │   ├── score/          # makes NUMBERS: run.py (THE entry point), image_metrics.py (PSNR/SSIM/NCC),
 │   │                   #   ef_dice.py (EF/Dice via nnU-Net), aggregate.py (folds image + breathing
-│   │                   #   resp_diag + timing [+ EF/Dice] into ONE metric_results/<ds>/<arm>.json)
+│   │                   #   resp_diag + timing [+ EF/Dice] into ONE metric_results/<split>/<ds>/<arm>.json)
 │   └── analysis/       # makes FIGURES (viz = GT-vs-pred GIF, breathing, slice panels,
 │                       #   compare_methods = multi-arm GIF, compare_table / compare_bars = cross-arm ranking)
-├── metric_results/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable)
-│   ├── _ef/<arm>.json               # EF/Dice chain output (cross-cohort, merged into the above)
+├── metric_results/<split>/<ds>/<arm>.json   # small cohort summaries (git-tracked, citable), one tree per split (val|test) — v2 series from 2026-09-13; pre-v2 in _archive/metric_results_prev2_20260913/
+│   ├── <split>/_ef/<arm>.json               # EF/Dice chain output (cross-cohort, merged into the above)
 │   └── _archive/                    # pre-restructure summaries (read-only record)
 ├── _archive/        # superseded code + pre-native-z results, incl. the old MODELS.md / models.json
 │
 ├── volumes/     -> GPFS (subject-major PRECIOUS data; gitignored)
 │   └── <dataset>/out/<subject>/
-│       ├── manifest.json  gt/  clean/  breath/  mask*  heart_seg*   # shared frozen bundle
-│       ├── cine_gt.nii.gz                                           # shared 4D GT (written once)
+│       ├── manifest.json  gt/  clean/  breath/  scatter/  mask*  heart_seg*   # shared frozen bundle
+│       ├── cine_gt.nii.gz  seg_gt/                                  # shared 4D GT + its nnU-Net segs (once per subject)
 │       └── <arm>/ recon_clean/ recon_breath/ metrics.json timing.json ed_dvf.npz
 │                  cine_{clean,breath}.nii.gz                        # scored 4D cines (image_metrics.py)
 │                  gif_{clean,breath}.gif                            # per-arm renders (viz.py) live WITH the recons
@@ -87,11 +87,29 @@ Real-time free-breathing (RTFB) inference is **out of scope** and is archived in
   points at the existing GPFS tree in place. `volumes/` and `checkpoints/` are gitignored so
   no GPFS binary or absolute path ever enters git; only code + small `metric_results/` +
   provenance are tracked.
-- **The breathing bundle is frozen and shared.** `gt/ clean/ breath/ manifest.json` +
+- **The breathing bundle is frozen and shared.** `gt/ clean/ breath/ scatter/ manifest.json` +
   masks are byte-identical inputs for every arm — that is the fairness guarantee. Never
   regenerate the bundle under a subject without re-running every arm on it.
-- **A cohort is defined by its split, and the tree does not enforce it.** Neither the bundle
-  dir nor `metric_results/<ds>/<arm>.json` is split-keyed, so a `test`-split bundle built into the
+- **`scatter/` is the same-input headline stack (docs/98 §7).** `scatter/stack_t{k}` holds, per
+  plane, the ONE phase VGGT's own one-frame-per-slice sampler draws for that plane (frozen in
+  `manifest["scatter"]`, built from `breath/`), plus VGGT's reference plane at phase `k`. A
+  baseline run with `INPUT=scatter` (arm `<method>_scatter`) sees byte-identical input to VGGT;
+  `INPUT=gated` (the default, arm `<method>`) is the easier phase-consistent stack. There is no
+  "clean scatter": scatter is breathed by construction and `--variant clean --input scatter`
+  is refused. Retrofit older bundles with `build_inputs/pooled.py --add-scatter`.
+- **Scoring registers every arm (docs/83, docs/98 §3).** `image_metrics` fits a 6-DOF rigid
+  pose per phase (NCC-max, PSF-blurred first for the deconvolvers in `pose_psf.PSF_METHODS`)
+  and reports the registered score as the headline `{var}_*_mean` plus the unregistered
+  `{var}_*_raw_mean`; both share one intensity gauge computed from the raw read. Per-phase
+  poses are in `metrics.json["poses"]`. SSIM is windowed skimage SSIM per SAX slice.
+- **Segmentation crops EVERY arm to `mask_heart` (docs/98 §5).** The baselines reconstruct
+  only inside the heart ROI (their protocol) and nnU-Net is measurably worse on that crop
+  than on a full FOV, so GT, VGGT and baselines are all cropped identically before nnU-Net —
+  uniform noise instead of a segmenter advantage. Absolute Dice/EF are therefore below
+  full-FOV literature values for every method. GT is segmented once per subject
+  (`<subject>/seg_gt/`, keyed on GT + ROI sha256) and reused by every arm.
+- **A cohort is defined by its split, and the tree does not enforce it.** The bundle dir
+  is not split-keyed (only `metric_results/<split>/` is), so a `test`-split bundle built into the
   same `out/` would otherwise be reconstructed, scored and averaged into the val numbers with
   no warning. Every consumer that defines a cohort honours `manifest["split"]` via
   `paths.filter_by_split`: `run_vggt` skips off-split bundles, `aggregate.py` excludes them
@@ -159,11 +177,24 @@ python evaluation/src/engine/run_vggt.py --dataset <src> --ckpt <pt> --model-nam
 #    baseline shells take (subject, variant); the arm/method is the METHOD env var, ONE call per variant:
 EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/src/engine/run_svrtk3d.sh <subj> clean
 EVAL_DATASET=<ds> METHOD=svrtk3d bash evaluation/src/engine/run_svrtk3d.sh <subj> breath
+#    same-input arm: INPUT=scatter reads scatter/stack_t* (breath only), arm = <method>_scatter
+EVAL_DATASET=<ds> METHOD=svrtk3d_scatter INPUT=scatter bash evaluation/src/engine/run_svrtk3d.sh <subj> breath
+#    cohort driver (sharded, requeue-safe: already-stamped subjects are skipped):
+python evaluation/src/engine/run_baselines.py --method svrtk3d|nesvor --variant breath \
+       --split val|test --input gated|scatter [--dry-run]
+#    Dangi et al. 2018 slice-alignment baseline (docs/100): per-slice LV-centre CNN + rigid in-plane
+#    shift of each input slice (no splat, no z-resampling); ~4 s/subject, A40 and CPU alike (I/O-bound);
+#    ckpt checkpoints/dangi_pool_v2. Use --device cuda for the paper's compute-cost timing column.
+#    arm = dangi_scatter (--input scatter) | dangi (--input gated); stamped subjects are skipped.
+python evaluation/src/engine/run_dangi.py --split val|test --input scatter|gated
+#    → sbatch/eval_baseline_{svrtk,nesvor}_v2.sh loop val+test × gated+scatter over all 7 sources.
+#    NeSVoR runs natively from the nesvor-t2 env ($NESVOR_BIN in run_nesvor.sh, docs/90) — no container.
+#    All timed GPU methods (NeSVoR + every VGGT arm) run on the same GPU class: A40/spgpu, account jjparkcv98.
 # 3+4. score every subject + cohort summary in one go (THE entry point):
 python evaluation/src/score/run.py --method <arm> [--datasets <ds...>] [--split val]
 #    or per subject / per dataset:
 EVAL_DATASET=<ds> python evaluation/src/score/image_metrics.py <subj> <arm>   # -> <arm>/metrics.json + cine_*
-SPLIT=val python evaluation/src/score/aggregate.py <ds> <arm>                 # -> metric_results/<ds>/<arm>.json
+SPLIT=val python evaluation/src/score/aggregate.py <ds> <arm>                 # -> metric_results/val/<ds>/<arm>.json
 #    GIFs are decoupled from scoring:
 EVAL_DATASET=<ds> python evaluation/src/analysis/viz.py <subj> <arm>          # reads the cine_* files
 ```
@@ -178,12 +209,16 @@ just `metrics.json` + `metric_results/*.json`.
 ```bash
 python evaluation/src/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
 python evaluation/src/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
-# EF/EDV/ESV/LVM (+RV) + Dice/HD95 — reads the SCORED cine_* files (run score/ first):
-python evaluation/src/score/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>
+# EF/EDV/ESV/LVM (+RV) + Dice/HD95 — reads the SCORED cine_* files (run score/ first).
+# Every cine (GT included) is cropped to mask_heart before nnU-Net (docs/98 §5).
+# Optional pre-warm, needs NO arm: segment GT once for every split subject into <subject>/seg_gt/
+SPLIT=val  python evaluation/src/score/ef_dice.py dump <gt_dir> --gt-only   # then run_seg.sh + `score <seg> --input <gt_dir>`
+python evaluation/src/score/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>   # skips GT when cached
 bash   evaluation/src/engine/run_seg.sh   <dir> <seg_dir>      # nnU-Net Task114 2d (nnunet env, wrapped)
-python evaluation/src/score/ef_dice.py score <seg_dir> --input <dir>   # -> metric_results/_ef/<arm>.json
-python evaluation/src/score/ef_dice.py plot  metric_results/_ef/<arm>.json --out <ef.png>
-# then re-run score/aggregate.py (or run.py): it folds the _ef file into metric_results/<ds>/<arm>.json
+python evaluation/src/score/ef_dice.py score <seg_dir> --input <dir>   # -> metric_results/<split>/_ef/<arm>.json
+python evaluation/src/score/ef_dice.py plot  metric_results/<split>/_ef/<arm>.json --out <ef.png>
+# then re-run score/aggregate.py (or run.py): it folds the _ef file into metric_results/<split>/<ds>/<arm>.json
+# <split> is $SPLIT (default val) — set the same SPLIT for dump and aggregate.
 ```
 
 Cross-method comparison (any mix of arms — classical baselines + vggt — one subject / cohort):
@@ -191,11 +226,11 @@ Cross-method comparison (any mix of arms — classical baselines + vggt — one 
 ```bash
 # multi-arm cardiac-cycle GIF: GT row + one recon row per arm, same subject (auto-picked if omitted)
 python evaluation/src/analysis/compare_methods.py --cohort <ds> --subject <s> --arms svrtk3d nesvor vggt_<slug> --variant breath
-# rank every arm of a dataset by a metric, straight from metric_results/<ds>/*.json
+# rank every arm of a dataset by a metric, straight from metric_results/<split>/<ds>/*.json (--split, default val)
 python evaluation/src/analysis/compare_table.py <ds> --metric breath_psnr [--arms svrtk3d nesvor vggt_<slug> ...]
 ```
 
-Cohort numbers live in git at `metric_results/<dataset>/<arm>.json`; per-arm provenance in each arm's
+Cohort numbers live in git at `metric_results/<split>/<dataset>/<arm>.json`; per-arm provenance in each arm's
 `metadata.json` (tabulated on demand by `build_models_table.py`).
 
 ## Extending
@@ -227,7 +262,7 @@ Cohort numbers live in git at `metric_results/<dataset>/<arm>.json`; per-arm pro
 fixes this for **new** runs (single `_contz`); `slice_panels.method_dir` / `rep_subject` still
 probe both suffixes for the legacy dirs. `ef_dice.method_dir` deliberately does NOT — it
 requires the exact literal arm name, because a probed suffix would make the
-`metric_results/_ef/<arm>.json` key diverge from the arm name `aggregate.py` joins on and the
+`metric_results/<split>/_ef/<arm>.json` key diverge from the arm name `aggregate.py` joins on and the
 EF block would silently never fold. Dump a contz arm under its full dir name.
 
 ## Why subject-major (the one divergence from MRI2CT)

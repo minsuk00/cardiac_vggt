@@ -160,9 +160,10 @@ def build_batch_rt(ds, seq_index, bundle, device):
 
 
 @torch.no_grad()
-def reconstruct_rt(model, ds, seq_index, bundle, device):
+def reconstruct_rt(model, ds, seq_index, bundle, device, splat_res=None):
     """Sweep slot 0 (reference, z_mid) over every real frame; companions fixed.
-    Returns ((T_rt, D, 256, 256) recon, mean ms/frame, frame-0 DVF pack)."""
+    Returns ((T_rt, D, 256, 256) recon, mean ms/frame, frame-0 DVF pack).
+    `splat_res`: the run's own loss.volume.splat_res — render with the point density it trained on."""
     batch = build_batch_rt(ds, seq_index, bundle, device)
     slot_frames = batch["timesteps"][0].cpu().numpy().copy()   # fixed companion frame per slot
     n_frames, D = bundle.shape[:2]
@@ -176,7 +177,7 @@ def reconstruct_rt(model, ds, seq_index, bundle, device):
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
         wp = preds["world_points"].float()
-        V, _ = _splat_preds_native({"world_points": wp}, batch, (D, 256, 256), z_scale)
+        V, _ = _splat_preds_native({"world_points": wp}, batch, (D, 256, 256), z_scale, splat_res=splat_res)
         torch.cuda.synchronize(); ms.append((time.perf_counter() - t0) * 1e3)
         vols.append(V[0].float().cpu().numpy())
         if f == 0:
@@ -236,7 +237,8 @@ def main():
 
     device = torch.device("cuda")
     model, cfg = load_model_from_run(args.ckpt, device=device)
-    print("model loaded")
+    splat_res = ((cfg.get("loss") or {}).get("volume") or {}).get("splat_res")   # None = native 256²
+    print(f"model loaded (splat_res={splat_res})")
 
     for subj in args.subjects:
         rt_path = os.path.join(RT_ROOT, subj.replace("MIITT_", ""), "realtime/sax/4d_recon.nii.gz")
@@ -256,7 +258,7 @@ def main():
                   f"{'yes' if gated is not None else 'no (missing or D mismatch)'}")
             t0 = time.perf_counter()
             recon, ms_per_frame, dvf_pack = reconstruct_rt(
-                model, ds, rv.name_seed("miitt", subj), bundle, device)
+                model, ds, rv.name_seed("miitt", subj), bundle, device, splat_res=splat_res)
             print(f"  reconstructed {n_frames} frames in {time.perf_counter() - t0:.1f}s "
                   f"({ms_per_frame:.0f} ms/frame)")
 

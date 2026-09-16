@@ -436,7 +436,8 @@ loss:
     # denser training splat rather than input resolution (the native-splat 518 replicate
     # tracks 224/336). Does not change the rendered grid. Applies to train AND the in-run
     # val metrics / identity baseline / filmstrip (all splat the same point set); the
-    # offline `evaluation/` render stays native. Coverage/hole_frac are NOT comparable
+    # offline `evaluation/` render reads it from the run's run_meta too (run_vggt.py, 2026-09-13).
+    # Coverage/hole_frac are NOT comparable
     # between splat_res arms and native arms (same series break as docs/73).
     splat_res: null
     #

@@ -26,7 +26,14 @@ export FCMR_BIND="$VGGT/scratch"      # bind the whole GPFS tree (covers sif + e
 #                     BOTH variants identically (breathing single-stack has no clean slice to
 #                     reject against either, so robust stats can't help it regardless).
 SUBJ="${1:?subject}"; VAR="${2:?clean|breath}"; RES="${3:-1.4}"; ITERS="${4:-4}"
-J="${J:-8}"; T="${T:-12}"; THICK="${THICK:-8}"; METHOD="${METHOD:-svrtk3d}"
+J="${J:-8}"; T="${T:-12}"; THICK="${THICK:-8}"
+# INPUT = which bundle stack feeds the recon. Default = the variant's own gated stack (clean/ or
+# breath/: every plane at the target phase). INPUT=scatter = the SAME-INPUT arm: scatter/stack_tNN
+# (each plane at VGGT's frozen random phase, reference plane at the target phase, breathing
+# applied) — what VGGT actually sees. Scatter recons land under a separate arm name
+# (<METHOD>_scatter) with the usual recon_<VAR>/ layout, so the scorer needs no changes.
+INPUT="${INPUT:-$VAR}"
+if [ "$INPUT" = scatter ]; then METHOD="${METHOD:-svrtk3d_scatter}"; else METHOD="${METHOD:-svrtk3d}"; fi
 # Layout: <subject>/ holds the SHARED frozen bundle (gt/ clean/ breath/ mask_heart.nii.gz manifest.json,
 # identical for every method); each method writes under <subject>/<METHOD>/ . See README "Directory layout".
 SD="$VGGT/scratch/eval/${EVAL_DATASET:?EVAL_DATASET must name a source dir: cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr}/out/$SUBJ"
@@ -44,7 +51,7 @@ recon_one() {
   # applied breathing later without re-running. See run's README "what is logged".
   local t0=$(date +%s)
   ( cd "$wd" && OMP_NUM_THREADS="$OMP" mirtk reconstruct vol.nii.gz 1 \
-      "$SD/$VAR/stack_t${pp}.nii.gz" -thickness "$THICK" -mask "$SD/${MASK_FILE:-mask_heart.nii.gz}" \
+      "$SD/$INPUT/stack_t${pp}.nii.gz" -thickness "$THICK" -mask "$SD/${MASK_FILE:-mask_heart.nii.gz}" \
       -resolution "$RES" -iterations "$ITERS" -no_robust_statistics $DBG > log.txt 2>&1 )
   local dt=$(( $(date +%s) - t0 ))
   cp -f "$wd/log.txt" "$OUT/log_t${pp}.txt" 2>/dev/null
@@ -66,7 +73,7 @@ recon_one() {
 #   small subset under METHOD=svrtk3d_debug — a rerun into an EXISTING arm dir skips every cached
 #   phase (so no .dof appears) while still overwriting provenance.txt/total_wall.sec.
 OMP="${OMP:-2}"; DBG=""; [ "${DEBUG:-0}" = "1" ] && DBG="-debug"
-export -f recon_one; export OUT SD VAR MASK_FILE THICK RES ITERS OMP DBG
+export -f recon_one; export OUT SD VAR INPUT MASK_FILE THICK RES ITERS OMP DBG
 # Provenance (once per subject/variant) — exact engine, command, params, container, AND the hardware
 # + timing needed for a fair speed comparison vs our GPU feed-forward model. See README "What is logged".
 SIF="${FCMR_SIF:-$VGGT/scratch/fetal_cmr_4d/sif/svrtk.sif}"
@@ -90,7 +97,7 @@ NCPU_ALLOC=$(echo "$JINFO" | grep -oE 'cpu=[0-9]+' | cut -d= -f2); NCPU_ALLOC=${
 MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=${MEM_ALLOC:-unknown}
 {
   echo "engine          : SVRTK 'mirtk reconstruct' (3D per-phase, single gated stack, K=1)"
-  echo "command         : mirtk reconstruct vol.nii.gz 1 <VAR/stack_tNN.nii.gz> -thickness $THICK \\"
+  echo "command         : mirtk reconstruct vol.nii.gz 1 <$INPUT/stack_tNN.nii.gz> -thickness $THICK \\"
   echo "                    -mask ${MASK_FILE:-mask_heart.nii.gz} -resolution $RES -iterations $ITERS \\"
   echo "                    -no_robust_statistics $DBG"
   echo "params          : thickness_mm=$THICK resolution_mm=$RES iterations=$ITERS \\"
@@ -98,7 +105,7 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "container(sif)  : $SIF"
   echo "container_id    : $(stat -c '%s bytes, mtime %y' "$SIF" 2>/dev/null)"
   echo "method          : $METHOD"
-  echo "subject/variant : $SUBJ / $VAR   phases(T)=$T"
+  echo "subject/variant : $SUBJ / $VAR   phases(T)=$T   input_stack=$INPUT"
   echo "--- hardware / parallelism (for the compute-cost comparison) ---"
   echo "host            : $(hostname)   SLURM job ${SLURM_JOB_ID:-none}"
   echo "cpu model       : $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//')"
@@ -121,8 +128,8 @@ echo "$T_ALL" > "$OUT/total_wall.sec"                       # end-to-end wall, a
 # identical config count as the same run, so clean/breath stamps from separate submissions match.
 N_OK=$(ls "$OUT"/vol_t*.nii.gz 2>/dev/null | wc -l)
 if [ "$N_OK" -eq "$T" ]; then
-  printf '{"engine": "svrtk3d", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "robust_statistics": "off", "container_id": "%s"}\n' \
-    "$THICK" "$RES" "$ITERS" "$(container_id "$SIF")" > "$OUT/stamp.json"
+  printf '{"engine": "svrtk3d", "input_stack": "%s", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "robust_statistics": "off", "container_id": "%s"}\n' \
+    "$([ "$INPUT" = scatter ] && echo scatter || echo gated)" "$THICK" "$RES" "$ITERS" "$(container_id "$SIF")" > "$OUT/stamp.json"
 else
   echo "NOT stamped: only $N_OK/$T phases OK"
 fi

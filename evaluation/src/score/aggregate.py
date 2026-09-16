@@ -5,9 +5,9 @@ The single collector (successor to _archive/aggregate.py): for each subject it r
   - <subj>/<arm>/resp_diag.json        breathing motion pred-vs-applied (run_vggt; baselines
                                        once the transform-saving svrtk3d_debug run exists)
   - <subj>/<arm>/timing.json | <arm>/recon_breath/total_wall.sec     recon wall-clock
-and writes ONE  metric_results/<dataset>/<method>.json  (the git-tracked citable numbers).
+and writes ONE  metric_results/<split>/<dataset>/<method>.json  (the git-tracked citable numbers).
 The EF/Dice chain (ef_dice.py, separate because it crosses to the nnunet env) writes
-metric_results/_ef/<method>.json; when that exists its per-subject biventricular metrics are
+metric_results/<split>/_ef/<method>.json; when that exists its per-subject biventricular metrics are
 joined into the rows and its cohort aggregate lands under summary["ef"] — absent file = null
 block, nothing fails. Re-run this aggregator after the seg chain to fold them in.
 
@@ -90,10 +90,10 @@ def _wall_sec(ds, subj, method):
         return None
 
 
-def _ef_data(dataset, method):
+def _ef_data(dataset, method, split):
     """(per-subject ef rows for this dataset keyed by subject, cohort aggregate block) from the
     EF/Dice chain's output — ({}, None) when the chain hasn't run for this arm."""
-    p = paths.ef_summary(method)
+    p = paths.ef_summary(method, split)
     try:
         d = json.load(open(p))
     except (OSError, json.JSONDecodeError):
@@ -103,10 +103,19 @@ def _ef_data(dataset, method):
     return per, d.get("aggregate", {}).get(dataset)
 
 
-def aggregate(dataset, method, split, exclude=()):
-    """`exclude`: subjects whose scoring FAILED in the calling run — their surviving
-    metrics.json (from an earlier run) must not be averaged in as if fresh (stale-row leak);
-    they are dropped here and listed in the summary as `excluded_stale`."""
+def _fmt(v, w, p=2):
+    return f"{v:>{w}.{p}f}" if v is not None else f"{'n/a':>{w}}"
+
+
+def _subject_of(metrics_path):
+    return os.path.basename(os.path.dirname(os.path.dirname(metrics_path)))
+
+
+def select_scored_files(dataset, method, split, exclude=()):
+    """metrics.json files to fold in for one (dataset, method): on disk, in-split, minus any
+    subject whose scoring FAILED in the calling run (`exclude`) — a surviving metrics.json from
+    an EARLIER run must not be averaged in as if it were fresh (stale-row leak); dropped
+    subjects are returned as `excluded_stale` for the summary."""
     root = paths.dataset_root(dataset)
     files = sorted(glob.glob(str(root / "*" / method / "metrics.json")))
     if not files:
@@ -114,28 +123,27 @@ def aggregate(dataset, method, split, exclude=()):
 
     # A cohort is defined by its SPLIT; nothing in the layout enforces that, so a test-split
     # bundle scored into the same tree would silently average into the val numbers.
-    def _subj_of(f):
-        return os.path.basename(os.path.dirname(os.path.dirname(f)))
-    keep, dropped = paths.filter_by_split(dataset, [_subj_of(f) for f in files], split)
+    keep, dropped = paths.filter_by_split(dataset, [_subject_of(f) for f in files], split)
     if dropped:
         print(f"  !! EXCLUDED {len(dropped)} scored subject(s) not in split '{split}':")
         for s, why in dropped:
             print(f"       {s}: {why}")
     keep = set(keep)
-    excluded_stale = sorted(set(exclude) & {_subj_of(f) for f in files})
+    excluded_stale = sorted(set(exclude) & {_subject_of(f) for f in files})
     if excluded_stale:
         print(f"  !! EXCLUDED {len(excluded_stale)} subject(s) whose scoring failed this run "
               f"(their on-disk metrics.json is a stale earlier record): {', '.join(excluded_stale[:8])}"
               f"{' ...' if len(excluded_stale) > 8 else ''}")
     keep -= set(exclude)
-    files = [f for f in files if _subj_of(f) in keep]
+    files = [f for f in files if _subject_of(f) in keep]
     if not files:
         sys.exit(f"no split-'{split}' subjects scored for arm '{method}' in {dataset}")
+    return files, excluded_stale
 
-    ef_rows, ef_agg = _ef_data(dataset, method)
-    if ef_rows:
-        print(f"  ef/dice chain found for '{method}' — folding biventricular metrics "
-              f"({len(ef_rows)} subject(s) in {dataset})")
+
+def load_rows(dataset, method, files, ef_rows):
+    """One row per scored subject: image metrics (metrics.json) + breathing (_resp_row) +
+    EF/Dice (ef_rows) + wall-clock (_wall_sec) + provenance fields — ready for stat()/printing."""
     rows = []
     for f in files:
         d = json.load(open(f))
@@ -158,13 +166,18 @@ def aggregate(dataset, method, split, exclude=()):
             "ckpt": d.get("ckpt"), "ckpt_fingerprint": d.get("ckpt_fingerprint"),
             "stamps_agree": d.get("stamps_agree"),
         })
+    return rows
 
-    # Completeness + provenance checks (a partial or mixed-ckpt cohort must NOT summarize as if
-    # whole). One keying mode for the whole cohort: fingerprints only if EVERY ckpt-bearing row
-    # has one, else realpath (mirrors run_vggt._same_ckpt).
+
+def check_provenance(dataset, method, split, rows):
+    """Warn about a partial cohort, mixed checkpoints, or unverified cost_psnr (never raises —
+    a partial/mixed cohort must still summarize, just loudly). Returns
+    {expected, missing, ckpts, unverified} for the caller's summary block.
+
+    One keying mode for the whole cohort: fingerprints only if EVERY ckpt-bearing row has one
+    and they're all the same format (legacy size:mtime vs v2 content ids are not comparable —
+    paths.same_fingerprint), else realpath (mirrors run_vggt._same_ckpt)."""
     ckpt_rows = [r for r in rows if r.get("ckpt")]
-    # ... and only if they are all the same format (legacy size:mtime vs v2 content ids are not
-    # comparable — paths.same_fingerprint).
     use_fp = bool(ckpt_rows) and all(r.get("ckpt_fingerprint") for r in ckpt_rows) and \
         len({str(r["ckpt_fingerprint"]).startswith("v2:") for r in ckpt_rows}) == 1
     def _ckpt_key(r):
@@ -187,61 +200,76 @@ def aggregate(dataset, method, split, exclude=()):
     if unverified:
         print(f"  !! WARNING: cost_psnr UNVERIFIED for {len(unverified)}/{len(rows)} subject(s): "
               f"{', '.join(unverified[:8])}{' ...' if len(unverified) > 8 else ''}")
+    return {"expected": expected, "missing": missing, "ckpts": ckpts, "unverified": unverified}
 
+
+def print_subject_table(dataset, method, split, rows):
     has_clean = any(r["clean_psnr"] is not None for r in rows)
     print(f"\n=== {dataset} / {method} / split={split}  (n={len(rows)}"
           f"{'' if has_clean else ', breath arm only'}) ===")
-    def _f(v, w, p=2):
-        return f"{v:>{w}.{p}f}" if v is not None else f"{'n/a':>{w}}"
     hdr = f"{'subject':<40}{'clean':>8}{'breath':>8}{'cost':>7}{'|disp|mm':>9}"
     print(hdr); print("-" * len(hdr))
     for r in sorted(rows, key=lambda r: r["subject"]):
-        print(f"{r['subject']:<40}{_f(r['clean_psnr'],8)}"
-              f"{_f(r['breath_psnr'],8)}{_f(r['cost_psnr'],7)}{_f(r['breath_disp_mm'],9)}")
+        print(f"{r['subject']:<40}{_fmt(r['clean_psnr'],8)}"
+              f"{_fmt(r['breath_psnr'],8)}{_fmt(r['cost_psnr'],7)}{_fmt(r['breath_disp_mm'],9)}")
 
-    def summarize(subset, label):
-        if not subset:
-            return None
-        cp = stat([r["clean_psnr"] for r in subset]); cs = stat([r["clean_ssim"] for r in subset])
-        cn = stat([r["clean_ncc"] for r in subset]); bn = stat([r["breath_ncc"] for r in subset])
-        bp = stat([r["breath_psnr"] for r in subset]); bs = stat([r["breath_ssim"] for r in subset])
-        ct = stat([r["cost_psnr"] for r in subset]); dz = stat([r["breath_disp_mm"] for r in subset])
-        bu = stat([r["breath_psnr_unit_peak"] for r in subset])
-        ep = stat([r.get("resp_epe_dz_mm", float("nan")) for r in subset])
-        ed = stat([r.get("resp_epe_dz_demeaned_mm", float("nan")) for r in subset])
-        sl = stat([r.get("resp_slope", float("nan")) for r in subset])
-        co = stat([r.get("resp_corr", float("nan")) for r in subset])
-        ws = stat([r["recon_wall_sec"] if r["recon_wall_sec"] is not None else float("nan")
-                   for r in subset])
-        print(f"\n[{label}]  n={bp[2]}")
-        if cp[2]:
-            print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}   NCC {cn[0]:.3f} +- {cn[1]:.3f}")
-        print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}   NCC {bn[0]:.3f} +- {bn[1]:.3f}")
-        if bu[2]:
-            print(f"  breath: PSNR {bu[0]:6.2f} +- {bu[1]:.2f} dB  [unit-peak, trainer-comparable]")
-        if ct[2]:
-            print(f"  breathing cost (clean-breath): {ct[0]:.2f} +- {ct[1]:.2f} dB   |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm")
-        else:
-            print(f"  |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm   (no clean arm -> no breathing-cost delta)")
-        if ep[2]:
-            print(f"  breathing motion: EPE {ep[0]:.2f} +- {ep[1]:.2f} mm  "
-                  f"(demeaned {ed[0]:.2f} +- {ed[1]:.2f} mm)   slope {sl[0]:.2f} +- {sl[1]:.2f}   "
-                  f"corr {co[0]:.2f} +- {co[1]:.2f}  [n={ep[2]}]")
-        if ws[2]:
-            print(f"  recon wall-clock: {ws[0]:.1f} +- {ws[1]:.1f} s per 12-phase cine  [n={ws[2]}]")
-        # n keys off the BREATH count: the deliverable arm and the only one always present.
-        return {"n": bp[2], "n_clean": cp[2],
-                "clean_psnr": cp[:2], "clean_ssim": cs[:2], "clean_ncc": cn[:2],
-                "breath_psnr": bp[:2], "breath_ssim": bs[:2], "breath_ncc": bn[:2],
-                "breath_psnr_unit_peak": bu[:2],
-                "cost_psnr": ct[:2], "breath_disp_mm": dz[:2],
-                "resp_epe_dz_mm": ep[:2], "resp_epe_dz_demeaned_mm": ed[:2],
-                "resp_slope": sl[:2], "resp_corr": co[:2], "n_resp": ep[2],
-                "recon_wall_sec": ws[:2], "n_timing": ws[2]}
+
+def summarize(subset, label):
+    if not subset:
+        return None
+    cp = stat([r["clean_psnr"] for r in subset]); cs = stat([r["clean_ssim"] for r in subset])
+    cn = stat([r["clean_ncc"] for r in subset]); bn = stat([r["breath_ncc"] for r in subset])
+    bp = stat([r["breath_psnr"] for r in subset]); bs = stat([r["breath_ssim"] for r in subset])
+    ct = stat([r["cost_psnr"] for r in subset]); dz = stat([r["breath_disp_mm"] for r in subset])
+    bu = stat([r["breath_psnr_unit_peak"] for r in subset])
+    ep = stat([r.get("resp_epe_dz_mm", float("nan")) for r in subset])
+    ed = stat([r.get("resp_epe_dz_demeaned_mm", float("nan")) for r in subset])
+    sl = stat([r.get("resp_slope", float("nan")) for r in subset])
+    co = stat([r.get("resp_corr", float("nan")) for r in subset])
+    ws = stat([r["recon_wall_sec"] if r["recon_wall_sec"] is not None else float("nan")
+               for r in subset])
+    print(f"\n[{label}]  n={bp[2]}")
+    if cp[2]:
+        print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}   NCC {cn[0]:.3f} +- {cn[1]:.3f}")
+    print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}   NCC {bn[0]:.3f} +- {bn[1]:.3f}")
+    if bu[2]:
+        print(f"  breath: PSNR {bu[0]:6.2f} +- {bu[1]:.2f} dB  [unit-peak, trainer-comparable]")
+    if ct[2]:
+        print(f"  breathing cost (clean-breath): {ct[0]:.2f} +- {ct[1]:.2f} dB   |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm")
+    else:
+        print(f"  |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm   (no clean arm -> no breathing-cost delta)")
+    if ep[2]:
+        print(f"  breathing motion: EPE {ep[0]:.2f} +- {ep[1]:.2f} mm  "
+              f"(demeaned {ed[0]:.2f} +- {ed[1]:.2f} mm)   slope {sl[0]:.2f} +- {sl[1]:.2f}   "
+              f"corr {co[0]:.2f} +- {co[1]:.2f}  [n={ep[2]}]")
+    if ws[2]:
+        print(f"  recon wall-clock: {ws[0]:.1f} +- {ws[1]:.1f} s per 12-phase cine  [n={ws[2]}]")
+    # n keys off the BREATH count: the deliverable arm and the only one always present.
+    return {"n": bp[2], "n_clean": cp[2],
+            "clean_psnr": cp[:2], "clean_ssim": cs[:2], "clean_ncc": cn[:2],
+            "breath_psnr": bp[:2], "breath_ssim": bs[:2], "breath_ncc": bn[:2],
+            "breath_psnr_unit_peak": bu[:2],
+            "cost_psnr": ct[:2], "breath_disp_mm": dz[:2],
+            "resp_epe_dz_mm": ep[:2], "resp_epe_dz_demeaned_mm": ed[:2],
+            "resp_slope": sl[:2], "resp_corr": co[:2], "n_resp": ep[2],
+            "recon_wall_sec": ws[:2], "n_timing": ws[2]}
+
+
+def aggregate(dataset, method, split, exclude=()):
+    """`exclude`: subjects whose scoring FAILED in the calling run — see select_scored_files."""
+    files, excluded_stale = select_scored_files(dataset, method, split, exclude)
+
+    ef_rows, ef_agg = _ef_data(dataset, method, split)
+    if ef_rows:
+        print(f"  ef/dice chain found for '{method}' — folding biventricular metrics "
+              f"({len(ef_rows)} subject(s) in {dataset})")
+    rows = load_rows(dataset, method, files, ef_rows)
+    prov = check_provenance(dataset, method, split, rows)
+    print_subject_table(dataset, method, split, rows)
 
     summary = {"dataset": dataset, "method": method, "split": split, "n": len(rows),
-               "n_expected": len(expected), "missing": missing, "ckpts": ckpts,
-               "cost_psnr_unverified": unverified,
+               "n_expected": len(prov["expected"]), "missing": prov["missing"],
+               "ckpts": prov["ckpts"], "cost_psnr_unverified": prov["unverified"],
                "excluded_stale": excluded_stale,
                # honest provenance: the set of scorers that actually produced the folded rows
                # (migrated pre-rename rows say "score.py", fresh ones "image_metrics.py")
@@ -250,7 +278,7 @@ def aggregate(dataset, method, split, exclude=()):
                "all": summarize(rows, "ALL")}
     summary["per_subject"] = rows
 
-    out = paths.summary(dataset, method)
+    out = paths.summary(dataset, method, split)
     out.parent.mkdir(parents=True, exist_ok=True)
     json.dump(json_safe(summary), open(out, "w"), indent=2, allow_nan=False)
     print(f"\n-> {out}")
