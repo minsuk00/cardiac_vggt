@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+runs/
+dangi-*.log
+ACDC/
+ACDC.zip
+*.egg-info/
+build/
+dist/
+.jupyter/
+.ipynb_checkpoints/
