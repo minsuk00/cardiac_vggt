@@ -1,0 +1,332 @@
+{
+  "dataset": "acdc",
+  "method": "niftymic_scatter",
+  "split": "val",
+  "n": 11,
+  "n_expected": 11,
+  "missing": [],
+  "ckpts": [],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": null,
+  "all": {
+    "n": 11,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      12.67498392047304,
+      1.0618996239931064
+    ],
+    "breath_ssim": [
+      0.3340811820120106,
+      0.05228541091104368
+    ],
+    "breath_ncc": [
+      0.6035296056758273,
+      0.163668925569021
+    ],
+    "breath_psnr_unit_peak": [
+      13.437051144513218,
+      1.5225726814605385
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      5.3193716022499995,
+      2.164451370427226
+    ],
+    "resp_epe_dz_mm": [
+      null,
+      null
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      null,
+      null
+    ],
+    "resp_slope": [
+      null,
+      null
+    ],
+    "resp_corr": [
+      null,
+      null
+    ],
+    "n_resp": 0,
+    "recon_wall_sec": [
+      180.63636363636363,
+      35.50485940434512
+    ],
+    "n_timing": 11
+  },
+  "per_subject": [
+    {
+      "subject": "ACDC_patient020",
+      "recon_wall_sec": 183.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8518651276826859,
+      "breath_psnr": 11.452517827351889,
+      "breath_ssim": 0.4608159450386548,
+      "breath_psnr_unit_peak": 16.409207264582317,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.715282939918773,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient029",
+      "recon_wall_sec": 175.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.42970459908246994,
+      "breath_psnr": 14.470618486404419,
+      "breath_ssim": 0.34198956234491873,
+      "breath_psnr_unit_peak": 14.470618486404419,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 8.557926939246519,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient035",
+      "recon_wall_sec": 207.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.48546911776065826,
+      "breath_psnr": 12.858153740564982,
+      "breath_ssim": 0.35355363735562034,
+      "breath_psnr_unit_peak": 12.927494684855143,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.7582562926090373,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient041",
+      "recon_wall_sec": 113.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7463211566209793,
+      "breath_psnr": 13.38386837641398,
+      "breath_ssim": 0.35143832235875355,
+      "breath_psnr_unit_peak": 13.767390410105387,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.907845261867844,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient050",
+      "recon_wall_sec": 169.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6601195981105169,
+      "breath_psnr": 13.705501079559326,
+      "breath_ssim": 0.3244733324255517,
+      "breath_psnr_unit_peak": 13.705501079559326,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.017440099506954,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient060",
+      "recon_wall_sec": 153.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7870463381210963,
+      "breath_psnr": 11.196914434432983,
+      "breath_ssim": 0.2931157592056735,
+      "breath_psnr_unit_peak": 11.196914434432983,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.951075734625121,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient061",
+      "recon_wall_sec": 156.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.45315531144539517,
+      "breath_psnr": 13.187840541203817,
+      "breath_ssim": 0.29842872231961487,
+      "breath_psnr_unit_peak": 13.630614280700684,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.97870550287187,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient071",
+      "recon_wall_sec": 172.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8166776696840922,
+      "breath_psnr": 11.468059539794922,
+      "breath_ssim": 0.29811660888943237,
+      "breath_psnr_unit_peak": 11.468059539794922,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.9397288504499155,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient075",
+      "recon_wall_sec": 183.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.44031239300966263,
+      "breath_psnr": 12.528867562611898,
+      "breath_ssim": 0.3835691115932393,
+      "breath_psnr_unit_peak": 15.05928087234497,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 6.657028931212655,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient092",
+      "recon_wall_sec": 252.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.41947705795367557,
+      "breath_psnr": 11.550456126530966,
+      "breath_ssim": 0.256368945234058,
+      "breath_psnr_unit_peak": 11.550456126530966,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.04680425594306,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "ACDC_patient093",
+      "recon_wall_sec": 224.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.548677292962869,
+      "breath_psnr": 13.622025410334269,
+      "breath_ssim": 0.31302305536659963,
+      "breath_psnr_unit_peak": 13.622025410334269,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.982992816498237,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    }
+  ]
+}

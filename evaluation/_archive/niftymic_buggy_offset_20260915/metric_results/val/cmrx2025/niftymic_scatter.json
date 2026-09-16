@@ -1,0 +1,608 @@
+{
+  "dataset": "cmrx2025",
+  "method": "niftymic_scatter",
+  "split": "val",
+  "n": 23,
+  "n_expected": 23,
+  "missing": [],
+  "ckpts": [],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": null,
+  "all": {
+    "n": 23,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      11.545378365378447,
+      4.1977805612563035
+    ],
+    "breath_ssim": [
+      0.3902046879986831,
+      0.07979976868967317
+    ],
+    "breath_ncc": [
+      0.6540901852042779,
+      0.15394079277163703
+    ],
+    "breath_psnr_unit_peak": [
+      15.06703012922536,
+      3.49519921536403
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      6.696952223028237,
+      2.6687502612532463
+    ],
+    "resp_epe_dz_mm": [
+      null,
+      null
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      null,
+      null
+    ],
+    "resp_slope": [
+      null,
+      null
+    ],
+    "resp_corr": [
+      null,
+      null
+    ],
+    "n_resp": 0,
+    "recon_wall_sec": [
+      199.30434782608697,
+      36.76533667867613
+    ],
+    "n_timing": 23
+  },
+  "per_subject": [
+    {
+      "subject": "CMRx25_R1test_Center001_Siemens_30T_Vida_P004",
+      "recon_wall_sec": 236.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.552904486656189,
+      "breath_psnr": 5.487229386965434,
+      "breath_ssim": 0.32926619400348917,
+      "breath_psnr_unit_peak": 11.858456691106161,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.135503074341162,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1test_Center004_Siemens_15T_Aera_P014",
+      "recon_wall_sec": 195.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6637205382188162,
+      "breath_psnr": 14.164089759190878,
+      "breath_ssim": 0.4459700860218658,
+      "breath_psnr_unit_peak": 19.0081680615743,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.611659064048775,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1test_Center005_Siemens_30T_Vida_P021",
+      "recon_wall_sec": 254.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7817212641239166,
+      "breath_psnr": 17.689194520314533,
+      "breath_ssim": 0.49363002582903354,
+      "breath_psnr_unit_peak": 17.689194520314533,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.451814961072946,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P011",
+      "recon_wall_sec": 293.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8243018984794617,
+      "breath_psnr": 7.054439345995585,
+      "breath_ssim": 0.3851688215079286,
+      "breath_psnr_unit_peak": 11.912981589635214,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.7884041859467565,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P012",
+      "recon_wall_sec": 224.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8204313317934672,
+      "breath_psnr": 6.553050239880879,
+      "breath_ssim": 0.34280422760917495,
+      "breath_psnr_unit_peak": 11.442286014556885,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.024191795978833,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1test_Center012_Philips_30T_IngeniaCX_P013",
+      "recon_wall_sec": 174.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.688689743479093,
+      "breath_psnr": 11.906847476959229,
+      "breath_ssim": 0.3453256930740953,
+      "breath_psnr_unit_peak": 13.741198062896729,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.869009720759184,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1val_Center001_UIH_30T_umr780_P045",
+      "recon_wall_sec": 211.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7171240001916885,
+      "breath_psnr": 20.352694988250732,
+      "breath_ssim": 0.48796929141870166,
+      "breath_psnr_unit_peak": 20.990159670511883,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.6525185861734135,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1val_Center004_Siemens_15T_Aera_P011",
+      "recon_wall_sec": 259.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7601842085520426,
+      "breath_psnr": 16.085161685943604,
+      "breath_ssim": 0.4988365327870096,
+      "breath_psnr_unit_peak": 19.948930740356445,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.812557478346722,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R1val_Center004_Siemens_15T_Aera_P017",
+      "recon_wall_sec": 195.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8271706899007162,
+      "breath_psnr": 17.167948087056477,
+      "breath_ssim": 0.48936413348589997,
+      "breath_psnr_unit_peak": 18.29694716135661,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.3764123288955608,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R2test_Center001_UIH_30T_umr780_P007",
+      "recon_wall_sec": 181.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7096798767646154,
+      "breath_psnr": 8.494432806968689,
+      "breath_ssim": 0.33324629577512815,
+      "breath_psnr_unit_peak": 11.725991090138754,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.505168204357348,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R2test_Center002_Siemens_30T_CIMAX_P021",
+      "recon_wall_sec": 170.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6756694912910461,
+      "breath_psnr": 15.299772103627523,
+      "breath_ssim": 0.558601530139002,
+      "breath_psnr_unit_peak": 22.970247904459637,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.3298050726341515,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R2test_Center005_UIH_15T_umr670_P007",
+      "recon_wall_sec": 204.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.756947840253512,
+      "breath_psnr": 10.334744930267334,
+      "breath_ssim": 0.42427426963986653,
+      "breath_psnr_unit_peak": 13.357423384984335,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 13.094433833076291,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R2test_Center006_UIH_30T_umr790_P024",
+      "recon_wall_sec": 173.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.46702002237240475,
+      "breath_psnr": 12.597832759221395,
+      "breath_ssim": 0.3439277078245652,
+      "breath_psnr_unit_peak": 14.916821797688803,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.716073107743439,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_R2val_Center004_UIH_15T_umr680_P007",
+      "recon_wall_sec": 230.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.5528270602226257,
+      "breath_psnr": 5.101161917050679,
+      "breath_ssim": 0.27968149774203277,
+      "breath_psnr_unit_peak": 10.678057432174683,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.202189676336165,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center001_UIH_30T_umr780_P005",
+      "recon_wall_sec": 146.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.26884861290454865,
+      "breath_psnr": 9.98318099975586,
+      "breath_ssim": 0.31367207259658253,
+      "breath_psnr_unit_peak": 12.389369010925293,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.994728834529874,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center003_UIH_30T_umr880_P009",
+      "recon_wall_sec": 159.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.37229783087968826,
+      "breath_psnr": 9.278432766596476,
+      "breath_ssim": 0.32160804203351606,
+      "breath_psnr_unit_peak": 12.868674993515015,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.007059662860049,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center003_UIH_30T_umr880_P024",
+      "recon_wall_sec": 174.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6033499240875244,
+      "breath_psnr": 9.487176100413004,
+      "breath_ssim": 0.338593959736665,
+      "breath_psnr_unit_peak": 14.759292840957642,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.520930235559968,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center005_Siemens_30T_Vida_P013",
+      "recon_wall_sec": 199.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7483972311019897,
+      "breath_psnr": 15.046941916147867,
+      "breath_ssim": 0.43392081321730824,
+      "breath_psnr_unit_peak": 18.765973567962646,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 6.792120263095346,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P021",
+      "recon_wall_sec": 180.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.42233655601739883,
+      "breath_psnr": 8.667334000269571,
+      "breath_ssim": 0.3284641633685302,
+      "breath_psnr_unit_peak": 12.895972887674967,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.365731053230946,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P032",
+      "recon_wall_sec": 188.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.807354137301445,
+      "breath_psnr": 16.185377677281696,
+      "breath_ssim": 0.5077563655606018,
+      "breath_psnr_unit_peak": 18.299522558848064,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.673915803329111,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P034",
+      "recon_wall_sec": 225.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.5199131915966669,
+      "breath_psnr": 12.249516248703003,
+      "breath_ssim": 0.33637673430502296,
+      "breath_psnr_unit_peak": 12.646478573481241,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.703448634126326,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center006_Siemens_30T_Prisma_P035",
+      "recon_wall_sec": 169.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7161286622285843,
+      "breath_psnr": 9.663632074991861,
+      "breath_ssim": 0.3060709250272639,
+      "breath_psnr_unit_peak": 12.420185883839926,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 10.100641631266242,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx25_train_Center007_Siemens_30T_Prisma_P001",
+      "recon_wall_sec": 145.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.78705566128095,
+      "breath_psnr": 6.69351061185201,
+      "breath_ssim": 0.3301784412664278,
+      "breath_psnr_unit_peak": 12.95935853322347,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.301583921940824,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    }
+  ]
+}

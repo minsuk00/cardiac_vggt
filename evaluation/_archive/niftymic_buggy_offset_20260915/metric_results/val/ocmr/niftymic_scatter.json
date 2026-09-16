@@ -1,0 +1,263 @@
+{
+  "dataset": "ocmr",
+  "method": "niftymic_scatter",
+  "split": "val",
+  "n": 8,
+  "n_expected": 8,
+  "missing": [],
+  "ckpts": [],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": null,
+  "all": {
+    "n": 8,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      6.759149889151255,
+      3.4433421206125816
+    ],
+    "breath_ssim": [
+      0.32616133177655154,
+      0.03518758641257443
+    ],
+    "breath_ncc": [
+      0.6157720554620028,
+      0.16557490714149112
+    ],
+    "breath_psnr_unit_peak": [
+      12.079814751942953,
+      1.617892540759391
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      6.403136491389022,
+      2.2974158667814466
+    ],
+    "resp_epe_dz_mm": [
+      null,
+      null
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      null,
+      null
+    ],
+    "resp_slope": [
+      null,
+      null
+    ],
+    "resp_corr": [
+      null,
+      null
+    ],
+    "n_resp": 0,
+    "recon_wall_sec": [
+      195.125,
+      29.092256272073502
+    ],
+    "n_timing": 8
+  },
+  "per_subject": [
+    {
+      "subject": "OCMR_fs_0012_3T",
+      "recon_wall_sec": 161.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7224490394194921,
+      "breath_psnr": 9.438182592391968,
+      "breath_ssim": 0.38892787183532435,
+      "breath_psnr_unit_peak": 15.081197500228882,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.696795009454658,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0045_3T",
+      "recon_wall_sec": 213.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.4781071146329244,
+      "breath_psnr": 4.104036808013916,
+      "breath_ssim": 0.353096579240432,
+      "breath_psnr_unit_peak": 12.11035418510437,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 2.7468930035926573,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0053_1_5T",
+      "recon_wall_sec": 175.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8002955615520477,
+      "breath_psnr": 14.371097008387247,
+      "breath_ssim": 0.35672813093658334,
+      "breath_psnr_unit_peak": 14.48128867149353,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.5252914896808365,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0060_1_5T",
+      "recon_wall_sec": 209.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6262554402152697,
+      "breath_psnr": 6.410917282104492,
+      "breath_ssim": 0.3002413337615542,
+      "breath_psnr_unit_peak": 11.371496995290121,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 8.381858418147077,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0063_1_5T",
+      "recon_wall_sec": 210.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.253483846783638,
+      "breath_psnr": 3.395994782447815,
+      "breath_ssim": 0.2976070553100281,
+      "breath_psnr_unit_peak": 10.836324771245321,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.269814509412958,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0068_1_5T",
+      "recon_wall_sec": 236.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7179916252692541,
+      "breath_psnr": 7.470392982165019,
+      "breath_ssim": 0.3319724593348474,
+      "breath_psnr_unit_peak": 10.894688844680786,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 7.39982422529449,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0069_1_5T",
+      "recon_wall_sec": 212.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7290487239758173,
+      "breath_psnr": 4.4152668714523315,
+      "breath_ssim": 0.30087580914379936,
+      "breath_psnr_unit_peak": 10.738028049468994,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.063351111888294,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    },
+    {
+      "subject": "OCMR_fs_0074_1_5T",
+      "recon_wall_sec": 145.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.5985450918475786,
+      "breath_psnr": 4.467310786247253,
+      "breath_ssim": 0.27984141464984363,
+      "breath_psnr_unit_peak": 11.125138998031616,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 9.141264163641209,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    }
+  ]
+}
