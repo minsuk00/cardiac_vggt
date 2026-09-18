@@ -222,6 +222,7 @@ def summarize(subset, label):
     bp = stat([r["breath_psnr"] for r in subset]); bs = stat([r["breath_ssim"] for r in subset])
     ct = stat([r["cost_psnr"] for r in subset]); dz = stat([r["breath_disp_mm"] for r in subset])
     bu = stat([r["breath_psnr_unit_peak"] for r in subset])
+    cu = stat([r["clean_psnr_unit_peak"] for r in subset])
     ep = stat([r.get("resp_epe_dz_mm", float("nan")) for r in subset])
     ed = stat([r.get("resp_epe_dz_demeaned_mm", float("nan")) for r in subset])
     sl = stat([r.get("resp_slope", float("nan")) for r in subset])
@@ -231,9 +232,12 @@ def summarize(subset, label):
     print(f"\n[{label}]  n={bp[2]}")
     if cp[2]:
         print(f"  clean : PSNR {cp[0]:6.2f} +- {cp[1]:.2f} dB   SSIM {cs[0]:.3f} +- {cs[1]:.3f}   NCC {cn[0]:.3f} +- {cn[1]:.3f}")
-    print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}   NCC {bn[0]:.3f} +- {bn[1]:.3f}")
+    # HEADLINE = unit-peak PSNR (peak 1.0 on [0,1] data, the field convention — fastMRI/CMRxRecon
+    # use the full-image GT max; docs/106). `breath_psnr` (peak = GT max inside the heart ROI) is
+    # kept under its historical key for continuity with every archived JSON, ~3 dB lower.
     if bu[2]:
-        print(f"  breath: PSNR {bu[0]:6.2f} +- {bu[1]:.2f} dB  [unit-peak, trainer-comparable]")
+        print(f"  breath: PSNR {bu[0]:6.2f} +- {bu[1]:.2f} dB   SSIM {bs[0]:.3f} +- {bs[1]:.3f}   NCC {bn[0]:.3f} +- {bn[1]:.3f}  [HEADLINE: unit peak]")
+    print(f"  breath: PSNR {bp[0]:6.2f} +- {bp[1]:.2f} dB  [ROI-peak, legacy `breath_psnr` key]")
     if ct[2]:
         print(f"  breathing cost (clean-breath): {ct[0]:.2f} +- {ct[1]:.2f} dB   |disp| {dz[0]:.2f} +- {dz[1]:.2f} mm")
     else:
@@ -248,7 +252,7 @@ def summarize(subset, label):
     return {"n": bp[2], "n_clean": cp[2],
             "clean_psnr": cp[:2], "clean_ssim": cs[:2], "clean_ncc": cn[:2],
             "breath_psnr": bp[:2], "breath_ssim": bs[:2], "breath_ncc": bn[:2],
-            "breath_psnr_unit_peak": bu[:2],
+            "breath_psnr_unit_peak": bu[:2], "clean_psnr_unit_peak": cu[:2],
             "cost_psnr": ct[:2], "breath_disp_mm": dz[:2],
             "resp_epe_dz_mm": ep[:2], "resp_epe_dz_demeaned_mm": ed[:2],
             "resp_slope": sl[:2], "resp_corr": co[:2], "n_resp": ep[2],

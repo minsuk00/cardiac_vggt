@@ -32,7 +32,8 @@ evaluation/
 │
 ├── volumes/     -> GPFS (subject-major PRECIOUS data; gitignored)
 │   └── <dataset>/out/<subject>/
-│       ├── manifest.json  gt/  clean/  breath/  scatter/  mask*  heart_seg*   # shared frozen bundle
+│       ├── manifest.json  gt/  clean/  breath/  scatter/  rolled/  mask*  heart_seg*   # shared frozen bundle
+│       ├── fetal_cmr_4d/gate/   stack4d.nii.gz cardphase.txt rrintervals.txt gate.json   # self-gating (docs/105)
 │       ├── cine_gt.nii.gz  seg_gt/                                  # shared 4D GT + its nnU-Net segs (once per subject)
 │       └── <arm>/ recon_clean/ recon_breath/ metrics.json timing.json ed_dvf.npz
 │                  cine_{clean,breath}.nii.gz                        # scored 4D cines (image_metrics.py)
@@ -97,17 +98,31 @@ Real-time free-breathing (RTFB) inference is **out of scope** and is archived in
   `INPUT=gated` (the default, arm `<method>`) is the easier phase-consistent stack. There is no
   "clean scatter": scatter is breathed by construction and `--variant clean --input scatter`
   is refused. Retrofit older bundles with `build_inputs/pooled.py --add-scatter`.
+- **`rolled/` is the self-gating input for the Fetal CMR 4D arm (docs/105).** `breath/` with each
+  plane's 12 phases circularly shifted by a frozen random per-slice roll (`manifest["rolled"]`,
+  audit only): 12 frames per slice with UNKNOWN phase. On the stored ED-first cine the method's
+  self-gating would just read the index back; the roll gives it the cross-slice offset to recover.
+  Privileged input relative to `scatter/` (12 frames/slice vs 1) — a † row, never the headline.
+  Retrofit with `build_inputs/pooled.py --add-rolled`.
 - **Scoring registers every arm (docs/83, docs/98 §3).** `image_metrics` fits a 6-DOF rigid
   pose per phase (NCC-max, PSF-blurred first for the deconvolvers in `pose_psf.PSF_METHODS`)
   and reports the registered score as the headline `{var}_*_mean` plus the unregistered
   `{var}_*_raw_mean`; both share one intensity gauge computed from the raw read. Per-phase
   poses are in `metrics.json["poses"]`. SSIM is windowed skimage SSIM per SAX slice.
-- **Segmentation crops EVERY arm to `mask_heart` (docs/98 §5).** The baselines reconstruct
-  only inside the heart ROI (their protocol) and nnU-Net is measurably worse on that crop
-  than on a full FOV, so GT, VGGT and baselines are all cropped identically before nnU-Net —
-  uniform noise instead of a segmenter advantage. Absolute Dice/EF are therefore below
-  full-FOV literature values for every method. GT is segmented once per subject
-  (`<subject>/seg_gt/`, keyed on GT + ROI sha256) and reused by every arm.
+- **Segmentation crops EVERY arm to the PADDED heart ROI `mask_heart_pad10` (docs/98 §5,
+  docs/104 §4, docs/107).** The baselines reconstruct only inside the heart ROI (their protocol)
+  and nnU-Net is measurably worse on that crop than on a full FOV, so GT, VGGT and baselines are
+  all cropped identically before nnU-Net — uniform noise instead of a segmenter advantage.
+  The tight `mask_heart` (seg union + 6 mm) inflates nnU-Net's ES LV read on reconstructions
+  by ~+5 pp EF MAE (docs/104); a further +10 mm in-plane pad (z-extent unchanged,
+  `tools/build_padded_heart_mask.py`) brings the crop within ~0.5 pp of full-FOV segmentation.
+  The same padded mask is the baselines' recon mask (`run_baselines.py` `MASK_FILE`) AND the
+  image-metric scoring ROI (`image_metrics.py`, ∩ FOV) — one ROI everywhere; the tight
+  `mask_heart` is only the seed it is dilated from. Absolute Dice/EF are still below full-FOV
+  literature values for every method. GT is segmented once per subject (`<subject>/seg_gt/`,
+  keyed on GT + ROI sha256) and reused by every arm. Everything scored under the tight crop
+  (metric results + mask-dependent baseline recons + seg caches) is in
+  `evaluation/_archive/metric_results_prepad_20260916/` and `scratch/eval/_archive_prepad_20260916/`.
 - **A cohort is defined by its split, and the tree does not enforce it.** The bundle dir
   is not split-keyed (only `metric_results/<split>/` is), so a `test`-split bundle built into the
   same `out/` would otherwise be reconstructed, scored and averaged into the val numbers with
@@ -187,6 +202,12 @@ python evaluation/src/engine/run_baselines.py --method svrtk3d|nesvor --variant 
 #    ckpt checkpoints/dangi_pool_v2. Use --device cuda for the paper's compute-cost timing column.
 #    arm = dangi_scatter (--input scatter) | dangi (--input gated); stamped subjects are skipped.
 python evaluation/src/engine/run_dangi.py --split val|test --input scatter|gated
+#    Fetal CMR 4D (van Amerom 2019, docs/105): SVRTK reconstructCardiac 4D-joint on the rolled/ stack,
+#    self-gated by fetal4d_gate.py (LV-area ED anchor, nnU-Net on the rolled input frames — GPU stage),
+#    then the CPU recon shell (~9 min / subject on 4 cores, ~4.4 GB). Arm = fetal_cmr_4d, breath only.
+python evaluation/src/engine/build_inputs/pooled.py --source <src> --split val|test --add-rolled
+python evaluation/src/engine/fetal4d_gate.py dump|seg|assemble --split val|test [--sources ..]
+python evaluation/src/engine/run_baselines.py --method fetal_cmr_4d --variant breath --split val|test
 #    → sbatch/eval_baseline_{svrtk,nesvor}_v2.sh loop val+test × gated+scatter over all 7 sources.
 #    NeSVoR runs natively from the nesvor-t2 env ($NESVOR_BIN in run_nesvor.sh, docs/90) — no container.
 #    All timed GPU methods (NeSVoR + every VGGT arm) run on the same GPU class: A40/spgpu, account jjparkcv98.
@@ -210,7 +231,7 @@ just `metrics.json` + `metric_results/*.json`.
 python evaluation/src/analysis/breathing_pred_vs_applied.py --dataset <ds> --arm <arm>
 python evaluation/src/analysis/slice_panels.py --cohort <ds> --method <arm> --arm breath
 # EF/EDV/ESV/LVM (+RV) + Dice/HD95 — reads the SCORED cine_* files (run score/ first).
-# Every cine (GT included) is cropped to mask_heart before nnU-Net (docs/98 §5).
+# Every cine (GT included) is cropped to mask_heart_pad10 before nnU-Net (docs/98 §5, docs/107).
 # Optional pre-warm, needs NO arm: segment GT once for every split subject into <subject>/seg_gt/
 SPLIT=val  python evaluation/src/score/ef_dice.py dump <gt_dir> --gt-only   # then run_seg.sh + `score <seg> --input <gt_dir>`
 python evaluation/src/score/ef_dice.py dump <dir> --method <arm> --cohorts <ds...>   # skips GT when cached
@@ -227,7 +248,7 @@ Cross-method comparison (any mix of arms — classical baselines + vggt — one 
 # multi-arm cardiac-cycle GIF: GT row + one recon row per arm, same subject (auto-picked if omitted)
 python evaluation/src/analysis/compare_methods.py --cohort <ds> --subject <s> --arms svrtk3d nesvor vggt_<slug> --variant breath
 # rank every arm of a dataset by a metric, straight from metric_results/<split>/<ds>/*.json (--split, default val)
-python evaluation/src/analysis/compare_table.py <ds> --metric breath_psnr [--arms svrtk3d nesvor vggt_<slug> ...]
+python evaluation/src/analysis/compare_table.py <ds> --metric breath_psnr_unit_peak [--arms svrtk3d nesvor vggt_<slug> ...]
 ```
 
 Cohort numbers live in git at `metric_results/<split>/<dataset>/<arm>.json`; per-arm provenance in each arm's

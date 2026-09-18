@@ -1,0 +1,115 @@
+{
+  "dataset": "miitt",
+  "method": "fetal_cmr_4d",
+  "split": "val",
+  "n": 1,
+  "n_expected": 13,
+  "missing": [
+    "MIITT_Patient_2024Feb08_HCM",
+    "MIITT_Patient_2024Jan04_Cardiomyopathy_AFib",
+    "MIITT_Volunteer1",
+    "MIITT_Volunteer10",
+    "MIITT_Volunteer2",
+    "MIITT_Volunteer3",
+    "MIITT_Volunteer4",
+    "MIITT_Volunteer5",
+    "MIITT_Volunteer6",
+    "MIITT_Volunteer7",
+    "MIITT_Volunteer8",
+    "MIITT_Volunteer9"
+  ],
+  "ckpts": [],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": null,
+  "all": {
+    "n": 1,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      17.634184042612713,
+      0.0
+    ],
+    "breath_ssim": [
+      0.4620537660310697,
+      0.0
+    ],
+    "breath_ncc": [
+      0.7473247647285461,
+      0.0
+    ],
+    "breath_psnr_unit_peak": [
+      17.801932493845623,
+      0.0
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      5.583656007911111,
+      0.0
+    ],
+    "resp_epe_dz_mm": [
+      null,
+      null
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      null,
+      null
+    ],
+    "resp_slope": [
+      null,
+      null
+    ],
+    "resp_corr": [
+      null,
+      null
+    ],
+    "n_resp": 0,
+    "recon_wall_sec": [
+      509.0,
+      0.0
+    ],
+    "n_timing": 1
+  },
+  "per_subject": [
+    {
+      "subject": "MIITT_Patient_2023Sep23_ARVC",
+      "recon_wall_sec": 509.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.7473247647285461,
+      "breath_psnr": 17.634184042612713,
+      "breath_ssim": 0.4620537660310697,
+      "breath_psnr_unit_peak": 17.801932493845623,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 5.583656007911111,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "gauss_thickness",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    }
+  ]
+}

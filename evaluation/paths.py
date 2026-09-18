@@ -39,9 +39,11 @@ FIGURES = EVAL_ROOT / "comparison_figures"   # -> GPFS (subject-major DISPOSABLE
 # so they differ by provenance, not by regime. Keys match `build_inputs/pooled.py`'s --source.
 DATASETS = ("cmrx2023", "cmrx2024", "cmrx2025", "acdc", "mnms", "miitt", "ocmr")
 VARIANTS = ("clean", "breath")           # the two recon conditions (both in one metrics.json)
-BUNDLE_DIRS = ("gt", "clean", "breath", "scatter")  # input-bundle subdirs; NOT arms
-# input-bundle phase-stack filename prefix per subdir: gt/ -> gt_t*, clean|breath|scatter/ -> stack_t*
-_STACK_PREFIX = {"gt": "gt", "clean": "stack", "breath": "stack", "scatter": "stack"}
+BUNDLE_DIRS = ("gt", "clean", "breath", "scatter", "rolled")  # input-bundle subdirs; NOT arms
+# input-bundle phase-stack filename prefix per subdir: gt/ -> gt_t*, clean|breath|scatter|rolled/ -> stack_t*
+# rolled/ = breath/ with each plane's 12 phases circularly shifted by a frozen random roll (unknown
+# per-slice phase, for the self-gating Fetal CMR 4D arm; built by pooled.py add_rolled).
+_STACK_PREFIX = {"gt": "gt", "clean": "stack", "breath": "stack", "scatter": "stack", "rolled": "stack"}
 
 
 # --- roots -----------------------------------------------------------------
@@ -163,7 +165,20 @@ def fov_mask(dataset, subject):
 
 
 def heart_mask(dataset, subject):
+    """Tight heart ROI (seg union + 6 mm in-plane + z±1). Since docs/107 it is only the seed
+    `heart_mask_pad` is built from; the image-metric scoring ROI is `heart_mask_pad` ∩ FOV."""
     return subject_dir(dataset, subject) / "mask_heart.nii.gz"
+
+
+HEART_MASK_PAD = "mask_heart_pad10.nii.gz"
+
+
+def heart_mask_pad(dataset, subject):
+    """`heart_mask` dilated +10 mm in-plane (z-extent unchanged), clamped to the FOV
+    (tools/build_padded_heart_mask.py). Used for the SEGMENTATION crop (ef_dice) and as the
+    classical baselines' reconstruction mask — the tight crop biases nnU-Net's ES LV read on
+    reconstructions by ~+5 pp EF MAE (docs/104 §4); the pad removes it (docs/107)."""
+    return subject_dir(dataset, subject) / HEART_MASK_PAD
 
 
 # --- per-arm artifacts -----------------------------------------------------

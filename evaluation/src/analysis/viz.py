@@ -112,10 +112,10 @@ def main():
         ref_z = int(round(float(np.load(dvf)["slot_z"][0])))
 
     # Shared display window across all rows, ONCE over all phases — p99.9 over the SCORING ROI
-    # (heart∩FOV), same as the archived scorer's gifs, so hearts render at the same brightness
-    # as the historical record (a full-FOV window includes bright chest wall and darkens them).
+    # (heart∩FOV, now mask_heart_pad10 same as image_metrics.py, docs/107), so hearts render at
+    # a consistent brightness (a full-FOV window includes bright chest wall and darkens them).
     fov = np.asarray(nib.load(str(paths.fov_mask(ds, subj))).dataobj) > 0.5
-    heart_p = paths.heart_mask(ds, subj)
+    heart_p = paths.heart_mask_pad(ds, subj)
     heart = np.asarray(nib.load(str(heart_p)).dataobj) > 0.5 if os.path.exists(heart_p) else fov
     if fov.shape != gt.shape[1:] or heart.shape != gt.shape[1:]:   # masks must already be on the
         sys.exit(f"{subj}: mask grid {fov.shape}/{heart.shape} != GT {gt.shape[1:]} — "

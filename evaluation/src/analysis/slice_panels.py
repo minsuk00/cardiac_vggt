@@ -531,7 +531,8 @@ def build(cohort, subject, method, arm, outdir=None, panels=("dvf",), vmax=None)
         # has no recon/GT stacks loaded — so a standalone panel is very slightly off the gifs' scale.
         # Falls back to the FOV mask (heart_mask is optional per-source) or, if every slot's z-plane
         # happens to miss the ROI entirely, to the unmasked whole-slot pool.
-        heart_p = str(paths.heart_mask(cohort, subject))
+        # mask_heart_pad10, same ROI as image_metrics.py's scoring mask (docs/107).
+        heart_p = str(paths.heart_mask_pad(cohort, subject))
         mask_p = heart_p if os.path.exists(heart_p) else str(paths.fov_mask(cohort, subject))
         roi3d = R._load_xyz_to_dhw(mask_p) > 0.5                                   # (D,H,W)
         roi_pool = [im[roi3d[s["slice_idx"]]] for s, im in zip(slots, inputs_ed)
