@@ -19,7 +19,30 @@
 >   temporal coupling → **preserves the contraction but noisier**. ~6 min & few-GB, parallelized on 32
 >   cores. This is the roster's "3D+t".
 >
-> **Headline scientific finding (measured, reproduced):** the 4D-joint recon **under-contracts** — LV
+> **⚠️ UPDATE 2026-09-16 (late), docs/105 §5c — the 43.2 % re-run below is ALSO not trustworthy.**
+> That re-run tagged the 25 ms pixdim as `sec`; MIRTK reads a `sec`-tagged pixdim ×1000 against an
+> R-R in seconds, so its temporal window was `2π·25/1.1` ≈ flat over the whole cycle (the original
+> 1.0 s untagged run was `2π·1.0/1.1` = 5.7 rad, also nearly flat). Both runs also carry the
+> container binary's `-cardphase` off-by-one (every frame labelled with its predecessor's phase).
+> Neither the 20.6 % nor the 43.2 % figure says anything about the method; MIITT is not being
+> re-run for the paper (decision 2026-09-16). `export_miitt.py` now writes 0.025 s with the unit
+> code UNSET; the v2 arm's corrected P012 result is in docs/105 §5c.
+>
+> **⚠️ UPDATE 2026-09-16, CONFIRMED ([[project_fetal_cmr_4d_v2_regime]], `DEVIATIONS.md` §E/§F) — SUPERSEDED by the note above:**
+> the MIITT export this doc's 4D-joint numbers were measured on (`s01_rlt_ab.nii.gz`,
+> `export_miitt.py`) carried NO frame-duration header — nibabel defaulted it to 1.0 s against the
+> true 25 ms, a ~40×-too-wide temporal-PSF window (`dtrad = 2π·dt/rr` in
+> `ReconstructionCardiac4D.cc`). **Re-run with the header fixed** (author-faithful params, 1.25 mm,
+> 25 phases, robust ON, temporal PSF, Volunteer1, `temp/fetal4d_3way/miitt/`): **EF rose from
+> 20.6% to 43.2%, closing most of the gap to the real gated-cine EF (55.0%, error 11.8 pts vs the
+> old ~34-pt implied gap).** The header bug WAS the dominant cause of the severe flattening
+> reported below — the "temporal PSF fundamentally flattens contraction" claim is NOT supported at
+> this magnitude. The qualitative direction (4D-joint may still blend more than an uncoupled
+> per-phase recon) is untested post-fix; the specific numbers below (EF=20.6%, "~9–20%") are
+> superseded and must not be cited as current.
+>
+> **Headline scientific finding (measured, reproduced — MAGNITUDE NOW SUSPECT, see update above):**
+> the 4D-joint recon **under-contracts** — LV
 > EF collapses to ~9–20% though the **raw input contracts ~57%**. Cause is **NOT breathing** (motion
 > was corrected — LV position stabilized 8 mm→1.5 mm), **NOT the self-gating** (well-synced mid slices
 > still flatten), and **NOT resolution** — it is the **temporal PSF** of the joint-4D method blending
