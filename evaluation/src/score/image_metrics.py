@@ -150,8 +150,9 @@ def psnr(a, b, m):
 
     ⚠️ NOT comparable to the trainer's `metric_psnr_3d_*`, which uses peak = 1.0. The ROI is the
     same object (`heart_roi_canonical`); only the normalization differs, by exactly
-    `20*log10(gt[roi].max())`. Kept as the headline because it is the harness's cross-method
-    convention; `psnr_unit_peak` below is emitted alongside for trainer reconciliation.
+    `20*log10(gt[roi].max())`. Kept under its historical key for continuity with archived JSONs;
+    since docs/106 the HEADLINE is `psnr_unit_peak` below (peak 1.0 = the field convention —
+    fastMRI / CMRxRecon use the full-image GT max, never an ROI-restricted max).
     """
     if not m.any():                       # empty ROI: b[m].max() would raise on a zero-size array
         return float("nan")
@@ -291,14 +292,15 @@ def score_subject(ds, subj, method):
     """Score one (subject, method); returns the metrics dict (also written to metrics.json)."""
     manifest = json.load(open(paths.manifest(ds, subj)))
     T = manifest["T"]
-    # Scoring ROI = GT whole-heart seg (dilated +-1 plane) INTERSECT native-FOV mask: the dilation
-    # spills onto zero-padded edge planes with no acquired data; intersecting with the native FOV
-    # drops those no-data planes -> honest metric.
+    # Scoring ROI = GT whole-heart seg (dilated +-1 plane), padded +10mm in-plane (docs/107),
+    # INTERSECT native-FOV mask: the dilation spills onto zero-padded edge planes with no
+    # acquired data; intersecting with the native FOV drops those no-data planes -> honest metric.
+    # Same mask_heart_pad10 as the segmentation crop / baseline recon mask -- one ROI everywhere.
     shape_xyz, aff = subject_grid(ds, subj)
     D = shape_xyz[2]
     content = load_canon(str(paths.fov_mask(ds, subj)), shape_xyz, aff) > 0.5
-    has_heart = os.path.exists(paths.heart_mask(ds, subj))
-    heart = load_canon(str(paths.heart_mask(ds, subj)), shape_xyz, aff) > 0.5 if has_heart else content
+    has_heart = os.path.exists(paths.heart_mask_pad(ds, subj))
+    heart = load_canon(str(paths.heart_mask_pad(ds, subj)), shape_xyz, aff) > 0.5 if has_heart else content
     mask = heart & content
     print(f"{subj} [{method}]: T={T} D={D}  scoring ROI={'heart&FOV' if has_heart else 'FOV only'}  "
           f"mask_voxels={int(mask.sum())}")

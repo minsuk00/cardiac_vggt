@@ -73,8 +73,10 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def base_method(method):
     """Arm name -> engine name: 'svrtk3d_scatter' / 'nesvor_scatter' (same-input arms, see
-    run_svrtk3d.sh INPUT=scatter) and '*_debug' share their base method's PSF/gauge treatment."""
-    for suf in ("_scatter", "_debug"):
+    run_svrtk3d.sh INPUT=scatter), '*_debug', and '*_norobust' (fetal_cmr_4d with
+    -no_robust_statistics, docs/105 — same engine, same output kind) share their base method's
+    PSF/gauge treatment."""
+    for suf in ("_scatter", "_debug", "_norobust"):
         if method.endswith(suf):
             return method[: -len(suf)]
     return method
@@ -352,7 +354,7 @@ def main():
     ds, subj, t = args.dataset, args.subject, args.phase
     shape_xyz, aff = im.subject_grid(ds, subj)
     content = im.load_canon(str(paths.fov_mask(ds, subj)), shape_xyz, aff) > 0.5
-    heart_p = paths.heart_mask(ds, subj)
+    heart_p = paths.heart_mask_pad(ds, subj)
     heart = im.load_canon(str(heart_p), shape_xyz, aff) > 0.5 if heart_p.exists() else content
     mask = heart & content
     gt = im.load_canon(str(paths.bundle_stack(ds, subj, "gt", t)), shape_xyz, aff)

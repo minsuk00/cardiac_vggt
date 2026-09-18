@@ -97,7 +97,8 @@ def main():
     content = A.load_canon(str(paths.fov_mask(ds, subj)), shape_xyz, aff) > 0.5
     # The heart ROI is optional — build_inputs/pooled.py warns and skips it for sources that ship
     # no canonical seg. Fall back to the FOV, same as image_metrics, instead of FileNotFound.
-    heart_p = str(paths.heart_mask(ds, subj))
+    # mask_heart_pad10, same ROI as image_metrics.py's scoring mask (docs/107).
+    heart_p = str(paths.heart_mask_pad(ds, subj))
     heart = (A.load_canon(heart_p, shape_xyz, aff) > 0.5) if os.path.exists(heart_p) else content
     mask = heart & content
     disp_mask = mask if a.mask else content        # --mask: restrict the display to the heart ROI

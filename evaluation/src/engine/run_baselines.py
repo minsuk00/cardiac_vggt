@@ -27,8 +27,9 @@ Run (one method per invocation — SVRTK is CPU, NeSVoR needs a GPU):
         --sources cmrx2024 --subjects CMRx24_Test_P012
     ... --shard 0 3        # this process handles every 3rd subject (SLURM array sharding)
 
-Extra shell knobs (J, OMP, DEBUG, METHOD) pass through the environment; METHOD names the arm for
-gated runs (e.g. METHOD=svrtk3d_debug) and is overridden by <method>_scatter for --input scatter.
+Extra shell knobs (J, OMP, DEBUG, METHOD) pass through the environment; METHOD names the arm
+(e.g. METHOD=svrtk3d_debug DEBUG=1 --input scatter -> arm svrtk3d_debug_scatter, its own dir,
+never colliding with / skipped-as-done under the campaign's <method>_scatter arm).
 """
 import argparse
 import json
@@ -41,7 +42,8 @@ sys.path.insert(0, os.path.join(ROOT, "evaluation"))
 import paths  # noqa: E402
 
 DATA_ROOT = os.path.join(ROOT, "scratch/data")
-SHELLS = {"svrtk3d": "run_svrtk3d.sh", "nesvor": "run_nesvor.sh", "niftymic": "run_niftymic_v2.sh"}
+SHELLS = {"svrtk3d": "run_svrtk3d.sh", "nesvor": "run_nesvor.sh", "niftymic": "run_niftymic_v2.sh",
+          "fetal_cmr_4d": "run_fetal4d.sh"}   # fetal_cmr_4d: rolled/ input only, self-gated (docs/105)
 
 
 def ocmr_thickness(rel_path):
@@ -88,10 +90,11 @@ def main():
     shell = os.path.join(os.path.dirname(os.path.abspath(__file__)), SHELLS[args.method])
     if args.input == "scatter" and args.variant != "breath":
         sys.exit("--input scatter is built from the breath bundle only; use --variant breath")
-    # Arm name: a user METHOD (e.g. svrtk3d_debug) still passes through for gated runs.
-    arm = os.environ.get("METHOD") or args.method
-    if args.input == "scatter":
-        arm = args.method + "_scatter"
+    # Arm name: a user METHOD (e.g. svrtk3d_debug) is honored for scatter too, always with the
+    # _scatter suffix appended, so a debug rerun lands in its own arm dir instead of silently
+    # being skipped-as-already-stamped under the campaign's <method>_scatter arm.
+    base = os.environ.get("METHOD") or args.method
+    arm = base + "_scatter" if args.input == "scatter" else base
     work = []                                     # (source, subject, T, thick)
     for ds in args.sources:
         keep, dropped = paths.filter_by_split(ds, paths.subjects(ds), args.split)
@@ -104,6 +107,13 @@ def main():
             m = json.load(open(paths.manifest(ds, s)))
             if args.input == "scatter" and "scatter" not in m:
                 raise KeyError(f"{ds}/{s}: bundle has no scatter draw — run pooled.py --add-scatter")
+            if args.method == "fetal_cmr_4d":
+                if args.input == "scatter" or args.variant != "breath":
+                    sys.exit("fetal_cmr_4d reads the rolled/ stack only: use --variant breath --input gated")
+                if "rolled" not in m:
+                    raise KeyError(f"{ds}/{s}: bundle has no rolled/ stack — run pooled.py --add-rolled")
+                if not (paths.subject_dir(ds, s) / "fetal_cmr_4d" / "gate" / "cardphase.txt").is_file():
+                    raise FileNotFoundError(f"{ds}/{s}: not self-gated yet — run fetal4d_gate.py dump/seg/assemble")
             thick = thickness_mm(ds, m["rel_path"], float(m["dz_mm"]))
             if thick <= 0 or thick > float(m["dz_mm"]) + 1e-6:
                 raise ValueError(f"{ds}/{s}: implausible thickness {thick} for dz {m['dz_mm']}")
@@ -130,7 +140,7 @@ def main():
     for k, (ds, s, T, thick) in enumerate(todo):
         print(f"--- [{k + 1}/{len(todo)}] {ds}/{s} (T={T}, thick={thick:g}mm) ---", flush=True)
         env = {**os.environ, "EVAL_DATASET": ds, "T": str(T), "THICK": f"{thick:g}",
-               "MASK_FILE": "mask_heart.nii.gz", "METHOD": arm,
+               "MASK_FILE": paths.HEART_MASK_PAD, "METHOD": arm,   # +10 mm padded ROI (docs/107)
                "INPUT": "scatter" if args.input == "scatter" else args.variant}
         r = subprocess.run(["bash", shell, s, args.variant], env=env)
         if r.returncode == 0 and paths.recon_stamp(ds, s, arm, args.variant).is_file():

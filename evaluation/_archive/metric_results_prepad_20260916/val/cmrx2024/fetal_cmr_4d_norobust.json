@@ -1,0 +1,121 @@
+{
+  "dataset": "cmrx2024",
+  "method": "fetal_cmr_4d_norobust",
+  "split": "val",
+  "n": 1,
+  "n_expected": 19,
+  "missing": [
+    "CMRx24_Test_P020",
+    "CMRx24_Test_P028",
+    "CMRx24_Test_P054",
+    "CMRx24_Test_P063",
+    "CMRx24_Test_P064",
+    "CMRx24_Test_P068",
+    "CMRx24_Train_P011",
+    "CMRx24_Train_P053",
+    "CMRx24_Train_P074",
+    "CMRx24_Train_P091",
+    "CMRx24_Train_P113",
+    "CMRx24_Train_P120",
+    "CMRx24_Train_P127",
+    "CMRx24_Train_P141",
+    "CMRx24_Train_P142",
+    "CMRx24_Train_P175",
+    "CMRx24_Val_P048",
+    "CMRx24_Val_P054"
+  ],
+  "ckpts": [],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": null,
+  "all": {
+    "n": 1,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      15.774104356765747,
+      0.0
+    ],
+    "breath_ssim": [
+      0.5280773575561942,
+      0.0
+    ],
+    "breath_ncc": [
+      0.6059399098157883,
+      0.0
+    ],
+    "breath_psnr_unit_peak": [
+      23.233545621236164,
+      0.0
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      6.06637520639761,
+      0.0
+    ],
+    "resp_epe_dz_mm": [
+      null,
+      null
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      null,
+      null
+    ],
+    "resp_slope": [
+      null,
+      null
+    ],
+    "resp_corr": [
+      null,
+      null
+    ],
+    "n_resp": 0,
+    "recon_wall_sec": [
+      553.0,
+      0.0
+    ],
+    "n_timing": 1
+  },
+  "per_subject": [
+    {
+      "subject": "CMRx24_Test_P012",
+      "recon_wall_sec": 553.0,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.6059399098157883,
+      "breath_psnr": 15.774104356765747,
+      "breath_ssim": 0.5280773575561942,
+      "breath_psnr_unit_peak": 23.233545621236164,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 6.06637520639761,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": null,
+      "ckpt_fingerprint": null,
+      "stamps_agree": true
+    }
+  ]
+}

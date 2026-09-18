@@ -94,15 +94,17 @@ def _dump_cine(cine_path, input_dir, cohort, sidx, arm, roi):
 
 
 def _heart_roi(cohort, subj):
-    p = paths.heart_mask(cohort, subj)
+    """The SEGMENTATION crop = the +10 mm padded heart ROI (docs/104 §4 / docs/107), not the
+    tight image-metric ROI: the tight crop inflates nnU-Net's ES LV read on reconstructions."""
+    p = paths.heart_mask_pad(cohort, subj)
     if not os.path.isfile(p):
-        sys.exit(f"{cohort}/{subj}: no mask_heart.nii.gz — seg metrics are ROI-cropped for every arm "
-                 f"and cannot be computed without it")
+        sys.exit(f"{cohort}/{subj}: no {paths.HEART_MASK_PAD} — seg metrics are ROI-cropped for every "
+                 f"arm and cannot be computed without it (tools/build_padded_heart_mask.py)")
     return np.asarray(nib.load(str(p)).dataobj) > 0.5
 
 
 def _roi_sha(cohort, subj):
-    return paths.file_sha256(paths.heart_mask(cohort, subj))
+    return paths.file_sha256(paths.heart_mask_pad(cohort, subj))
 
 
 def _gt_seg_cached(cohort, subj, gt_sha):
@@ -289,7 +291,7 @@ def _sync_gt_seg_cache(seg_dir, cohort, sidx, subj, T, m):
         tmp = cache / f".seg_t{t:02d}.{os.getpid()}.tmp.nii.gz"
         shutil.copyfile(p, tmp); os.replace(tmp, cache / f"seg_t{t:02d}.nii.gz")
     tmp = cache / f".src.{os.getpid()}.tmp.json"
-    json.dump({"gt_sha256": gt_sha, "roi_sha256": _roi_sha(cohort, subj), "T": T, "crop": "mask_heart"},
+    json.dump({"gt_sha256": gt_sha, "roi_sha256": _roi_sha(cohort, subj), "T": T, "crop": paths.HEART_MASK_PAD},
               open(tmp, "w")); os.replace(tmp, cache / "src.json")
 
 

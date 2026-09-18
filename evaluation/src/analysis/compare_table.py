@@ -20,7 +20,9 @@ EVAL = ROOT / "evaluation"
 sys.path.insert(0, str(EVAL))
 import paths  # noqa: E402
 
-COLS = ["clean_psnr", "breath_psnr", "cost_psnr", "clean_ssim", "breath_ssim", "clean_ncc", "breath_ncc"]
+# breath_psnr_unit_peak (peak = 1.0) is the paper headline (docs/106); breath_psnr = ROI-peak legacy.
+COLS = ["breath_psnr_unit_peak", "clean_psnr_unit_peak", "clean_psnr", "breath_psnr", "cost_psnr",
+        "clean_ssim", "breath_ssim", "clean_ncc", "breath_ncc"]
 
 
 def cell(v):
@@ -38,7 +40,7 @@ def cell(v):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dataset", choices=list(paths.DATASETS))
-    ap.add_argument("--metric", default="breath_psnr", choices=COLS)
+    ap.add_argument("--metric", default="breath_psnr_unit_peak", choices=COLS)
     ap.add_argument("--arms", nargs="*", default=None, help="default: every arm with a results json")
     ap.add_argument("--out", default=None, help="also write the table to this path (markdown/plain)")
     ap.add_argument("--split", default="val")
