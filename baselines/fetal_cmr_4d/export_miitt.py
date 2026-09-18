@@ -104,7 +104,13 @@ def export(vol):
 
     # --- real-time 4D stack (magnitude) ---
     rlt = nib.Nifti1Image(rt, affine)
-    rlt.header.set_zooms(im.header.get_zooms())
+    # reconstructCardiac reads the frame duration from the 4th pixdim (temporal-PSF window,
+    # dtrad = 2*pi*dt/rr). The source MIITT header does not carry it (nibabel defaults to 1.0 s,
+    # ~40x too wide for a 25 ms real-time frame -> whole cycle blended into every phase; docs/105 §5a).
+    # Time-unit code stays UNSET: MIRTK multiplies a 'sec'-tagged pixdim by 1000 while the R-R
+    # stays in seconds (docs/105 §5c); the authors' writer stores seconds with xyzt_units = 0 too.
+    rlt.header.set_zooms((*im.header.get_zooms()[:3], FRAME_DT_S))
+    rlt.header.set_xyzt_units("mm", None)
     nib.save(rlt, os.path.join(datadir, "s01_rlt_ab.nii.gz"))
 
     # --- DC / static temporal mean ---

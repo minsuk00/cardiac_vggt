@@ -401,6 +401,14 @@ temporal PSF, LV-anchored cardphase, tight mask all UNCHANGED) fits 32 G and dem
 pipeline end-to-end. `selfgate_cine_test/` = coarse test; `selfgate_cine/` reserved for the faithful run.
 
 ### 10.8 End-to-end demonstration — IT WORKS (Volunteer1, coarse 3 mm test, 2026-07-05)
+
+> **⚠️ CAVEAT added 2026-09-16 (docs/105 §5c, docs/36 header).** The EF = 20.6 % below and its
+> "expected single-orientation attenuation" reading are NOT supported: the exported stack carried
+> no frame-duration header (1.0 s default ⇒ temporal window ≈ the whole cycle) and the container's
+> `reconstructCardiac` mislabels every frame's phase by one (`-cardphase` off-by-one). The
+> qualitative "coherent cycle, correctly timed" observation stands (gating validated in §10.5); the
+> amplitude number does not. The corrected v2 arm on CMRx P012 reaches EF 51 % (GT 59 %), inside
+> the VGGT-arm spread — docs/105 §5c. MIITT is not being re-run for the paper.
 The full pipeline ran end-to-end: **LV-area self-gating → author-logic `reconstructCardiac` →
 coherent 4D cine.** Output `selfgate_cine_test/cine.nii.gz` = `(66,43,40,25)` isotropic 3 mm × 25
 cardiac phases.

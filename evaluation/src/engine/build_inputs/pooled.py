@@ -18,6 +18,10 @@ Output per subject, under `evaluation/volumes/<source>/out/<subject>/`:
     mask_heart.nii.gz              heart ROI, canonical grid — copied when the source has one
     heart_seg.nii.gz               per-phase LV/MYO/RV, canonical grid — same
     manifest.json                  geometry + the full breathing realization
+    scatter/stack_t{00..T-1}.nii.gz  same-input stack VGGT sees (add_scatter, --add-scatter)
+    rolled/stack_t{00..T-1}.nii.gz   breath/ with each plane's phases circularly rolled by a frozen
+                                     random offset: UNKNOWN per-slice phase, for the self-gating
+                                     Fetal CMR 4D arm (add_rolled, --add-rolled; docs/105)
 
 ## Why the bundle is frozen
 
@@ -202,6 +206,42 @@ def add_scatter(subj_dir, source, name, split, rel_path):
     return phase_per_plane, ref
 
 
+def add_rolled(subj_dir, source, name):
+    """Write <subj_dir>/rolled/stack_t{k}: the breath bundle with each plane's T phases circularly
+    shifted by its own frozen random roll r_z, i.e. rolled/stack_t{k}[z] = breath/stack_t{(k - r_z) mod T}[z].
+    Frame k of plane z therefore shows cardiac phase (k - r_z) mod T, and the stored ED (phase 0)
+    sits at frame r_z — unknown to the consumer. This is the input for the self-gating Fetal CMR 4D
+    arm (docs/105): the stored cine is ED-first and cross-slice synchronised, so on breath/ the
+    self-gater would merely read the index back (measured: period forced to T, ED at frame 0 in
+    112/167 slices); the roll removes the per-slice start phase, which is exactly the unknown the
+    method's inter-slice synchronisation exists to recover. Breathing stays one state per plane
+    (a 12-frame real-time burst is ~1 s, well inside a breathing cycle). Deterministic: the roll RNG
+    is seeded from the bundle's own subject seed (+1 so it never shares a stream with the breathing
+    draw). Records the roll in manifest["rolled"] — for auditing, never read by the arm."""
+    mpath = os.path.join(subj_dir, "manifest.json")
+    man = json.load(open(mpath))
+    T, D = man["T"], man["D"]
+    seed = man["seed"]
+    assert seed == name_seed(source, name), (seed, name_seed(source, name))
+    roll = np.random.default_rng(seed + 1).integers(0, T, size=D).tolist()
+    breath = [nib.load(os.path.join(subj_dir, "breath", f"stack_t{t:02d}.nii.gz")) for t in range(T)]
+    arrs = [np.asarray(im.dataobj, dtype=np.float32) for im in breath]     # (X,Y,Z) each
+    affine = breath[0].affine
+    os.makedirs(os.path.join(subj_dir, "rolled"), exist_ok=True)
+    for k in range(T):
+        out = np.empty_like(arrs[0])
+        for z in range(D):
+            out[:, :, z] = arrs[(k - roll[z]) % T][:, :, z]
+        nib.save(nib.Nifti1Image(out, affine), os.path.join(subj_dir, "rolled", f"stack_t{k:02d}.nii.gz"))
+    man["rolled"] = {"roll_per_plane": roll, "rng": "np.random.default_rng(seed + 1).integers(0, T, D)",
+                     "note": "rolled/stack_t{k}: plane z from breath/stack_t{(k - roll_per_plane[z]) mod T}; "
+                             "stored ED (phase 0) of plane z is at frame roll_per_plane[z]"}
+    tmp = f"{mpath}.tmp{os.getpid()}"
+    json.dump(man, open(tmp, "w"), indent=1)
+    os.replace(tmp, mpath)
+    return roll
+
+
 def build_subject(rel_path, source, rcfg, rcfg_dump, out_root, split_file, split, overwrite):
     """-> (name, status) where status is 'built' | 'skipped'."""
     name = os.path.basename(rel_path)
@@ -309,6 +349,9 @@ def main():
     ap.add_argument("--add-scatter", action="store_true",
                     help="only add scatter/ (+ manifest['scatter']) to EXISTING bundles that lack it; "
                          "gt/clean/breath untouched")
+    ap.add_argument("--add-rolled", action="store_true",
+                    help="only add rolled/ (+ manifest['rolled']) to EXISTING bundles that lack it; "
+                         "gt/clean/breath/scatter untouched (input for the self-gating fetal_cmr_4d arm)")
     a = ap.parse_args()
 
     rcfg, rcfg_dump = load_respiratory_config(a.config)
@@ -340,6 +383,20 @@ def main():
             except Exception as e:  # noqa: BLE001
                 print(f"  FAIL {name}: {type(e).__name__}: {e}", flush=True); n["failed"] += 1
         print(f"add-scatter: {n}")
+        return
+    if a.add_rolled:
+        n = {"added": 0, "skipped": 0, "failed": 0}
+        for rel in rels:
+            name = os.path.basename(rel); sd = os.path.join(out_root, name)
+            if not os.path.exists(os.path.join(sd, "manifest.json")):
+                print(f"  no bundle for {name} — build it first", flush=True); n["failed"] += 1; continue
+            if "rolled" in json.load(open(os.path.join(sd, "manifest.json"))):
+                n["skipped"] += 1; continue
+            try:
+                add_rolled(sd, a.source, name); n["added"] += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"  FAIL {name}: {type(e).__name__}: {e}", flush=True); n["failed"] += 1
+        print(f"add-rolled: {n}")
         return
     print(f"  breathing from {os.path.relpath(a.config, ROOT)}: amp={rcfg.amplitude_mm}"
           f"+/-{rcfg.amplitude_jitter}mm ap={rcfg.ap_ratio} burst={rcfg.group_by_burst} "
