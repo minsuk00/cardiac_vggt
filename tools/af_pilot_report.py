@@ -125,8 +125,23 @@ def read_metrics(cohort, subj, arm):
 
 
 def read_ef(split, arm):
+    """-> {(cohort, subject): (pred_ef, gt_ef)} from the _ef json's per_subject rows.
+
+    Per-subject, not the `aggregate` block: the aggregate is computed over every subject in the
+    cohort including degenerate ones, and a held AF window drives EF to nonsense (P004: GT EF
+    collapses 70.6 -> 14.4), so it must be excluded on the same rule table 3 applies.
+    NOTE the _ef json is SHARED with the live campaign and merges per cohort, so it also holds
+    the published rows — filter to the cohorts asked for and never rewrite this file by hand.
+    """
     p = os.path.join(ROOT, "evaluation", "metric_results", split, "_ef", f"{arm}.json")
-    return json.load(open(p)) if os.path.isfile(p) else None
+    if not os.path.isfile(p):
+        return None
+    d = json.load(open(p))
+    out = {}
+    for r in d.get("per_subject", []):
+        if r.get("ef_breath") is not None and r.get("ef_gt") is not None:
+            out[(r.get("cohort"), r.get("subject"))] = (r["ef_breath"], r["ef_gt"])
+    return out
 
 
 def table(rows, headers):
@@ -221,19 +236,38 @@ def main():
                              f"{np.mean(vals[keys[2]]):.3f}", f"{np.mean(vals[keys[3]]):.3f}"])
     print(table(rows, ["cohort", "arm", "n", "excl", "PSNR_unit", "PSNR_roi", "SSIM", "NCC"]))
 
-    print("\n\n=== 5. EF ===\n")
+    print("\n\n=== 5. EF  (degenerate excluded; regular_frozen-vs-regular is the NOISE FLOOR) ===")
+    print("    Those two cohorts differ only in frozen vs frame-wise breathing, so any EF gap")
+    print("    between them is noise, not rhythm. Read no rhythm effect smaller than it.\n")
     rows = []
     for arm in FETAL + [VGGT]:
         ef = read_ef(args.split, arm)
         if not ef:
             continue
         for c in args.cohorts:
-            blk = (ef.get("per_cohort") or {}).get(c)
-            if blk:
-                blob["ef"].setdefault(c, {})[arm] = blk
-                rows.append([short(c), arm, blk.get("n"), blk.get("lv_ef_mae"),
-                             blk.get("lv_ef_bias")])
-    print(table(rows, ["cohort", "arm", "n", "EF MAE", "EF bias"]))
+            use = [(s, ef[(c, s)]) for s in args.subjects
+                   if (c, s) in ef and (c, s) not in degen]
+            if not use:
+                continue
+            err = [abs(p - g) for _, (p, g) in use]
+            blob["ef"].setdefault(c, {})[arm] = {s: v for s, v in use}
+            rows.append([short(c), arm, len(use),
+                         f"{np.mean(err):.2f}", f"{np.mean([p - g for _, (p, g) in use]):+.2f}",
+                         f"{np.mean([p for _, (p, _) in use]):.1f}",
+                         f"{np.mean([g for _, (_, g) in use]):.1f}"])
+    print(table(rows, ["cohort", "arm", "n", "EF MAE", "EF bias", "pred EF", "GT EF"]))
+    for arm in FETAL + [VGGT]:
+        ef = read_ef(args.split, arm)
+        if not ef:
+            continue
+        pair = [(s, ef[("cmrx2024_regular_frozen", s)], ef[("cmrx2024_regular", s)])
+                for s in args.subjects
+                if ("cmrx2024_regular_frozen", s) in ef and ("cmrx2024_regular", s) in ef
+                and ("cmrx2024_regular_frozen", s) not in degen]
+        if pair:
+            d = [abs(a[0] - b[0]) for _, a, b in pair]
+            print(f"  NOISE FLOOR {arm:30s} |dEF| frozen-vs-framewise: "
+                  f"mean {np.mean(d):.1f} pp, max {np.max(d):.1f} pp")
 
     if args.json:
         json.dump(blob, open(args.json, "w"), indent=2)
