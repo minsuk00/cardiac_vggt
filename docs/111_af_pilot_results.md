@@ -327,10 +327,11 @@ be said about it.
    numbers. **FIXED**: the tool now intersects the usable subject set across all cohorts first and
    prints it. This would have recurred at 38 subjects, where ~1 degenerate subject again lands in
    `af` only.
-6. **Reviewer findings in the shipped code, not fixed during the pilot** (one binary for all runs):
-   a one-sided `GATE_ARM`/`METHOD` guard (`run_baselines.py:100`) that still admits a mis-attributed
-   `_oracle` arm when `METHOD` is set and `GATE_ARM` is not — the pilot is unaffected because
-   `af_pilot_fetal.sh` always sets both and all 32 stamps verify; `resp_diag` reporting the **frozen**
+6. **Reviewer findings in the shipped code.** ⚠️ **The `GATE_ARM`/`METHOD` guard is now FIXED**
+   (`run_baselines.py:100`, see §9) — kept here for the record of what the pilot ran with. It used
+   to admit a mis-attributed `_oracle` arm when `METHOD` was set and `GATE_ARM` was not — the pilot
+   itself was unaffected because `af_pilot_fetal.sh` always set both and all 32 stamps verify;
+   `resp_diag` reporting the **frozen**
    displacement on frame-wise cohorts (max **6.74 mm**, `regular_frozen` exactly 0.00) — diagnostic
    only, not used in any conclusion here, but it corrupts the `metric_resp_*` family; an
    exact-bin tolerance (1e-4) smaller than the oracle's own token residue (1.1514e-4) so the
@@ -371,3 +372,102 @@ be said about it.
   arm attribution and breathing metrics respectively.
 - **Decide whether pilot rows belong in the live campaign `_ef/*.json`** (verified additive here,
   published 6.62 intact) or should be redirected with a `--out` override.
+
+## 9. Full-cohort launch (38 subjects) — pre-launch review + what changed
+
+**Scope.** 38 cmrx2024 test subjects × 4 rhythm cohorts × 3 fetal arms, **minus** a provable
+optimization: `fetal_cmr_4d_oracle_balanced` is skipped for `regular_frozen`/`regular`, because
+`rank_quantize` on an already-integer, already-uniformly-spaced rhythm is the identity permutation
+— verified once on P016 (§3d) and then, before launch, on **all 76 manifests** in both cohorts
+(§9.2). **380 total reconstructions** (not 456), submitted as SLURM job **61553947**
+(`sbatch/af_full_fetal.sh`, 30 array tasks = 10 (cohort, arm) combos × 3 subject-shards each, using
+`run_baselines.py`'s own `--shard I N` — the same mechanism the production campaign uses — rather
+than the pilot's per-pair concurrency scheme). VGGT (152 runs) launched in parallel on the GPU;
+doesn't depend on the fetal jobs.
+
+**The 30-vs-CPU-budget correction.** Early planning conflated "30 CPUs" (this session's original
+budget) with "30 concurrent jobs" — the user corrected this mid-session. 30 concurrent 4-CPU jobs
+is 120 CPUs, not 30; wall-clock estimate corrected from ~15h to ~3.2h accordingly.
+
+### 9.1 Second prove-it pass, before submission (3 reviewers, nothing yet queued)
+
+Scoped to everything added since the pilot's own prove-it pass (commit `e6c1811` onward): the
+`--balanced` gate code now going into production, the skip-decision's universal validity, and the
+full-scale launch script + bundle correctness at 38 subjects. Did **not** re-review the pilot's own
+PSNR/EF conclusions (already reviewed).
+
+- **R1 (balanced-gate code):** clean on all four sub-questions — non-regression with `--balanced`
+  OFF verified against the literal pre-commit diff line; `rank_quantize`'s bijection property holds
+  **unconditionally** for any input (`argsort` always returns a valid permutation; `kind="stable"`
+  affects only tie-break determinism, not correctness — confirmed with an all-identical-values
+  probe, a mixed-tie probe, and an unstable-sort comparison, all still bijective); the constant-offset
+  math is unaffected by quantized vs. raw input; the suffix-order question from the pilot's review
+  was itself a false alarm — `"_oracle_balanced"` and `"_oracle"` end in different characters, so
+  neither can ever be a suffix of the other, and no ordering in the strip tuple can matter.
+- **R2 (skip-decision validity):** re-verified the P016 spot-check on **all 76 manifests** (38
+  subjects × 2 cohorts) using the actual imported `rank_quantize`, not a reimplementation. Max
+  deviation from integer: 7.1e-15. Every slice: a valid complete permutation of {0..11}, zero ties.
+  Max `|theta_raw − theta_balanced|` across all 76: 5.3e-15 — identical noise floor to the original
+  one-subject check, now universal. **CONFIRMED SAFE at full scale**, not just for P016.
+- **R3 (launch readiness):** sharding math, `COMBO_IDX`/`SHARD_IDX` arithmetic, and `GATE_ARM`
+  pairing all verified correct against `run_baselines.py`'s real `--shard` semantics (38 subjects
+  over 3 shards → sizes 13/13/12, exact union, no gaps/overlaps). **Found the actual launch blocker**
+  (§9.3) and **a new edge-case count** (§9.4) — both closed before submission.
+
+### 9.2 Gate-build sequence actually run
+
+Self-gated needs a GPU nnU-Net pass (dump 1824 frames → seg → assemble, ~35 min); oracle and
+oracle-balanced are CPU-only (`assemble --oracle [--balanced]`, seconds). Order used:
+`dump` (all 4 cohorts) → `seg` (GPU) → `assemble` self-gated → `assemble --oracle` (all 4 cohorts)
+→ `assemble --oracle --balanced` (hrv + af only). **Completeness check before touching `sbatch`:**
+all 10 (cohort, arm) combos confirmed at 38/38 gate files (380/380 total) by direct `ls` count, then
+`sbatch/af_full_fetal.sh --dry-run` exercised at 4 array indices spanning both boundaries and the
+middle of the index space (0, 9, 19, 29) — all four resolved to the correct (cohort, arm, shard)
+and returned rc=0.
+
+### 9.3 The launch blocker R3 found (closed before submission, not a code bug)
+
+`run_baselines.py:130-138` raises an unguarded `FileNotFoundError` if **any** subject in a cohort's
+full 38-subject list lacks its gate file — and this check runs **before** the `--shard` filter is
+applied. So a missing gate for even one subject crashes the **entire** array task (all subjects in
+that task's shard), not just the one subject missing it — the opposite of the "driver skips
+subjects that lack them" behavior the script's own header comment implies. R3 checked this against
+the actual state at review time (only the pilot's 4 subjects + 3 `af`/oracle-balanced pilot
+subjects had gates) and correctly flagged that submitting then would have crashed all 30 tasks with
+zero of 380 reconstructions completed. Not a logic bug — the gate-build step in §9.2 simply hadn't
+been run yet at review time. Resolved by finishing §9.2 and re-verifying completeness (380/380)
+before submission. **Worth fixing later**: make the precondition check per-shard, so a single
+missing gate degrades to "skip one subject" instead of "crash the whole task."
+
+### 9.4 New finding: 5/38 (not ~1/38) AF subjects are degenerate
+
+The design-time cohort pass (docs/110 §9 item 4) predicted ~1/38 subjects with excursion < 30 %.
+R3's full-cohort spot-check found **5/38 (13 %)** meet the `duplicate_targets` degeneracy signature:
+the known **P004** (dup_pairs = 55, the pilot's case) plus **CMRx24_Test_P013** (6),
+**CMRx24_Test_P023** (10), **CMRx24_Train_P038** (10), **CMRx24_Val_P026** (10) — all less extreme
+than P004 (span 5.5–7.8 frames vs. P004's 0.97) but all exceed the `DEGEN_DUP_PAIRS = 5` exclusion
+threshold. P023 verified at the pixel level, not just the manifest flag: `gt_t01`..`gt_t05` are
+byte-identical (max|diff| = 0.0) across all 10 pairs. All 5 must be excluded from cohort PSNR/EF
+means the same way P004 was in the pilot — `tools/af_pilot_report.py`'s exclusion logic already
+handles this generically (`dup_pairs > DEGEN_DUP_PAIRS`), but its subject-list default was hardcoded
+to the 4 pilot subjects and would have silently missed 4 of these 5. **Fixed** (§9.5): the default
+now resolves the full test-split subject list dynamically via `paths.filter_by_split`.
+
+### 9.5 Code changes made for the full-cohort launch
+
+- `evaluation/src/engine/run_baselines.py` — the `GATE_ARM`/`METHOD` guard (previously one-sided,
+  §7 item 6) is now symmetric: also refuses when `METHOD` names a `fetal_cmr_4d` variant and
+  `GATE_ARM` is left unset (the exact silent-mispairing bug the original guard existed to prevent,
+  just from the other direction). Verified: existing self-gated calls (no `GATE_ARM`) and existing
+  correctly-paired oracle calls both still work unchanged; the bug scenario now hard-refuses; the
+  new condition is syntactically scoped to `fetal_cmr_4d*` methods only and can never fire for
+  svrtk3d/nesvor/other baselines. `pytest tests/` → 372 passed after the change.
+- `sbatch/af_full_fetal.sh` (new) — the full-cohort launch script, §9 design above.
+- `tools/af_pilot_report.py` — `SUBJECTS` default now resolves the live test-split subject list
+  (38, not 4) via `paths.filter_by_split`, falling back to the pilot's 4-subject list only if that
+  resolution fails; `FETAL` now includes `fetal_cmr_4d_oracle_balanced` so EF gets computed for the
+  coverage-balanced arm too, not just self-gated/oracle/VGGT (closing the gap the user flagged: the
+  §3d disambiguation was only ever measured in PSNR, and PSNR is known to be a poor instrument for
+  exactly this failure mode — LV phase-mixing barely moves whole-volume PSNR but directly corrupts
+  the (max−min)/max computation EF is; the coverage-vs-timing effect size may be much larger in EF
+  than the 0.3–0.9 dB PSNR swings found in §3d).
