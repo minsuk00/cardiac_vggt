@@ -47,6 +47,24 @@ import paths  # noqa: E402
 
 ARM = "fetal_cmr_4d"
 ARM_ORACLE = "fetal_cmr_4d_oracle"   # --oracle: same engine, TRUE per-frame theta (docs/110)
+# --oracle --balanced (docs/111 s3d): disambiguates the oracle-arm reversal under `af`. True theta
+# gives every (slice, phase) cell EXACTLY ONE image at full weight; the raw af oracle leaves
+# 9.8-18.1% of cells empty (docs/111 s3c), and self-gated's uniform ramp has 0% empty BY
+# CONSTRUCTION. This arm keeps the TRUE per-slice ORDERING of the 12 frames (rank_quantize below)
+# but forces that same one-image-per-bin coverage, so it isolates coverage from timing accuracy:
+# if the reversal disappears, coverage was the cause; if it persists, timing accuracy itself is.
+ARM_ORACLE_BALANCED = "fetal_cmr_4d_oracle_balanced"
+
+
+def rank_quantize(pos_row, T):
+    """(T,) true positions, one slice -> a BIJECTION onto bin centers 0.5..T-0.5, preserving rank
+    order. `argsort(kind='stable')` resolves exact ties (e.g. an af hold: several frames at the
+    identical position T) by original frame order, so the map stays a true bijection even when
+    the input has duplicates -- unlike the raw values, which collide into the same output bin."""
+    order = np.argsort(pos_row % T, kind="stable")
+    q = np.empty(T)
+    q[order] = np.arange(T) + 0.5
+    return q
 RR_NOMINAL_S = 1.0          # no timing in the source data; sets the engine's time axis only
 # run_fetal4d.sh passes `-cardphase CPCOUNT <values>`, and the engine reads the COUNT token itself
 # as frame 0 / slice 0's phase (docs/105 par.5c). 710 = 113*2pi, i.e. 6e-05 rad -- VERIFIED to be
@@ -181,6 +199,8 @@ def assemble(args):
             pos = np.asarray(r["pos_per_plane"], dtype=np.float64)   # (D, T), GT-frame units
             if pos.shape != (D, T):
                 sys.exit(f"{ds}/{subj}: rhythm.pos_per_plane is {pos.shape}, expected {(D, T)}")
+            if args.balanced:
+                pos = np.stack([rank_quantize(pos[z], T) for z in range(D)])
             theta = 2 * np.pi * ((pos % T) / T)
             # Shift every theta by the constant that puts theta[0,0] at the count token's residue.
             # The engine reads that token as frame 0 / slice 0's phase, and for the self-gated arm
@@ -191,7 +211,9 @@ def assemble(args):
             # bin is "phase 0", and the ref_phase readout samples these SAME shifted thetas, so it
             # cancels exactly in the score while keeping the argv at 710 tokens.
             theta = (theta - theta[0, 0] + CARDPHASE_COUNT_TOKEN % (2 * np.pi)) % (2 * np.pi)
-        gd = gate_dir(ds, subj, ARM_ORACLE if args.oracle else ARM)
+        arm = (ARM_ORACLE_BALANCED if (args.oracle and args.balanced)
+               else ARM_ORACLE if args.oracle else ARM)
+        gd = gate_dir(ds, subj, arm)
         gd.mkdir(parents=True, exist_ok=True)
         # The container's reconstructCardiac reads `-cardphase N v...` as N+1 entries with the COUNT
         # token as frame 0's phase (measured, docs/105 par.5c; the authors' scripts hit the same
@@ -226,11 +248,16 @@ def assemble(args):
                     "circ_std_deg": float(np.degrees(np.sqrt(-2 * np.log(max(R, 1e-9)))))}
         meta = {"source": ds, "subject": subj, "T": T, "D": D, "rr_nominal_s": RR_NOMINAL_S,
                 "n_anchored": int(sum(p["anchored"] for p in per)),
-                "gater": "oracle" if args.oracle else "self",
-                "arm": ARM_ORACLE if args.oracle else ARM,
+                "gater": ("oracle_balanced" if (args.oracle and args.balanced)
+                          else "oracle" if args.oracle else "self"),
+                "arm": arm,
                 "segmenter": "nnU-Net Task114 2d nnUNetTrainerV2_MMS on rolled/ input frames (full FOV)",
                 "ed_rule": "LV-area (label 1) argmax over the single circular cycle, no smoothing; no LV -> offset 0",
-                "theta": ("2*pi*(rhythm.pos_per_plane mod T)/T -- TRUE per-frame phase from the "
+                "theta": ("2*pi*rank_quantize(rhythm.pos_per_plane)/T -- TRUE per-slice RANK ORDER "
+                          "of the 12 frames, forced onto a bijection with the 12 output bins "
+                          "(docs/111 s3d: isolates coverage from timing accuracy)"
+                          if (args.oracle and args.balanced) else
+                          "2*pi*(rhythm.pos_per_plane mod T)/T -- TRUE per-frame phase from the "
                           "simulation truth manifest (fractional)" if args.oracle
                           else "2*pi*((f - f_ED) mod T)/T, wrapped [0, 2pi)"),
                 "slice0_frame_roll": -ed0,      # stack4d[:, :, 0] = rolled[:, :, 0] rolled by this (ED first)
@@ -259,6 +286,13 @@ def main():
                          "(TRUE per-frame cardiac phase) instead of the nnU-Net LV-area anchor, and "
                          f"write to <subject>/{ARM_ORACLE}/gate/. The ceiling arm that separates "
                          "gating error from reconstruction error (docs/110).")
+    ap.add_argument("--balanced", action="store_true",
+                    help="with --oracle: rank-quantize each slice's true positions onto a "
+                         "bijection with the output bins (one image/bin, 0% empty cells) instead "
+                         "of using the raw fractional positions. Isolates whether the af oracle's "
+                         f"reversal (docs/111 s3) is caused by coverage or by timing accuracy "
+                         f"itself. Writes to <subject>/{ARM_ORACLE_BALANCED}/gate/. Ignored "
+                         "without --oracle.")
     ap.add_argument("--subjects", nargs="+", default=None)
     args = ap.parse_args()
     {"dump": dump, "seg": seg, "assemble": assemble}[args.stage](args)

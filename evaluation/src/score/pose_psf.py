@@ -74,13 +74,17 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def base_method(method):
     """Arm name -> engine name: 'svrtk3d_scatter' / 'nesvor_scatter' (same-input arms, see
     run_svrtk3d.sh INPUT=scatter), '*_debug', '*_norobust' (fetal_cmr_4d with
-    -no_robust_statistics, docs/105 — same engine, same output kind) and '*_oracle'
+    -no_robust_statistics, docs/105 — same engine, same output kind), '*_oracle'
     (fetal_cmr_4d handed the TRUE per-frame cardiac phase instead of its own self-gating estimate;
-    same engine, same parameters, only cardphase.txt differs — docs/110) share their base method's
-    PSF/gauge treatment. '_oracle' is load-bearing: without it the arm is not in PSF_METHODS, so it
-    would be scored WITHOUT the PSF operator the self-gated arm receives — a silent handicap having
-    nothing to do with timing, which is the only thing under test."""
-    for suf in ("_scatter", "_debug", "_norobust", "_oracle"):
+    same engine, same parameters, only cardphase.txt differs — docs/110) and '*_oracle_balanced'
+    (same, but the true phases are rank-quantized onto a coverage-forced bijection — docs/111 s3d)
+    share their base method's PSF/gauge treatment. '_oracle'/'_oracle_balanced' are load-bearing:
+    without them the arm is not in PSF_METHODS, so it would be scored WITHOUT the PSF operator the
+    self-gated arm receives — a silent handicap having nothing to do with timing/coverage, which is
+    the only thing under test. '_oracle_balanced' must be checked before '_oracle' would otherwise
+    partially match, though endswith() on the full literal suffix already makes this safe either
+    order — kept first for readability."""
+    for suf in ("_scatter", "_debug", "_norobust", "_oracle_balanced", "_oracle"):
         if method.endswith(suf):
             return method[: -len(suf)]
     return method

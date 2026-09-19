@@ -1,0 +1,193 @@
+{
+  "dataset": "cmrx2024_af",
+  "method": "vggt_final518_diff1000_ep300",
+  "split": "test",
+  "n": 4,
+  "n_expected": 4,
+  "missing": [],
+  "ckpts": [
+    "v2:8867644927:6b3d6aaa09b0d90a"
+  ],
+  "cost_psnr_unverified": [],
+  "excluded_stale": [],
+  "scorer": [
+    "image_metrics.py"
+  ],
+  "ef": null,
+  "all": {
+    "n": 4,
+    "n_clean": 0,
+    "clean_psnr": [
+      null,
+      null
+    ],
+    "clean_ssim": [
+      null,
+      null
+    ],
+    "clean_ncc": [
+      null,
+      null
+    ],
+    "breath_psnr": [
+      23.060790538787842,
+      1.1253647837069636
+    ],
+    "breath_ssim": [
+      0.7565315579964281,
+      0.046374940398721295
+    ],
+    "breath_ncc": [
+      0.8967474140226841,
+      0.01133320777895863
+    ],
+    "breath_psnr_unit_peak": [
+      26.421241641044613,
+      2.498901530929724
+    ],
+    "clean_psnr_unit_peak": [
+      null,
+      null
+    ],
+    "cost_psnr": [
+      null,
+      null
+    ],
+    "breath_disp_mm": [
+      5.062382282704788,
+      0.9069414058870717
+    ],
+    "resp_epe_dz_mm": [
+      2.5182740262422705,
+      0.6014763551388029
+    ],
+    "resp_epe_dz_demeaned_mm": [
+      2.532542165105749,
+      0.5941331040298716
+    ],
+    "resp_slope": [
+      0.8676150778149527,
+      0.24553413199066437
+    ],
+    "resp_corr": [
+      0.780165291531311,
+      0.08292890262500284
+    ],
+    "n_resp": 4,
+    "recon_wall_sec": [
+      8.25586433825083,
+      1.6131175765451986
+    ],
+    "n_timing": 4
+  },
+  "per_subject": [
+    {
+      "subject": "CMRx24_Test_P004",
+      "resp_epe_dz_mm": 1.583698580071541,
+      "resp_epe_dz_demeaned_mm": 1.641973837920819,
+      "resp_slope": 1.0548522921804149,
+      "resp_corr": 0.9026117220815226,
+      "recon_wall_sec": 6.046795021742582,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.882339134812355,
+      "breath_psnr": 21.155514081319172,
+      "breath_ssim": 0.827071103188748,
+      "breath_psnr_unit_peak": 30.46002181371053,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.450851905569464,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "v2:8867644927:6b3d6aaa09b0d90a",
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx24_Test_P016",
+      "resp_epe_dz_mm": 2.5062179533605846,
+      "resp_epe_dz_demeaned_mm": 2.526461049484286,
+      "resp_slope": 0.6380199088574269,
+      "resp_corr": 0.8100374083464406,
+      "recon_wall_sec": 10.553218116983771,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.9136665264765421,
+      "breath_psnr": 24.070875644683838,
+      "breath_ssim": 0.7601049386241622,
+      "breath_psnr_unit_peak": 26.043514092763264,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.7904895852529,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "v2:8867644927:6b3d6aaa09b0d90a",
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx24_Test_P017",
+      "resp_epe_dz_mm": 2.741127220447879,
+      "resp_epe_dz_demeaned_mm": 2.6515968269666246,
+      "resp_slope": 0.6126788385083393,
+      "resp_corr": 0.7073875788121873,
+      "recon_wall_sec": 8.563058527186513,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8983867665131887,
+      "breath_psnr": 23.59426259994507,
+      "breath_ssim": 0.6986474570051713,
+      "breath_psnr_unit_peak": 23.636262893676758,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 6.611355679137002,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "v2:8867644927:6b3d6aaa09b0d90a",
+      "stamps_agree": true
+    },
+    {
+      "subject": "CMRx24_Train_P046",
+      "resp_epe_dz_mm": 3.242052351089076,
+      "resp_epe_dz_demeaned_mm": 3.3101369460512666,
+      "resp_slope": 1.1649092717136298,
+      "resp_corr": 0.7006244568850932,
+      "recon_wall_sec": 7.8603856870904565,
+      "clean_psnr": null,
+      "clean_ssim": null,
+      "clean_ncc": null,
+      "breath_ncc": 0.8925972282886505,
+      "breath_psnr": 23.42250982920329,
+      "breath_ssim": 0.7403027331676308,
+      "breath_psnr_unit_peak": 25.545167764027912,
+      "clean_psnr_unit_peak": null,
+      "arms": [
+        "breath"
+      ],
+      "cost_psnr": null,
+      "breath_disp_mm": 4.396831960859784,
+      "pose": "rigid6_ncc_per_phase",
+      "psf": "none",
+      "scorer": "image_metrics.py",
+      "ckpt": "scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt",
+      "ckpt_fingerprint": "v2:8867644927:6b3d6aaa09b0d90a",
+      "stamps_agree": true
+    }
+  ]
+}
