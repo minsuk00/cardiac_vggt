@@ -73,10 +73,14 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def base_method(method):
     """Arm name -> engine name: 'svrtk3d_scatter' / 'nesvor_scatter' (same-input arms, see
-    run_svrtk3d.sh INPUT=scatter), '*_debug', and '*_norobust' (fetal_cmr_4d with
-    -no_robust_statistics, docs/105 — same engine, same output kind) share their base method's
-    PSF/gauge treatment."""
-    for suf in ("_scatter", "_debug", "_norobust"):
+    run_svrtk3d.sh INPUT=scatter), '*_debug', '*_norobust' (fetal_cmr_4d with
+    -no_robust_statistics, docs/105 — same engine, same output kind) and '*_oracle'
+    (fetal_cmr_4d handed the TRUE per-frame cardiac phase instead of its own self-gating estimate;
+    same engine, same parameters, only cardphase.txt differs — docs/110) share their base method's
+    PSF/gauge treatment. '_oracle' is load-bearing: without it the arm is not in PSF_METHODS, so it
+    would be scored WITHOUT the PSF operator the self-gated arm receives — a silent handicap having
+    nothing to do with timing, which is the only thing under test."""
+    for suf in ("_scatter", "_debug", "_norobust", "_oracle"):
         if method.endswith(suf):
             return method[: -len(suf)]
     return method
