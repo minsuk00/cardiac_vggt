@@ -350,7 +350,11 @@ def check_bundle_split(ds_name, subjects, split):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", required=True, choices=list(paths.DATASETS))
+    # ALL_DATASETS, not DATASETS: the rhythm-arm cohorts (docs/110) are valid targets but are
+    # deliberately absent from every `default=` sweep. Nothing else in this file changes for them —
+    # the reference sweep at :236 already queries slot 0 over T, which under a rhythm cohort means
+    # "the mid slice's frame f", exactly what gt/gt_t{f} is the target for.
+    ap.add_argument("--dataset", required=True, choices=list(paths.ALL_DATASETS))
     ap.add_argument("--ckpt", required=True,
                     help="path INSIDE the run's log_dir; the protocol is read from its run_meta.jsonl")
     ap.add_argument("--model-name", required=True,
@@ -436,7 +440,13 @@ def main():
 
         with tempfile.TemporaryDirectory() as tmpdir:
             dset = make_dataset(cfg, man["rel_path"], args.split, tmpdir)
-            seq = name_seed(ds_name, subject)          # name-keyed: cohort-composition independent
+            # Keyed on the BASE source, not the cohort dir: a rhythm cohort (docs/110) holds the
+            # same subject re-simulated, and seeding on its dir name would give a different
+            # `random.Random(seq_index)` -> a different slot ORDER than the base cohort's run.
+            # The slot SET is identical either way (one frame per slice, slot 0 = z_mid) and
+            # pin_scatter overwrites every companion phase, but VGGT is not permutation-equivariant,
+            # so a reordered draw would stop `<source>_regular_frozen` being an exact control.
+            seq = name_seed(man.get("source", ds_name), subject)   # cohort-composition independent
             # metadata_draw is filled by the breath arm only (it owns ed_dvf.npz), but metadata.json
             # is written for EVERY arm — initialise it or `--arms clean` raises UnboundLocalError
             # AFTER the recons are on disk, leaving an arm with no metadata for check_overwrite.

@@ -38,6 +38,17 @@ FIGURES = EVAL_ROOT / "comparison_figures"   # -> GPFS (subject-major DISPOSABLE
 # ACDC and M&Ms are in the training pool now, and every source here is gated + breathing-simulated,
 # so they differ by provenance, not by regime. Keys match `build_inputs/pooled.py`'s --source.
 DATASETS = ("cmrx2023", "cmrx2024", "cmrx2025", "acdc", "mnms", "miitt", "ocmr")
+
+# Rhythm-arm cohorts (docs/110): `<source>_<arm>` holds the SAME subjects re-simulated under an
+# irregular cardiac rhythm, built by tools/build_af_bundle.py. They are deliberately NOT in
+# DATASETS, because six call sites do `default=list(paths.DATASETS)` (score/run.py, ef_dice.py,
+# run_baselines.py, fetal4d_gate.py, run_dangi.py, tools/build_padded_heart_mask.py) — adding them
+# there would silently widen every bare cohort sweep in the repo, including the live campaign's.
+# Use ALL_DATASETS for argparse `choices=` only, so these cohorts are opt-in by name.
+RHYTHM_ARMS = ("regular_frozen", "regular", "hrv", "af")
+EXTRA_DATASETS = tuple(f"{d}_{a}" for d in DATASETS for a in RHYTHM_ARMS)
+ALL_DATASETS = DATASETS + EXTRA_DATASETS
+
 VARIANTS = ("clean", "breath")           # the two recon conditions (both in one metrics.json)
 BUNDLE_DIRS = ("gt", "clean", "breath", "scatter", "rolled")  # input-bundle subdirs; NOT arms
 # input-bundle phase-stack filename prefix per subdir: gt/ -> gt_t*, clean|breath|scatter|rolled/ -> stack_t*

@@ -29,11 +29,25 @@ METHOD="${METHOD:-fetal_cmr_4d}"; INPUT=rolled
 # micromamba's ~/.cache/mamba/proc lock ("LockFile can't be set") and abort the call.
 SVR_PY="${SVR_PY:-/home/minsukc/micromamba/envs/svr/bin/python}"
 SD="$VGGT/scratch/eval/${EVAL_DATASET:?EVAL_DATASET must name a source dir}/out/$SUBJ"
-GATE="$SD/fetal_cmr_4d/gate"
+# GATE_ARM, not $METHOD: the fetal_cmr_4d_norobust / _motion arms deliberately SHARE the
+# self-gated fetal_cmr_4d/gate, so substituting $METHOD would break them. Only an arm with its own
+# gating (fetal_cmr_4d_oracle, from fetal4d_gate.py --oracle) overrides this.
+GATE="$SD/${GATE_ARM:-fetal_cmr_4d}/gate"
 OUT="$SD/$METHOD/recon_$VAR"; mkdir -p "$OUT"
 for f in stack4d.nii.gz cardphase.txt rrintervals.txt gate.json; do
   [ -f "$GATE/$f" ] || { echo "missing $GATE/$f — run fetal4d_gate.py dump/seg/assemble first"; exit 3; }
 done
+# Output readout mode comes from the BUNDLE, never the invocation: a bundle with a rhythm block
+# (tools/build_af_bundle.py, docs/110) is FRAME-indexed, so its targets are the reference slice's
+# own 12 acquisition instants; a legacy bundle has no such key and takes the original gt_ed roll
+# VERBATIM. You therefore cannot apply the wrong readout to the wrong cohort by mistake.
+# Both reads FAIL CLOSED: the script has no `set -e`, so a failed $( ) would otherwise leave an
+# empty string, and an empty READOUT is != gt_ed_roll -- i.e. it would silently select the NEW
+# path and skip the seg_gt precondition. Exit instead.
+READOUT=$("$SVR_PY" -c "import json,sys;print('ref_phase' if 'rhythm' in json.load(open(sys.argv[1])) else 'gt_ed_roll')" "$SD/manifest.json") \
+  || { echo "cannot read $SD/manifest.json to determine the readout mode"; exit 6; }
+REF_PLANE=$("$SVR_PY" -c "import json,sys;print(json.load(open(sys.argv[1]))['scatter']['ref_plane'])" "$SD/manifest.json") \
+  || { echo "cannot read scatter.ref_plane from $SD/manifest.json"; exit 6; }
 MASK="$SD/${MASK_FILE:-mask_heart.nii.gz}"
 NSLICE=$(wc -w < "$GATE/rrintervals.txt"); NFRAME=$(wc -w < "$GATE/cardphase.txt")
 MEANRR=$(python3 -c "import sys;v=[float(x) for x in open(sys.argv[1]).read().split()];print(sum(v)/len(v))" "$GATE/rrintervals.txt")
@@ -44,12 +58,25 @@ MEANRR=$(python3 -c "import sys;v=[float(x) for x in open(sys.argv[1]).read().sp
 # at frame 0, so entry 0 is right; entries 1..NFRAME-1 = our thetas 1..NFRAME-1, zero-padded to
 # 710 tokens. Per-slice R-R is not passed at all: it is a single nominal constant (rrintervals.txt
 # is provenance only) and the engine's fallback sets every slice to -rrinterval.
+# The count token itself READS as frame 0 / slice 0's phase, so it must encode theta[0][0].
+# 710 = 113*2pi = 6e-05 rad. VERIFIED against the engine source: cardPhase is stored raw
+# (reconstructCardiac.cc:400) and its only consumer CalculateAngularDifference takes a true modulo,
+# so angdiff(710) == angdiff(710 mod 2pi) exactly.
+# BOTH arms use this literal. Self-gated: assemble() puts an ED frame first, so theta00 == 0.
+# Oracle: fetal4d_gate.py shifts every theta by a constant so theta00 == 710 mod 2pi (a constant
+# offset only relabels the output bins and the ref_phase readout undoes it). Do NOT replace this
+# with a search for an integer matching an arbitrary theta00 -- 710 is a convergent of 2pi, so the
+# reachable residues have ~9e-3 rad gaps and no feasible search width gets within 1e-3.
 CPCOUNT=710
 [ "$NFRAME" -le "$CPCOUNT" ] || { echo "NFRAME=$NFRAME > $CPCOUNT: raise CPCOUNT to a larger multiple of 2pi"; exit 4; }
-CPARGS=$(python3 -c "
-import sys; v=open(sys.argv[1]).read().split(); n=int(sys.argv[2])
-assert abs(float(v[0]))<1e-6, 'frame 0 must be an ED-phase frame (re-run fetal4d_gate.py assemble)'
-print(' '.join(v[1:] + ['0.0']*(n-len(v)+1)))" "$GATE/cardphase.txt" "$CPCOUNT")
+CPARGS=$("$SVR_PY" -c "
+import sys, math
+v=open(sys.argv[1]).read().split(); n=int(sys.argv[2])
+# entry 0 is supplied by the count token; verify it really encodes theta[0][0].
+res = abs((n - float(v[0]) + math.pi) % (2*math.pi) - math.pi)
+assert res < 1e-3, f'count token {n} encodes phase off by {res:.2e} rad from theta[0][0]={v[0]} -- for an oracle gate, re-run fetal4d_gate.py assemble --oracle (it shifts theta to match)'
+print(' '.join(v[1:] + ['0.0']*(n-len(v)+1)))" "$GATE/cardphase.txt" "$CPCOUNT") \
+  || { echo "cardphase argument build FAILED (see the traceback above) -- refusing to run the engine"; exit 5; }
 ROBUST_FLAG=""; [ "$ROBUST" = "1" ] || ROBUST_FLAG="-no_robust_statistics"
 OMP="${OMP:-$(nproc)}"
 
@@ -74,12 +101,20 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "command         : mirtk reconstructCardiac cine.nii.gz 1 <gate/stack4d.nii.gz> -thickness $THICK -mask mask_heart \\"
   echo "                    -iterations $ITERS -rec_iterations $NSR -rec_iterations_last $NSRLAST -resolution $RES \\"
   echo "                    -numcardphase $T -rrinterval $MEANRR -cardphase $CPCOUNT <theta_1..theta_$((NFRAME-1)), 0-padded> $ROBUST_FLAG"
-  echo "cardphase note  : count token $CPCOUNT = 113*2pi is read as frame 0's phase (engine off-by-one, docs/105 par.5c); frame 0 = slice-0 ED frame"
+  if [ "$READOUT" = gt_ed_roll ]; then
+    echo "cardphase note  : count token $CPCOUNT = 113*2pi is read as frame 0's phase (engine off-by-one, docs/105 par.5c); frame 0 = slice-0 ED frame"
+  else
+    echo "cardphase note  : count token $CPCOUNT = 113*2pi is read as frame 0's phase (engine off-by-one, docs/105 par.5c); frame order is ACQUISITION order (no slice-0 ED re-roll) and thetas are offset so theta[0][0] matches the token"
+  fi
   echo "rr note         : no -rrintervals (engine off-by-one); all $NSLICE slices take -rrinterval $MEANRR via the engine fallback"
   echo "stack4d dt      : $("$SVR_PY" -c "import nibabel as nib,sys;h=nib.load(sys.argv[1]).header;print(h.get_zooms()[3],'s, time units',h.get_xyzt_units()[1])" "$GATE/stack4d.nii.gz")"
   echo "params          : thickness_mm=$THICK resolution_mm=$RES iterations=$ITERS rec_iterations=$NSR/$NSRLAST \\"
   echo "                    robust_statistics=$([ "$ROBUST" = 1 ] && echo ON || echo OFF) numcardphase=$T rr_nominal_s=$MEANRR"
-  echo "gating          : fetal4d_gate.py (LV-area ED anchor, nnU-Net Task114 on rolled/ frames; docs/105) -> $GATE"
+  if [ "${GATE_ARM:-fetal_cmr_4d}" = fetal_cmr_4d ]; then
+    echo "gating          : fetal4d_gate.py (LV-area ED anchor, nnU-Net Task114 on rolled/ frames; docs/105) -> $GATE"
+  else
+    echo "gating          : fetal4d_gate.py --oracle (TRUE per-frame theta from the simulation truth manifest; NO nnU-Net; docs/110) -> $GATE"
+  fi
   echo "container(sif)  : $SIF"
   echo "container_id    : $(stat -c '%s bytes, mtime %y' "$SIF" 2>/dev/null)"
   echo "method          : $METHOD"
@@ -111,22 +146,49 @@ echo "$DT" > "$OUT/total_wall.sec"
 # argmax the scorer uses (<subject>/seg_gt, ef_dice.py) — so "phase 0 = ED" means one thing on
 # both sides. One scalar index convention, no slice-level GT information; a no-op when GT ED = 0.
 SEG_GT="$SD/seg_gt"
-[ -f "$SEG_GT/seg_t00.nii.gz" ] || { echo "missing $SEG_GT — run ef_dice.py dump --gt-only + run_seg.sh + score first"; exit 3; }
+# ref_phase needs no GT at all (it reads out at the arm's own thetas), so the seg_gt prerequisite
+# applies only to the legacy roll.
+if [ "$READOUT" = gt_ed_roll ]; then
+  [ -f "$SEG_GT/seg_t00.nii.gz" ] || { echo "missing $SEG_GT — run ef_dice.py dump --gt-only + run_seg.sh + score first"; exit 3; }
+fi
 N_OK=0; GT_ED=-1
 if [ -f "$WD/cine.nii.gz" ] && gzip -t "$WD/cine.nii.gz" 2>/dev/null; then
-  read -r N_OK GT_ED < <("$SVR_PY" - "$WD/cine.nii.gz" "$OUT" "$T" "$SEG_GT" <<'EOF'
+  read -r N_OK GT_ED < <("$SVR_PY" - "$WD/cine.nii.gz" "$OUT" "$T" "$SEG_GT" "$READOUT" "$GATE/cardphase.txt" "$REF_PLANE" <<'EOF'
 import sys, nibabel as nib, numpy as np
 im = nib.load(sys.argv[1]); out = sys.argv[2]; T = int(sys.argv[3]); seg_gt = sys.argv[4]
-arr = np.asarray(im.dataobj, dtype=np.float32)
+readout, cp_path = sys.argv[5], sys.argv[6]      # argv[7] (ref) parsed inside the branch that
+arr = np.asarray(im.dataobj, dtype=np.float32)   # needs it, so the legacy path stays scatter-free
 if arr.ndim != 4 or arr.shape[3] != T:
     print(0, -1); sys.exit()
-lv = np.array([(np.asarray(nib.load(f"{seg_gt}/seg_t{t:02d}.nii.gz").dataobj) == 1).sum() for t in range(T)])
-gt_ed = int(lv.argmax())                      # ef_dice.py: ed = gt.argmax() (LV label 1 voxel count)
-arr = np.roll(arr, gt_ed, axis=3)             # output phase 0 (= gater ED) -> index gt_ed
+if readout == "gt_ed_roll":                   # LEGACY, unchanged
+    lv = np.array([(np.asarray(nib.load(f"{seg_gt}/seg_t{t:02d}.nii.gz").dataobj) == 1).sum() for t in range(T)])
+    tag = int(lv.argmax())                    # ef_dice.py: ed = gt.argmax() (LV label 1 voxel count)
+    arr = np.roll(arr, tag, axis=3)           # output phase 0 (= gater ED) -> index gt_ed
+else:
+    # ref_phase: target f is the REFERENCE slice's acquisition instant f, so read the engine's
+    # phase cine at that frame's own theta. REPLACES the gt_ed roll -- it does not compose with it.
+    # (Under a periodic rhythm the gater's ED is (gt_ed + roll_ref) mod T, so this rule reduces
+    # exactly to np.roll(arr, gt_ed); applying both would double-correct by gt_ed.)
+    ref = int(sys.argv[7])
+    th = np.array(open(cp_path).read().split(), dtype=np.float64)
+    D = th.size // T
+    assert th.size == D * T and 0 <= ref < D, (th.size, D, T, ref)
+    idx = th[ref * T:(ref + 1) * T] * T / (2.0 * np.pi)     # fractional output-bin index per frame
+    frames = []
+    for f in range(T):
+        i = float(idx[f]) % T
+        r = int(round(i))
+        if abs(i - r) < 1e-4:                 # exact bin: take it, no arithmetic (bit-exact).
+            frames.append(arr[..., r % T])    # theta is stored to 6dp, so i is 1.0000003, not 1.0;
+        else:                                 # blending with w=3e-7 is NOT bit-identical.
+            lo = int(np.floor(i)); w = np.float32(i - lo)
+            frames.append(arr[..., lo % T] * (np.float32(1.0) - w) + arr[..., (lo + 1) % T] * w)
+    arr = np.stack(frames, axis=-1).astype(np.float32)
+    tag = ref
 nib.save(nib.Nifti1Image(arr, im.affine), sys.argv[1])
 for t in range(T):
     nib.save(nib.Nifti1Image(arr[..., t], im.affine), f"{out}/vol_t{t:02d}.nii.gz")
-print(T, gt_ed)
+print(T, tag)
 EOF
 )
   mv -f "$WD/cine.nii.gz" "$OUT/cine.nii.gz"
@@ -141,9 +203,13 @@ else
   echo "FAIL recon (see $OUT/log.txt)"
 fi
 if [ "${N_OK:-0}" -eq "$T" ]; then
-  printf '{"engine": "fetal_cmr_4d", "input_stack": "rolled", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "rec_iterations": "%s/%s", "numcardphase": %s, "rr_nominal_s": %s, "robust_statistics": "%s", "container_id": "%s", "cardphase_count_token": %s, "gt_ed_roll": %s}\n' \
-    "$THICK" "$RES" "$ITERS" "$NSR" "$NSRLAST" "$T" "$MEANRR" "$([ "$ROBUST" = 1 ] && echo on || echo off)" "$(container_id "$SIF")" "$CPCOUNT" "$GT_ED" > "$OUT/stamp.json"
-  { echo "gt_ed_roll      : output rolled by $GT_ED phases so phase 0 = the GT's seg-derived ED (seg_gt LV argmax)"; } >> "$OUT/provenance.txt"
+  printf '{"engine": "fetal_cmr_4d", "input_stack": "rolled", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "rec_iterations": "%s/%s", "numcardphase": %s, "rr_nominal_s": %s, "robust_statistics": "%s", "container_id": "%s", "cardphase_count_token": %s, "readout": "%s", "readout_arg": %s, "gate_arm": "%s"}\n' \
+    "$THICK" "$RES" "$ITERS" "$NSR" "$NSRLAST" "$T" "$MEANRR" "$([ "$ROBUST" = 1 ] && echo on || echo off)" "$(container_id "$SIF")" "$CPCOUNT" "$READOUT" "$GT_ED" "${GATE_ARM:-fetal_cmr_4d}" > "$OUT/stamp.json"
+  if [ "$READOUT" = gt_ed_roll ]; then
+    { echo "readout         : gt_ed_roll -- output rolled by $GT_ED phases so phase 0 = the GT's seg-derived ED (seg_gt LV argmax)"; } >> "$OUT/provenance.txt"
+  else
+    { echo "readout         : ref_phase -- output cine sampled at reference plane $GT_ED's own per-frame theta from $GATE/cardphase.txt (fractional, circular); REPLACES the gt_ed roll, uses no GT"; } >> "$OUT/provenance.txt"
+  fi
 else
   echo "NOT stamped: $N_OK/$T phases"
 fi

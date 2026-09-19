@@ -94,6 +94,13 @@ def main():
     # _scatter suffix appended, so a debug rerun lands in its own arm dir instead of silently
     # being skipped-as-already-stamped under the campaign's <method>_scatter arm.
     base = os.environ.get("METHOD") or args.method
+    # GATE_ARM and METHOD are independent env vars, and mis-pairing them is silent: set one and not
+    # the other and you get an arm named _oracle holding self-gated timing, or an oracle recon
+    # written into (or skipped as already-stamped under) the plain arm dir. Require them to agree.
+    gate_arm_env = os.environ.get("GATE_ARM")
+    if gate_arm_env and gate_arm_env != base:
+        sys.exit(f"GATE_ARM={gate_arm_env!r} but METHOD={base!r}: an arm must be named after the "
+                 f"gate it consumes, or its recon is mis-attributed. Set METHOD={gate_arm_env}.")
     arm = base + "_scatter" if args.input == "scatter" else base
     work = []                                     # (source, subject, T, thick)
     for ds in args.sources:
@@ -105,16 +112,26 @@ def main():
             if args.subjects and s not in args.subjects:
                 continue
             m = json.load(open(paths.manifest(ds, s)))
-            if args.input == "scatter" and "scatter" not in m:
-                raise KeyError(f"{ds}/{s}: bundle has no scatter draw — run pooled.py --add-scatter")
+            # Guard on the DIRECTORY, not the manifest key. A rhythm cohort (docs/110) carries the
+            # scatter draw in its manifest (run_vggt.pin_scatter needs it) but writes no scatter/
+            # stacks, so a key-only check passes here and then fails inside the container.
+            if args.input == "scatter" and not (paths.subject_dir(ds, s) / "scatter").is_dir():
+                raise FileNotFoundError(f"{ds}/{s}: no scatter/ stacks — run pooled.py --add-scatter "
+                                        f"(a rhythm cohort does not build them)")
             if args.method == "fetal_cmr_4d":
                 if args.input == "scatter" or args.variant != "breath":
                     sys.exit("fetal_cmr_4d reads the rolled/ stack only: use --variant breath --input gated")
                 if "rolled" not in m:
                     raise KeyError(f"{ds}/{s}: bundle has no rolled/ stack — run pooled.py --add-rolled")
-                if not (paths.subject_dir(ds, s) / "fetal_cmr_4d" / "gate" / "cardphase.txt").is_file():
-                    raise FileNotFoundError(f"{ds}/{s}: not self-gated yet — run fetal4d_gate.py dump/seg/assemble")
-            thick = thickness_mm(ds, m["rel_path"], float(m["dz_mm"]))
+                gate_arm = os.environ.get("GATE_ARM", "fetal_cmr_4d")
+                if not (paths.subject_dir(ds, s) / gate_arm / "gate" / "cardphase.txt").is_file():
+                    raise FileNotFoundError(f"{ds}/{s}: no {gate_arm}/gate — run fetal4d_gate.py dump/seg/assemble"
+                                            + (" --oracle" if gate_arm.endswith("_oracle") else ""))
+            # m["source"], not the cohort dir name: a rhythm-arm cohort (docs/110) is named
+            # `<source>_<arm>` but carries the BASE source in its manifest, and thickness is a
+            # property of the scanner protocol, not of the simulated rhythm. thickness_mm() raises
+            # on an unknown name, so passing the dir name would hard-fail those cohorts.
+            thick = thickness_mm(m.get("source", ds), m["rel_path"], float(m["dz_mm"]))
             if thick <= 0 or thick > float(m["dz_mm"]) + 1e-6:
                 raise ValueError(f"{ds}/{s}: implausible thickness {thick} for dz {m['dz_mm']}")
             work.append((ds, s, int(m["T"]), thick))
