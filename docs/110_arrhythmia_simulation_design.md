@@ -358,6 +358,20 @@ cine-frame units.
 
 ### 11.5 `pos_physio` is solved in STORED-phase units — the ED-anchored version was reverted
 
+> ⚠️ **CORRECTION (docs/111 §5, measured):** the invariant asserted below and in `pos_physio`'s
+> docstring — *"all four arms open their window at the same stored phase and differ ONLY in
+> rhythm"* — is **FALSE for `af`**. `simulate`'s `t0` is a **time** offset `frac·rr[BURN]` into
+> beat 3. Under `pos_compress` (uniform stretch) that maps to phase `frac·T` exactly, so
+> `regular*`/`hrv` open at `(-roll[z]) % T` with deviation 0.00. Under `pos_physio` phase advances
+> at a fixed rate, so the open phase is `min(p_start[BURN] + frac·rr[BURN]·T, T)`, equal to
+> `(-roll[z]) % T` only when `rr[BURN] == 1` **and** `p_start[BURN] == 0`. Measured deviation up to
+> **5.52 phases**, with **16.4 % of `af` frames parked at the full-ED hold** (0 % in every other
+> arm). The *behaviour* is defensible — a free-running camera opens at a uniformly random time
+> inside a beat — but the **control claim is not**, and cross-cohort `af`-vs-`regular` deltas are
+> therefore not rhythm-only. Within-cohort comparisons (e.g. the oracle gap) are unaffected.
+> Fix is either to correct this text or to solve `t0` for a target phase under `pos_physio`; note
+> `p_start[BURN] > frac·T` makes the latter unsolvable for some draws.
+
 `pos_physio` takes `vol[0]` as "full". The stored cine is ED-first by convention but not always: the
 seg-derived ED is frame 10/11 on 4 of the 38 cmrx2024 test subjects (measured: P046 ED = frame 11,
 `vol[0]/vol[ED] = 0.959`) and ~14 % of CMRx25 (docs/105 §5d).
@@ -410,7 +424,10 @@ stop `regular_frozen` being an exact control.
   rhythm-cohort subject. That is the frame-index remap working. **Expected, not an error.**
 - **P004 is kept deliberately.** Its window sees only 21 % of the LV excursion and holds at full ED
   for 11 of 12 frames, so 11 GT targets are byte-identical and its GT EF collapses to ~15 % vs a true
-  71 %. Cause measured: a long effective beat with the camera window opening inside its diastasis.
+  71 %. ⚠️ **Cause CORRECTED (docs/111 §5):** not "a long effective beat with the camera window
+  opening inside its diastasis" as originally written, but the §11.5 `frac·rr[BURN]` time→phase
+  conversion — with `roll[4] = 8 ⇒ frac = 1/3`, every other arm opens at phase 4 while `af` opens at
+  phase **12.0** (full ED) and stays there.
   This is the model working as specified — both alternative resume models give the identical 21 %.
   Cohort-wide it is rare (median window sees 99 %; 1/38 below 30 %). Its signature is
   `rhythm.duplicate_targets` in the manifest. **Do not average its EF in silently.**
