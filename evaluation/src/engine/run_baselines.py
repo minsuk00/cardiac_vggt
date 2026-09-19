@@ -97,10 +97,19 @@ def main():
     # GATE_ARM and METHOD are independent env vars, and mis-pairing them is silent: set one and not
     # the other and you get an arm named _oracle holding self-gated timing, or an oracle recon
     # written into (or skipped as already-stamped under) the plain arm dir. Require them to agree.
+    # The check below :127 used to fire ONLY when GATE_ARM was set and disagreed with METHOD, which
+    # left the OPPOSITE mis-pairing open: METHOD=<a variant> with GATE_ARM simply unset silently
+    # defaulted to the self-gated gate at :129 (`os.environ.get("GATE_ARM", "fetal_cmr_4d")`) while
+    # the recon still landed under the variant's own arm dir. Caught by adversarial review
+    # (docs/111 s7 F1); confirmed live-attributable only via stamp.json's "gate_arm" field.
     gate_arm_env = os.environ.get("GATE_ARM")
     if gate_arm_env and gate_arm_env != base:
         sys.exit(f"GATE_ARM={gate_arm_env!r} but METHOD={base!r}: an arm must be named after the "
                  f"gate it consumes, or its recon is mis-attributed. Set METHOD={gate_arm_env}.")
+    if base != "fetal_cmr_4d" and not gate_arm_env and base.startswith("fetal_cmr_4d"):
+        sys.exit(f"METHOD={base!r} names a variant fetal_cmr_4d arm but GATE_ARM is unset — it "
+                 f"would silently default to the self-gated gate at fetal_cmr_4d/gate/, mis-"
+                 f"pairing METHOD's arm dir with the wrong gate. Set GATE_ARM={base}.")
     arm = base + "_scatter" if args.input == "scatter" else base
     work = []                                     # (source, subject, T, thick)
     for ds in args.sources:
