@@ -1,28 +1,41 @@
-# 111 — Arrhythmia pilot: results, and why the pre-registered outcome did NOT happen
+# 111 — Arrhythmia: pilot (n=4) then full cohort (n=38) — results and the coverage-not-timing finding
 
 > **TL;DR & takeaway**
-> First execution of the docs/110 rhythm ladder: 4 cohorts × 4 subjects × 3 arms
-> (`fetal_cmr_4d`, `fetal_cmr_4d_oracle`, VGGT `final518_diff1000_ep300`), 32 fetal recons + 16 VGGT
-> runs, all scored through the standard chain. **Gating collapses as designed** — the structural
-> (within-slice) θ error goes 0.000 → 0.000 → 0.486 → 1.328 cine frames and **62–75 %** of input
-> images land in the wrong reconstruction bin (the range is admissible-offset dependent, §2a).
-> **But the damage barely reaches the image metrics** (self-gated −0.60 dB under `af`) and **the
-> oracle arm REVERSES**: under `af`, handing Fetal 4D the TRUE per-frame timing makes it **0.63 dB
-> WORSE**, on all 3 non-degenerate subjects independently. That reversal is the robust result — it
-> survives including P004 (at 0.46 dB instead of 1.09 dB) and is **not** explained by window span.
-> **Its cause was a confounded hypothesis — now settled by a direct intervention (§3d).** The
-> correlational bin-imbalance measure was near-totally confounded with cohort identity (a plain "is
-> this `af`" dummy predicted the gap *better*, r = −0.891 vs −0.832). So a fourth gate arm was built:
-> true per-frame θ, but rank-quantized per slice to force the same one-image-per-bin coverage the
-> self-gated method gets for free. Restoring coverage **flips the sign** — raw-oracle trails
-> self-gated by −0.63 dB, balanced-oracle **leads** it by **+0.26 dB**, positive or flat on all 3
-> subjects. **Coverage, not timing accuracy, is the mechanism**: true timing never hurt
+> **Full-cohort update (§10): the pilot's findings replicate and strengthen at n=33 (paired), not
+> just n=3.** Giving Fetal CMR 4D the TRUE per-frame AF timing makes it WORSE, not better — PSNR
+> gap −0.81 dB (pilot: −0.63), EF gap +4.43 pp (worse than self-gated's own +2.68 pp under `af`).
+> Fixing bucket COVERAGE while keeping true timing flips this positive on both metrics — EF
+> 7.91 pp, beating self-gated (8.94) outright. **The real answer this project was built to find:
+> Fetal 4D's EF advantage over VGGT survives AF but collapses from 3.61 pp to 1.01 pp** — still
+> wins, barely. Visually confirmed (§10.4, GIFs): oracle-raw shows visible speckle where buckets
+> are under-filled; self-gated/oracle-balanced are clean. The elevated degenerate-subject rate
+> (5/38, not ~1/38 predicted) is real model behavior, confirmed by 5000-trial Monte Carlo (15.4%
+> vs measured 13.2%) — the design-time estimate was wrong, not the simulator.
+>
+> **Original pilot (n=4 subjects, below) — same finding, first discovered here.** 4 cohorts × 4
+> subjects × 3 arms (`fetal_cmr_4d`, `fetal_cmr_4d_oracle`, VGGT `final518_diff1000_ep300`), 32
+> fetal recons + 16 VGGT runs. **Gating collapses as designed** — the structural (within-slice) θ
+> error goes 0.000 → 0.000 → 0.486 → 1.328 cine frames and **62–75 %** of input images land in the
+> wrong reconstruction bin (the range is admissible-offset dependent, §2a). **But the damage barely
+> reaches the image metrics** (self-gated −0.60 dB under `af`) and **the oracle arm REVERSES**:
+> under `af`, handing Fetal 4D the TRUE per-frame timing makes it **0.63 dB WORSE**, on all 3
+> non-degenerate subjects independently. That reversal is the robust result — it survives including
+> P004 (at 0.46 dB instead of 1.09 dB) and is **not** explained by window span. **Its cause was a
+> confounded hypothesis — now settled by a direct intervention (§3d), and reconfirmed at full scale
+> in §10.** The correlational bin-imbalance measure was near-totally confounded with cohort identity
+> (a plain "is this `af`" dummy predicted the gap *better*, r = −0.891 vs −0.832). So a fourth gate
+> arm was built: true per-frame θ, but rank-quantized per slice to force the same one-image-per-bin
+> coverage the self-gated method gets for free. Restoring coverage **flips the sign** — raw-oracle
+> trails self-gated by −0.63 dB, balanced-oracle **leads** it by **+0.26 dB**, positive or flat on
+> all 3 subjects. **Coverage, not timing accuracy, is the mechanism**: true timing never hurt
 > reconstruction — the reversal was an artifact of uneven phase-bin occupancy that came bundled with
 > representing that timing honestly.
 > VGGT is flat across rhythm (+0.03 dB under `af`), though `af` differs from `regular` in **more than
-> rhythm** (§5). **EF is uninterpretable at n=3.** Pipeline correctness verified four ways with seven
-> fault injections (`tools/verify_af_pipeline.py`), then re-audited by 3 independent reviewers whose
-> findings are folded in below — including two claims of an earlier draft that are now **withdrawn**.
+> rhythm** (§5). **EF is uninterpretable at n=3** — resolved at full scale in §10.3. Pipeline
+> correctness verified four ways with seven fault injections (`tools/verify_af_pipeline.py`), then
+> re-audited by 3 independent reviewers whose findings are folded in below — including two claims of
+> an earlier draft that are now **withdrawn** — and re-reviewed again before the full-cohort launch
+> (§9.1).
 
 **Provenance.** Branch `exp/af-sim`, commits `66e6b6e` (code) → `bb45672` (docs/110) → `4899364`
 (pilot tooling) → `c0e958d` (verification). Recons: SLURM `61545022` (6 tasks), `61545023`,
@@ -471,3 +484,122 @@ now resolves the full test-split subject list dynamically via `paths.filter_by_s
   exactly this failure mode — LV phase-mixing barely moves whole-volume PSNR but directly corrupts
   the (max−min)/max computation EF is; the coverage-vs-timing effect size may be much larger in EF
   than the 0.3–0.9 dB PSNR swings found in §3d).
+
+## 10. Full-cohort RESULTS (38 subjects) — the pilot findings replicate and strengthen
+
+Execution: fetal array `61553947` (30 tasks, 380 reconstructions) — **all COMPLETED, zero
+failures**, ~3.6 h wall. VGGT (152 runs) ran in parallel on GPU. EF chain ran as 3 parallel SLURM
+jobs (`61562349/350/351`, one per fetal arm) — all COMPLETED. Paired subject set: **n = 33**
+(38 minus the 5 degenerate subjects confirmed in §10.2, excluded from every cohort so every arm
+is compared on the identical subject set).
+
+### 10.1 PSNR — the reversal replicates and gets SHARPER, not weaker
+
+| cohort | self-gated | oracle-raw | VGGT | oracle gap |
+|---|---|---|---|---|
+| regular_frozen | 24.41 | 24.70 | 26.21 | +0.29 |
+| regular | 24.63 | 25.00 | 26.11 | +0.37 |
+| hrv | 24.72 | 24.96 | 26.43 | +0.24 |
+| **af** | 24.21 | **23.40** | 26.33 | **−0.81** |
+
+The pilot (n=3) measured the af oracle gap at −0.63 dB. At n=33 it is **−0.81 dB** — larger, not
+smaller. Δ vs regular_frozen: self −0.20 / oracle **−1.31** / VGGT +0.12 under `af`, the same
+signature as the pilot (self mild, oracle large, VGGT flat).
+
+**Oracle-balanced replicates the fix, too** (`hrv`/`af` only, same paired set):
+
+| cohort | self-gated | oracle-raw | oracle-**balanced** |
+|---|---|---|---|
+| hrv | 24.72 | 24.96 (+0.24) | 24.80 (+0.09) |
+| af | 24.21 | 23.40 (−0.81) | **24.38 (+0.17)** |
+
+Restoring bucket coverage flips the sign again, exactly as at n=3 (there: −0.63 → +0.26).
+
+### 10.2 The degenerate-subject rate is real model behavior, not a bug — Monte Carlo confirms it
+
+R3's full-scale review (§9.4) found 5/38 af subjects degenerate — **P004, P013, P023, P038,
+P026** — vs the design-time ~1/38 estimate. Ran 5000 independent Monte Carlo draws of the
+**actual, unmodified** `rr_sequence`/`pos_physio` mechanism (not a re-derivation): **15.4%**
+degenerate rate, matching the measured **13.2%** (5/38) closely — well within sampling noise at
+n=38. **The design-time estimate was wrong because it was based on too small a sample; the
+simulator is behaving exactly as its own physiology implies** — AF beat lengths have a floor
+(0.45×) but no ceiling, so occasional very long beats (and the holds they produce) are an
+expected, not anomalous, consequence of that distribution. Still open: whether the disclosed
+window-open-phase limitation (§11.5) inflates degeneracy for any of the 4 non-P004 cases beyond
+P004 itself — not yet checked.
+
+### 10.3 EF — the real headline. The advantage survives AF but drops by two-thirds
+
+| cohort | self-gated | oracle-raw | VGGT |
+|---|---|---|---|
+| regular_frozen | 6.26 | 5.17 | 9.87 |
+| regular | 6.31 | 6.03 | 10.84 |
+| hrv | 6.28 | 4.78 | 9.41 |
+| **af** | **8.94** | **9.60** | 9.95 |
+
+**Sanity check — replication held.** `regular_frozen` self-gated EF MAE (6.26) matches the
+already-published cmrx2024-specific number (6.23) closely, and `regular_frozen`'s input stacks
+are still byte-identical to the live campaign's `rolled/` bundle. The full-cohort pipeline
+reproduces the known result before this section's new numbers.
+
+**Does Fetal 4D's EF advantage over VGGT survive AF?** Yes, but it collapses by roughly
+two-thirds: **3.61 pp** (regular_frozen: 9.87 − 6.26) → **1.01 pp** (af: 9.95 − 8.94). Self-gated's
+own EF error rises **+2.68 pp** under af (vs +0.05/+0.02 pp under regular/hrv — essentially flat
+there); VGGT's is flat everywhere (+0.08 to +0.97 pp, no rhythm-driven trend).
+
+**The coverage-vs-timing mechanism is far more visible in EF than PSNR — as predicted.** Oracle-raw
+degrades **harder** than self-gated under af (+4.43 pp vs self-gated's own +2.68 pp — a ~65% larger
+absolute degradation), and oracle-balanced doesn't just recover, it **beats self-gated outright**:
+
+| cohort | self-gated | oracle-raw | oracle-**balanced** |
+|---|---|---|---|
+| hrv | 6.28 | 4.78 | 5.10 |
+| af | 8.94 | 9.60 | **7.91** |
+
+This is the sharpest version of the §3d finding yet: fixing bucket coverage while keeping true
+timing doesn't just avoid the reversal, it produces the best EF of any fetal arm under af.
+
+### 10.4 Visual confirmation (docs/111 had none until this session)
+
+Built `tools/render_af_bucket_comparison.py` and `tools/render_af_bucket_with_curve.py`. **First
+attempt had a real bug**, not a quality finding: it sliced every arm's volume at the same raw
+Z-index, but `fetal_cmr_4d`'s native reconstruction grid is a completely different shape
+((100,85,103) vs GT's (256,256,12)) — comparing same-index slices across incompatible grids is
+meaningless and produced a misleadingly bad-looking result. **Fixed** by reusing
+`image_metrics.py`'s own `load_blurred → fit_rigid → resample` pipeline directly, so what's
+rendered is exactly what gets scored.
+
+Confirmed with the corrected renders (subject P017, `af` cohort):
+- `oracle-raw` shows visible speckle/mottled texture at z=2/z=6, f=6, where self-gated and
+  oracle-balanced are visually smooth — the coverage failure is directly visible, not just a
+  metric artifact.
+- `VGGT` reconstructs the entire canonical FOV (chest wall, liver, etc.); the fetal_cmr_4d family
+  is confined to a tight heart-only crop by design — this, not a quality gap, is why VGGT looks
+  far more "complete" despite losing on EF. Not previously stated plainly in this doc.
+- `vol_t{f}.nii.gz` confirmed by reading `run_fetal4d.sh:192` to be the **AF-order readout**
+  (already resampled to match GT's target-f indexing), not the engine's raw uniform-phase-bin
+  output — settles a question raised mid-session.
+
+**P004 visually and numerically confirmed frozen**, independent of the manifest flag: real
+`seg_gt` segmentation gives LV voxel counts `[5329]×11, 4563` — 11 of 12 frames pixel-identical,
+EF = 14.4% (vs a true ~70%). **P017 rendered as the healthy contrast case**: real segmentation,
+smooth LV curve, EF = 63.6%.
+
+**Correction to an earlier in-session explanation.** Initially reasoned that `hrv` avoids
+degradation because its bucket misplacements are small ("adjacent bucket" blur). **Measured, and
+wrong**: `hrv` and `af` have similarly large misplacement-magnitude distributions when a
+misplacement occurs (43.2% vs 45.3% off by 4+ buckets — nearly identical). The real reason `hrv`
+doesn't hurt: (1) self-gated is *always* a per-slice bijection regardless of accuracy — it never
+creates true coverage gaps under either rhythm — and (2) nearby cardiac phases look almost
+identical (measured on real GT: only ~0.67% intensity difference at 1 bucket apart, ~1.06% even at
+6 buckets/half a cycle apart), so a mislabeled-but-real frame doesn't look visibly wrong. `af`'s
+hold mechanic is a qualitatively different failure — a genuine information gap (a phase nobody
+captured) — which no amount of "nearby frames look similar" can paper over.
+
+### 10.5 Not yet done
+
+- Statistical re-check of the pilot's confounded correlation (§3a-bis) at full n — does the
+  bin-imbalance-vs-cohort-identity confound resolve with ~130 data points instead of 12?
+- Formal significance testing on the EF/PSNR deltas.
+- Whether the window-open-phase bug (§11.5) contributes to P013/P023/P038/P026's degeneracy.
+- Extending beyond cmrx2024 to the other 6 sources — not started, no bundles built.
