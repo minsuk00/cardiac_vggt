@@ -112,6 +112,8 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "                    robust_statistics=$([ "$ROBUST" = 1 ] && echo ON || echo OFF) numcardphase=$T rr_nominal_s=$MEANRR"
   if [ "${GATE_ARM:-fetal_cmr_4d}" = fetal_cmr_4d ]; then
     echo "gating          : fetal4d_gate.py (LV-area ED anchor, nnU-Net Task114 on rolled/ frames; docs/105) -> $GATE"
+  elif [[ "${GATE_ARM:-}" == *_oracle_balanced ]]; then
+    echo "gating          : fetal4d_gate.py --oracle --balanced (TRUE per-frame theta, rank-quantized onto a coverage-forced bijection with the output bins; NO nnU-Net; docs/111 s3d) -> $GATE"
   else
     echo "gating          : fetal4d_gate.py --oracle (TRUE per-frame theta from the simulation truth manifest; NO nnU-Net; docs/110) -> $GATE"
   fi

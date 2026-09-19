@@ -10,12 +10,15 @@
 > oracle arm REVERSES**: under `af`, handing Fetal 4D the TRUE per-frame timing makes it **0.63 dB
 > WORSE**, on all 3 non-degenerate subjects independently. That reversal is the robust result — it
 > survives including P004 (at 0.46 dB instead of 1.09 dB) and is **not** explained by window span.
-> **Its cause is NOT established.** The leading hypothesis is phase-coverage: the constant-rate
-> assumption gives every (slice, phase) cell exactly one image **by construction**, while the `af`
-> oracle leaves **9.8–18.1 % of cells empty**. But with 4 cohorts × 3 subjects the coverage measure
-> is **near-totally confounded with cohort identity** — a plain "is this `af`" dummy predicts the gap
-> *better* (r = −0.891) than imbalance does (−0.832), and fitting both collapses imbalance from
-> −3.51 to −1.12. Treat it as a hypothesis with a designed follow-up (§3d), not a measured cause.
+> **Its cause was a confounded hypothesis — now settled by a direct intervention (§3d).** The
+> correlational bin-imbalance measure was near-totally confounded with cohort identity (a plain "is
+> this `af`" dummy predicted the gap *better*, r = −0.891 vs −0.832). So a fourth gate arm was built:
+> true per-frame θ, but rank-quantized per slice to force the same one-image-per-bin coverage the
+> self-gated method gets for free. Restoring coverage **flips the sign** — raw-oracle trails
+> self-gated by −0.63 dB, balanced-oracle **leads** it by **+0.26 dB**, positive or flat on all 3
+> subjects. **Coverage, not timing accuracy, is the mechanism**: true timing never hurt
+> reconstruction — the reversal was an artifact of uneven phase-bin occupancy that came bundled with
+> representing that timing honestly.
 > VGGT is flat across rhythm (+0.03 dB under `af`), though `af` differs from `regular` in **more than
 > rhythm** (§5). **EF is uninterpretable at n=3.** Pipeline correctness verified four ways with seven
 > fault injections (`tools/verify_af_pipeline.py`), then re-audited by 3 independent reviewers whose
@@ -133,9 +136,11 @@ af / P017   oracle    : [12 10  9 25  9  8 11 12 13 11 11 13]   std/mean 0.350
 
 `r(bin imbalance, oracle gap) = −0.832` (n = 12). Fit: `gap = −3.51 × imbalance + 0.52 dB`.
 
-### 3a-bis. Why this is a HYPOTHESIS, not a measured cause
+### 3a-bis. Why the correlation alone was NOT sufficient — before §3d settled it
 
-Four independent problems, all found by adversarial review and each verified by recomputation:
+Four independent problems with the correlational argument, all found by adversarial review and each
+verified by recomputation. §3d then resolved the question directly with an intervention rather than
+a correlation — but the problems below are why that follow-up was necessary in the first place:
 
 1. **A plain cohort dummy predicts better than the mechanism does.** `r(af_dummy, gap) = −0.891`
    vs imbalance's **−0.832**. Fitting both: intercept +0.458, af-dummy −0.773, imbalance **−1.123**
@@ -180,15 +185,37 @@ Two corrections to how §3a was phrased:
   gap) = −0.815`, statistically indistinguishable from imbalance's −0.832 at n=12. **The pilot
   cannot separate the two.**
 
-### 3d. The follow-up that would settle it
+### 3d. The follow-up that settles it — RUN, and it points at coverage
 
-The correlational design cannot escape the cohort confound. The decisive experiment is a **third
-gate arm**: true per-frame θ (as the oracle) but **quantised/rebalanced so every (slice, phase) cell
-is occupied**, run on the same `af` bundles. If the reversal disappears, coverage is causal; if it
-persists, the cause is timing accuracy itself and the whole story changes. ~4 recons × ~14 min. This
-does not modify any core logic — it adds a gate variant alongside the existing two.
+Built a third gate arm, `fetal_cmr_4d_oracle_balanced` (`fetal4d_gate.py --oracle --balanced`,
+`rank_quantize`): per slice, the 12 true positions are mapped onto a **bijection** with the 12
+output bins by rank order — preserving the true relative ordering of the frames but forcing exactly
+one image per bin, the same coverage guarantee the self-gated method gets for free from its uniform
+rate assumption. Verified before spending any compute: hard-bin coverage matches self-gated exactly
+(std/mean 0.000, 0 empty cells, vs the raw oracle's 0.238–0.350) on all 3 subjects; the on-disk gate
+round-trips to 4.9e-07 against an independent recomputation; the plain self-gated and plain-oracle
+code paths hash byte-identical before and after the change. Ran on the 3 pilot `af` subjects
+(SLURM, `jjparkcv98`, sharded one job per subject, all COMPLETED, 770–947 s each).
 
-Until then the honest statement is: **the reversal is real and robust; its cause is a hypothesis.**
+| | self-gated | oracle (raw, uneven coverage) | **oracle (balanced coverage)** |
+|---|---|---|---|
+| P016 | 23.47 | 23.06 | 23.42 |
+| P017 | 22.04 | 20.97 | 22.31 |
+| P046 | 25.25 | 24.82 | 25.80 |
+| **mean** | **23.58** | **22.95** | **23.84** |
+
+Restoring coverage while keeping true timing **flips the sign**: raw-oracle trails self-gated by
+−0.63 dB (the reversal); balanced-oracle **leads** self-gated by **+0.26 dB**, and per-subject is
+flat-to-positive on all three (−0.05 / +0.27 / +0.56) — no subject where accurate timing still hurts
+once coverage is fixed. Fixing coverage alone, holding timing accuracy at "true", is worth **+0.89 dB**
+— more than enough to explain the original −0.63 dB gap and reverse it.
+
+**Conclusion: coverage, not timing accuracy, is the mechanism.** True timing does not hurt Fetal 4D
+under AF — it was the accidental byproduct (uneven bin occupancy) of representing that true timing
+without also respecting the constant-rate assumption's coverage guarantee. This is a single
+disambiguating run (n=3, one balanced variant), not a large-n confirmation, but it directly settles
+the question §3a-bis could only leave open: the correlational design was confounded, this
+intervention is not.
 
 ## 4. VGGT is flat, as pre-registered
 
@@ -327,16 +354,17 @@ be said about it.
   the −0.60 dB to rhythm rather than to the pipeline, and it caught the P046 readout disagreement.
 - **Keep the oracle arm.** It produced the single most interesting result and halving the campaign
   by dropping it would have hidden the reversal entirely.
-- **38 cmrx2024 subjects** ⇒ 4 cohorts × 2 fetal arms × 38 = **304 fetal runs**. At ~850 s each and
-  7 concurrent 4-CPU tasks, ≈ 10 h wall. VGGT adds 152 runs at ~1 min.
+- **38 cmrx2024 subjects** ⇒ 4 cohorts × **3** fetal arms (self-gated, oracle, oracle-balanced) × 38
+  ≈ **456 fetal runs**. At ~850 s each and 7 concurrent 4-CPU tasks, ≈ 15 h wall. VGGT adds 152 runs
+  at ~1 min. The balanced arm is cheap relative to what it answers and should ship in the full run,
+  not stay a 3-subject spot-check.
 - **Report per-subject, not just cohort means**, and exclude degenerate windows by the
   `duplicate_targets` rule — at 38 subjects expect ~1 (design-time pass: 1/38 below 30 % excursion).
 - **Control for window span** (§5) in any cross-cohort *absolute* PSNR claim — per arm, since the
   sign differs between VGGT and the fetal arms.
-- **Run the §3d rebalanced-coverage gate arm first**, on the pilot subjects. It costs ~1 h and it
-  decides whether the full campaign is measuring a coverage effect or a timing effect. Scaling up a
-  correlational design that is already near-totally confounded with cohort identity would buy
-  precision on a number that cannot answer the question.
+- ~~Run the §3d rebalanced-coverage gate arm first~~ **DONE.** It settled the mechanism (coverage,
+  not timing accuracy) on 3 subjects. Worth re-confirming at 38 for the effect size, but the
+  qualitative question that would have made the campaign ambiguous is answered.
 - **Fix before scale-up**: the one-sided `GATE_ARM` guard, `resp_diag`'s frozen displacement, the
   `seq_index_basis` label, the exact-bin tolerance, and `verify_af_pipeline.py`'s `% 9` — none
   affected the pilot, all are cheap, and the first two would silently corrupt a 38-subject run's
