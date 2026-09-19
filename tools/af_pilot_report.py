@@ -49,8 +49,16 @@ import paths  # noqa: E402
 
 T = 12
 COHORTS = ["cmrx2024_regular_frozen", "cmrx2024_regular", "cmrx2024_hrv", "cmrx2024_af"]
-SUBJECTS = ["CMRx24_Test_P016", "CMRx24_Test_P004", "CMRx24_Test_P017", "CMRx24_Train_P046"]
-FETAL = ["fetal_cmr_4d", "fetal_cmr_4d_oracle"]
+# Full cmrx2024 test split (38 subjects), not the 4-subject pilot list. A hardcoded pilot list
+# here previously meant the degenerate-window exclusion (table 3/4/5) only ever fired on P004 --
+# 4 more real degenerate af subjects (P013, P023, P038, P026, found by full-cohort review) would
+# have been silently averaged into the cohort means instead of excluded. Derived dynamically so
+# it can never drift from the actual test split again.
+SUBJECTS = None               # resolved in main() via paths.filter_by_split; keep the name for
+                               # anyone importing this module directly (falls back to the pilot's
+                               # 4 subjects only if paths can't be imported at all).
+_PILOT_SUBJECTS = ["CMRx24_Test_P016", "CMRx24_Test_P004", "CMRx24_Test_P017", "CMRx24_Train_P046"]
+FETAL = ["fetal_cmr_4d", "fetal_cmr_4d_oracle", "fetal_cmr_4d_oracle_balanced"]
 VGGT = "vggt_final518_diff1000_ep300"
 DEGEN_DUP_PAIRS = 5          # > this many byte-identical GT pairs (of 66) => degenerate window
 
@@ -159,9 +167,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", default="test")
     ap.add_argument("--cohorts", nargs="+", default=COHORTS)
-    ap.add_argument("--subjects", nargs="+", default=SUBJECTS)
+    ap.add_argument("--subjects", nargs="+", default=None,
+                    help="default: the full cmrx2024 <split> subject list (38 for test), not the "
+                         "4-subject pilot set. Pass --subjects <pilot 4> to reproduce the pilot report.")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+    if args.subjects is None:
+        try:
+            args.subjects, _ = paths.filter_by_split("cmrx2024", paths.subjects("cmrx2024"), args.split)
+        except Exception as e:
+            print(f"  !! could not resolve the full {args.split} split ({e}); "
+                  f"falling back to the 4-subject pilot list", file=sys.stderr)
+            args.subjects = _PILOT_SUBJECTS
     short = lambda c: c.replace("cmrx2024_", "")            # noqa: E731
     blob = {"gate": {}, "gt": {}, "image": {}, "ef": {}}
 
