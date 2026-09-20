@@ -32,6 +32,10 @@ volume nobody photographed (docs/110 section 7).
     af              beat length ~ N(1, 0.25), frame-wise        -> cut-off / hold / volume-matched
                                                                    resume (docs/110 section 5)
 
+    regular24 / hrv24 / af24 / regular_frozen24  -- the SAME rhythms at 24 frames per slice
+    (2 nominal beats) instead of 12. New cohort names, so the 12-frame bundles behind docs/111-112
+    are never overwritten. See the ARMS table for why 24 frames is the lever.
+
 Usage:
     PYTHONPATH=training:. python tools/build_af_bundle.py --source cmrx2024 \
         --subjects CMRx24_Test_P016,CMRx24_Test_P004,CMRx24_Test_P017
@@ -65,7 +69,7 @@ RR_MIN, RR_MAX = 0.45, np.inf   # only a physiological floor (~systole). Markl's
                                 # must NOT be used as a clip: measured, it shrinks the realised
                                 # sd from 0.25 to 0.216 (docs/110 section 5).
 
-# arm -> (rhythm model, breathing model)
+# arm -> (rhythm model, breathing model, frames per slice)
 # af_rvr / af_pause are the DISAMBIGUATION pair. `af` draws R-R around 1.0, so a short beat is cut
 # off mid-cycle and a long one parks at full ED -- two faces of one mechanic, measured at
 # r(cutoff rate, hold_frac) = -0.50, so `af` alone can never say which of them costs EF. These two
@@ -79,12 +83,25 @@ RR_MIN, RR_MAX = 0.45, np.inf   # only a physiological floor (~systole). Markl's
 #            cut-offs/slice, hold_frac 0.245.
 # Both are real AF phenotypes, not synthetic extremes. See docs/113.
 ARMS = {
-    "regular_frozen": ("regular", True),
-    "regular":        ("regular", False),
-    "hrv":            ("hrv",     False),
-    "af":             ("af",      False),
-    "af_rvr":         ("af_rvr",   False),
-    "af_pause":       ("af_pause", False),
+    "regular_frozen": ("regular", True,  T),
+    "regular":        ("regular", False, T),
+    "hrv":            ("hrv",     False, T),
+    "af":             ("af",      False, T),
+    "af_rvr":         ("af_rvr",   False, T),
+    "af_pause":       ("af_pause", False, T),
+    # 24-frame (2 nominal beats) arms -- the final paper run. Same rhythms, NEW cohort names so the
+    # 12-frame bundles that docs/111-112 rest on are never overwritten. 24 frames is the lever the
+    # rhythm parameters are not: it hands Fetal CMR 4D TWO images per output bin per slice instead
+    # of one, so its uniform-ramp gate averages them. Under a regular rhythm those two are exactly
+    # one beat apart (same cardiac phase -> denoising); under af they are 2.04-4.24 of 12 phases
+    # apart (-> temporal blur). Measured bin_phase_sd 37.2deg -> 59.7deg with 0% empty bins, versus
+    # +2deg for any rhythm-parameter change. The baseline gets MORE data, not less.
+    # `numcardphase` stays T=12: it is the output bin count, and letting it follow the frame count
+    # would give every frame its own bin and silently delete the whole mechanism.
+    "regular_frozen24": ("regular", True,  2 * T),
+    "regular24":        ("regular", False, 2 * T),
+    "hrv24":            ("hrv",     False, 2 * T),
+    "af24":             ("af",      False, 2 * T),
 }
 
 # Rhythms solved with pos_physio (cut-off / hold / volume-matched resume) rather than the uniform
@@ -344,22 +361,22 @@ def build(src_dir, dst_dir, arm, source, overwrite):
                          f"can never write into a real bundle")
     if os.path.exists(os.path.join(dst_dir, "manifest.json")) and not overwrite:
         return "skipped"
-    rhythm, frozen = ARMS[arm]
+    rhythm, frozen, nf = ARMS[arm]
     man, gt, vol = load_subject(src_dir, need_vol=(rhythm in AF_RHYTHMS))
     D = gt.shape[1]
     seed = int(man["seed"])
     affine = nib.load(os.path.join(src_dir, "gt", "gt_t00.nii.gz")).affine
 
-    frames, info = simulate(man, gt, vol, rhythm, seed, frozen_breath=frozen)
+    frames, info = simulate(man, gt, vol, rhythm, seed, frozen_breath=frozen, n_frames=nf)
     ref = int(man["scatter"]["ref_plane"])
-    pos = np.asarray(info[ref]["pos"], float)          # the 12 target positions
+    pos = np.asarray(info[ref]["pos"], float)          # the nf target positions
     blend = rhythm != "regular"
 
     os.makedirs(os.path.join(dst_dir, "gt"), exist_ok=True)
     os.makedirs(os.path.join(dst_dir, "breath"), exist_ok=True)
 
     # --- input stacks -------------------------------------------------------------------
-    for f in range(T):
+    for f in range(nf):
         _save_dhw(frames[f], affine, os.path.join(dst_dir, "breath", f"stack_t{f:02d}.nii.gz"))
 
     # rolled/ == breath/ (the unknown per-slice start phase is already baked into the rhythm).
@@ -373,7 +390,7 @@ def build(src_dir, dst_dir, arm, source, overwrite):
     # Integer position => GT is literally one of the source files: COPY it, so the permutation is
     # byte-identical rather than merely numerically equal (and re-runs are trivially idempotent).
     gt_map = []
-    for f in range(T):
+    for f in range(nf):
         p = float(pos[f]) % T
         dst = os.path.join(dst_dir, "gt", f"gt_t{f:02d}.nii.gz")
         k = int(np.round(p))
@@ -438,7 +455,7 @@ def build(src_dir, dst_dir, arm, source, overwrite):
                             os.path.join(sd, f"seg_t{f:02d}.nii.gz"))
         src_json = json.load(open(os.path.join(src_dir, "seg_gt", "src.json")))
         json.dump({"gt_sha256": _sha(os.path.join(dst_dir, "gt", "gt_t00.nii.gz")),
-                   "roi_sha256": src_json["roi_sha256"], "T": T, "crop": src_json.get("crop"),
+                   "roi_sha256": src_json["roi_sha256"], "T": nf, "crop": src_json.get("crop"),
                    "note": f"permuted copy of {source}'s seg_gt: seg_t{{f}} = source seg_t{{gt_map[f]}}"},
                   open(os.path.join(sd, "src.json"), "w"), indent=1)
         seg_note = "permuted copy of the source cache"
@@ -452,18 +469,36 @@ def build(src_dir, dst_dir, arm, source, overwrite):
            if k in man}
     out["cohort"] = f"{source}_{arm}"
     out["heart_siblings_missing"] = missing
+    # Every consumer (ef_dice, image_metrics, run_vggt, fetal4d_gate) reads manifest["T"] as "how
+    # many phase volumes does this bundle have", which is now the FRAME count. The nominal beat
+    # length in frames -- fetal's -numcardphase, and the modulus of the gate's uniform ramp -- is a
+    # separate number and stays at the stored cine's T. Conflating them deletes the 2-images-per-bin
+    # mechanism, so they are written as two explicit keys rather than one reused one.
+    out["T"] = nf
+    out["n_cardphase"] = T
     roll = man["rolled"]["roll_per_plane"]
     ppp = man["scatter"]["phase_per_plane"]
     # Remap the frozen companion draw from PHASE indices to FRAME indices, so plane z still shows
     # the cardiac phase it shows today: frame j of plane z is at phase (j - roll_z) mod T, so
     # j = (ppp[z] + roll_z) mod T. This makes regular_frozen a true replication of the source
     # scatter input, leaving the rhythm as the only delta. (pin_scatter skips slot 0.)
+    # Which BEAT each companion plane's single frame is taken from. VGGT reads exactly one frame
+    # per slice; with nf > T that frame must be allowed anywhere in the acquisition, or VGGT's
+    # scatter spans 1 s while the baselines integrate 2 s of the same slices. The cardiac-phase
+    # draw is untouched (j and j+T are the same stored phase) -- what changes is the respiratory
+    # state, which advances every frame by DT/T_BREATH. Its own RNG stream, so adding it cannot
+    # perturb the per-plane rhythm draws; for nf == T it is all zeros and the arm is unchanged.
+    n_beats_win = nf // T
+    beat = (np.random.default_rng([seed, 991]).integers(0, n_beats_win, D)
+            if n_beats_win > 1 else np.zeros(D, dtype=int))
     out["scatter"] = {**man["scatter"],
-                      "phase_per_plane": [int((ppp[z] + roll[z]) % T) for z in range(D)],
+                      "phase_per_plane": [int((ppp[z] + roll[z]) % T + T * beat[z])
+                                          for z in range(D)],
                       "phase_per_plane_source": list(map(int, ppp)),
+                      "beat_per_plane_scatter": [int(b) for b in beat],
                       "note": "FRAME index per plane (not cardiac phase): stack_t{j}[z] is that "
                               "slice's j-th real-time frame. Remapped from the source bundle's "
-                              "phase draw by j = (phase + roll_z) mod T."}
+                              "phase draw by j = (phase + roll_z) mod T + T*beat_z."}
     out["rhythm"] = {
         "arm": arm, "rhythm": rhythm, "frozen_breath": frozen, "seed": seed,
         "ref_plane": ref, "ref_pos": pos.tolist(),        # <- the oracle-timing file
@@ -472,14 +507,19 @@ def build(src_dir, dst_dir, arm, source, overwrite):
         # and HOLDS there, so consecutive camera frames photograph the same state and their GT
         # volumes are byte-identical. Expected, not a bug -- but that target is double-weighted in
         # the per-phase PSNR/SSIM/NCC mean (EF is unaffected: (max-min)/max ignores repeats).
+        # On a 24-frame arm this list is LONG BY DESIGN and means something different: under
+        # `regular` frames f and f+12 are the same stored phase, so every phase pairs up and all 12
+        # pairs appear here. That is the whole point of the design (two images per output bin), NOT
+        # a degenerate window -- so the old run-length exclusion rule must NOT be applied to these
+        # arms. The degeneracy signal remains window LV-excursion coverage (docs/110 s11.8).
         "duplicate_targets": [[int(i) for i in np.where(np.abs((pos % T) - p) < 1e-9)[0]]
                               for p in sorted({round(float(x) % T, 9) for x in pos})
                               if int((np.abs((pos % T) - p) < 1e-9).sum()) > 1],
         "pos_per_plane": [i["pos"] for i in info],
         "rr_per_plane": [i["rr"] for i in info],
         "beat_per_plane": [i["beat"] for i in info],
-        "params": {"T": T, "DT": DT, "T_BREATH": T_BREATH, "N_BEATS": N_BEATS, "BURN": BURN,
-                   "HRV_MODEL": HRV_MODEL, "RR_MIN": RR_MIN, "blend": blend},
+        "params": {"T": T, "n_frames": nf, "DT": DT, "T_BREATH": T_BREATH, "N_BEATS": N_BEATS,
+                   "BURN": BURN, "HRV_MODEL": HRV_MODEL, "RR_MIN": RR_MIN, "blend": blend},
         "builder": os.path.basename(__file__), "source_cohort": source,
         "gt": "clean unbreathed volume at the REFERENCE slice's true position for frame f",
         "seg_gt": seg_note,
@@ -489,8 +529,13 @@ def build(src_dir, dst_dir, arm, source, overwrite):
 
 
 # ───────────────────────── checks ─────────────────────────
-def check(src_dir, dst_root, subject, source):
-    """Verification 1-4 of the plan. Prints PASS/FAIL per check; returns the number of failures."""
+def check(src_dir, dst_root, subject, source, suffix=""):
+    """Verification 1-4 of the plan. Prints PASS/FAIL per check; returns the number of failures.
+
+    `suffix` selects the arm family ("" = the 12-frame arms, "24" = the 2-beat paper arms). Every
+    loop below runs to the BUILT arm's own frame count, read from its manifest, so the same checks
+    cover both families rather than silently testing only the first beat of a 24-frame bundle.
+    """
     fails = 0
 
     def report(name, ok, detail=""):
@@ -498,12 +543,20 @@ def check(src_dir, dst_root, subject, source):
         fails += not ok
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}{('  ' + detail) if detail else ''}")
 
+    def arm_dir(a):
+        return os.path.join(dst_root, f"{source}_{a}{suffix}", "out", subject)
+
+    def n_frames_of(a):
+        return int(json.load(open(os.path.join(arm_dir(a), "manifest.json")))["T"])
+
     man = json.load(open(os.path.join(src_dir, "manifest.json")))
     ref = int(man["scatter"]["ref_plane"])
     roll = man["rolled"]["roll_per_plane"]
 
-    # 1. regular_frozen reproduces the source rolled/ stacks bit-exactly
-    d = os.path.join(dst_root, f"{source}_regular_frozen", "out", subject)
+    # 1. regular_frozen reproduces the source rolled/ stacks bit-exactly.
+    #    The source has only T frames, so compare the FIRST beat; 1b covers the rest.
+    d = arm_dir("regular_frozen")
+    nf = n_frames_of("regular_frozen")
     worst = 0.0
     for k in range(T):
         a = np.asarray(nib.load(os.path.join(d, "breath", f"stack_t{k:02d}.nii.gz")).dataobj,
@@ -511,13 +564,30 @@ def check(src_dir, dst_root, subject, source):
         b = np.asarray(nib.load(os.path.join(src_dir, "rolled", f"stack_t{k:02d}.nii.gz")).dataobj,
                        dtype=np.float32)
         worst = max(worst, float(np.abs(a - b).max()))
-    report("regular_frozen input == source rolled/", worst == 0.0, f"max|diff|={worst:.2e}")
+    report("regular_frozen input == source rolled/ (first beat)", worst == 0.0,
+           f"max|diff|={worst:.2e}")
+
+    # 1b. Under regular_frozen the rhythm is periodic AND breathing is frozen per plane, so frame f
+    #     and frame f+T are the same cardiac phase at the same displacement -> byte-identical. This
+    #     is the only check that looks past frame T, and it is what catches an n_frames plumbing bug
+    #     that leaves the second beat empty, stale or misindexed.
+    if nf > T:
+        worst = 0.0
+        for k in range(nf - T):
+            a = np.asarray(nib.load(os.path.join(d, "breath", f"stack_t{k:02d}.nii.gz")).dataobj,
+                           dtype=np.float32)
+            b = np.asarray(nib.load(os.path.join(d, "breath",
+                                                 f"stack_t{k + T:02d}.nii.gz")).dataobj,
+                           dtype=np.float32)
+            worst = max(worst, float(np.abs(a - b).max()))
+        report("regular_frozen frame f == frame f+T (periodic, frozen breath)", worst == 0.0,
+               f"max|diff|={worst:.2e}  nf={nf}")
 
     # 2. regular* GT is a byte-identical cyclic permutation of the source gt_t*
     for arm in ("regular_frozen", "regular"):
-        d = os.path.join(dst_root, f"{source}_{arm}", "out", subject)
+        d = arm_dir(arm)
         ok = True
-        for f in range(T):
+        for f in range(n_frames_of(arm)):
             k = (f - roll[ref]) % T
             ok &= _sha(os.path.join(d, "gt", f"gt_t{f:02d}.nii.gz")) == \
                 _sha(os.path.join(src_dir, "gt", f"gt_t{k:02d}.nii.gz"))
@@ -528,9 +598,9 @@ def check(src_dir, dst_root, subject, source):
     #    integer position yields 12 integer positions and a GT identical to regular's (measured on
     #    CMRx24_Test_P017). The falsifiable property is that the RHYTHM differs -- the drawn beat
     #    lengths are not all 1.0, and that difference reaches the pixels on at least one plane.
-    reg = os.path.join(dst_root, f"{source}_regular", "out", subject)
+    reg = arm_dir("regular")
     for arm in ("hrv", "af"):
-        d = os.path.join(dst_root, f"{source}_{arm}", "out", subject)
+        d = arm_dir(arm)
         rr = np.asarray(json.load(open(os.path.join(d, "manifest.json")))["rhythm"]["rr_per_plane"])
         differs = max(
             float(np.abs(
@@ -538,7 +608,7 @@ def check(src_dir, dst_root, subject, source):
                            dtype=np.float32)
                 - np.asarray(nib.load(os.path.join(reg, "breath", f"stack_t{f:02d}.nii.gz")).dataobj,
                              dtype=np.float32)).max())
-            for f in range(T))
+            for f in range(n_frames_of(arm)))
         report(f"{arm} rhythm is irregular and reaches the pixels",
                rr.std() > 1e-6 and differs > 0,
                f"rr sd={rr.std():.3f}  max|{arm}-regular|={differs:.3e}")
@@ -546,7 +616,7 @@ def check(src_dir, dst_root, subject, source):
     # Informational: how much of this subject's LV excursion the af window actually observes, and
     # which targets are duplicated by a full-ED hold. Not pass/fail -- a weak window is a legitimate
     # draw -- but a near-static window makes that subject's EF uninformative, so it must be visible.
-    dm = json.load(open(os.path.join(dst_root, f"{source}_af", "out", subject, "manifest.json")))
+    dm = json.load(open(os.path.join(arm_dir("af"), "manifest.json")))
     segs = sorted(glob.glob(os.path.join(src_dir, "seg_gt", "seg_t*.nii.gz")))
     if len(segs) == T:
         vol = np.array([(np.asarray(nib.load(f).dataobj) == 1).sum() for f in segs], float)
@@ -564,14 +634,15 @@ def check(src_dir, dst_root, subject, source):
     #    float32 coordinate round-trip leaves ~2e-6), so an exact-equality branch would raise a
     #    spurious FAIL on any subject whose reference plane happens to sit at end-expiration.
     for arm in ("regular_frozen", "hrv"):
-        d = os.path.join(dst_root, f"{source}_{arm}", "out", subject)
+        d = arm_dir(arm)
         man_d = json.load(open(os.path.join(d, "manifest.json")))
+        nf_a = int(man_d["T"])
         pos_ref = np.asarray(man_d["rhythm"]["ref_pos"], float)
         frozen = bool(man_d["rhythm"]["frozen_breath"])
         disp0 = np.asarray(man_d["breath"]["disp_dhw_mm"], float)[ref]
         u, amp, r0, n, _ = breathing_model(man_d)
         worst = 0.0
-        for f in range(T):
+        for f in range(nf_a):
             gtf = np.asarray(nib.load(os.path.join(d, "gt", f"gt_t{f:02d}.nii.gz")).dataobj,
                              dtype=np.float32)
             disp = disp0 if frozen else (
@@ -585,7 +656,7 @@ def check(src_dir, dst_root, subject, source):
             worst = max(worst, float(np.abs(got.numpy().T - inp).max()))
         blended = int((np.abs(pos_ref - np.round(pos_ref)) > 1e-9).sum())
         report(f"{arm}: ref plane of GT[f] reslices onto input frame f, all f",
-               worst < 1e-5, f"max={worst:.2e}  ({blended}/{T} targets blended)")
+               worst < 1e-5, f"max={worst:.2e}  ({blended}/{nf_a} targets blended)")
     return fails
 
 
@@ -597,6 +668,8 @@ def main():
     ap.add_argument("--eval-root", default=os.path.join(ROOT, "scratch/eval"))
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--check", action="store_true", help="verify an already-built set, write nothing")
+    ap.add_argument("--check-suffix", default="", choices=["", "24"],
+                    help="which arm family --check verifies ('' = 12-frame arms, '24' = 2-beat arms)")
     a = ap.parse_args()
 
     subjects = [s.strip() for s in a.subjects.split(",") if s.strip()]
@@ -604,7 +677,8 @@ def main():
         bad = 0
         for s in subjects:
             print(f"\n=== {s} ===")
-            bad += check(os.path.join(a.eval_root, a.source, "out", s), a.eval_root, s, a.source)
+            bad += check(os.path.join(a.eval_root, a.source, "out", s), a.eval_root, s, a.source,
+                         suffix=a.check_suffix)
         print(f"\n{'ALL CHECKS PASSED' if not bad else str(bad) + ' CHECK(S) FAILED'}")
         raise SystemExit(1 if bad else 0)
 
