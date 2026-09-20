@@ -22,7 +22,10 @@ export FCMR_BIND="$VGGT/scratch"      # bind the whole GPFS tree (covers sif + e
 
 SUBJ="${1:?subject}"; VAR="${2:-breath}"
 [ "$VAR" = breath ] || { echo "fetal_cmr_4d runs on the breath bundle only (rolled/ is built from breath/)"; exit 2; }
-T="${T:-12}"; THICK="${THICK:-8}"; RES="${RES:-1.4}"; ITERS="${ITERS:-4}"
+# NF (frames per slice == output volumes) and NCP (cardiac bins == nominal beat length in frames)
+# are read from the BUNDLE below, not fixed here: on a `*24` bundle they are 24 and 12. They were
+# one number for every 12-frame bundle. `T` stays as the legacy override and, when set, pins BOTH.
+THICK="${THICK:-8}"; RES="${RES:-1.4}"; ITERS="${ITERS:-4}"
 NSR="${NSR:-10}"; NSRLAST="${NSRLAST:-20}"; ROBUST="${ROBUST:-1}"
 METHOD="${METHOD:-fetal_cmr_4d}"; INPUT=rolled
 # The env's python directly, not `micromamba run`: 16 concurrent array shards collide on
@@ -48,6 +51,19 @@ READOUT=$("$SVR_PY" -c "import json,sys;print('ref_phase' if 'rhythm' in json.lo
   || { echo "cannot read $SD/manifest.json to determine the readout mode"; exit 6; }
 REF_PLANE=$("$SVR_PY" -c "import json,sys;print(json.load(open(sys.argv[1]))['scatter']['ref_plane'])" "$SD/manifest.json") \
   || { echo "cannot read scatter.ref_plane from $SD/manifest.json"; exit 6; }
+# Same fail-closed rule as READOUT above. NF drives the OUTPUT length and the theta slice; NCP
+# drives -numcardphase and the phase-cine modulus. An explicit T= pins both (legacy behaviour).
+NF=$("$SVR_PY" -c "import json,sys;print(int(json.load(open(sys.argv[1]))['T']))" "$SD/manifest.json") \
+  || { echo "cannot read T from $SD/manifest.json"; exit 6; }
+NCP=$("$SVR_PY" -c "import json,sys;m=json.load(open(sys.argv[1]));print(int(m.get('n_cardphase',m['T'])))" "$SD/manifest.json") \
+  || { echo "cannot read n_cardphase from $SD/manifest.json"; exit 6; }
+[ -n "$T" ] && { NF="$T"; NCP="$T"; }
+T="$NF"                     # legacy alias: provenance/echo lines below still print $T
+# The legacy readout rolls the engine's NCP-long phase axis by an index taken from an NF-long GT
+# curve. That is only meaningful when the two are equal, and every NF > NCP bundle carries a
+# rhythm block and therefore takes the ref_phase path -- so this can only fire on a malformed one.
+[ "$READOUT" = gt_ed_roll ] && [ "$NF" != "$NCP" ] && {
+  echo "gt_ed_roll readout needs NF == NCP (got $NF != $NCP)"; exit 7; }
 MASK="$SD/${MASK_FILE:-mask_heart.nii.gz}"
 NSLICE=$(wc -w < "$GATE/rrintervals.txt"); NFRAME=$(wc -w < "$GATE/cardphase.txt")
 MEANRR=$(python3 -c "import sys;v=[float(x) for x in open(sys.argv[1]).read().split()];print(sum(v)/len(v))" "$GATE/rrintervals.txt")
@@ -100,7 +116,7 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "engine          : SVRTK 'mirtk reconstructCardiac' (4D joint, temporal PSF; fetal_cmr_4d recon_cine_vol.bash params)"
   echo "command         : mirtk reconstructCardiac cine.nii.gz 1 <gate/stack4d.nii.gz> -thickness $THICK -mask mask_heart \\"
   echo "                    -iterations $ITERS -rec_iterations $NSR -rec_iterations_last $NSRLAST -resolution $RES \\"
-  echo "                    -numcardphase $T -rrinterval $MEANRR -cardphase $CPCOUNT <theta_1..theta_$((NFRAME-1)), 0-padded> $ROBUST_FLAG"
+  echo "                    -numcardphase $NCP -rrinterval $MEANRR -cardphase $CPCOUNT <theta_1..theta_$((NFRAME-1)), 0-padded> $ROBUST_FLAG"
   if [ "$READOUT" = gt_ed_roll ]; then
     echo "cardphase note  : count token $CPCOUNT = 113*2pi is read as frame 0's phase (engine off-by-one, docs/105 par.5c); frame 0 = slice-0 ED frame"
   else
@@ -109,7 +125,7 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "rr note         : no -rrintervals (engine off-by-one); all $NSLICE slices take -rrinterval $MEANRR via the engine fallback"
   echo "stack4d dt      : $("$SVR_PY" -c "import nibabel as nib,sys;h=nib.load(sys.argv[1]).header;print(h.get_zooms()[3],'s, time units',h.get_xyzt_units()[1])" "$GATE/stack4d.nii.gz")"
   echo "params          : thickness_mm=$THICK resolution_mm=$RES iterations=$ITERS rec_iterations=$NSR/$NSRLAST \\"
-  echo "                    robust_statistics=$([ "$ROBUST" = 1 ] && echo ON || echo OFF) numcardphase=$T rr_nominal_s=$MEANRR"
+  echo "                    robust_statistics=$([ "$ROBUST" = 1 ] && echo ON || echo OFF) numcardphase=$NCP rr_nominal_s=$MEANRR"
   if [ "${GATE_ARM:-fetal_cmr_4d}" = fetal_cmr_4d ]; then
     echo "gating          : fetal4d_gate.py (LV-area ED anchor, nnU-Net Task114 on rolled/ frames; docs/105) -> $GATE"
   elif [[ "${GATE_ARM:-}" == *_oracle_balanced ]]; then
@@ -120,7 +136,7 @@ MEM_ALLOC=$(echo "$JINFO" | grep -oE 'mem=[0-9]+[MG]' | cut -d= -f2); MEM_ALLOC=
   echo "container(sif)  : $SIF"
   echo "container_id    : $(stat -c '%s bytes, mtime %y' "$SIF" 2>/dev/null)"
   echo "method          : $METHOD"
-  echo "subject/variant : $SUBJ / $VAR   phases(T)=$T   input_stack=$INPUT   frames=$NFRAME slices=$NSLICE"
+  echo "subject/variant : $SUBJ / $VAR   out_vols(NF)=$NF cardbins(NCP)=$NCP   input_stack=$INPUT   frames=$NFRAME slices=$NSLICE"
   echo "--- hardware / parallelism (for the compute-cost comparison) ---"
   echo "host            : $(hostname)   SLURM job ${SLURM_JOB_ID:-none}"
   echo "cpu model       : $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//')"
@@ -134,7 +150,7 @@ T0=$(date +%s)
 ( cd "$WD" && OMP_NUM_THREADS="$OMP" mirtk reconstructCardiac cine.nii.gz 1 "$GATE/stack4d.nii.gz" \
     -thickness "$THICK" -mask "$MASK" \
     -iterations "$ITERS" -rec_iterations "$NSR" -rec_iterations_last "$NSRLAST" \
-    -resolution "$RES" -numcardphase "$T" -rrinterval "$MEANRR" \
+    -resolution "$RES" -numcardphase "$NCP" -rrinterval "$MEANRR" \
     -cardphase "$CPCOUNT" $CPARGS $ROBUST_FLAG > log.txt 2>&1 )
 DT=$(( $(date +%s) - T0 ))
 cp -f "$WD/log.txt" "$OUT/log.txt" 2>/dev/null
@@ -155,14 +171,18 @@ if [ "$READOUT" = gt_ed_roll ]; then
 fi
 N_OK=0; GT_ED=-1
 if [ -f "$WD/cine.nii.gz" ] && gzip -t "$WD/cine.nii.gz" 2>/dev/null; then
-  read -r N_OK GT_ED < <("$SVR_PY" - "$WD/cine.nii.gz" "$OUT" "$T" "$SEG_GT" "$READOUT" "$GATE/cardphase.txt" "$REF_PLANE" <<'EOF'
+  read -r N_OK GT_ED < <("$SVR_PY" - "$WD/cine.nii.gz" "$OUT" "$NCP" "$SEG_GT" "$READOUT" "$GATE/cardphase.txt" "$REF_PLANE" "$NF" <<'EOF'
 import sys, nibabel as nib, numpy as np
 im = nib.load(sys.argv[1]); out = sys.argv[2]; T = int(sys.argv[3]); seg_gt = sys.argv[4]
 readout, cp_path = sys.argv[5], sys.argv[6]      # argv[7] (ref) parsed inside the branch that
 arr = np.asarray(im.dataobj, dtype=np.float32)   # needs it, so the legacy path stays scatter-free
+# T = the engine's phase-cine length (-numcardphase); NF = frames per slice = output volumes.
+# Equal for every 12-frame bundle; NF = 2T on a `*24` one, where the SAME T-bin periodic cine is
+# read out at each of the NF acquisition instants.
+NF = int(sys.argv[8]) if len(sys.argv) > 8 else T
 if arr.ndim != 4 or arr.shape[3] != T:
     print(0, -1); sys.exit()
-if readout == "gt_ed_roll":                   # LEGACY, unchanged
+if readout == "gt_ed_roll":                   # LEGACY, unchanged (guarded to NF == T by the caller)
     lv = np.array([(np.asarray(nib.load(f"{seg_gt}/seg_t{t:02d}.nii.gz").dataobj) == 1).sum() for t in range(T)])
     tag = int(lv.argmax())                    # ef_dice.py: ed = gt.argmax() (LV label 1 voxel count)
     arr = np.roll(arr, tag, axis=3)           # output phase 0 (= gater ED) -> index gt_ed
@@ -173,11 +193,11 @@ else:
     # exactly to np.roll(arr, gt_ed); applying both would double-correct by gt_ed.)
     ref = int(sys.argv[7])
     th = np.array(open(cp_path).read().split(), dtype=np.float64)
-    D = th.size // T
-    assert th.size == D * T and 0 <= ref < D, (th.size, D, T, ref)
-    idx = th[ref * T:(ref + 1) * T] * T / (2.0 * np.pi)     # fractional output-bin index per frame
+    D = th.size // NF                          # cardphase.txt is slice-major over NF frames
+    assert th.size == D * NF and 0 <= ref < D, (th.size, D, NF, T, ref)
+    idx = th[ref * NF:(ref + 1) * NF] * T / (2.0 * np.pi)    # fractional PHASE-BIN index per frame
     frames = []
-    for f in range(T):
+    for f in range(NF):
         i = float(idx[f]) % T
         r = int(round(i))
         if abs(i - r) < 1e-4:                 # exact bin: take it, no arithmetic (bit-exact).
@@ -188,9 +208,9 @@ else:
     arr = np.stack(frames, axis=-1).astype(np.float32)
     tag = ref
 nib.save(nib.Nifti1Image(arr, im.affine), sys.argv[1])
-for t in range(T):
+for t in range(arr.shape[3]):
     nib.save(nib.Nifti1Image(arr[..., t], im.affine), f"{out}/vol_t{t:02d}.nii.gz")
-print(T, tag)
+print(arr.shape[3], tag)
 EOF
 )
   mv -f "$WD/cine.nii.gz" "$OUT/cine.nii.gz"
@@ -205,8 +225,8 @@ else
   echo "FAIL recon (see $OUT/log.txt)"
 fi
 if [ "${N_OK:-0}" -eq "$T" ]; then
-  printf '{"engine": "fetal_cmr_4d", "input_stack": "rolled", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "rec_iterations": "%s/%s", "numcardphase": %s, "rr_nominal_s": %s, "robust_statistics": "%s", "container_id": "%s", "cardphase_count_token": %s, "readout": "%s", "readout_arg": %s, "gate_arm": "%s"}\n' \
-    "$THICK" "$RES" "$ITERS" "$NSR" "$NSRLAST" "$T" "$MEANRR" "$([ "$ROBUST" = 1 ] && echo on || echo off)" "$(container_id "$SIF")" "$CPCOUNT" "$READOUT" "$GT_ED" "${GATE_ARM:-fetal_cmr_4d}" > "$OUT/stamp.json"
+  printf '{"engine": "fetal_cmr_4d", "input_stack": "rolled", "thickness_mm": %s, "resolution_mm": %s, "iterations": %s, "rec_iterations": "%s/%s", "numcardphase": %s, "n_frames": %s, "rr_nominal_s": %s, "robust_statistics": "%s", "container_id": "%s", "cardphase_count_token": %s, "readout": "%s", "readout_arg": %s, "gate_arm": "%s"}\n' \
+    "$THICK" "$RES" "$ITERS" "$NSR" "$NSRLAST" "$NCP" "$NF" "$MEANRR" "$([ "$ROBUST" = 1 ] && echo on || echo off)" "$(container_id "$SIF")" "$CPCOUNT" "$READOUT" "$GT_ED" "${GATE_ARM:-fetal_cmr_4d}" > "$OUT/stamp.json"
   if [ "$READOUT" = gt_ed_roll ]; then
     { echo "readout         : gt_ed_roll -- output rolled by $GT_ED phases so phase 0 = the GT's seg-derived ED (seg_gt LV argmax)"; } >> "$OUT/provenance.txt"
   else
