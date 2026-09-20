@@ -45,7 +45,7 @@ DATASETS = ("cmrx2023", "cmrx2024", "cmrx2025", "acdc", "mnms", "miitt", "ocmr")
 # run_baselines.py, fetal4d_gate.py, run_dangi.py, tools/build_padded_heart_mask.py) — adding them
 # there would silently widen every bare cohort sweep in the repo, including the live campaign's.
 # Use ALL_DATASETS for argparse `choices=` only, so these cohorts are opt-in by name.
-RHYTHM_ARMS = ("regular_frozen", "regular", "hrv", "af")
+RHYTHM_ARMS = ("regular_frozen", "regular", "hrv", "af", "af_rvr", "af_pause")
 EXTRA_DATASETS = tuple(f"{d}_{a}" for d in DATASETS for a in RHYTHM_ARMS)
 ALL_DATASETS = DATASETS + EXTRA_DATASETS
 
