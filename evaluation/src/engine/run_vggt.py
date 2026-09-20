@@ -142,8 +142,14 @@ def build_batch(ds, seq_index, phases_bundle, device, dz_bundle=None):
     D_ds = int(np.asarray(b["phases"]).shape[1])
     if phases_bundle.shape[1] != D_ds:
         raise ValueError(f"bundle D={phases_bundle.shape[1]} != dataset D={D_ds}")
-    if phases_bundle.shape[0] != np.asarray(b["phases"]).shape[0]:
-        raise ValueError(f"bundle T={phases_bundle.shape[0]} != dataset T={np.asarray(b['phases']).shape[0]}")
+    # The dataset's `phases` is the STORED cine (12 cardiac phases); the bundle's first axis is
+    # FRAMES, which a `*24` bundle has 2 nominal beats of. They were the same number for every
+    # 12-frame bundle, so require a whole multiple rather than equality: the frames are what
+    # `timesteps` indexes, and an in-between value would mean a truncated or misbuilt bundle.
+    T_ds = int(np.asarray(b["phases"]).shape[0])
+    if phases_bundle.shape[0] % T_ds:
+        raise ValueError(f"bundle frames={phases_bundle.shape[0]} is not a whole multiple of "
+                         f"dataset T={T_ds}")
     # dz guard: a pitch relabel of the source NIfTIs (has happened twice — docs/27, docs/56)
     # usually keeps D, so D/T alone can't catch a bundle breathed at one dz being splatted/scored
     # at another. The manifest froze dz at build time; the dataset carries today's.

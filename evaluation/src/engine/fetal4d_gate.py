@@ -18,7 +18,13 @@ public nnU-Net Task114 segmenter — the same net the scorer uses, run on the IN
 GT: the bundle's heart_seg carries GT frame order, which is the label the roll hides). The paper's
 per-slice heart-rate step (x-f Fourier peak) is not exercised: with one full cycle of 12 frames the
 period is the window length by construction (measured on 380 slices), so R-R is a nominal
-constant (1.0 s; CMRxRecon ships no timing) and theta = 2pi * ((f - f_ED) mod T) / T. Slices with
+constant (1.0 s; CMRxRecon ships no timing) and theta = 2pi * ((f - f_ED) mod NCP) / NCP, where
+NCP = manifest["n_cardphase"] is the nominal beat length IN FRAMES (== T for every 12-frame
+bundle). On a `*24` bundle T = 24 frames = 2 nominal beats while NCP stays 12, so the ramp wraps
+TWICE and frames f and f+12 land in the same output bin for the engine to average -- the whole
+point of that design. T drives the frame loops; NCP drives the modulus, the frame duration and
+-numcardphase, and merging them back into one number would delete the mechanism without error.
+Slices with
 no segmentable LV (base/apex, a physical limit — docs/35 par.6) keep offset 0 and are left to the
 engine's robust statistics, exactly as on the MIITT pilot.
 
@@ -100,6 +106,19 @@ def subjects_of(args):
     return out
 
 
+def n_cardphase(man):
+    """The nominal beat length IN FRAMES = the number of output cardiac bins.
+
+    `man["T"]` is the FRAME count, which on a `*24` bundle is 2 nominal beats. These were one
+    number for every 12-frame bundle and must never be re-merged: the ramp modulus, the engine's
+    -numcardphase and the frame duration all follow THIS, while the frame loops follow T. Were the
+    modulus to silently follow T, every frame would get its own bin, the two-images-per-bin
+    averaging the 24-frame design exists to create would vanish, and NOTHING would crash.
+    Defaults to T, so every 12-frame bundle stays bit-identical.
+    """
+    return int(man.get("n_cardphase", man["T"]))
+
+
 def load_rolled(ds, subj):
     man = json.load(open(paths.manifest(ds, subj)))
     if "rolled" not in man:
@@ -120,14 +139,16 @@ def dump(args):
         # The 4D header's time pixdim IS the frame duration reconstructCardiac uses for its
         # temporal PSF (ReconstructionCardiac4D.cc: _slice_dt = attr._dt; dtrad = 2*pi*dt/rr sets the
         # sinc width). nibabel's default of 1.0 s = one whole R-R would make every output phase a
-        # blend of the entire cycle (found on the first pilot, docs/105 par.5a). One frame = RR/T.
+        # blend of the entire cycle (found on the first pilot, docs/105 par.5a). One frame =
+        # RR/n_cardphase -- NOT RR/T: on a 24-frame bundle the window is 2 nominal beats, so
+        # dividing by the frame count would halve the PSF width and silently narrow every bin.
         # The time-unit code must stay UNSET: MIRTK multiplies a 'sec'-tagged pixdim by 1000 on
         # read while the R-R stays in seconds, so dtrad = 2*pi*83.3/1.0 -> a flat window over the
         # whole cycle (measured on the P012 debug run, docs/105 par.5c). The authors' own writer
         # (ktrecon mrecon_writenifti.m) stores seconds with xyzt_units = 0 for the same reason.
         # Slice 0's frames are re-rolled in `assemble` (ED first) — see there.
         img = nib.Nifti1Image(arr, aff)
-        img.header.set_zooms((*img.header.get_zooms()[:3], RR_NOMINAL_S / arr.shape[-1]))
+        img.header.set_zooms((*img.header.get_zooms()[:3], RR_NOMINAL_S / n_cardphase(man)))
         img.header.set_xyzt_units("mm", None)
         nib.save(img, str(gd / "stack4d.nii.gz"))
         for k in range(arr.shape[-1]):        # full-FOV input frames, one 3D file per frame
@@ -164,6 +185,10 @@ def assemble(args):
     for ds, subj in subjects_of(args):
         man = json.load(open(paths.manifest(ds, subj)))
         T, D = int(man["T"]), int(man["D"])
+        NCP = n_cardphase(man)                  # output bins = nominal beat in frames (see above)
+        if T % NCP:
+            sys.exit(f"{ds}/{subj}: T={T} is not a whole number of nominal beats of {NCP} frames; "
+                     f"the ramp would wrap mid-beat and bins would receive unequal counts")
         theta = np.zeros((D, T)); per = []
         roll = man.get("rolled", {}).get("roll_per_plane")          # diagnostic only
         # The oracle arm takes theta from the truth manifest and never reads `area`, so it must not
@@ -180,11 +205,15 @@ def assemble(args):
             for z in range(D):
                 ed = detect_ed(area[z])
                 off = 0 if ed is None else ed
-                theta[z] = 2 * np.pi * ((np.arange(T) - off) % T) / T
+                # Modulus NCP, not T: over a 24-frame window the ramp WRAPS TWICE, so frames f and
+                # f+NCP land in the same output bin and the engine averages them. That pairing is
+                # the mechanism the 24-frame design exists to create.
+                theta[z] = 2 * np.pi * ((np.arange(T) - off) % NCP) / NCP
                 rec = {"z": z, "ed_frame": ed, "anchored": ed is not None,
                        "lv_coverage": float((area[z] > 0).mean()), "lv_area_max": float(area[z].max())}
                 if roll is not None and ed is not None:
-                    rec["ed_err_frames_diag"] = int(((ed - roll[z] + T // 2) % T) - T // 2)
+                    # roll_per_plane is in stored-phase units (0..NCP-1), so compare mod NCP.
+                    rec["ed_err_frames_diag"] = int(((ed - roll[z] + NCP // 2) % NCP) - NCP // 2)
                 per.append(rec)
         # ORACLE (docs/110): the same engine handed the TRUE per-(slice, frame) cardiac phase from
         # the rhythm truth manifest, instead of its own self-gating estimate. Everything else --
@@ -200,8 +229,14 @@ def assemble(args):
             if pos.shape != (D, T):
                 sys.exit(f"{ds}/{subj}: rhythm.pos_per_plane is {pos.shape}, expected {(D, T)}")
             if args.balanced:
+                # rank_quantize maps T frames onto T bin centers -- a bijection only when the frame
+                # count equals the bin count. With T > NCP there is no such map, so refuse rather
+                # than emit a silently non-bijective theta.
+                if T != NCP:
+                    sys.exit(f"{ds}/{subj}: --balanced needs one frame per bin (T={T}, "
+                             f"n_cardphase={NCP}); there is no rank bijection at T > n_cardphase")
                 pos = np.stack([rank_quantize(pos[z], T) for z in range(D)])
-            theta = 2 * np.pi * ((pos % T) / T)
+            theta = 2 * np.pi * ((pos % NCP) / NCP)
             # Shift every theta by the constant that puts theta[0,0] at the count token's residue.
             # The engine reads that token as frame 0 / slice 0's phase, and for the self-gated arm
             # theta[0,0] is exactly 0 so the literal 710 works. Oracle thetas are fractional, and
@@ -232,7 +267,7 @@ def assemble(args):
             theta[0] = np.roll(theta[0], -ed0)
             assert abs(theta[0, 0]) < 1e-9, theta[0, 0]
         img = nib.Nifti1Image(arr, aff)
-        img.header.set_zooms((*img.header.get_zooms()[:3], RR_NOMINAL_S / T))
+        img.header.set_zooms((*img.header.get_zooms()[:3], RR_NOMINAL_S / NCP))   # see dump()
         img.header.set_xyzt_units("mm", None)                      # see dump(): must stay unset
         nib.save(img, str(gd / "stack4d.nii.gz"))
         with open(gd / "cardphase.txt", "w") as fh:               # slice-major / frame-minor
@@ -242,11 +277,12 @@ def assemble(args):
         errs = [p["ed_err_frames_diag"] for p in per if "ed_err_frames_diag" in p]
         diag = None
         if len(errs) > 1:
-            ang = np.array(errs) * 2 * np.pi / T
+            ang = np.array(errs) * 2 * np.pi / NCP
             R = abs(np.mean(np.exp(1j * ang)))
             diag = {"n": len(errs), "within_1_frame": float(np.mean(np.abs(errs) <= 1)),
                     "circ_std_deg": float(np.degrees(np.sqrt(-2 * np.log(max(R, 1e-9)))))}
-        meta = {"source": ds, "subject": subj, "T": T, "D": D, "rr_nominal_s": RR_NOMINAL_S,
+        meta = {"source": ds, "subject": subj, "T": T, "n_cardphase": NCP, "D": D,
+                "beats_in_window": T // NCP, "rr_nominal_s": RR_NOMINAL_S,
                 "n_anchored": int(sum(p["anchored"] for p in per)),
                 "gater": ("oracle_balanced" if (args.oracle and args.balanced)
                           else "oracle" if args.oracle else "self"),
@@ -259,9 +295,11 @@ def assemble(args):
                           if (args.oracle and args.balanced) else
                           "2*pi*(rhythm.pos_per_plane mod T)/T -- TRUE per-frame phase from the "
                           "simulation truth manifest (fractional)" if args.oracle
-                          else "2*pi*((f - f_ED) mod T)/T, wrapped [0, 2pi)"),
+                          else "2*pi*((f - f_ED) mod n_cardphase)/n_cardphase, wrapped [0, 2pi); "
+                               "over T > n_cardphase frames the ramp wraps T/n_cardphase times, so "
+                               "frames f and f+n_cardphase share an output bin"),
                 "slice0_frame_roll": -ed0,      # stack4d[:, :, 0] = rolled[:, :, 0] rolled by this (ED first)
-                "stack4d_time_pixdim_s": RR_NOMINAL_S / T, "stack4d_time_units": "unset (MIRTK: no x1000)",
+                "stack4d_time_pixdim_s": RR_NOMINAL_S / NCP, "stack4d_time_units": "unset (MIRTK: no x1000)",
                 "diag_vs_manifest_roll": diag, "per_slice": per}
         json.dump(meta, open(gd / "gate.json", "w"), indent=1)
         summary.append((ds, subj, meta["n_anchored"], D, diag))
