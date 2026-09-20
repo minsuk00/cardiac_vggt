@@ -1,6 +1,23 @@
 # 111 — Arrhythmia: pilot (n=4) then full cohort (n=38) — results and the coverage-not-timing finding
 
 > **TL;DR & takeaway**
+>
+> ⚠️ **CORRECTION (docs/112, measured — read it before quoting any EF number below).** The EF
+> headline as written is **not supported by a significance test**. Fetal 4D's EF advantage over
+> VGGT is significant under `regular_frozen` (+3.61 pp, 95 % CI [+0.17, +6.87], p = 0.007) but
+> **indistinguishable from zero under `af`** (+1.01 pp, CI [−2.13, +4.01], p = 0.50), and the
+> *collapse* itself is **not significant** (−2.61 pp, CI [−6.79, +1.70], p = 0.22). So "survives
+> AF but collapses 3.6×, still wins barely" must be read as "**significant under a regular rhythm,
+> no longer detectable under `af`**" — the two cohort estimates differ in significance, which is
+> not the same as differing from each other. The **PSNR** mechanism results below are unaffected
+> and are strongly significant (af oracle gap −0.815 dB, CI [−1.14, −0.50], p = 2.8e−05; the
+> reversal −1.106 dB, p = 2.6e−06; coverage-balanced flips it to +0.166 dB, p = 0.005).
+> Separately, docs/112 §1 **withdraws** the bin-imbalance correlation of §3a (null within `af`:
+> r = −0.152, p = 0.40, with 4.5× imbalance variation available) — the coverage mechanism now
+> rests solely on the §3d/§10 intervention, which is enough. docs/112 §3 closes the
+> degenerate-subject question: chance beat draws, **not** the window-open-phase bug and not a
+> subject trait.
+>
 > **Full-cohort update (§10): the pilot's findings replicate and strengthen at n=33 (paired), not
 > just n=3.** Giving Fetal CMR 4D the TRUE per-frame AF timing makes it WORSE, not better — PSNR
 > gap −0.81 dB (pilot: −0.63), EF gap +4.43 pp (worse than self-gated's own +2.68 pp under `af`).

@@ -66,24 +66,50 @@ RR_MIN, RR_MAX = 0.45, np.inf   # only a physiological floor (~systole). Markl's
                                 # sd from 0.25 to 0.216 (docs/110 section 5).
 
 # arm -> (rhythm model, breathing model)
+# af_rvr / af_pause are the DISAMBIGUATION pair. `af` draws R-R around 1.0, so a short beat is cut
+# off mid-cycle and a long one parks at full ED -- two faces of one mechanic, measured at
+# r(cutoff rate, hold_frac) = -0.50, so `af` alone can never say which of them costs EF. These two
+# split them by bounding the draw on one side only:
+#   af_rvr   every beat <= 1.0 -> the trigger always arrives before the cycle finishes, so beats
+#            are cut mid-contraction and resume from a partly-contracted state. AF with RAPID
+#            ventricular response. Measured: 0.88 cut-offs/slice, hold_frac 0.071.
+#   af_pause every beat >= 1.05 -> traversing all T phases takes 1.0 s at the fixed rate, so every
+#            beat COMPLETES before the next trigger and nothing is ever cut; the surplus is spent
+#            parked at full ED. AF with SLOW ventricular response / pauses. Measured: 0.00
+#            cut-offs/slice, hold_frac 0.245.
+# Both are real AF phenotypes, not synthetic extremes. See docs/113.
 ARMS = {
     "regular_frozen": ("regular", True),
     "regular":        ("regular", False),
     "hrv":            ("hrv",     False),
     "af":             ("af",      False),
+    "af_rvr":         ("af_rvr",   False),
+    "af_pause":       ("af_pause", False),
 }
+
+# Rhythms solved with pos_physio (cut-off / hold / volume-matched resume) rather than the uniform
+# stretch of pos_compress. Keyed here, not by `== "af"`, so a new arm cannot silently fall through
+# to the wrong position model.
+AF_RHYTHMS = ("af", "af_rvr", "af_pause")
 
 
 # ───────────────────────── R-R sequences (units of nominal R-R) ─────────────────────────
-def _iid_gauss(sd, n, rng):
+def _iid_gauss(sd, n, rng, mu=1.0, lo=None, hi=None):
     """iid per-cycle Gaussian factor (the form used by Furnrohr & Heckel 2026). Out-of-range draws
     are REDRAWN, not clipped, so no probability mass piles up at the bound. The lower bound is
-    load-bearing: a beat shorter than systole (~0.45) is unphysiological (refractory period)."""
-    rr = rng.normal(1.0, sd, n)
-    bad = (rr < RR_MIN) | (rr > RR_MAX)
+    load-bearing: a beat shorter than systole (~0.45) is unphysiological (refractory period).
+
+    `mu`/`lo`/`hi` default to the shipped behaviour (mean 1.0, [RR_MIN, RR_MAX]), so `regular`,
+    `hrv` and `af` draw EXACTLY as before -- verified by the regular_frozen bit-exactness check.
+    The disambiguation arms override them to bound the draw on one side.
+    """
+    lo = RR_MIN if lo is None else lo
+    hi = RR_MAX if hi is None else hi
+    rr = rng.normal(mu, sd, n)
+    bad = (rr < lo) | (rr > hi)
     while bad.any():
-        rr[bad] = rng.normal(1.0, sd, int(bad.sum()))
-        bad = (rr < RR_MIN) | (rr > RR_MAX)
+        rr[bad] = rng.normal(mu, sd, int(bad.sum()))
+        bad = (rr < lo) | (rr > hi)
     return rr
 
 
@@ -100,6 +126,23 @@ def rr_sequence(rhythm, n, rng):
             prev = prev + d * (1.0 - prev) + rng.normal(0, s)
             rr[i] = prev
         return rr
+    if rhythm == "af_rvr":                                      # every beat cut off mid-cycle
+        # mu=0.60 (100 bpm), not the first cut at 0.80: MEASURED, short beats cannot lower phase
+        # coverage (bins_cov 9.43-9.70 for every candidate, all ABOVE regular_frozen's 9.31, which
+        # does zero EF damage), because a short beat starts a NEW beat and keeps sampling new
+        # phases -- only a hold re-samples the same one. So this arm can only ever test "do
+        # cut-offs cost EF at CONSTANT coverage", and the one thing tuning buys is cut-off rate.
+        # At 0.60 that is 1.10 cut-offs/slice (2.5x `af`) with hold_frac 0.054 (2.4x BELOW `af`),
+        # so a null here means cut-offs are harmless rather than "the arm was too mild".
+        return _iid_gauss(0.10, n, rng, mu=0.60, hi=0.85)
+    if rhythm == "af_pause":                                    # every beat completes, then parks
+        # mu=1.20, not 1.30: MEASURED, 1.30 drives hold_frac to 0.229 but makes 14/38 subjects
+        # DEGENERATE (4-7 consecutive frozen target frames -> duplicate GT -> excluded), which is
+        # both the unphysiological freeze this project is trying to avoid and a cut of the paired
+        # set to n=24. At 1.20 the hold dose is still 1.35x the shipped `af` arm (0.177 vs 0.131)
+        # with zero cut-offs, while the degenerate rate falls to 5/38 -- exactly `af`'s own rate,
+        # so the hold arm is no more artifact-prone than the arm already published.
+        return _iid_gauss(0.15, n, rng, mu=1.20, lo=1.03)
     return _iid_gauss(0.25, n, rng)                             # af: Markl 2015, 161/643
 
 
@@ -140,12 +183,39 @@ def pos_physio(times, rr, vol):
     sys_v = np.minimum.accumulate(vol[:es + 1])                  # enforce monotone-decreasing systole
     starts = np.concatenate([[0.0], np.cumsum(rr)])
     p_start = np.zeros(len(rr))
+    # A beat's OWN nominal duration: contraction p_start->es plus expansion es->T, both at the
+    # stored cine's rate. A resumed beat has less contraction left, so its nominal is shorter.
+    t_nom = (T - p_start[0]) * DT
+
+    def _split(p0):
+        """(time to contract p0->es at normal speed, nominal duration of the whole beat)."""
+        t_c = max(es - p0, 0.0) * DT
+        return t_c, t_c + (T - es) * DT
+
     for i in range(len(rr) - 1):
-        p_end = max(min(p_start[i] + rr[i] / DT, float(T)), float(es))   # never cut inside systole
+        t_c, t_nom = _split(p_start[i])
+        if rr[i] >= t_nom:
+            p_end = float(T)                    # long beat: expansion stretched, always completes
+        elif rr[i] <= t_c:
+            p_end = p_start[i] + rr[i] / DT     # (unreachable in practice: rr >= RR_MIN > t_c)
+        else:
+            p_end = es + (rr[i] - t_c) / DT     # short beat: cut off partway through expansion
+        p_end = max(min(p_end, float(T)), float(es))                    # never cut inside systole
         vv = np.interp(p_end, np.arange(T + 1), vol_p)
         p_start[i + 1] = 0.0 if vv >= sys_v[0] else np.interp(vv, sys_v[::-1], np.arange(es + 1)[::-1])
     b = np.searchsorted(starts, times, side="right") - 1
-    return np.minimum(p_start[b] + (times - starts[b]) / DT, float(T)), b
+    el = times - starts[b]
+    pos = np.empty(len(times))
+    for k in range(len(times)):
+        i = int(b[k]); p0 = p_start[i]; e = el[k]
+        t_c, t_nom = _split(p0)
+        if e <= t_c:                                    # CONTRACTION -- always at the stored rate
+            pos[k] = p0 + e / DT
+        elif rr[i] >= t_nom:                            # EXPANSION, stretched to end exactly at rr
+            pos[k] = es + min((e - t_c) / max(rr[i] - t_c, 1e-9), 1.0) * (T - es)
+        else:                                           # EXPANSION at the stored rate, then cut off
+            pos[k] = min(es + (e - t_c) / DT, float(T))
+    return pos, b
 
 
 # ───────────────────────── rendering ─────────────────────────
@@ -227,7 +297,8 @@ def simulate(man, gt, vol, rhythm, seed, frozen_breath, n_frames=T):
         # Start fraction = the bundle's own per-plane roll => a periodic rhythm reproduces rolled/.
         t0 = rr[:BURN].sum() + ((-roll[z]) % T) / T * rr[BURN]
         times = t0 + np.arange(n_frames) * DT
-        pos, beat = (pos_physio(times, rr, vol) if rhythm == "af" else pos_compress(times, rr))
+        pos, beat = (pos_physio(times, rr, vol) if rhythm in AF_RHYTHMS
+                     else pos_compress(times, rr))
         info.append({"z": z, "pos": pos.tolist(), "beat": beat.tolist(), "rr": rr.tolist()})
         for f in range(n_frames):
             V = render_phase(gt, pos[f], blend)
@@ -274,7 +345,7 @@ def build(src_dir, dst_dir, arm, source, overwrite):
     if os.path.exists(os.path.join(dst_dir, "manifest.json")) and not overwrite:
         return "skipped"
     rhythm, frozen = ARMS[arm]
-    man, gt, vol = load_subject(src_dir, need_vol=(rhythm == "af"))
+    man, gt, vol = load_subject(src_dir, need_vol=(rhythm in AF_RHYTHMS))
     D = gt.shape[1]
     seed = int(man["seed"])
     affine = nib.load(os.path.join(src_dir, "gt", "gt_t00.nii.gz")).affine
