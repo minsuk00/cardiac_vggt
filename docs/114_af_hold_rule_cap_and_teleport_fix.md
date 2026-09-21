@@ -132,5 +132,13 @@ boundary (a beat cut in systole legitimately continues ~1 phase). Manifest gains
 - Preview: 5 subjects (one per source) rebuilt under
   `scratch/eval/_preview_afhold_20260921/`; GIFs (regular24 | hrv24 | af24 + LV trace) in
   `temp/af24_holdfix_demo/`.
-- Unquantified: whether ED-static stretches help or hurt the Fetal self-gate — check
-  `bin_phase_sd` after the re-gate.
+- **Re-gate verified (61616097, 8/8 COMPLETED):** 180/180 gates with `T=24`, `n_cardphase=12`,
+  `beats_in_window=2`, `gater=self`, D×24 thetas, ramp wraps (`theta[f] == theta[f+12]`), exactly
+  12 distinct thetas, all newer than the rebuilt bundles.
+- **The hold makes Fetal's bins LESS coherent, not more.** `bin_phase_sd` on the real gates,
+  paired over 180 subjects: stretch **77.2°** → hold **85.6°**, +8.3° (sd 9.4), higher in 148/180.
+  Definition used here: per output bin, circular sd of the TRUE cardiac phase
+  (`pos_per_plane`) over every (slice, frame) the gate put in that bin, averaged over bins.
+  ⚠️ That pools the within-slice `f`/`f+12` pair with the across-slice spread, so the absolute
+  level is NOT comparable to docs/115 §1's 59.7° (a different, design-time computation); only the
+  old-vs-new contrast is meaningful. So the fix does not hand the baseline an easier problem.
