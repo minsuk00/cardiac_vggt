@@ -131,6 +131,7 @@ position in [0, 12]; (3) render that position to an image and apply breathing.
 | **implementing that by resuming at the systolic frame whose whole-LV volume matches the volume reached at cut-off** | — | **OURS. No precedent.** Assumes a half-filled heart in diastole ≈ the same-volume heart in systole. Must be disclosed. |
 | R-R floor 0.45 (a beat cannot be shorter than systole; refractory period) | — | **OURS**, physiological reasoning, unsourced |
 | long beats **hold the full-ED frame** (keeping the GT's atrial-kick frames) | — | **OURS**, a robustness choice. Physiologically AF has **no atrial kick**; holding at diastasis instead was tried in design but abandoned because P020's volume curve has no plateau (100 97 74 62 52 45 42 47 49 56 67 74 → +26 % jump to ED), which would have made every one of its beats start weak. Disclose. |
+| ↳ **hold is capped at 0.55 nominal R-R (550 ms), by shortening the beat** (2026-09-21, **docs/114**) | the cap VALUE has no source — no paper bounds diastasis in a long beat. 0.55 = the rest a full beat gets at Markl's longest observed R-R (1.55 − 1.0) | **OURS, a modelling bound — present it as one.** Clips 6.0 % of in-window beats. The interim "stretch expansion across the long beat" rule (no physiological support; froze late-ES subjects) and the clamp-to-`es` teleport are both removed — docs/114. |
 | **Markl's [0.57, 1.55] range is NOT used as a clip** | measured: clipping there shrinks the realised sd 0.25 → 0.216 | our decision; only the 0.45 floor is applied, by **redraw** (1.4 % of draws), realised sd 0.240 |
 
 **Precedent's own recipe, for the record** (arXiv 2607.03299, App. A.6, quoted): *"we alter the
@@ -265,7 +266,11 @@ before regenerating figures.
   cine; cycle-duration change by phase-aware frame interpolation). PDF read.
 - **van Amerom et al.**, *MRM* 82:1055 (2019) — Fetal CMR 4D; §2.4 + Discussion; local PDF
   `baselines/fetal_cmr_4d/fetal_cmr_4d_paper.pdf`; MATLAB `scratch/fetal_cmr_4d/repo/cardsync/`.
-- **Markl et al.**, *JCMR* 2015, PMC4328928 — AF R-R 643 ± 161 ms (range 364–1000). Abstract only.
+- **Markl et al.**, *JCMR* 2015, PMC4328928 — AF R-R 643 ± 161 ms (range 364–1000). **Full text
+  read 2026-09-21: it is a conference abstract** — real-time TEE in **5 AF patients, 2–4
+  consecutive cycles each**; mean/sd/range are over those ~10–20 beats pooled across patients, so
+  0.25 and [0.57, 1.55] mix within- and between-patient spread. Beat-level, but a thin source
+  (docs/114 §2).
 - **Chung, Karamanoglu & Kovács**, *AJP Heart* 2004, PMID 15217800 — diastolic sub-phase durations
   vs HR. Abstract read verbatim.
 - **Weissler et al.** 1968 — systolic time intervals, `QS2 = −0.0021·HR + 0.546`. Summary only.
