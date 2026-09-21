@@ -68,6 +68,13 @@ INPLANE_MM = 1.4
 RR_MIN, RR_MAX = 0.45, np.inf   # only a physiological floor (~systole). Markl's [0.57, 1.55] range
                                 # must NOT be used as a clip: measured, it shrinks the realised
                                 # sd from 0.25 to 0.216 (docs/110 section 5).
+HOLD_MAX = 0.55         # longest full-relaxation hold, in nominal R-R. A MODELLING BOUND, not a cited
+                        # physiological value (none exists): it is the rest a full beat gets at
+                        # Markl's longest observed R-R (1.55 - 1.0). Only weak resumed beats, whose
+                        # nominal duration is short, would otherwise rest longer. docs/114.
+HOLD_MAX_FRAMES = int(HOLD_MAX / DT) + 1    # most frames a hold of HOLD_MAX can be sampled at
+JUMP_MAX = 1.5          # largest forward phase step across a beat boundary (a beat cut during
+                        # contraction legitimately continues ~1 phase into the next beat)
 
 # arm -> (rhythm model, breathing model, frames per slice)
 # af_rvr / af_pause are the DISAMBIGUATION pair. `af` draws R-R around 1.0, so a short beat is cut
@@ -77,7 +84,7 @@ RR_MIN, RR_MAX = 0.45, np.inf   # only a physiological floor (~systole). Markl's
 #   af_rvr   every beat <= 1.0 -> the trigger always arrives before the cycle finishes, so beats
 #            are cut mid-contraction and resume from a partly-contracted state. AF with RAPID
 #            ventricular response. Measured: 0.88 cut-offs/slice, hold_frac 0.071.
-#   af_pause every beat >= 1.05 -> traversing all T phases takes 1.0 s at the fixed rate, so every
+#   af_pause every beat >= 1.03 -> traversing all T phases takes 1.0 s at the fixed rate, so every
 #            beat COMPLETES before the next trigger and nothing is ever cut; the surplus is spent
 #            parked at full ED. AF with SLOW ventricular response / pauses. Measured: 0.00
 #            cut-offs/slice, hold_frac 0.245.
@@ -171,16 +178,58 @@ def pos_compress(times, rr):
     return (times - starts[b]) / rr[b] * T, b
 
 
+class DegenerateLV(ValueError):
+    """This subject's LV curve cannot drive the AF model. main() skips the subject, not the batch."""
+
+
+def physio_beats(rr, vol):
+    """The AF model's beat bookkeeping -> (realised rr, p_start per beat, es).
+
+    Every beat plays at the stored cine's rate, contraction AND expansion. A LONG beat finishes
+    its cycle and then HOLDS at full relaxation until the next trigger (diastasis absorbs the
+    surplus cycle length -- Chung 2004, PMID 15217800). A SHORT one is cut off, and the beat after
+    it resumes from where the heart actually is: the phase reached if it was cut during
+    contraction, else the systolic frame whose whole-LV volume matches the volume reached (a
+    weaker beat).
+
+    The hold is capped at HOLD_MAX by shortening the beat itself, so the REALISED rr differs from
+    the draw on the clipped beats; callers must build their timeline from the returned rr.
+    Idempotent: feeding the realised rr back in returns it unchanged.
+
+    History (docs/114): the first model also held, uncapped, and at 12 frames left P004 with 11 of
+    12 target frames byte-identical. It was replaced by stretching expansion across the long beat,
+    which froze late-ES subjects instead (12/180 at 24 frames, T-es phases spread over ~1 s) and
+    has no physiological support. The same rewrite clamped a beat cut during contraction forward
+    to `es`, teleporting the heart up to 5 phases (36/180).
+    """
+    es = int(np.argmin(vol))
+    if not 1 <= es <= T - 2:
+        raise DegenerateLV(f"degenerate LV curve: ES at index {es}")
+    vol_p = np.r_[vol, vol[0]]                                   # periodic, index T == phase 0
+    sys_v = np.minimum.accumulate(vol[:es + 1])                  # enforce monotone-decreasing systole
+    rr = np.array(rr, float)
+    p_start = np.zeros(len(rr))
+    for i in range(len(rr)):
+        # A beat's OWN nominal duration: contraction p_start->es plus expansion es->T, both at the
+        # stored cine's rate. A resumed beat has less contraction left, so its nominal is shorter.
+        t_c = max(es - p_start[i], 0.0) * DT
+        t_nom = t_c + (T - es) * DT
+        rr[i] = min(rr[i], t_nom + HOLD_MAX)
+        if i + 1 == len(rr):
+            break
+        if rr[i] <= t_c:                        # cut during contraction: already a systolic phase
+            p_start[i + 1] = p_start[i] + rr[i] / DT
+            continue
+        p_end = min(es + (rr[i] - t_c) / DT, float(T))
+        vv = np.interp(p_end, np.arange(T + 1), vol_p)
+        p_start[i + 1] = 0.0 if vv >= sys_v[0] else np.interp(vv, sys_v[::-1], np.arange(es + 1)[::-1])
+    return rr, p_start, es
+
+
 def pos_physio(times, rr, vol):
-    """The AF model. Contraction always advances at the stored cine's rate. A LONG beat has its
-    expansion stretched so the cycle ends exactly at the next trigger; a SHORT one is cut off
-    partway through expansion, and the beat after it resumes from the systolic frame whose
-    whole-LV volume matches the volume reached (a weaker beat).
+    """Cardiac position under the AF model (see physio_beats). `rr` must be the REALISED sequence.
 
     vol: (T,) whole-LV volume per GT phase. Returns pos in [0, T] (T == phase 0) and beat idx.
-    There is NO full-ED hold: the earlier model advanced phase at a fixed rate and parked at full
-    ED for a long beat's surplus, which left P004 with 11 of 12 target frames byte-identical and
-    its GT EF at 14.4 instead of 70.6. The stretch replaced it (0/38 degenerate).
 
     Positions are in STORED phase units, with a beat running 0 -> T. That convention is
     load-bearing: `pos_compress` uses it too, and `simulate`'s `t0` encodes the bundle's own
@@ -200,47 +249,22 @@ def pos_physio(times, rr, vol):
     stored cine is ED-first by convention but not always -- the seg-derived ED is frame 10/11 on
     4 of the 38 cmrx2024 test subjects and ~14% of CMRx25 (docs/105 s5d). For those, "full" is
     ~96-99% of the true maximum, so the volume-matched resume measures against a slightly low
-    reference and a long beat's stretch ends a hair short of true ED. A ~1-frame effect on ~10% of
+    reference and a completed beat holds a hair short of true ED. A ~1-frame effect on ~10% of
     subjects, versus a whole-arm misalignment if corrected by rolling. Revisit only with a scheme
     that keeps the stored-phase time origin.
     """
-    es = int(np.argmin(vol))
-    assert 1 <= es <= T - 2, f"degenerate LV curve: ES at index {es}"
-    vol_p = np.r_[vol, vol[0]]                                   # periodic, index T == phase 0
-    sys_v = np.minimum.accumulate(vol[:es + 1])                  # enforce monotone-decreasing systole
+    rr_real, p_start, es = physio_beats(rr, vol)
+    assert np.array_equal(rr_real, rr), "pos_physio needs the realised rr (physio_beats(rr, vol)[0])"
     starts = np.concatenate([[0.0], np.cumsum(rr)])
-    p_start = np.zeros(len(rr))
-    # A beat's OWN nominal duration: contraction p_start->es plus expansion es->T, both at the
-    # stored cine's rate. A resumed beat has less contraction left, so its nominal is shorter.
-    t_nom = (T - p_start[0]) * DT
-
-    def _split(p0):
-        """(time to contract p0->es at normal speed, nominal duration of the whole beat)."""
-        t_c = max(es - p0, 0.0) * DT
-        return t_c, t_c + (T - es) * DT
-
-    for i in range(len(rr) - 1):
-        t_c, t_nom = _split(p_start[i])
-        if rr[i] >= t_nom:
-            p_end = float(T)                    # long beat: expansion stretched, always completes
-        elif rr[i] <= t_c:
-            p_end = p_start[i] + rr[i] / DT     # (unreachable in practice: rr >= RR_MIN > t_c)
-        else:
-            p_end = es + (rr[i] - t_c) / DT     # short beat: cut off partway through expansion
-        p_end = max(min(p_end, float(T)), float(es))                    # never cut inside systole
-        vv = np.interp(p_end, np.arange(T + 1), vol_p)
-        p_start[i + 1] = 0.0 if vv >= sys_v[0] else np.interp(vv, sys_v[::-1], np.arange(es + 1)[::-1])
     b = np.searchsorted(starts, times, side="right") - 1
     el = times - starts[b]
     pos = np.empty(len(times))
     for k in range(len(times)):
-        i = int(b[k]); p0 = p_start[i]; e = el[k]
-        t_c, t_nom = _split(p0)
-        if e <= t_c:                                    # CONTRACTION -- always at the stored rate
+        p0 = p_start[int(b[k])]; e = el[k]
+        t_c = max(es - p0, 0.0) * DT
+        if e <= t_c:                                    # CONTRACTION at the stored rate
             pos[k] = p0 + e / DT
-        elif rr[i] >= t_nom:                            # EXPANSION, stretched to end exactly at rr
-            pos[k] = es + min((e - t_c) / max(rr[i] - t_c, 1e-9), 1.0) * (T - es)
-        else:                                           # EXPANSION at the stored rate, then cut off
+        else:                                           # EXPANSION at the stored rate, then HOLD at T
             pos[k] = min(es + (e - t_c) / DT, float(T))
     return pos, b
 
@@ -316,7 +340,9 @@ def simulate(man, gt, vol, rhythm, seed, frozen_breath, n_frames=T):
         # must not depend on n_frames or on how many other slices came before it. Any change that
         # makes the draw depend on either re-introduces a bug that was found and fixed in design.
         rng = np.random.default_rng([seed, z])
-        rr = rr_sequence(rhythm, N_BEATS, rng)
+        rr_drawn = rr_sequence(rhythm, N_BEATS, rng)
+        # The hold cap shortens beats, so the timeline (t0, starts) must use the REALISED rr.
+        rr = physio_beats(rr_drawn, vol)[0] if rhythm in AF_RHYTHMS else rr_drawn
         assert rr[BURN:].sum() > (n_frames + T) * DT, "raise N_BEATS"
         # The window opens inside beat BURN, not beat 0: without burn-in the timeline's first beat
         # always starts from a full heart, so the first beat in EVERY window would be a normal one
@@ -326,7 +352,8 @@ def simulate(man, gt, vol, rhythm, seed, frozen_breath, n_frames=T):
         times = t0 + np.arange(n_frames) * DT
         pos, beat = (pos_physio(times, rr, vol) if rhythm in AF_RHYTHMS
                      else pos_compress(times, rr))
-        info.append({"z": z, "pos": pos.tolist(), "beat": beat.tolist(), "rr": rr.tolist()})
+        info.append({"z": z, "pos": pos.tolist(), "beat": beat.tolist(), "rr": rr.tolist(),
+                     "rr_drawn": rr_drawn.tolist()})
         for f in range(n_frames):
             V = render_phase(gt, pos[f], blend)
             if frozen_breath:
@@ -336,6 +363,39 @@ def simulate(man, gt, vol, rhythm, seed, frozen_breath, n_frames=T):
                 d = u * amp * float(lujan_displacement(float(r), 1.0, n=n))
             out[f, z] = reslice_volume_vec(V, d, spacing=spacing)[z]
     return out.numpy(), info
+
+
+def physio_postconditions(info, vol):
+    """Hard build-time checks on EVERY plane's trajectory -> stats dict for the manifest.
+
+    check() only ever looked at the reference plane's GT targets, which is how a freeze and a
+    teleport on the INPUT planes both shipped (docs/114). Under the hold rule a held frame sits at
+    exactly float(T), so both tests are exact -- no tolerance to tune.
+    """
+    holds, clipped, n_beats = [], 0, 0
+    for pl in info:
+        pos, beat = np.asarray(pl["pos"]), np.asarray(pl["beat"])
+        rr, rr_drawn = np.asarray(pl["rr"]), np.asarray(pl["rr_drawn"])
+        run = longest = 0
+        for at_T in pos == float(T):
+            run = run + 1 if at_T else 0
+            longest = max(longest, run)
+        if longest > HOLD_MAX_FRAMES:
+            raise SystemExit(f"plane {pl['z']}: {longest} consecutive held frames > {HOLD_MAX_FRAMES}")
+        jump = np.diff(pos)[np.diff(beat) != 0]
+        if (jump > JUMP_MAX).any():
+            raise SystemExit(f"plane {pl['z']}: forward jump of {jump.max():.2f} phases across a "
+                             f"beat boundary > {JUMP_MAX}")
+        _, p_start, es = physio_beats(rr, vol)
+        win = np.unique(beat)
+        t_nom = (np.maximum(es - p_start, 0.0) + (T - es)) * DT
+        holds += np.maximum(rr - t_nom, 0.0)[win].tolist()
+        clipped += int((rr < rr_drawn)[win].sum())
+        n_beats += len(win)
+    return {"max_hold_ms": 1000 * max(holds), "beats_clipped": clipped, "beats_in_window": n_beats,
+            "rr_sd_drawn": float(np.std(np.concatenate([pl["rr_drawn"] for pl in info]))),
+            "rr_sd_realised": float(np.std(np.concatenate([pl["rr"] for pl in info]))),
+            "note": "ms assume a 1 s nominal R-R; sd over all N_BEATS of every plane"}
 
 
 # ───────────────────────── writer ─────────────────────────
@@ -378,6 +438,7 @@ def build(src_dir, dst_dir, arm, source, overwrite):
     affine = nib.load(os.path.join(src_dir, "gt", "gt_t00.nii.gz")).affine
 
     frames, info = simulate(man, gt, vol, rhythm, seed, frozen_breath=frozen, n_frames=nf)
+    physio = physio_postconditions(info, vol) if rhythm in AF_RHYTHMS else None   # before any write
     ref = int(man["scatter"]["ref_plane"])
     pos = np.asarray(info[ref]["pos"], float)          # the nf target positions
     blend = rhythm != "regular"
@@ -494,9 +555,11 @@ def build(src_dir, dst_dir, arm, source, overwrite):
     # scatter input, leaving the rhythm as the only delta. (pin_scatter skips slot 0.)
     # Which BEAT each companion plane's single frame is taken from. VGGT reads exactly one frame
     # per slice; with nf > T that frame must be allowed anywhere in the acquisition, or VGGT's
-    # scatter spans 1 s while the baselines integrate 2 s of the same slices. The cardiac-phase
-    # draw is untouched (j and j+T are the same stored phase) -- what changes is the respiratory
-    # state, which advances every frame by DT/T_BREATH. Its own RNG stream, so adding it cannot
+    # scatter spans 1 s while the baselines integrate 2 s of the same slices. Under a PERIODIC
+    # rhythm the cardiac phase is untouched (j and j+T are the same stored phase) and only the
+    # respiratory state changes (it advances every frame by DT/T_BREATH). Under hrv/af that is
+    # FALSE: frames j and j+T sit at different cardiac positions, so the beat draw also changes
+    # which phase the companion plane shows. Its own RNG stream, so adding it cannot
     # perturb the per-plane rhythm draws; for nf == T it is all zeros and the arm is unchanged.
     n_beats_win = nf // T
     beat = (np.random.default_rng([seed, 991]).integers(0, n_beats_win, D)
@@ -526,10 +589,13 @@ def build(src_dir, dst_dir, arm, source, overwrite):
                               for p in sorted({round(float(x) % T, 9) for x in pos})
                               if int((np.abs((pos % T) - p) < 1e-9).sum()) > 1],
         "pos_per_plane": [i["pos"] for i in info],
-        "rr_per_plane": [i["rr"] for i in info],
+        "rr_per_plane": [i["rr"] for i in info],           # REALISED (after the hold cap)
+        "rr_drawn_per_plane": [i["rr_drawn"] for i in info],
+        "physio": physio,
         "beat_per_plane": [i["beat"] for i in info],
         "params": {"T": T, "n_frames": nf, "DT": DT, "T_BREATH": T_BREATH, "N_BEATS": N_BEATS,
-                   "BURN": BURN, "HRV_MODEL": HRV_MODEL, "RR_MIN": RR_MIN, "blend": blend},
+                   "BURN": BURN, "HRV_MODEL": HRV_MODEL, "RR_MIN": RR_MIN, "HOLD_MAX": HOLD_MAX,
+                   "blend": blend},
         "builder": os.path.basename(__file__), "source_cohort": source,
         "gt": "clean unbreathed volume at the REFERENCE slice's true position for frame f",
         "seg_gt": seg_note,
@@ -700,8 +766,12 @@ def main():
         for arm in a.arms:
             dst = os.path.join(a.eval_root, f"{a.source}_{arm}", "out", s)
             os.makedirs(dst, exist_ok=True)
-            st = build(src, dst, arm, a.source, a.overwrite)
-            n[st] += 1
+            try:
+                st = build(src, dst, arm, a.source, a.overwrite)
+            except DegenerateLV as e:          # one bad subject must not abort the whole batch
+                st = "degenerate"
+                print(f"  {s}: {e}", flush=True)
+            n[st] = n.get(st, 0) + 1
             print(f"  {s:24} {arm:15} {st}", flush=True)
     print(f"built={n['built']} skipped={n['skipped']}")
 
