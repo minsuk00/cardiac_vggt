@@ -37,10 +37,22 @@ if [ ! -f "$SEG/ef_dump_id" ] && [ "${#_old[@]}" -gt 0 ]; then
   echo "run_seg: $SEG already holds ${#_old[@]} unstamped segs — use a fresh seg_dir" >&2; exit 1
 fi
 echo "$DUMP_ID" > "$SEG/ef_dump_id"
-echo "[run_seg] Task114 2d nnUNetTrainerV2_MMS   in=$IN (${#_in[@]} vols)  out=$SEG"
+
+# Segmenter config, stamped into the seg_dir alongside the dump id and guarded the same way.
+# ef_dice.py score refuses a seg_dir whose stamp disagrees with its own SEG_CFG -- that guard is
+# what makes "3D predictions silently scored against 2D GT segs" impossible rather than unlikely,
+# because the GT cache key never included the segmenter.
+# NOT fetal4d_gate.py's nnUNet_predict, which stays 2d: that call is the BASELINE'S OWN gating
+# front end, not a metric, and changing it would change the method we are comparing against.
+SEG_CFG=${SEG_CFG:-3d_fullres}
+if [ -f "$SEG/nnunet_config" ] && [ "$(cat "$SEG/nnunet_config")" != "$SEG_CFG" ]; then
+  echo "run_seg: $SEG holds $(cat "$SEG/nnunet_config") segs, not $SEG_CFG — use a fresh seg_dir" >&2; exit 1
+fi
+echo "$SEG_CFG" > "$SEG/nnunet_config"
+echo "[run_seg] Task114 $SEG_CFG nnUNetTrainerV2_MMS   in=$IN (${#_in[@]} vols)  out=$SEG"
 
 micromamba run -n nnunet bash -c "source '$ENV_SH' && \
-  nnUNet_predict -i '$IN' -o '$SEG' -t 114 -m 2d -tr nnUNetTrainerV2_MMS"
+  nnUNet_predict -i '$IN' -o '$SEG' -t 114 -m '$SEG_CFG' -tr nnUNetTrainerV2_MMS"
 
 _seg=("$SEG"/*.nii.gz)
 echo "[run_seg] segmented ${#_seg[@]} volumes -> $SEG"
