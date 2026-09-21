@@ -52,13 +52,14 @@ READOUT=$("$SVR_PY" -c "import json,sys;print('ref_phase' if 'rhythm' in json.lo
 REF_PLANE=$("$SVR_PY" -c "import json,sys;print(json.load(open(sys.argv[1]))['scatter']['ref_plane'])" "$SD/manifest.json") \
   || { echo "cannot read scatter.ref_plane from $SD/manifest.json"; exit 6; }
 # Same fail-closed rule as READOUT above. NF drives the OUTPUT length and the theta slice; NCP
-# drives -numcardphase and the phase-cine modulus. An explicit T= pins both (legacy behaviour).
+# drives -numcardphase and the phase-cine modulus. Both come from the manifest ONLY: run_baselines.py
+# always exports T=manifest["T"], so honouring an inherited T would set -numcardphase 24 on a `*24`
+# bundle and leave half the bins empty (docs/114).
 NF=$("$SVR_PY" -c "import json,sys;print(int(json.load(open(sys.argv[1]))['T']))" "$SD/manifest.json") \
   || { echo "cannot read T from $SD/manifest.json"; exit 6; }
 NCP=$("$SVR_PY" -c "import json,sys;m=json.load(open(sys.argv[1]));print(int(m.get('n_cardphase',m['T'])))" "$SD/manifest.json") \
   || { echo "cannot read n_cardphase from $SD/manifest.json"; exit 6; }
-[ -n "$T" ] && { NF="$T"; NCP="$T"; }
-T="$NF"                     # legacy alias: provenance/echo lines below still print $T
+T="$NF"                    # legacy alias: provenance/echo lines below still print $T
 # The legacy readout rolls the engine's NCP-long phase axis by an index taken from an NF-long GT
 # curve. That is only meaningful when the two are equal, and every NF > NCP bundle carries a
 # rhythm block and therefore takes the ref_phase path -- so this can only fire on a malformed one.
@@ -163,7 +164,9 @@ echo "$DT" > "$OUT/total_wall.sec"
 # ~14% of CMRx25, docs/105 par.5d). Roll the output by the GT's seg-derived ED index — the SAME
 # argmax the scorer uses (<subject>/seg_gt, ef_dice.py) — so "phase 0 = ED" means one thing on
 # both sides. One scalar index convention, no slice-level GT information; a no-op when GT ED = 0.
-SEG_GT="$SD/seg_gt"
+# Follows the scorer's segmenter (paths.seg_gt_dir): bare seg_gt/ is the 2d cache.
+SEG_CFG=${SEG_CFG:-3d_fullres}
+if [ "$SEG_CFG" = 2d ]; then SEG_GT="$SD/seg_gt"; else SEG_GT="$SD/seg_gt_$SEG_CFG"; fi
 # ref_phase needs no GT at all (it reads out at the arm's own thetas), so the seg_gt prerequisite
 # applies only to the legacy roll.
 if [ "$READOUT" = gt_ed_roll ]; then
@@ -194,7 +197,7 @@ else:
     ref = int(sys.argv[7])
     th = np.array(open(cp_path).read().split(), dtype=np.float64)
     D = th.size // NF                          # cardphase.txt is slice-major over NF frames
-    assert th.size == D * NF and 0 <= ref < D, (th.size, D, NF, T, ref)
+    assert th.size % NF == 0 and 0 <= ref < D, (th.size, D, NF, T, ref)
     idx = th[ref * NF:(ref + 1) * NF] * T / (2.0 * np.pi)    # fractional PHASE-BIN index per frame
     frames = []
     for f in range(NF):
