@@ -67,6 +67,9 @@ t0=$(date +%s)
 $PY evaluation/src/score/ef_dice.py dump "$WORK/in" "${DUMP_ARGS[@]}" --cohorts "$DS"
 t1=$(date +%s); echo "[timing] dump: $((t1-t0))s  ($(ls "$WORK/in" | grep -c _0000.nii.gz) volumes to segment)"
 if ls "$WORK/in"/*_0000.nii.gz >/dev/null 2>&1; then
+  # Stagger `micromamba run`: tasks released together collide on ~/.cache/mamba/proc ("LockFile
+  # acquisition failed") and the task dies before segmenting anything.
+  sleep $(( (IDX % 10) * 15 ))
   bash evaluation/src/engine/run_seg.sh "$WORK/in" "$WORK/seg"
 fi
 t2=$(date +%s); echo "[timing] seg: $((t2-t1))s"
