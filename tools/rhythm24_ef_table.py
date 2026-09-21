@@ -40,6 +40,38 @@ def load(arm):
     return D
 
 
+def fill_undefined_ef(D, arm):
+    """Fill ef_breath / esv_breath where ef_dice left them None, from masks saved on GPFS.
+
+    ef_dice keeps only scalars and the campaign's masks were node-local, so the per-frame LV curve of
+    an EF-undefined subject has to come from tools/render_lv_vanish_gif.py's saved re-segmentation
+    (scratch/eval/_rhythm24_segs/<arm>/lv_vanish/<subject>/seg -- the same ef_dice crop and the same
+    nnU-Net 3d_fullres). EDV and ESV are BOTH taken from those masks so the EF is self-consistent;
+    the saved-mask EDV is returned next to the campaign's so the two passes can be seen to agree.
+    A subject with no saved masks stays undefined (and is reported by the caller as missing).
+    """
+    import nibabel as nib
+    done = []
+    for m, subs in D.items():
+        for (cohort, subj), s in subs.items():
+            if s.get("ef_breath") is not None:
+                continue
+            fs = sorted(glob.glob(os.path.join(ROOT, "scratch", "eval", "_rhythm24_segs", arm, "lv_vanish", subj,
+                                               "seg", f"{cohort}__s000__{m}__t*.nii.gz")))
+            if not fs:
+                continue
+            ml = np.prod(nib.load(fs[0]).header.get_zooms()[:3]) / 1000.0
+            curve = np.array([(np.asarray(nib.load(f).dataobj) == 1).sum() for f in fs], float) * ml
+            seen = curve[curve > 0]                       # skip frames with no LV anywhere in the volume
+            if seen.size < 2:
+                continue
+            edv, esv = float(seen.max()), float(seen.min())
+            edv_json = s["edv_breath"]
+            s.update(ef_breath=100.0 * (edv - esv) / edv, esv_breath=esv, ef_filled=True)
+            done.append((m, subj, s["ef_breath"], edv, edv_json, int((curve == 0).sum())))
+    return done
+
+
 def image_metrics(arm):
     """method -> mean unit-peak PSNR / SSIM / NCC over every scored subject of the arm's 5 cohorts."""
     out = {}
@@ -58,6 +90,20 @@ def main():
     ap.add_argument("--json", default=None)
     a = ap.parse_args()
     D = load(a.arm)
+    n_all = max(len(v) for v in D.values())
+    # A method another campaign is still scoring into this folder is listed but flagged: its row
+    # covers fewer subjects and is not comparable.
+    partial = {m: len(v) for m, v in D.items() if len(v) < n_all}
+    if partial:
+        print(f"PARTIAL (not yet scored on every cohort, NOT comparable): {partial}")
+    # EF RULE (agreed 2026-09-21): end-systole is the smallest LV volume over the frames in which the
+    # segmenter FOUND an LV; a frame with no LV anywhere in the volume is skipped. An empty mask is a
+    # segmenter miss, not a zero-volume ventricle -- counting it makes ESV = 0 and EF = 100 %, which is
+    # why ef_dice leaves EF undefined there. Same rule for every method; every subject is kept.
+    filled = fill_undefined_ef(D, a.arm)
+    for m, subj, ef, edv_saved, edv_json, skipped in filled:
+        print(f"EF filled from saved masks: {short(m):9} {subj:22} EF={ef:5.1f}  frames skipped={skipped}  "
+              f"EDV check: saved-mask {edv_saved:.1f} mL vs campaign {edv_json:.1f} mL")
     methods = [REF] + sorted(m for m in D if m != REF)
     out = {"arm": a.arm, "methods": {}, "paired_vs_fetal": {}}
 

@@ -62,7 +62,8 @@ def main():
     ax.set_title(f"{arm}: 180 test subjects, 24 frames/slice  —  green = best per column", fontsize=12.5, weight="bold", pad=10)
     fig.text(0.5, 0.035, "EF bias = mean(pred − GT), signed; EF MAE = mean|pred − GT|.  EF r = corr(pred, GT).  "
              "Motion EPE = VGGT's predicted through-plane breathing shift vs the true applied shift "
-             "(Fetal predicts none).  Fetal n<180: EF undefined where its LV vanishes in ≥1 frame.",
+             "(Fetal predicts none).  End-systole = smallest LV volume over the frames in which the segmenter "
+             "found an LV (frames with none are skipped; same rule for every method).",
              ha="center", fontsize=8.6, color="#444444", wrap=True)
     out = os.path.join(ROOT, "figs", "rhythm24", f"{arm}_results_table.png")
     os.makedirs(os.path.dirname(out), exist_ok=True)
