@@ -28,6 +28,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -95,11 +96,33 @@ def main():
         fails.append(name) if not ok else None
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}{('  ' + detail) if detail else ''}")
 
+    # --work-tag isolates only the nnU-Net scratch dir: dump/assemble write the subject's LIVE
+    # fetal_cmr_4d/gate/, and stamp the synthetic result "gater": "self". So refuse to run over a
+    # real gate, and move our synthetic one out of the bundle afterwards -- it must never be
+    # mistaken for (or reconstructed from as) the real thing.
+    gd = paths.subject_dir(ds, a.subject) / "fetal_cmr_4d" / "gate"
+    if gd.exists() and any(gd.iterdir()):
+        sys.exit(f"REFUSING: {gd} already holds a gate and this check would overwrite it. "
+                 f"Run it on a subject that has not been gated yet.")
+    try:
+        _check(a, ds, gd, rep)
+    finally:
+        if gd.exists():
+            parked = paths.VOLUMES / "_fetal4d_gate" / a.work_tag / f"synthetic_gate__{ds}__{a.subject}"
+            if parked.exists():
+                shutil.rmtree(parked)
+            shutil.move(str(gd), str(parked))
+            print(f"  synthetic gate moved out of the bundle -> {parked}")
+
+    print(f"\n{'ALL CHECKS PASSED' if not fails else f'{len(fails)} CHECK(S) FAILED'}")
+    sys.exit(1 if fails else 0)
+
+
+def _check(a, ds, gd, rep):
     run("dump", ds, a.subject, a.work_tag, a.split)
     man, T, D, NCP, area = plant_segs(ds, a.subject, a.work_tag, a.split)
     run("assemble", ds, a.subject, a.work_tag, a.split)
 
-    gd = paths.subject_dir(ds, a.subject) / "fetal_cmr_4d" / "gate"
     meta = json.load(open(gd / "gate.json"))
     th = np.array(open(gd / "cardphase.txt").read().split(), float)
 
@@ -127,9 +150,6 @@ def main():
     rep("7 detected ED == planted argmax, every slice", not bad,
         f"{D - len(bad)}/{D} slices" + (f"  first bad z={bad[0]}: got {got.get(bad[0])} "
                                         f"want {want[bad[0]]}" if bad else ""))
-
-    print(f"\n{'ALL CHECKS PASSED' if not fails else f'{len(fails)} CHECK(S) FAILED'}")
-    sys.exit(1 if fails else 0)
 
 
 if __name__ == "__main__":

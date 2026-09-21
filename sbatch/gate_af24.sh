@@ -48,8 +48,13 @@ PY=${PY:-/home/minsukc/micromamba/envs/svr/bin/python}
 ARM=${ARM:-af24}
 N_SHARDS=${N_SHARDS:-8}
 IDX=${SLURM_ARRAY_TASK_ID:-0}
-TAG="${ARM}_s${IDX}"
-SOURCES=$($PY -c "import sys; sys.path.insert(0,'evaluation'); import paths; print(' '.join(f'{d}_${ARM}' for d in paths.DATASETS))")
+# TAG_PREFIX must be NEW whenever the bundles were rebuilt: nnUNet_predict skips outputs that
+# already exist, and a rebuilt cohort reuses the same file names, so an old work dir would feed
+# the gate the PREVIOUS bundles' segmentations without any error.
+TAG="${TAG_PREFIX:-$ARM}_s${IDX}"
+SOURCES=$($PY -c "import sys; sys.path.insert(0,'evaluation'); import paths; print(' '.join(f'{d}_${ARM}' for d in paths.DATASETS))") \
+  || { echo "failed to derive SOURCES"; exit 2; }
+[ -n "$SOURCES" ] || { echo "empty SOURCES"; exit 2; }
 
 # Round-robin the flat (source, subject) list so shards get a mix of small- and large-D cohorts.
 SUBJ=$($PY - "$IDX" "$N_SHARDS" "$ARM" <<'EOF'
