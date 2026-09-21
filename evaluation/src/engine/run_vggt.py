@@ -456,7 +456,8 @@ def main():
             # metadata_draw is filled by the breath arm only (it owns ed_dvf.npz), but metadata.json
             # is written for EVERY arm — initialise it or `--arms clean` raises UnboundLocalError
             # AFTER the recons are on disk, leaving an arm with no metadata for check_overwrite.
-            timing, rdiag, metadata_draw = {"model_load_sec": model_load_s}, {}, {}
+            timing, rdiag, metadata_draw = {"model_load_sec": model_load_s,
+                                            "gpu": torch.cuda.get_device_name(0)}, {}, {}
             for breathing, var in [(b, v) for b, v in ((False, "clean"), (True, "breath"))
                                    if v in args.arms]:
                 rv = str(paths.recon_dir(ds_name, subject, method, var))
