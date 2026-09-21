@@ -66,6 +66,24 @@ def lv_stored(src_dir, ncp):
     return v if v.max() > 0 else None
 
 
+def boundaries(man, z, stored):
+    """Plane z's beats -> (boundary positions in FRAME units (len n+1), realised rr, cut flags).
+
+    Rebuilds the builder's own timeline (simulate: t0 sits inside beat BURN, offset by the plane's
+    roll). A beat is CUT when the next trigger arrives before its nominal duration is up.
+    """
+    from build_af_bundle import AF_RHYTHMS, physio_beats
+    r, p = man["rhythm"], man["rhythm"]["params"]
+    rr = np.asarray(r["rr_per_plane"][z], float)
+    t0 = rr[:p["BURN"]].sum() + ((-man["rolled"]["roll_per_plane"][z]) % p["T"]) / p["T"] * rr[p["BURN"]]
+    kb = (np.concatenate([[0.0], np.cumsum(rr)]) - t0) / p["DT"]
+    cut = np.zeros(len(rr), bool)
+    if r["rhythm"] in AF_RHYTHMS and stored is not None:
+        _, p_start, es = physio_beats(rr, stored)
+        cut = rr < (np.maximum(es - p_start, 0.0) + (p["T"] - es)) * p["DT"] - 1e-9
+    return kb, rr, cut
+
+
 def render(subj, bundles, src_dir, out):
     nf = int(next(iter(bundles.values()))[1]["T"])
     fnt, fnt_s = font(), font(13)
@@ -102,20 +120,32 @@ def render(subj, bundles, src_dir, out):
             lv = curves[arm]
             if lv is None:
                 continue
-            x0, y0, y1 = i * SIZE + 10, SIZE + 54, SIZE + 46 + TRACE - 30
+            x0, y0, y1 = i * SIZE + 10, SIZE + 72, SIZE + 46 + TRACE - 30
+            dr.rectangle([i * SIZE + 2, SIZE + 48, (i + 1) * SIZE - 3, y1 + 8], fill=(255, 255, 255))
             xs = [x0 + k * (SIZE - 20) / (nf - 1) for k in range(nf)]
             ys = [y1 - (lv[k] - ymin) / max(ymax - ymin, 1e-6) * (y1 - y0) for k in range(nf)]
-            for b in range(1, (nf + ncp - 1) // ncp):          # nominal beat boundary
-                bx = x0 + (b * ncp) * (SIZE - 20) / (nf - 1)
-                dr.line([(bx, y0 - 4), (bx, y1 + 3)], fill=(90, 90, 96), width=1)
-            dr.line(list(zip(xs, ys)), fill=(110, 175, 60), width=2)
-            dr.ellipse([xs[f] - 4, ys[f] - 4, xs[f] + 4, ys[f] + 4], fill=(255, 210, 90))
+            # ACTUAL beat boundaries of this slice (dotted) + each interval's realised R-R. A beat
+            # the next trigger CUT OFF before it finished is drawn in red.
+            kb, rr, cut = boundaries(man, mids[arm], stored)
+            for b in range(len(rr)):
+                lo_k, hi_k = max(kb[b], 0.0), min(kb[b + 1], nf - 1.0)
+                if hi_k <= lo_k:
+                    continue
+                col = (200, 30, 30) if cut[b] else (70, 70, 78)
+                if 0.0 <= kb[b + 1] <= nf - 1:
+                    bx = x0 + kb[b + 1] * (SIZE - 20) / (nf - 1)
+                    for yy in range(SIZE + 50, y1 + 6, 6):
+                        dr.line([(bx, yy), (bx, yy + 3)], fill=col, width=1)
+                if (hi_k - lo_k) * (SIZE - 20) / (nf - 1) >= 30:
+                    cx = x0 + (lo_k + hi_k) / 2 * (SIZE - 20) / (nf - 1)
+                    dr.text((cx - 13, SIZE + 51), f"{rr[b]:.2f}", font=fnt_s, fill=col)
+            dr.line(list(zip(xs, ys)), fill=(40, 130, 40), width=2)
+            dr.ellipse([xs[f] - 4, ys[f] - 4, xs[f] + 4, ys[f] + 4], fill=(230, 120, 0))
         dr.text((W - 150, 6), f"frame {f:2d}/{nf}   beat {f // 12}", font=fnt_s,
                 fill=(150, 150, 155))
         if have:
-            dr.text((10, H - 14), "LV volume at the shown slice's cardiac position   "
-                                  "(grey = nominal beat boundary)", font=fnt_s,
-                    fill=(150, 150, 155))
+            dr.text((10, H - 14), "LV volume of the shown middle slice.  Dotted = beat boundary,  "
+                                  "number = R-R (nominal 1.00),  red = beat CUT OFF early", font=fnt_s, fill=(150, 150, 155))
         frames.append(canvas)
     frames[0].save(out, save_all=True, append_images=frames[1:], duration=170, loop=0)
 
