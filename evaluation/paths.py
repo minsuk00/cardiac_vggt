@@ -213,10 +213,24 @@ def cine_gt(dataset, subject):
     return subject_dir(dataset, subject) / "cine_gt.nii.gz"
 
 
-def seg_gt_dir(dataset, subject):
-    """Cache of the GT cine's nnU-Net segs (seg_t{00..T-1}.nii.gz + src.json {"gt_sha256", "crop"}),
-    written by ef_dice.py score and reused by later dumps so GT is segmented once, not per arm."""
-    return subject_dir(dataset, subject) / "seg_gt"
+def seg_gt_dir(dataset, subject, seg_config="2d"):
+    """Cache of the GT cine's nnU-Net segs (seg_t{00..T-1}.nii.gz + src.json {"gt_sha256", "crop",
+    "seg_config"}), written by ef_dice.py score and reused by later dumps so GT is segmented once,
+    not per arm.
+
+    KEYED ON THE SEGMENTER CONFIG, and `2d` keeps the historical bare `seg_gt/` path. Two reasons
+    it cannot be one shared dir:
+      - the cache key never included the segmenter, so flipping run_seg.sh to 3d_fullres would
+        leave every existing subject "cached" and score 3D predictions against 2D GT segs, with
+        no error and no warning;
+      - `seg_gt/` has a consumer that is NOT a metric. tools/build_af_bundle.py reads its LV
+        volume curve for the AF volume-matched resume, so overwriting it would change the
+        simulated AF INPUT and invalidate every bundle and reconstruction built on it. (That
+        caller hardcodes the "seg_gt" basename rather than coming through here, so it is
+        insulated either way -- keep it that way.)
+    """
+    sub = "seg_gt" if seg_config == "2d" else f"seg_gt_{seg_config}"
+    return subject_dir(dataset, subject) / sub
 
 
 def cine_gt_src(dataset, subject):

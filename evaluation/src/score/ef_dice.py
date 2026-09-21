@@ -107,13 +107,26 @@ def _roi_sha(cohort, subj):
     return paths.file_sha256(paths.heart_mask_pad(cohort, subj))
 
 
+# Which nnU-Net configuration this process scores with. MUST match run_seg.sh's SEG_CFG default,
+# and score() refuses a seg_dir stamped with anything else.
+SEG_CONFIG = os.environ.get("SEG_CFG", "3d_fullres")
+
+
 def _gt_seg_cached(cohort, subj, gt_sha):
-    """True when <subject>/seg_gt/ holds segs of THIS gt bundle cropped by THIS heart ROI
-    (content-keyed on gt_sha256 AND the ROI's sha: an ROI regenerated under an unchanged GT
-    must not reuse segs cropped by the old one)."""
-    src = paths.seg_gt_dir(cohort, subj) / "src.json"
+    """True when the GT seg cache holds segs of THIS gt bundle, cropped by THIS heart ROI, from
+    THIS segmenter config.
+
+    Content-keyed on gt_sha256 AND the ROI's sha (an ROI regenerated under an unchanged GT must
+    not reuse segs cropped by the old one) AND seg_config. The segmenter was NOT part of this key
+    historically, and that is the trap: flipping run_seg.sh to 3d_fullres would otherwise leave
+    every subject with an existing cache "cached", so 3D predictions would be scored against 2D
+    GT segs with no error and no warning. A cache written before this field existed is 2d by
+    definition, so an absent field reads as "2d" and the pre-existing 2d path stays bit-identical.
+    """
+    src = paths.seg_gt_dir(cohort, subj, SEG_CONFIG) / "src.json"
     return (_json_field(src, "gt_sha256") == gt_sha
-            and _json_field(src, "roi_sha256") == _roi_sha(cohort, subj))
+            and _json_field(src, "roi_sha256") == _roi_sha(cohort, subj)
+            and (_json_field(src, "seg_config") or "2d") == SEG_CONFIG)
 
 
 def dump(args):
@@ -170,7 +183,7 @@ def dump(args):
             # score() copies the cached segs back into the seg_dir under this dump's sidx.
             gt_cached = _gt_seg_cached(cohort, subj, gt_sha)
             if gt_cached:
-                T = int(_json_field(paths.seg_gt_dir(cohort, subj) / "src.json", "T"))
+                T = int(_json_field(paths.seg_gt_dir(cohort, subj, SEG_CONFIG) / "src.json", "T"))
             else:
                 T = _dump_cine(paths.cine_gt(cohort, subj), args.input_dir, cohort, sidx, "gt", roi)
             if T == 0:
@@ -272,7 +285,7 @@ def _sync_gt_seg_cache(seg_dir, cohort, sidx, subj, T, m):
     gt_sha = m.get("gt_sha256")
     if not gt_sha:
         return
-    cache = paths.seg_gt_dir(cohort, subj)
+    cache = paths.seg_gt_dir(cohort, subj, SEG_CONFIG)
     if m.get("gt_cached"):
         for t in range(T):
             dst = seg_path(seg_dir, cohort, sidx, "gt", t)
@@ -291,11 +304,23 @@ def _sync_gt_seg_cache(seg_dir, cohort, sidx, subj, T, m):
         tmp = cache / f".seg_t{t:02d}.{os.getpid()}.tmp.nii.gz"
         shutil.copyfile(p, tmp); os.replace(tmp, cache / f"seg_t{t:02d}.nii.gz")
     tmp = cache / f".src.{os.getpid()}.tmp.json"
-    json.dump({"gt_sha256": gt_sha, "roi_sha256": _roi_sha(cohort, subj), "T": T, "crop": paths.HEART_MASK_PAD},
+    json.dump({"gt_sha256": gt_sha, "roi_sha256": _roi_sha(cohort, subj), "T": T,
+               "crop": paths.HEART_MASK_PAD, "seg_config": SEG_CONFIG},
               open(tmp, "w")); os.replace(tmp, cache / "src.json")
 
 
 def score(args):
+    # FAIL CLOSED on the segmenter. run_seg.sh stamps the config it predicted with; if this
+    # process would score those segs under a different one, every GT-vs-prediction comparison
+    # below is cross-segmenter and silently meaningless. An unstamped seg_dir predates the stamp
+    # and is 2d by definition.
+    stamp = os.path.join(args.seg_dir, "nnunet_config")
+    got = open(stamp).read().strip() if os.path.isfile(stamp) else "2d"
+    if got != SEG_CONFIG:
+        sys.exit(f"score: {args.seg_dir} was segmented with '{got}' but SEG_CFG is "
+                 f"'{SEG_CONFIG}' — scoring these against a '{SEG_CONFIG}' GT cache would be "
+                 f"cross-segmenter. Re-run run_seg.sh with SEG_CFG={SEG_CONFIG}, or set "
+                 f"SEG_CFG={got} to score this seg_dir as it stands.")
     man = json.load(open(f"{args.input}/ef_manifest.json"))
     # dump() writes {"meta": {...}, "subjects": [...]}; a legacy dump is a bare list.
     meta = man.get("meta", {}) if isinstance(man, dict) else {}
