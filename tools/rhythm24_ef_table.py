@@ -37,6 +37,18 @@ def load(arm):
     return D
 
 
+def image_metrics(arm):
+    """method -> mean unit-peak PSNR / SSIM / NCC over every scored subject of the arm's 5 cohorts."""
+    out = {}
+    for f in glob.glob(os.path.join(ROOT, "scratch", "eval", f"*_{arm}", "out", "*", "*", "metrics.json")):
+        j = json.load(open(f))
+        if "breath_psnr_unit_peak_mean" in j:
+            out.setdefault(f.split("/")[-2], []).append(
+                (j["breath_psnr_unit_peak_mean"], j["breath_ssim_mean"], j["breath_ncc_mean"]))
+    return {m: dict(zip(("psnr", "ssim", "ncc"), np.mean(v, axis=0).tolist()), n_img=len(v))
+            for m, v in out.items()}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("arm")
@@ -46,9 +58,13 @@ def main():
     methods = [REF] + sorted(m for m in D if m != REF)
     out = {"arm": a.arm, "methods": {}, "paired_vs_fetal": {}}
 
-    print(f"=== {a.arm} ===")
-    print(f"{'method':10}{'n':>5}{'EF MAE':>8}{'bias':>8}{'slope':>7}{'r':>6}{'predEF':>8}{'EDV MAE':>9}"
-          f"{'ESV MAE':>9}{'DiceLV ED/ES':>15}{'DiceMYO ED/ES':>15}")
+    img = image_metrics(a.arm)
+    rp = os.path.join(ROOT, "temp", "rhythm24_ef", f"{a.arm}_resp_epe.json")     # tools/rhythm24_resp_epe.py
+    resp = json.load(open(rp)) if os.path.exists(rp) else {}
+    print(f"=== {a.arm} ===   (motion EPE = breathing through-plane EPE vs the TRUE frame-wise shift; "
+          f"VGGT only -- Fetal predicts no per-slice shift)")
+    print(f"{'method':10}{'n':>5}{'PSNR':>7}{'SSIM':>7}{'NCC':>7}{'EF MAE':>8}{'bias':>8}{'r':>6}{'EDV MAE':>9}"
+          f"{'ESV MAE':>9}{'DiceLV ED/ES':>15}{'DiceMYO ED/ES':>15}{'motionEPE mm':>14}")
     for m in methods:
         v = list(D.get(m, {}).values())
         if not v:
@@ -63,10 +79,14 @@ def main():
              "esv_mae": float(np.mean([abs(s["esv_breath"] - s["esv_gt"]) for s in v])),
              "dice_lv_ed": mean("dice_breath_LV_ED"), "dice_lv_es": mean("dice_breath_LV_ES"),
              "dice_myo_ed": mean("dice_breath_MYO_ED"), "dice_myo_es": mean("dice_breath_MYO_ES")}
+        r.update(img.get(m, {}))
+        r["motion_epe_mm"] = resp.get(m, {}).get("epe")
         out["methods"][m] = r
-        print(f"{short(m):10}{r['n']:5d}{r['ef_mae']:8.2f}{r['ef_bias']:+8.2f}{r['slope']:7.2f}{r['r']:6.2f}"
-              f"{r['pred_ef_mean']:8.1f}{r['edv_mae']:9.1f}{r['esv_mae']:9.1f}"
-              f"{r['dice_lv_ed']:9.3f}/{r['dice_lv_es']:.3f}{r['dice_myo_ed']:9.3f}/{r['dice_myo_es']:.3f}")
+        epe = f"{r['motion_epe_mm']:14.2f}" if r["motion_epe_mm"] is not None else f"{'n/a':>14}"
+        print(f"{short(m):10}{r['n']:5d}{r.get('psnr', float('nan')):7.2f}{r.get('ssim', float('nan')):7.3f}"
+              f"{r.get('ncc', float('nan')):7.3f}{r['ef_mae']:8.2f}{r['ef_bias']:+8.2f}{r['r']:6.2f}"
+              f"{r['edv_mae']:9.1f}{r['esv_mae']:9.1f}"
+              f"{r['dice_lv_ed']:9.3f}/{r['dice_lv_es']:.3f}{r['dice_myo_ed']:9.3f}/{r['dice_myo_es']:.3f}{epe}")
 
     F = D.get(REF, {})
     print(f"\npaired vs {short(REF)} -- |EF err| (pp), subjects both methods scored:")
