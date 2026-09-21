@@ -35,6 +35,42 @@ def font(sz):
     return ImageFont.load_default()
 
 
+def gt_lv_curve(ds, subj, T):
+    """GT LV volume (mL) per frame from the cached nnU-Net 3d_fullres GT segmentation, or None."""
+    d = paths.seg_gt_dir(ds, subj, "3d_fullres")
+    fs = [os.path.join(str(d), f"seg_t{t:02d}.nii.gz") for t in range(T)]
+    if not all(os.path.isfile(f) for f in fs):
+        return None
+    ml = float(np.prod(nib.load(fs[0]).header.get_zooms()[:3])) / 1000.0
+    return np.array([(np.asarray(nib.load(f).dataobj) == 1).sum() for f in fs], float) * ml
+
+
+def draw_curve(dr, lv, t, box, fnt):
+    """GT LV-volume curve on a white panel with a cursor at frame t. box = (x0, y0, x1, y1)."""
+    x0, y0, x1, y1 = box
+    dr.rectangle(box, fill=(255, 255, 255))
+    px0, px1, py0, py1 = x0 + 46, x1 - 12, y0 + 40, y1 - 20      # headroom: title row + the ED label
+    lo, hi = float(lv.min()), float(lv.max()); span = max(hi - lo, 1e-6)
+    X = lambda k: px0 + k * (px1 - px0) / (len(lv) - 1)                     # noqa: E731
+    Y = lambda v: py1 - (v - lo) / span * (py1 - py0)                       # noqa: E731
+    for v in (lo, hi):                                                      # y grid + labels (mL)
+        dr.line([(px0, Y(v)), (px1, Y(v))], fill=(215, 215, 220), width=1)
+        dr.text((x0 + 4, Y(v) - 7), f"{v:.0f}", font=fnt, fill=(70, 70, 78))
+    for k in range(0, len(lv), 4):
+        dr.text((X(k) - 5, py1 + 4), str(k), font=fnt, fill=(70, 70, 78))
+    dr.line([(X(k), Y(v)) for k, v in enumerate(lv)], fill=(40, 130, 40), width=3)
+    for k, v in enumerate(lv):
+        dr.ellipse([X(k) - 2, Y(v) - 2, X(k) + 2, Y(v) + 2], fill=(40, 130, 40))
+    ed, es = int(lv.argmax()), int(lv.argmin())
+    dr.text((X(ed) - 8, Y(lv[ed]) - 16), "ED", font=fnt, fill=(40, 100, 40))
+    dr.text((X(es) - 8, Y(lv[es]) + 3), "ES", font=fnt, fill=(40, 100, 40))
+    dr.line([(X(t), py0 - 4), (X(t), py1 + 2)], fill=(230, 120, 0), width=2)
+    dr.ellipse([X(t) - 5, Y(lv[t]) - 5, X(t) + 5, Y(lv[t]) + 5], fill=(230, 120, 0))
+    ef = 100.0 * (hi - lo) / hi
+    dr.text((px0, y0 + 3), f"GT LV volume (mL) per frame   EDV {hi:.0f}  ESV {lo:.0f}  EF {ef:.0f}%   "
+                           f"now: {lv[t]:.0f} mL", font=fnt, fill=(30, 30, 36))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", required=True)
@@ -66,10 +102,14 @@ def main():
         vmax = {k: float(np.percentile(v[roi][v[roi] > 0], 99.5)) for k, v in vols.items()}
 
         keys = list(vols)
-        W = 46 + len(keys) * (CELL + PAD); H = 30 + len(zs) * (CELL + PAD) + 22
+        lv = gt_lv_curve(ds, subj, T)                         # mL per frame, or None
+        PLOT = 170 if lv is not None else 0
+        W = 46 + len(keys) * (CELL + PAD); H = 30 + len(zs) * (CELL + PAD) + PLOT + 22
         frames = []
         for t in range(T):
             cv = Image.new("RGB", (W, H), (14, 14, 16)); dr = ImageDraw.Draw(cv)
+            if lv is not None:
+                draw_curve(dr, lv, t, (46, 30 + len(zs) * (CELL + PAD) + 6, W - 8, H - 28), f_small)
             for c, k in enumerate(keys):
                 dr.text((46 + c * (CELL + PAD) + 6, 6), k, font=f_big, fill=(235, 235, 240))
                 for r, z in enumerate(zs):
