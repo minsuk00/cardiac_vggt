@@ -73,6 +73,17 @@ if ls "$WORK/in"/*_0000.nii.gz >/dev/null 2>&1; then
   bash evaluation/src/engine/run_seg.sh "$WORK/in" "$WORK/seg"
 fi
 t2=$(date +%s); echo "[timing] seg: $((t2-t1))s"
+# KEEP the segmentation masks. $WORK is node-local and deleted on exit, and the score json holds
+# only scalars (EDV/ESV/EF/Dice) -- so without this, the per-frame LV/MYO/RV volume curves are gone
+# and any other EF rule (temporal smoothing, GT-anchored ED/ES, no largest-component filter...)
+# costs a full re-segmentation. Masks are uint8 and compress to a few KB each. ef_manifest.json
+# maps the sidx in each file name back to (cohort, subject). Copied BEFORE score, so a scoring
+# failure does not lose them either.
+KEEP="$REPO/scratch/eval/_rhythm24_segs/$ARM/${TAG}__${DS}"
+if ls "$WORK/seg"/*.nii.gz >/dev/null 2>&1; then
+  mkdir -p "$KEEP" && cp "$WORK/seg"/*.nii.gz "$WORK/seg"/nnunet_config "$WORK/in/ef_manifest.json" "$KEEP"/ \
+    && echo "kept $(ls "$KEEP" | grep -c nii.gz) seg masks -> $KEEP"
+fi
 $PY evaluation/src/score/ef_dice.py score "$WORK/seg" --input "$WORK/in" --out "$OUT"
 echo "[timing] score: $(( $(date +%s) - t2 ))s"
 echo "DONE -> $OUT"
