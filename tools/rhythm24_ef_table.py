@@ -31,7 +31,10 @@ def load(arm):
         if m == "gt":
             continue
         for s in json.load(open(f))["per_subject"]:
-            if s.get("ef_breath") is None or s.get("ef_gt") is None:
+            # Keep a subject whose EF is undefined (ef_dice: the LV vanished in >= 1 frame, so ESV
+            # and EF are None). Its EDV and Dice ARE defined and are part of the method's record --
+            # dropping it here would quietly remove the method's worst cases from every column.
+            if s.get("ef_gt") is None or s.get("edv_breath") is None:
                 continue
             D.setdefault(m, {})[(s["cohort"], s["subject"])] = s
     return D
@@ -69,14 +72,15 @@ def main():
         v = list(D.get(m, {}).values())
         if not v:
             continue
-        g = np.array([s["ef_gt"] for s in v]); p = np.array([s["ef_breath"] for s in v])
+        e = [s for s in v if s.get("ef_breath") is not None]      # EF/ESV: only where they are defined
+        g = np.array([s["ef_gt"] for s in e]); p = np.array([s["ef_breath"] for s in e])
         lr = linregress(g, p)
-        mean = lambda k: float(np.nanmean([s.get(k, np.nan) for s in v]))          # noqa: E731
-        r = {"n": len(v), "ef_mae": float(np.abs(p - g).mean()), "ef_bias": float((p - g).mean()),
+        mean = lambda k: float(np.nanmean([np.nan if s.get(k) is None else s[k] for s in v]))   # noqa: E731
+        r = {"n": len(v), "n_ef": len(e), "ef_mae": float(np.abs(p - g).mean()), "ef_bias": float((p - g).mean()),
              "slope": float(lr.slope), "r": float(lr.rvalue), "pred_ef_mean": float(p.mean()),
              "gt_ef_mean": float(g.mean()),
              "edv_mae": float(np.mean([abs(s["edv_breath"] - s["edv_gt"]) for s in v])),
-             "esv_mae": float(np.mean([abs(s["esv_breath"] - s["esv_gt"]) for s in v])),
+             "esv_mae": float(np.mean([abs(s["esv_breath"] - s["esv_gt"]) for s in e])),
              "dice_lv_ed": mean("dice_breath_LV_ED"), "dice_lv_es": mean("dice_breath_LV_ES"),
              "dice_myo_ed": mean("dice_breath_MYO_ED"), "dice_myo_es": mean("dice_breath_MYO_ES")}
         r.update(img.get(m, {}))
@@ -91,7 +95,7 @@ def main():
     F = D.get(REF, {})
     print(f"\npaired vs {short(REF)} -- |EF err| (pp), subjects both methods scored:")
     for m in methods[1:]:
-        k = [x for x in D[m] if x in F]
+        k = [x for x in D[m] if x in F and F[x].get("ef_breath") is not None and D[m][x].get("ef_breath") is not None]
         if not k:
             continue
         ef = np.array([abs(F[x]["ef_breath"] - F[x]["ef_gt"]) for x in k])
