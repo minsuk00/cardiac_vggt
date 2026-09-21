@@ -172,25 +172,35 @@ def pos_compress(times, rr):
 
 
 def pos_physio(times, rr, vol):
-    """The AF model. Phases advance at NORMAL speed; the next trigger cuts the beat off wherever it
-    is; the next beat resumes from the systolic frame whose whole-LV volume matches the volume
-    reached (a weaker beat); a long beat holds the full-ED frame until the trigger.
+    """The AF model. Contraction always advances at the stored cine's rate. A LONG beat has its
+    expansion stretched so the cycle ends exactly at the next trigger; a SHORT one is cut off
+    partway through expansion, and the beat after it resumes from the systolic frame whose
+    whole-LV volume matches the volume reached (a weaker beat).
 
-    vol: (T,) whole-LV volume per GT phase. Returns pos in [0, T] (T == full-ED hold) and beat idx.
+    vol: (T,) whole-LV volume per GT phase. Returns pos in [0, T] (T == phase 0) and beat idx.
+    There is NO full-ED hold: the earlier model advanced phase at a fixed rate and parked at full
+    ED for a long beat's surplus, which left P004 with 11 of 12 target frames byte-identical and
+    its GT EF at 14.4 instead of 70.6. The stretch replaced it (0/38 degenerate).
 
-    Positions are in STORED phase units, with a beat running 0 -> T and the hold parked at T == 0.
-    That convention is load-bearing: `pos_compress` uses it too, and `simulate`'s `t0` encodes the
-    bundle's own per-plane roll in those units, so all four arms open their window at the same
-    stored phase and differ ONLY in rhythm. Do not re-express this in an ED-anchored frame -- an
-    earlier attempt to roll the curve so "full" meant the true ED frame shifted the whole af
-    timeline by `ed` relative to every other arm (measured on P046, ed=11: off by exactly 11),
-    silently breaking the control for the very subjects it meant to help.
+    Positions are in STORED phase units, with a beat running 0 -> T. That convention is
+    load-bearing: `pos_compress` uses it too, and `simulate`'s `t0` encodes the bundle's own
+    per-plane roll in those units. Do not re-express this in an ED-anchored frame -- an earlier
+    attempt to roll the curve so "full" meant the true ED frame shifted the whole af timeline by
+    `ed` relative to every other arm (measured on P046, ed=11: off by exactly 11), silently
+    breaking the control for the very subjects it meant to help.
+
+    `t0` equalises the window's opening TIME, not its opening PHASE. Under `regular`/`hrv`
+    (pos_compress) the stored phase at t0 is roll_frac * T whatever the beat lengths, so those
+    arms do open at the same phase. Under an AF arm the beat playing at t0 has already been cut
+    and volume-matched-resumed during the BURN-in, so it opens elsewhere -- measured on
+    MNMs_L8N7Z0's mid plane: 2.00 for regular/hrv, 4.53 for af. That is the burn-in working as
+    intended (the window must not always open on a fresh beat), not a control defect.
 
     KNOWN LIMITATION, disclosed rather than fixed: `sys_v[0] = vol[0]` is taken as "full". The
     stored cine is ED-first by convention but not always -- the seg-derived ED is frame 10/11 on
     4 of the 38 cmrx2024 test subjects and ~14% of CMRx25 (docs/105 s5d). For those, "full" is
-    ~96-99% of the true maximum, so the hold parks about one frame short of true ED and the
-    volume-matched resume measures against a slightly low reference. A ~1-frame effect on ~10% of
+    ~96-99% of the true maximum, so the volume-matched resume measures against a slightly low
+    reference and a long beat's stretch ends a hair short of true ED. A ~1-frame effect on ~10% of
     subjects, versus a whole-arm misalignment if corrected by rolling. Revisit only with a scheme
     that keeps the stored-phase time origin.
     """
