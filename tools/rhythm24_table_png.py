@@ -3,6 +3,8 @@
 
 Usage:  python tools/rhythm24_table_png.py af24
         (reads temp/rhythm24_ef/<arm>_summary.json, writes figs/rhythm24/<arm>_results_table.png)
+        python tools/rhythm24_table_png.py af24 <summary.json> <out.png>
+        (explicit input + output, e.g. the CiNeVol variant -- so the default table is never overwritten)
 """
 import json
 import os
@@ -13,7 +15,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt                                    # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NAMES = {"fetal_cmr_4d": "Fetal CMR 4D (self-gated)", "vggt_final518_base_ep300": "VGGT base",
+NAMES = {"fetal_cmr_4d": "Fetal CMR 4D (self-gated)", "cinevol": "CiNeVol† (R-peaks + breath level given)",
+         "cinevol_masked": "CiNeVol† (R-peaks + breath level given)",
+         "vggt_final518_base_ep300": "VGGT base",
          "vggt_final518_diff1000_ep300": "VGGT diff1000", "vggt_final518_nogather_ep300": "VGGT nogather",
          "vggt_final518_hw0_ep300": "VGGT hw0"}
 # (header, key, format, higher_is_better | None = no winner highlighted)
@@ -27,7 +31,8 @@ COLS = [("n", "n", "{:d}", None), ("PSNR\n(dB) ↑", "psnr", "{:.2f}", True),
 
 def main():
     arm = sys.argv[1]
-    S = json.load(open(os.path.join(ROOT, "temp", "rhythm24_ef", f"{arm}_summary.json")))["methods"]
+    src = sys.argv[2] if len(sys.argv) > 2 else os.path.join(ROOT, "temp", "rhythm24_ef", f"{arm}_summary.json")
+    S = json.load(open(src))["methods"]
     order = [m for m in NAMES if m in S]
     cells, best = [], {}
     for ci, (_, key, fmt, hib) in enumerate(COLS):
@@ -35,7 +40,8 @@ def main():
             continue
         val = lambda m: (sum(S[m][k] for k in key) / 2 if isinstance(key, tuple) else S[m].get(key))   # noqa: E731
         cand = [(val(m), m) for m in order if val(m) is not None]
-        best[ci] = (max if hib else min)(cand)[1]
+        if cand:                                   # a column with no values yet (e.g. motion EPE) has no winner
+            best[ci] = (max if hib else min)(cand)[1]
     for m in order:
         row = [NAMES[m]]
         for _, key, fmt, _ in COLS:
@@ -59,13 +65,18 @@ def main():
         elif best.get(c - 1) == order[r - 1]:
             cell.set_facecolor("#d9f0dc"); cell.set_text_props(weight="bold")
     tb.auto_set_column_width(list(range(len(COLS) + 1)))
-    ax.set_title(f"{arm}: 180 test subjects, 24 frames/slice  —  green = best per column", fontsize=12.5, weight="bold", pad=10)
+    nf = 12 if arm.endswith("12") else 24          # af12 = af24's first 12 frames/slice (tools/build_af12_from_af24.py)
+    ax.set_title(f"{arm}: 180 test subjects, {nf} frames/slice  —  green = best per column", fontsize=12.5, weight="bold", pad=10)
     fig.text(0.5, 0.035, "EF bias = mean(pred − GT), signed; EF MAE = mean|pred − GT|.  EF r = corr(pred, GT).  "
              "Motion EPE = VGGT's predicted through-plane breathing shift vs the true applied shift "
              "(Fetal predicts none).  End-systole = smallest LV volume over the frames in which the segmenter "
-             "found an LV (frames with none are skipped; same rule for every method).",
+             "found an LV (frames with none are skipped; same rule for every method)."
+             + ("  † CiNeVol is handed every frame's R-peak timing and breathing level (it never estimates them); "
+                "no other method sees either." if "cinevol" in order else ""),
              ha="center", fontsize=8.6, color="#444444", wrap=True)
-    out = os.path.join(ROOT, "figs", "rhythm24", f"{arm}_results_table.png")
+    out = sys.argv[3] if len(sys.argv) > 3 else os.path.join(ROOT, "figs", "rhythm24", f"{arm}_results_table.png")
+    if len(sys.argv) > 3 and os.path.exists(out):
+        sys.exit(f"REFUSING: {out} already exists -- choose a new name")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     fig.savefig(out, bbox_inches="tight", facecolor="white")
     print("wrote", out)
