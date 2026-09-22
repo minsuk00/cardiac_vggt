@@ -136,21 +136,27 @@ against the original campaign score to within 0.1 mL on all 4 subjects). Moves F
 from 13.15 (n=176, dropping the 4) to 13.50 (n=180, this rule) — VGGT unaffected (no VGGT
 reconstruction had a whole-frame LV vanish in any arm).
 
-## 6. Scope decision needed: af24 alone, or the full 3-rhythm progression?
+## 6. Scope decision needed: af24 alone, or af24 + hrv24?
 
-Not yet decided. Two options:
+**`regular24` is out of scope for the headline regardless** — the paper's stated regime is
+AF-or-HRV free-breathing acquisition (docs/115 §1), not periodic rhythm, so a genuinely regular
+cine isn't the target scenario being tested. It stays useful as a methods-section reference (it's
+what shows the `af24`/`hrv24` effect is a rhythm effect, not just "24 frames breaks Fetal" — the
+reversal in §3 is the evidence for that), but not as a results-table row. That narrows the actual
+choice to two options:
 
-1. **`af24` only** as the headline (§2) — simplest, largest and cleanest effect, matches the
-   paper's stated research question most directly (docs/115: "does VGGT ≥ Fetal under AF").
-2. **The full regular→hrv→af progression** (§3) as the headline, with `af24`'s per-method table
-   as the detail — shows the effect is a genuine dose-response to rhythm irregularity rather than
-   an artifact of the `af24` simulation specifically, and the `regular24` reversal (Fetal *better*
-   there) pre-empts an obvious reviewer objection ("maybe Fetal is just worse at 24 frames
-   generally") that `af24` alone cannot answer.
+1. **`af24` only** — simplest, largest and cleanest effect, the pathological/severe case.
+2. **`af24` + `hrv24`** — both are in-regime. `hrv24`'s missing Fetal EF cell (§1, in flight via
+   the handoff) decides which of two framings the data supports once it lands:
+   - Fetal ties or wins on `hrv24` but loses badly on `af24` → **AF specifically** breaks Fetal;
+     mild/everyday irregularity is fine. Narrower but more clinically precise claim.
+   - Fetal already loses on `hrv24`, similarly to `af24` → **any irregularity** breaks Fetal,
+     VGGT is robust across the in-regime range. Broader, stronger claim.
 
-Recommendation: **option 2**, once `hrv24` Fetal EF lands — the reversal itself (§3) is a stronger,
-more defensible result than the af24 gap alone, and `hrv24` was built specifically to supply the
-missing middle data point. Until then, `af24` is the only cohort where the story is complete.
+These are different papers, not just more/less data, so it's not resolvable without the `hrv24`
+number. Recommendation: **af24 + hrv24** once `hrv24` Fetal EF lands (its VGGT side and Fetal PSNR
+are already in — §3 — only the EF/Dice cell is missing). Until then, `af24` alone is publishable
+as-is; `hrv24` is not decidable yet either way.
 
 ## 7. Not yet done
 
