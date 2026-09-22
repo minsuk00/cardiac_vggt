@@ -293,7 +293,20 @@ the A40 attribution for VGGT rests on the sbatch partition, not on a per-run sta
 Timing fairness: GPU methods (NeSVoR, VGGT) timed on the same A40/spgpu class (docs/98 §8). VGGT per-phase
 wall on CMRx24 val (curation-ablation **224-px** arm): **~175 ms per volume** steady-state (first phase
 ~570 ms, warm-up), **3.6 s per 12-phase cine**, model load 17.7 s excluded (`run_vggt.py:233–238,389–391`;
-`…/vggt_curation_curated_ep300/timing.json`). ⚠️ 224-px arm; the 518-px number is PENDING. SVRTK example
+`…/vggt_curation_curated_ep300/timing.json`).
+
+**518-px arm — MEASURED 2026-09-18** (from the final518 five-arm sweep's `timing.json` files, `evaluation/
+src/engine/run_vggt.py`'s per-phase `torch.cuda.synchronize()`+`perf_counter()` timer; A40, bf16 autocast,
+eager PyTorch — no `torch.compile`/TensorRT/ONNX at inference). Per-volume time (forward pass + splat)
+scales almost perfectly linearly with the subject's own slice count `D` (`one_frame_per_slice: true` ⇒
+`S == D`, so attention cost tracks slot count): across all 291 (subject × final518-arm) `timing.json`s
+spanning 7 eval datasets, steady-state (first-phase warm-up excluded) `ms/volume ≈ -210 + 122.6·D`
+(r = 0.996, D range 6–20): **~530 ms at D=6, ~1.0 s at D=10 (the modal subject), ~2.2 s at D=20**. All five
+final518 arms (base/diff1000/hw2/motion10/motion10_hw2) are indistinguishable (same 518×518 architecture,
+loss weights only differ). First-phase warm-up adds ~200–250 ms; model load ~14–15 s (excluded, one-time).
+⚠️ **The oft-repeated "~100 ms per volume on an A40" (docs/87:29, docs/99:260) is WRONG for the 518-px
+arm** — it undershoots even the smallest (D=6) subject by ~5×; it may have been extrapolated from the
+224-px number without accounting for image-size or D-scaling. SVRTK example
 (CMRx24_Test_P001, scatter): 141 s end-to-end for 12 phases at J = 8 (mean 78 s per phase single-threaded
 equivalent); NeSVoR ~158–174 s per phase single-fit on A40.
 
@@ -425,7 +438,7 @@ Every epoch; 180 entries = 90 val subjects × {ED, ES} (`ef_val_sweep`), determi
 | Peak GPU memory | **29.0 GB** | `log.txt` |
 | Wall per epoch | ~20 min (≈16.5 min train + 3.5 min val) | `metrics.jsonl` timestamps |
 | Total | 68.0 h for 197 epochs ⇒ **~102 h (~4.3 d) projected for 300** — PENDING | same |
-| Inference | "~100 ms per volume (forward + splat) on an A40" appears in docs/87:29 and docs/99:260 but **no measurement of the 518-px model exists** → UNVERIFIED. Measured on disk (A40, 224-px curation arm): **~175 ms per volume** steady-state, 3.6 s per 12-phase cine, model load 17.7 s (§2.4a) | docs/87; docs/99; `timing.json` |
+| Inference | 224-px curation arm: **~175 ms/volume** steady-state, 3.6 s/12-phase cine, model load 17.7 s. **518-px final518 arms (MEASURED 2026-09-18): ~530 ms–2.2 s/volume, scaling linearly with subject slice count D** (`ms ≈ -210 + 122.6·D`, r=0.996; ~1.0 s at the modal D=10), model load ~14–15 s. The "~100 ms on A40" figure in docs/87/99 is WRONG for 518-px (§2.4a) | docs/87; docs/99; `timing.json` |
 | Model load | GPFS `torch.load` ~266 s vs ~5 s from `/tmp` (docs/50) — engineering, not a paper number | docs/50 |
 | Stack | Python 3.10.14, torch 2.13.0+cu130, torchvision 0.28.0, triton 3.7.1, monai 1.6.0, numpy 2.2.6, CUDA 13.0, hydra 1.3.2, batchaug 0.1.0, fused-ssim 1.0.0 (val SSIM metric only); eval segmenter nnU-Net 1.7.1 | `micromamba run -n svr`; `run_meta` |
 
@@ -449,7 +462,7 @@ table needs every row at 518/518 with the base loss; today only the final518 fam
 reference-off / breathing-sim-off / frozen-backbone arms **do not exist**.
 
 ### 3.9 Do not write
-- "~0.1 s inference" as measured (unverified; measure with `run_vggt.py` timing on the 518 checkpoint).
+- "~0.1 s inference" — MEASURED WRONG (§2.4a/§3.7): the 518-px arms run ~530 ms–2.2 s/volume, D-dependent.
 - "Trained on A40" — the final arms run on L40S (`spgpu2`).
 - 200 epochs (the `default.yaml` value); the sbatch overrides to 300.
 - "Frozen patch-embedding layer" — the frozen module is the whole DINOv2 encoder.
@@ -513,7 +526,8 @@ acquisition-artifact proxies (simulated low resolution, Gibbs ringing, phase-enc
 the target volume and asynchronous observations are extracted; the respiratory simulation of
 Sec.~\ref{sec:learning} is applied to the inputs in both training and validation. Training takes
 \todo{$\approx$4 days} on one NVIDIA L40S (29\,GB peak memory); reconstructing one volume takes
-\todo{xx\,ms}. Exact augmentation probabilities and ranges are listed in Appendix~\ref{app:impl}.
+$\approx$1\,s on an NVIDIA A40 (530\,ms--2.2\,s, scaling linearly with the subject's slice count).
+Exact augmentation probabilities and ranges are listed in Appendix~\ref{app:impl}.
 ```
 
 ---
@@ -531,7 +545,7 @@ Sec.~\ref{sec:learning} is applied to the inputs in both training and validation
 | Fetal CMR 4D full test run + EF/Dice | † row | **DONE 2026-09-16** (docs/105 §8): 180/180 test, image + EF/Dice scored + aggregated; val not run; paper name still open |
 | NiftyMIC engine runner | row or drop (currently no row) | not built |
 | v2 identity / no-correction floor | floor row | `dice_floors.py` on v2 |
-| 518-px inference timing | "xx ms" | `run_vggt.py` timing on 518 ckpt |
+| 518-px inference timing | ~~"xx ms"~~ | **DONE 2026-09-18** (§2.4a/§3.7): `timing.json` across final518 sweep |
 | Dangi inference re-run on A40 (`--device cuda`) + GPU name stamped in every `timing.json` | runtime column fairness | `run_dangi.py`, `run_vggt.py` |
 | "Mean Dice" definition | Table 2 column | writer decision |
 | Reference-off / breathing-sim-off / frozen-backbone arms at the final recipe | ablation rows | not started |
