@@ -23,7 +23,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation")]
 import paths                                                       # noqa: E402
 
-NAME = {"fetal_cmr_4d": "Fetal CMR 4D", "vggt_final518_diff1000_ep300": "VGGT diff1000",
+NAME = {"fetal_cmr_4d": "Fetal CMR 4D", "cinevol": "CiNeVol", "cinevol_masked": "CiNeVol (heart ROI)",
+        "vggt_final518_diff1000_ep300": "VGGT diff1000",
         "vggt_final518_base_ep300": "VGGT base"}
 CELL, PAD, MARGIN = 230, 4, 12
 
@@ -77,8 +78,10 @@ def main():
     ap.add_argument("--subjects", nargs="+", required=True, help="source:subject")
     ap.add_argument("--methods", nargs="+", default=["fetal_cmr_4d", "vggt_final518_diff1000_ep300"])
     ap.add_argument("--offset", type=int, default=2, help="slices above/below the middle one")
+    ap.add_argument("--outdir", default=None, help="default figs/rhythm24/<arm>_recon_compare; give a NEW dir for "
+                                                   "another method set so existing GIFs are not overwritten")
     a = ap.parse_args()
-    outdir = os.path.join(ROOT, "figs", "rhythm24", f"{a.arm}_recon_compare")
+    outdir = a.outdir or os.path.join(ROOT, "figs", "rhythm24", f"{a.arm}_recon_compare")
     os.makedirs(outdir, exist_ok=True)
     f_big, f_small = font(15), font(12)
 

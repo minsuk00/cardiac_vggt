@@ -1,0 +1,121 @@
+{
+  "description": "Published CiNeVol Proposed (without segmentation supervision) settings. Used by cinevol.config; unspecified implementation choices are logged separately.",
+  "source": "Supplemental Material 1, section 1.1.1 and Table 1, DOI 10.1007/s11517-025-03488-7",
+  "common": {
+    "optimization": {
+      "steps_per_subject": 500,
+      "batch_observed_pixels": 32768,
+      "optimizer": "AdamW",
+      "learning_rate": 0.005,
+      "mlp_weight_decay": 0.01
+    },
+    "psf_samples": {
+      "fitting": 16,
+      "inference": 16
+    },
+    "spatial_grid": {
+      "levels": 16,
+      "features_per_level": 2,
+      "log2_hashmap_size": 19,
+      "base_resolution": [
+        16,
+        16,
+        16
+      ],
+      "finest_resolution": [
+        2048,
+        2048,
+        2048
+      ]
+    },
+    "spatiotemporal_grids": {
+      "coordinates": [
+        "xy_cardiac",
+        "xz_cardiac",
+        "yz_cardiac",
+        "xy_respiratory",
+        "xz_respiratory",
+        "yz_respiratory"
+      ],
+      "levels_each": 32,
+      "features_per_level": 2,
+      "log2_hashmap_size": 19,
+      "base_resolution": [
+        8,
+        8,
+        8
+      ],
+      "finest_resolution": [
+        32,
+        32,
+        16
+      ]
+    },
+    "mlps": {
+      "hidden_layers_each": 1,
+      "hidden_width": 64,
+      "hidden_activation": "ReLU",
+      "cardiac_input_output": [
+        224,
+        3
+      ],
+      "respiratory_input_output": [
+        224,
+        3
+      ],
+      "intensity_input_output": [
+        32,
+        17
+      ],
+      "bias_input_output": [
+        20,
+        1
+      ],
+      "correction_input_output": [
+        48,
+        1
+      ]
+    },
+    "embeddings": {
+      "slice_features": 16,
+      "frame_features": 16,
+      "intermediate_intensity_features": 16,
+      "bias_coarsest_levels": 2
+    },
+    "loss_weights": {
+      "mae": 1.0,
+      "tv": 0.01,
+      "bias": 0.1,
+      "jacobian_respiratory": 0.1
+    },
+    "segmentation_supervision": false,
+    "training_psf_fwhm": {
+      "in_plane_spacing_multiplier": 1.2,
+      "through_plane": "slice_thickness"
+    },
+    "training_coverage_minimum_distinct_stacks": 2,
+    "full_cine_export_cardiac_frames": 20
+  },
+  "profiles": {
+    "phantom": {
+      "loss_weights": {
+        "correction": 0.5,
+        "jacobian_cardiac": 0.01
+      },
+      "paper_breath_hold_respiratory_query": 0.0
+    },
+    "invivo": {
+      "loss_weights": {
+        "correction": 0.2,
+        "jacobian_cardiac": 0.0001
+      },
+      "paper_breath_hold_respiratory_query": 0.5
+    }
+  },
+  "notes": [
+    "Merge common settings with exactly one published profile; unspecified parameters are documented separately in IMPLEMENTATION_PLAN.md.",
+    "Correction MLP uses supplemental Table 1 input dimension 48; main Eq. (8) also lists spatial features. See the plan.",
+    "Paper breath-hold respiratory queries describe the original datasets. The research benchmark must map its actual end-expiration state explicitly.",
+    "The benchmark also queries the exact cardiac state of the reference frame without changing model or fitting parameters."
+  ]
+}
