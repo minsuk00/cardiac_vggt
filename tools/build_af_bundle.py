@@ -109,6 +109,10 @@ ARMS = {
     "regular24":        ("regular", False, 2 * T),
     "hrv24":            ("hrv",     False, 2 * T),
     "af24":             ("af",      False, 2 * T),
+    # 48-frame (4 nominal beats) AF: the frames-per-slice PROBE (tools/cinevol_nframes_probe.py),
+    # built only under temp/, never into scratch/eval. Per-plane RNG streams do not depend on
+    # n_frames, so frames 0..23 are bit-identical to af24 -- the probe asserts this.
+    "af48":             ("af",      False, 4 * T),
 }
 
 # Rhythms solved with pos_physio (cut-off / hold / volume-matched resume) rather than the uniform
