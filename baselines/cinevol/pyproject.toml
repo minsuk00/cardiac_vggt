@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cinevol-cmr-baseline"
+version = "0.1.0"
+description = "CiNeVol full-cine research baseline with subject-specific optimization"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "torch>=1.13.1", "nibabel", "matplotlib", "scikit-image"]
+
+[tool.setuptools.packages.find]
+include = ["cinevol*"]
+
+[tool.setuptools.package-data]
+cinevol = ["paper_defaults.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
