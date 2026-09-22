@@ -47,18 +47,28 @@ MODELS=(
 SOURCES=(cmrx2023 cmrx2024 cmrx2025 acdc mnms)
 IDX=${SLURM_ARRAY_TASK_ID:-0}
 NS=${#SOURCES[@]}
-[ "$IDX" -lt $(( ${#MODELS[@]} * NS )) ] || { echo "task $IDX: nothing to do"; exit 0; }
-read -r NAME CKPT <<< "${MODELS[$((IDX / NS))]}"
-DS="${SOURCES[$((IDX % NS))]}_${ARM}"
+# PER_MODEL=1: task index = model index and one job runs all 5 cohorts in sequence (generation is
+# fast; 1 A40 job per model).  Default: task index = (model, source), 20 tasks.
+if [ -n "${PER_MODEL:-}" ]; then
+    [ "$IDX" -lt "${#MODELS[@]}" ] || { echo "task $IDX: nothing to do"; exit 0; }
+    read -r NAME CKPT <<< "${MODELS[$IDX]}"
+    DSS=("${SOURCES[@]/%/_${ARM}}")
+else
+    [ "$IDX" -lt $(( ${#MODELS[@]} * NS )) ] || { echo "task $IDX: nothing to do"; exit 0; }
+    read -r NAME CKPT <<< "${MODELS[$((IDX / NS))]}"
+    DSS=("${SOURCES[$((IDX % NS))]}_${ARM}")
+fi
 [ -f "$CKPT" ] || { echo "missing checkpoint $CKPT"; exit 3; }
 
 GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-echo "=== task $IDX  model=$NAME  dataset=$DS  gpu=$GPU ==="
+echo "=== task $IDX  model=$NAME  datasets=${DSS[*]}  gpu=$GPU ==="
 if [ "${1:-}" = "--dry-run" ]; then echo "dry-run: nothing run"; exit 0; fi
 [[ "$GPU" == *A40* ]] || [ -n "${ALLOW_ANY_GPU:-}" ] || { echo "not an A40 ($GPU) -- timing would not be comparable"; exit 4; }
 
-$PY evaluation/src/engine/run_vggt.py --dataset "$DS" --ckpt "$CKPT" --model-name "$NAME" \
-    --split test --arms breath --input scatter ${SUBJECTS:+--subjects $SUBJECTS}
-rc=$?
+rc=0
+for DS in "${DSS[@]}"; do
+    $PY evaluation/src/engine/run_vggt.py --dataset "$DS" --ckpt "$CKPT" --model-name "$NAME" \
+        --split test --arms breath --input scatter ${SUBJECTS:+--subjects $SUBJECTS} || rc=$?
+done
 echo "=== task $IDX done (rc=$rc) ==="
 exit $rc

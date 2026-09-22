@@ -9,7 +9,9 @@ Per subject, from scratch (CiNeVol has no training set -- the fit IS its inferen
                                 own cardiac label for frame f, breathing 0, 1.4 mm isotropic.
 Writes the harness's arm contract (evaluation/paths.py): <subject>/<arm>/recon_breath/
 {vol_t*.nii.gz, provenance.txt, total_wall.sec, losses.jsonl, stamp.json}. stamp.json is written
-LAST and a stamped subject is skipped, exactly like run_baselines.py. The checkpoint is NOT kept.
+LAST and a stamped subject is skipped, exactly like run_baselines.py. The checkpoint is NOT kept
+unless --keep-checkpoint is passed (then also last.pt -- for tools/cinevol_resp_epe.py, which
+queries the fitted model's own respiratory offset field; see that file for the analysis).
 
     source baselines/cinevol/env.sh
     $CINEVOL_PY tools/run_cinevol.py --build-only                     # compile the encoder ONCE
@@ -43,7 +45,7 @@ def git_head(path):
         return "unknown"
 
 
-def run_subject(ds, subj, arm_name, microbatch, chunk, tmp_root):
+def run_subject(ds, subj, arm_name, microbatch, chunk, tmp_root, keep_checkpoint=False):
     import torch
     from cinevol.fit import fit, model_from_checkpoint
     from cinevol.reconstruct import query
@@ -76,6 +78,8 @@ def run_subject(ds, subj, arm_name, microbatch, chunk, tmp_root):
         nib.save(img, os.path.join(out, f"vol_t{f:02d}.nii.gz"))
     torch.cuda.synchronize()
     total = time.perf_counter() - t0
+    if keep_checkpoint:
+        shutil.copy(ckpt, os.path.join(out, "last.pt"))   # for cinevol_resp_epe.py (model.offsets)
     shutil.copy(os.path.join(work, "run", "losses.jsonl"), os.path.join(out, "losses.jsonl"))
     last = json.loads(open(os.path.join(work, "run", "losses.jsonl")).read().splitlines()[-1])
     sim = meta["simulation"]
@@ -120,6 +124,8 @@ def main():
     ap.add_argument("--microbatch", type=int, default=8192)
     ap.add_argument("--chunk", type=int, default=65536, help="export voxels per forward (memory only)")
     ap.add_argument("--tmp", default=f"/tmp/cinevol_{os.environ.get('USER', 'user')}")
+    ap.add_argument("--keep-checkpoint", action="store_true", help="also copy last.pt into the "
+                    "published recon dir (~80 MB/subject) -- for tools/cinevol_resp_epe.py")
     ap.add_argument("--shard", nargs=2, type=int, metavar=("I", "N"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--build-only", action="store_true", help="compile/load the Grid4D encoder and exit")
@@ -152,7 +158,7 @@ def main():
     for k, (ds, s) in enumerate(todo):
         print(f"--- [{k + 1}/{len(todo)}] {ds}/{s} ---", flush=True)
         try:
-            sec = run_subject(ds, s, a.arm_name, a.microbatch, a.chunk, a.tmp)
+            sec = run_subject(ds, s, a.arm_name, a.microbatch, a.chunk, a.tmp, a.keep_checkpoint)
             print(f"    done in {sec:.0f} s", flush=True)
         except Exception as e:                                # one bad subject must not kill the shard
             import traceback

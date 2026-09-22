@@ -39,19 +39,20 @@ REPO=${REPO:-${SLURM_SUBMIT_DIR:-/home/minsukc/vggt-afsim}}
 cd "$REPO" || exit 1
 source baselines/cinevol/env.sh
 ARM=${ARM:-af24}
+ARM_NAME=${ARM_NAME:-cinevol}   # output arm dir; ARM_NAME=cinevol_motion KEEP_CKPT=1 = resp-EPE refit
 N_SHARDS=${N_SHARDS:-8}
 IDX=${SLURM_ARRAY_TASK_ID:-0}
 DRYRUN=""; [ "${1:-}" = "--dry-run" ] && DRYRUN="--dry-run"
 
 GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-echo "=== task $IDX/$N_SHARDS  arm=$ARM  gpu=$GPU  build=$GRID4D_BUILD_DIR ==="
+echo "=== task $IDX/$N_SHARDS  arm=$ARM  arm_name=$ARM_NAME  keep_ckpt=${KEEP_CKPT:-0}  gpu=$GPU  build=$GRID4D_BUILD_DIR ==="
 if [ -z "$DRYRUN" ]; then
     [[ "$GPU" == *A40* ]] || [ -n "${ALLOW_ANY_GPU:-}" ] || { echo "not an A40 ($GPU): timing would not be comparable, refusing"; exit 4; }
     [ -f "$GRID4D_BUILD_DIR/_hash_encoder.so" ] || { echo "encoder not built: run tools/run_cinevol.py --build-only first"; exit 5; }
 fi
 sleep $((IDX * 5))          # stagger the 8 extension loads / GPFS opens
-$CINEVOL_PY -u tools/run_cinevol.py --arm "$ARM" --shard "$IDX" "$N_SHARDS" \
-    ${SUBJECTS:+--subjects $SUBJECTS} $DRYRUN
+$CINEVOL_PY -u tools/run_cinevol.py --arm "$ARM" --arm-name "$ARM_NAME" --shard "$IDX" "$N_SHARDS" \
+    ${KEEP_CKPT:+--keep-checkpoint} ${SUBJECTS:+--subjects $SUBJECTS} $DRYRUN
 rc=$?
 echo "=== task $IDX done (rc=$rc) ==="
 exit $rc
