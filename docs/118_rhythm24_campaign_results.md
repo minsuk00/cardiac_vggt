@@ -1,19 +1,22 @@
 # 118 — 24-frame rhythm campaign: results so far (af24 complete, regular24/hrv24 partial)
 
 > **TL;DR & takeaway**
-> `af24` (simulated AF, 180 test subjects, all 5 methods) is **fully scored**: VGGT `diff1000`
-> beats Fetal CMR 4D on every metric — EF MAE **7.07 vs 13.50 pp** (paired Δ −6.43 pp, p = 4e-14,
-> better in 131/180), PSNR **24.52 vs 22.11 dB**, Dice LV ED/ES **0.905/0.856 vs 0.807/0.729**.
-> The `regular24` control (partial, n=110/180) shows the opposite sign — **Fetal beats VGGT under
-> a periodic rhythm** (EF MAE 4.13 vs 7.52 pp, VGGT worse by +3.39 pp, p = 3e-7). So the claim is
-> not "VGGT is always better" — it is **"Fetal's advantage is conditional on regular rhythm and
-> reverses under AF."** `hrv24` has full VGGT + full Fetal PSNR but no Fetal EF/Dice yet. The
-> missing segmentation (regular24 acdc+mnms, all of hrv24 Fetal) has been **handed off to an
-> external GPU** (2.4 GB package, `/gpfs/.../shared_data/vggt_af_seg_handoff.zip`) after our own
-> queue sat 13–15 h on `Priority`. `nogather`/`hw0` collapsing on EF (42.45 / 37.45 pp MAE) despite
-> normal PSNR is the **expected result of that ablation**, not a bug — that is what it is there to
-> show. **Open decision, not yet made: report af24 alone, or the full regular→hrv→af progression
-> (recommended below).**
+> **Scope decision resolved by data (§6): report `af24` + `hrv24`.** Three-point paired EF picture
+> (VGGT `diff1000` vs Fetal, |EF err|, same-subject Wilcoxon):
+> **`regular24` Fetal wins** (4.62 vs 7.08 pp, Δ +2.45 pp, p = 9e-6, n=159/180 — acdc cohort still
+> pending, resubmitted) → **`hrv24` a statistical tie** (6.46 vs 6.82 pp, Δ +0.35 pp, p = 0.22, NOT
+> significant, VGGT better in only 79/179 — a coin flip, n=180/180 **complete**) → **`af24` VGGT
+> wins decisively** (13.50 vs 7.07 pp, Δ −6.43 pp, p = 4e-14, better in 131/180, n=180/180). The
+> claim this supports: **Fetal CMR 4D's periodic-cine assumption is robust to physiological HRV but
+> breaks down specifically under simulated AF** — not "any irregularity breaks Fetal." VGGT is flat
+> across all three rhythms (PSNR 24.25/24.60/24.52 dB, EF MAE 7.00/6.82/7.07 pp) — it never
+> conditions on rhythm, so this is its expected null result. On `af24` alone (full 5-method table,
+> §2): VGGT `diff1000` beats Fetal on every metric — PSNR 24.52 vs 22.11 dB, Dice LV ED/ES
+> 0.905/0.856 vs 0.807/0.729. Most of the missing Fetal segmentation was filled by an **external
+> GPU handoff** (2.4 GB package) after our own queue sat 13–15 h on `Priority`; one small gap
+> (`acdc_regular24`, 21 subjects) was missed when scoping that handoff and is resubmitted on our
+> own queue (now much quieter). `nogather`/`hw0` collapsing on EF (42.45 / 37.45 pp MAE) despite
+> normal PSNR is the **expected result of that ablation**, not a bug.
 
 ---
 
@@ -23,7 +26,7 @@
 |---|---|---|---|
 | Fetal recon | 180/180 ✓ | 180/180 ✓ | 180/180 ✓ |
 | Fetal PSNR/SSIM/NCC | 180/180 ✓ | 180/180 ✓ | 180/180 ✓ |
-| Fetal EF/Dice | **110/180** (3/5 cohorts) | **0/180** | 180/180 ✓ |
+| Fetal EF/Dice | **159/180** (4/5 cohorts; acdc resubmitted `61710869`) | **180/180 ✓** (via handoff) | 180/180 ✓ |
 | VGGT `diff1000` (recon+metrics+EF) | 180/180 ✓ | 180/180 ✓ | 180/180 ✓ |
 | VGGT `base`/`nogather`/`hw0` | not run (scope decision, see §5) | not run | 180/180 ✓ |
 | GT segmentation cache | ✓ | ✓ | ✓ |
@@ -74,26 +77,38 @@ Not investigated further; not a defect.
 Flat within noise across all three — VGGT reconstructs each frame independently and never
 conditions on rhythm, so this is the expected null result for it.
 
-**Fetal CMR 4D, image metrics (full, no segmentation needed) + EF where scored:**
+**Fetal CMR 4D, image metrics (full) + EF (near-complete):**
 
 | arm | n (PSNR) | PSNR | SSIM | NCC | n (EF) | EF MAE (pp) | EF bias (pp) | Dice LV ED/ES |
 |---|---|---|---|---|---|---|---|---|
-| `regular24` | 180 | 23.18 | 0.648 | 0.834 | **110 (partial)** | 4.13 | +1.63 | 0.894/0.841 |
-| `hrv24` | 180 | 22.81 | 0.626 | 0.820 | **0** | — | — | — |
-| `af24` | 180 | 22.11 | 0.590 | 0.795 | 180 | 13.50 | −10.97 | 0.807/0.729 |
+| `regular24` | 180 | 23.18 | 0.648 | 0.834 | **159/180** (acdc pending) | 4.62 | +1.26 | 0.889/0.836 |
+| `hrv24` | 180 | 22.81 | 0.626 | 0.820 | **180/180** | 6.46 | −3.47 | 0.845/0.795 |
+| `af24` | 180 | 22.11 | 0.590 | 0.795 | 180/180 | 13.50 | −10.97 | 0.807/0.729 |
 
 PSNR degrades monotonically with rhythm irregularity (23.18 → 22.81 → 22.11 dB), with the AF step
-(−0.70 dB) costing roughly double the HRV step (−0.37 dB) despite HRV being the more clinically
-subtle irregularity. Fetal's partial `regular24` EF (n=110/180, missing acdc+mnms) is provisional.
+(−0.70 dB) costing roughly double the HRV step (−0.37 dB). EF MAE is **not** monotonic in the same
+smooth way — it holds nearly flat from `regular24` to `hrv24` (4.62 → 6.46) and then jumps sharply
+into `af24` (→ 13.50), consistent with the paired analysis below: HRV alone barely moves Fetal's EF
+error, AF roughly triples it.
 
-**The reversal.** On `regular24` (partial), Fetal beats VGGT on EF: MAE 4.13 vs 7.52 pp, paired
-Δ = **+3.39 pp in VGGT's disfavor** (p = 2.5e-7, VGGT better in only 35/110). On `af24` (full),
-that flips completely: Fetal 13.50 vs VGGT 7.07 pp, Δ = −6.43 pp in VGGT's favor. **This is the
-central finding this campaign was built to test** (docs/115 §1): Fetal's periodic-cine assumption
-gives it a real, measured advantage under a regular rhythm, and simulated AF is severe enough to
-not just erode that advantage but reverse it. `hrv24`'s missing EF cell is exactly the data point
-that would show whether this reversal needs AF specifically, or already shows up under mild
-irregularity — undetermined until the handoff returns.
+**The dose-response, paired against VGGT `diff1000` (|EF err|, same subjects, Wilcoxon):**
+
+| arm | n | Fetal | VGGT | Δ (VGGT − Fetal) | p | VGGT better in |
+|---|---|---|---|---|---|---|
+| `regular24` | 159 | 4.62 | 7.08 | **+2.45 pp** (Fetal wins) | 9.2e-6 | 60/159 |
+| `hrv24` | 179 | 6.46 | 6.80 | +0.35 pp (**tied**) | 0.223 (n.s.) | 79/179 |
+| `af24` | 180 | 13.50 | 7.07 | **−6.43 pp** (VGGT wins) | 4.1e-14 | 131/180 |
+
+**This is the central finding this campaign was built to test** (docs/115 §1), and it resolves
+cleanly: Fetal's periodic-cine assumption gives it a real, measured EF advantage under a regular
+rhythm (p = 9e-6). Under HRV — physiological, non-pathological beat-to-beat variability — that
+advantage **evaporates but does not reverse**: the paired difference is not statistically
+significant (p = 0.22), and VGGT is better in barely more than a coin flip of subjects (79/179).
+Only under simulated AF does the comparison flip hard in VGGT's favor (p = 4e-14). So the honest
+claim is narrower and more precise than a strict monotonic ordering would suggest: **Fetal CMR 4D
+tolerates ordinary heart-rate variability but its periodicity assumption specifically breaks down
+under atrial fibrillation**, where VGGT's per-frame-independent reconstruction has no equivalent
+failure mode (§3, VGGT flat at 7.00/6.82/7.07 pp EF MAE across all three arms).
 
 ## 4. External segmentation handoff (in flight)
 
@@ -120,6 +135,16 @@ job problem. Rather than continue waiting, built and handed off a self-contained
   to investigate, and it is now fixed (masks copied to `scratch/eval/_rhythm24_segs/<arm>/...`
   before the work dir is cleaned up). All jobs submitted before the fix (the ones stuck in queue,
   now handed off externally) do not benefit from it retroactively.
+- **Returned 2026-09-22**, via a shared Google Drive link, as a `.tar.gz`: 5,496 segmentation
+  masks, exact counts matching every cohort we sent, `postprocessing.json` identical to our own
+  copy of the model (same per-class Dice — confirms the same weights/config), `uint8` labels
+  0–3 as expected. Stamped with the dump's `ef_dump_id` + `nnunet_config=3d_fullres` and scored
+  with our own `ef_dice.py score` (no numbers were trusted from the external side, per §4's design).
+  **Scoping gap found on our side**: the handoff dump only included `mnms_regular24`, not
+  `acdc_regular24` — the other `regular24` cohort that had also been stuck in our queue. Missed
+  when building the package; not a segmentation failure. Backfilled by resubmitting just that one
+  cohort (21 subjects) on our own queue, `61710869` — much lighter than the original ask, and the
+  account's `spgpu` queue had emptied out substantially by the time this was caught.
 
 ## 5. The EF-undefined-frame rule (af24, settled)
 
@@ -136,27 +161,22 @@ against the original campaign score to within 0.1 mL on all 4 subjects). Moves F
 from 13.15 (n=176, dropping the 4) to 13.50 (n=180, this rule) — VGGT unaffected (no VGGT
 reconstruction had a whole-frame LV vanish in any arm).
 
-## 6. Scope decision needed: af24 alone, or af24 + hrv24?
+## 6. Scope decision: RESOLVED — report af24 + hrv24
 
-**`regular24` is out of scope for the headline regardless** — the paper's stated regime is
-AF-or-HRV free-breathing acquisition (docs/115 §1), not periodic rhythm, so a genuinely regular
-cine isn't the target scenario being tested. It stays useful as a methods-section reference (it's
-what shows the `af24`/`hrv24` effect is a rhythm effect, not just "24 frames breaks Fetal" — the
-reversal in §3 is the evidence for that), but not as a results-table row. That narrows the actual
-choice to two options:
+`hrv24` Fetal EF landed complete (180/180, via the external handoff, §4) and settles this.
+**`regular24` stays out of the headline** — the paper's regime is AF-or-HRV free-breathing
+acquisition (docs/115 §1), not periodic rhythm — but it remains the essential methods-section
+control: it is what proves the `hrv24`/`af24` effect is a genuine rhythm effect (Fetal actually
+*wins* there, p = 9e-6) rather than an artifact of 24-frame Fetal reconstruction generally.
 
-1. **`af24` only** — simplest, largest and cleanest effect, the pathological/severe case.
-2. **`af24` + `hrv24`** — both are in-regime. `hrv24`'s missing Fetal EF cell (§1, in flight via
-   the handoff) decides which of two framings the data supports once it lands:
-   - Fetal ties or wins on `hrv24` but loses badly on `af24` → **AF specifically** breaks Fetal;
-     mild/everyday irregularity is fine. Narrower but more clinically precise claim.
-   - Fetal already loses on `hrv24`, similarly to `af24` → **any irregularity** breaks Fetal,
-     VGGT is robust across the in-regime range. Broader, stronger claim.
-
-These are different papers, not just more/less data, so it's not resolvable without the `hrv24`
-number. Recommendation: **af24 + hrv24** once `hrv24` Fetal EF lands (its VGGT side and Fetal PSNR
-are already in — §3 — only the EF/Dice cell is missing). Until then, `af24` alone is publishable
-as-is; `hrv24` is not decidable yet either way.
+The `hrv24` result selects the narrower framing over the broader one (§3): Fetal **ties** VGGT
+under HRV (p = 0.22, not significant) and only loses decisively under AF (p = 4e-14). So report
+**`af24` + `hrv24`** side by side, with `regular24` as the supporting control in methods, and the
+claim as: *"Fetal CMR 4D's periodic-cine reconstruction tolerates physiological heart-rate
+variability but its underlying periodicity assumption specifically fails under atrial
+fibrillation; VGGT's per-frame reconstruction has no equivalent failure mode."* This is a more
+precise and more defensible claim than "VGGT is robust to any irregularity," and it is exactly the
+question the three-arm design (docs/115) was built to answer.
 
 ## 7. Not yet done
 
