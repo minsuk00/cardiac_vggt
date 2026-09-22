@@ -203,6 +203,42 @@ sentence on why each baseline moves the direction it does (§2a/§2b).
 | Fetal CMR 4D | **+5.36** (worse) | −0.12 (flat) |
 | VGGT diff1000 | −0.42 | +0.02 (flat) |
 
+### 3c. VGGT ablations on `af12` (added 2026-09-22): `base`, `nogather`, `hw0` — all six arms
+
+`nogather` and `hw0` were generated after the three-method campaign (`nogather` inline on an L40S,
+`hw0` on an A40 via `sbatch/rhythm24_vggt.sh PER_MODEL=1` so `af12` has one A40-timed VGGT arm) and
+scored on the same 180 subjects with the same chain (`rhythm24_metrics.sh` → `rhythm24_seg.sh
+STAGE=pred`, 0 failures). n = 180 image / 178 EF (Fetal's two failed self-gates excluded from the
+paired EF set), unit-peak PSNR:
+
+| | PSNR | SSIM | NCC | EF MAE (pp) | EF slope | Dice LV ED/ES |
+|---|---|---|---|---|---|---|
+| Fetal CMR 4D | 22.23 | 0.595 | 0.797 | 7.79 | 0.75 | 0.834/0.752 |
+| CiNeVol (masked) | 23.28 | 0.648 | 0.842 | 10.29 | 0.72 | 0.848/0.801 |
+| VGGT base | **24.53** | 0.711 | **0.884** | 8.89 | 0.88 | **0.903**/0.850 |
+| **VGGT diff1000** | 24.50 | **0.715** | 0.883 | **7.49** | **0.91** | 0.902/**0.857** |
+| VGGT nogather (ablation) | 23.73 | 0.680 | 0.860 | 37.6 | 0.40 | 0.837/0.747 |
+| VGGT hw0 (ablation) | 23.61 | 0.679 | 0.856 | 42.9 | 0.29 | 0.828/0.731 |
+
+- `base` vs `diff1000`: image metrics identical (±0.03 dB); `diff1000` is better on function (EF
+  MAE −1.4 pp, ESV MAE 7.9 vs 9.7 mL, slope 0.91 vs 0.88). Same ordering as af24 (docs/118).
+- `nogather`/`hw0` **replicate their af24 collapse almost to the decimal** (af24: 37.45 / 42.45 pp,
+  docs/118 §3): predicted EF ≈ 11–13 % (e.g. CMRx24_Test_P001: EDV 111 / ESV 97 mL vs GT 165 / 71)
+  — a near-static heart — while PSNR drops only ~0.9 dB. The gather mechanism is load-bearing for
+  cardiac function, not for image fidelity, and that holds at 12 frames as at 24.
+- Timing caveat: `af12` VGGT wall-clock is only A40-comparable for `hw0`; `base`/`diff1000`/
+  `nogather` ran on an L40S (the scored metrics are GPU-invariant).
+
+Files: `temp/rhythm24_ef/af12_summary.json` (6 arms; `tools/rhythm24_ef_table.py af12 --json …`
+— the `--json` flag is what saves it), `figs/rhythm24/af12_results_table.png`,
+`evaluation/metric_results/test/*_af12/vggt_final518_{nogather,hw0}_ep300.json`.
+
+**CiNeVol `cinevol_motion` refit (checkpoints only).** A second from-scratch fit of all 180 `af12`
+subjects with `tools/run_cinevol.py --keep-checkpoint` (arm dir `cinevol_motion`, `last.pt` ~170 MB
+per subject, 180/180 landed) for the respiratory-motion EPE analysis of docs/119 §6. Seeded
+(`seed=7`) but not bit-reproducible on GPU, and run on mixed L40S / RTX 6000 Ada, so it is kept as
+its own arm: its volumes and timing are NOT scored and it never replaces `cinevol`/`cinevol_masked`.
+
 ## 4. Cleanup done this session
 
 - `scratch/eval/*_af24/out/*/cinevol_maskzero/` (23 subjects, 895 MB) — the buggy first mask-zero
@@ -231,9 +267,10 @@ table, see §1). Results: `figs/rhythm24/af12_results_table.png`,
 
 ## 6. Not done / open
 
-- VGGT `base` on `af12`: image metrics complete (180/180); EF/Dice partial as this doc was written
-  (3/5 cohorts) — will complete on its own, does not change §3's `diff1000` conclusions.
-- Motion EPE column for `af12` (`tools/rhythm24_resp_epe.py af12` not yet run).
+- ~~VGGT `base`/`nogather`/`hw0` on `af12`~~ — done, §3c.
+- Motion EPE column for `af12` (`tools/rhythm24_resp_epe.py af12` not yet run), and the CiNeVol
+  ψ-conditioned EPE (`tools/cinevol_resp_epe.py`, not yet written; its inputs, the `cinevol_motion`
+  checkpoints, are complete — §3c).
 - `regular24`/`hrv24` CiNeVol arms (would give the paired regular→AF control CiNeVol currently
   lacks, matching what docs/118 already did for Fetal-vs-VGGT) — not started, ~1 day each.
 - A `regular12`/`hrv12` pair, if the paper ends up wanting the full dose-response at both frame
