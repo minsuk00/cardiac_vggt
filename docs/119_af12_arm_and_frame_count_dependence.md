@@ -268,9 +268,9 @@ table, see §1). Results: `figs/rhythm24/af12_results_table.png`,
 ## 6. Not done / open
 
 - ~~VGGT `base`/`nogather`/`hw0` on `af12`~~ — done, §3c.
-- Motion EPE column for `af12` (`tools/rhythm24_resp_epe.py af12` not yet run), and the CiNeVol
-  ψ-conditioned EPE (`tools/cinevol_resp_epe.py`, not yet written; its inputs, the `cinevol_motion`
-  checkpoints, are complete — §3c).
+- ~~Motion EPE column for `af12`, and the CiNeVol ψ-conditioned EPE~~ — done, docs/122
+  (af12 dz: VGGT `base` 0.87 mm, CiNeVol 4.23, Fetal 4.86, predict-nothing 4.72; scripts now in
+  `evaluation/src/analysis/motion_epe/`).
 - `regular24`/`hrv24` CiNeVol arms (would give the paired regular→AF control CiNeVol currently
   lacks, matching what docs/118 already did for Fetal-vs-VGGT) — not started, ~1 day each.
 - A `regular12`/`hrv12` pair, if the paper ends up wanting the full dose-response at both frame
