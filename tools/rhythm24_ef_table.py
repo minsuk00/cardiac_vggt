@@ -113,7 +113,7 @@ def main():
     print(f"=== {a.arm} ===   (motion EPE = breathing through-plane EPE vs the TRUE frame-wise shift; "
           f"VGGT only -- Fetal predicts no per-slice shift)")
     print(f"{'method':10}{'n':>5}{'PSNR':>7}{'SSIM':>7}{'NCC':>7}{'EF MAE':>8}{'bias':>8}{'r':>6}{'EDV MAE':>9}"
-          f"{'ESV MAE':>9}{'DiceLV ED/ES':>15}{'DiceMYO ED/ES':>15}{'motionEPE mm':>14}")
+          f"{'ESV MAE':>9}{'SV MAE':>8}{'curve%':>8}{'DiceLV ED/ES':>15}{'DiceMYO ED/ES':>15}{'motionEPE mm':>14}")
     for m in methods:
         v = list(D.get(m, {}).values())
         if not v:
@@ -127,6 +127,12 @@ def main():
              "gt_ef_mean": float(g.mean()),
              "edv_mae": float(np.mean([abs(s["edv_breath"] - s["edv_gt"]) for s in v])),
              "esv_mae": float(np.mean([abs(s["esv_breath"] - s["esv_gt"]) for s in e])),
+             # SV from EDV/ESV here (not ef_dice's sv_*) so it follows the filled-ESV rule above
+             "sv_mae": float(np.mean([abs((s["edv_breath"] - s["esv_breath"]) - (s["edv_gt"] - s["esv_gt"]))
+                                      for s in e])),
+             # per-frame LV curve error, % of GT EDV (ef_dice >= 45a72fa; nan on older jsons)
+             "lv_curve_nmae": mean("lv_curve_nmae_breath") if any("lv_curve_nmae_breath" in s for s in v)
+             else float("nan"),
              "dice_lv_ed": mean("dice_breath_LV_ED"), "dice_lv_es": mean("dice_breath_LV_ES"),
              "dice_myo_ed": mean("dice_breath_MYO_ED"), "dice_myo_es": mean("dice_breath_MYO_ES")}
         r.update(img.get(m, {}))
@@ -135,7 +141,7 @@ def main():
         epe = f"{r['motion_epe_mm']:14.2f}" if r["motion_epe_mm"] is not None else f"{'n/a':>14}"
         print(f"{short(m):10}{r['n']:5d}{r.get('psnr', float('nan')):7.2f}{r.get('ssim', float('nan')):7.3f}"
               f"{r.get('ncc', float('nan')):7.3f}{r['ef_mae']:8.2f}{r['ef_bias']:+8.2f}{r['r']:6.2f}"
-              f"{r['edv_mae']:9.1f}{r['esv_mae']:9.1f}"
+              f"{r['edv_mae']:9.1f}{r['esv_mae']:9.1f}{r['sv_mae']:8.1f}{r['lv_curve_nmae']:8.2f}"
               f"{r['dice_lv_ed']:9.3f}/{r['dice_lv_es']:.3f}{r['dice_myo_ed']:9.3f}/{r['dice_myo_es']:.3f}{epe}")
 
     F = D.get(REF, {})
