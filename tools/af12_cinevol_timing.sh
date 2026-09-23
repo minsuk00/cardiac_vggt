@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 source baselines/cinevol/env.sh          # module load + CINEVOL_PY + GRID4D_BUILD_DIR + PYTHONPATH
 GPUS=${GPUS:-0,1,2,3}
 NAME=${NAME:?set NAME (the arm name, e.g. cinevol_4gpu)}
-MAX_LOAD=${MAX_LOAD:-4}
+MAX_LOAD=${MAX_LOAD:-8}          # node-wide load; other users' cgroups on a shared node count too
 LOG=${LOG:-temp/af12_timing_${NAME}}; mkdir -p "$LOG"
 export CUDA_VISIBLE_DEVICES=$GPUS
 LOCAL_GPUS=$(seq -s, 0 $(( $(tr ',' '\n' <<< "$GPUS" | wc -l) - 1 )))
