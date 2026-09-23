@@ -12,7 +12,10 @@ cine_gt.nii.gz is deliberately NOT linked: image_metrics writes a fresh 12-frame
 
 NEVER OVERWRITES: an existing <src>_af12/out/<subject> dir is refused (no --overwrite here).
 
-    PYTHONPATH=training:. python tools/build_af12_from_af24.py [--sources ...] [--check]
+`--rhythm hrv` builds `<src>_hrv12` from `<src>_hrv24` the same way. Measured: the directly-simulated
+12-frame `cmrx2024_hrv` equals hrv24's frames 0..11 (positions + scatter 38/38, voxels byte-identical).
+
+    PYTHONPATH=training:. python tools/build_af12_from_af24.py [--rhythm af|hrv] [--sources ...] [--check]
 """
 import argparse
 import json
@@ -37,21 +40,22 @@ def rel_link(dst: Path, target: Path):
     dst.symlink_to(os.path.relpath(target, dst.parent))
 
 
-def truncate_manifest(m):
+def truncate_manifest(m, rhythm):
     T = int(m["n_cardphase"])
     assert m["T"] == 24 and T == NF, (m["T"], T)
+    assert m["rhythm"]["rhythm"] == rhythm, (m["rhythm"]["rhythm"], rhythm)
     out = json.loads(json.dumps(m))
     out["T"] = NF
-    out["cohort"] = f"{m['source']}_af12"
+    out["cohort"] = f"{m['source']}_{rhythm}12"
     sc = out["scatter"]
     # The builder's own rule for nf == T: frame j = (phase + roll) mod T, beat 0 for every plane.
     sc["phase_per_plane"] = [int(p % T) for p in m["scatter"]["phase_per_plane"]]
     sc["beat_per_plane_scatter"] = [0] * len(sc["phase_per_plane"])
     sc["note"] = ("FRAME index per plane (not cardiac phase): stack_t{j}[z] is that slice's j-th "
-                  "real-time frame. af24's draw folded onto its first beat: j = (phase + roll_z) mod T.")
+                  f"real-time frame. {rhythm}24's draw folded onto its first beat: j = (phase + roll_z) mod T.")
     r = out["rhythm"]
     pos = np.asarray(m["rhythm"]["ref_pos"][:NF], float)
-    r["arm"] = "af12"
+    r["arm"] = f"{rhythm}12"
     r["ref_pos"] = pos.tolist()
     r["gt_map"] = m["rhythm"]["gt_map"][:NF]
     r["duplicate_targets"] = [[int(i) for i in np.where(np.abs((pos % T) - p) < 1e-9)[0]]
@@ -60,20 +64,21 @@ def truncate_manifest(m):
     r["pos_per_plane"] = [row[:NF] for row in m["rhythm"]["pos_per_plane"]]
     r["beat_per_plane"] = [row[:NF] for row in m["rhythm"]["beat_per_plane"]]
     r["params"] = {**m["rhythm"]["params"], "n_frames": NF}
-    r["builder"] = "build_af12_from_af24.py (prefix of build_af_bundle.py's af24 record)"
-    r["truncated_from"] = f"{m['source']}_af24"
-    r["physio_note"] = "physio post-conditions were measured on the 24-frame record and are kept as-is"
+    r["builder"] = f"build_af12_from_af24.py (prefix of build_af_bundle.py's {rhythm}24 record)"
+    r["truncated_from"] = f"{m['source']}_{rhythm}24"
+    if "physio" in r:
+        r["physio_note"] = "physio post-conditions were measured on the 24-frame record and are kept as-is"
     return out
 
 
-def build(src, s):
-    ds24, ds12 = f"{src}_af24", f"{src}_af12"
+def build(src, s, rhythm):
+    ds24, ds12 = f"{src}_{rhythm}24", f"{src}_{rhythm}12"
     a = paths.subject_dir(ds24, s)
     d = paths.subject_dir(ds12, s)
     if d.exists():
         return "skipped"
     m = json.load(open(a / "manifest.json"))
-    man = truncate_manifest(m)
+    man = truncate_manifest(m, rhythm)
     d.mkdir(parents=True)
     (d / "breath").mkdir(); (d / "gt").mkdir()
     for f in range(NF):
@@ -96,8 +101,8 @@ def build(src, s):
     return "built"
 
 
-def check(src, s):
-    ds24, ds12 = f"{src}_af24", f"{src}_af12"
+def check(src, s, rhythm):
+    ds24, ds12 = f"{src}_{rhythm}24", f"{src}_{rhythm}12"
     a, d = paths.subject_dir(ds24, s), paths.subject_dir(ds12, s)
     m24, m12 = json.load(open(a / "manifest.json")), json.load(open(d / "manifest.json"))
     assert m12["T"] == NF and m12["n_cardphase"] == NF and m12["rhythm"]["params"]["n_frames"] == NF
@@ -118,16 +123,17 @@ def check(src, s):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--rhythm", choices=["af", "hrv"], default="af")
     ap.add_argument("--sources", nargs="+", default=list(SOURCES))
     ap.add_argument("--split", default="test")
     ap.add_argument("--check", action="store_true", help="verify built cohorts, write nothing")
     a = ap.parse_args()
     n = {}
     for src in a.sources:
-        ds24 = f"{src}_af24"
+        ds24 = f"{src}_{a.rhythm}24"
         keep, _ = paths.filter_by_split(ds24, paths.subjects(ds24), a.split)
         for s in keep:
-            st = "ok" if a.check and check(src, s) else (None if a.check else build(src, s))
+            st = "ok" if a.check and check(src, s, a.rhythm) else (None if a.check else build(src, s, a.rhythm))
             n[st] = n.get(st, 0) + 1
         print(f"  {src}: {len(keep)} subjects -> {n}", flush=True)
     print(n)
