@@ -428,12 +428,11 @@ def main():
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--gpus", default="0",
                     help="comma-separated GPU ids; >1 shards each subject's phases across them "
-                         "(one model copy + thread per GPU). Max 3 — 4 concurrent GPUs shut this "
-                         "machine down.")
+                         "(one model copy + thread per GPU). Max 4 (T=12 -> 3 phases/GPU).")
     args = ap.parse_args()
     gpus = [int(g) for g in args.gpus.split(",")]
-    if len(gpus) > 3 or len(set(gpus)) != len(gpus):
-        sys.exit(f"--gpus {args.gpus}: need 1-3 distinct GPUs")
+    if len(gpus) > 4 or len(set(gpus)) != len(gpus):
+        sys.exit(f"--gpus {args.gpus}: need 1-4 distinct GPUs")
 
     method = paths.canonical_arm(args.model_name, date=args.date)
     gated = args.input == "gated"
@@ -500,10 +499,18 @@ def main():
             # pin_scatter overwrites every companion phase, but VGGT is not permutation-equivariant,
             # so a reordered draw would stop `<source>_regular_frozen` being an exact control.
             seq = name_seed(man.get("source", ds_name), subject)   # cohort-composition independent
+            # Warm the monai cache OUTSIDE the timed span (docs/120 §6a): the first `get_data` of a
+            # subject on a node runs the full preprocess (GPFS NIfTI load, resample, normalize,
+            # ~1 s) lazily, which used to land inside `total_sec`. The draw is `random.Random(seq)`
+            # -seeded, so the timed call below returns the identical batch.
+            t0 = time.perf_counter()
+            dset.get_data(seq_index=seq, img_per_seq=dset.num_slices)
+            cache_warm_s = time.perf_counter() - t0
             # metadata_draw is filled by the breath arm only (it owns ed_dvf.npz), but metadata.json
             # is written for EVERY arm — initialise it or `--arms clean` raises UnboundLocalError
             # AFTER the recons are on disk, leaving an arm with no metadata for check_overwrite.
             timing, rdiag, metadata_draw = {"model_load_sec": model_load_s,
+                                            "cache_warm_sec": cache_warm_s,
                                             "gpu": torch.cuda.get_device_name(devices[0]),
                                             "gpus": gpus}, {}, {}
             for breathing, var in [(b, v) for b, v in ((False, "clean"), (True, "breath"))
