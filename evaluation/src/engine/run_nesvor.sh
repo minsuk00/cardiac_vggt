@@ -28,7 +28,7 @@
 #          bash evaluation/src/engine/run_nesvor.sh <subject> <clean|breath> [res_mm]
 #        EVAL_DATASET is REQUIRED (cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr).
 set -uo pipefail
-VGGT=/home/minsukc/vggt
+VGGT="${VGGT:-$(cd "$(dirname "$0")/../../.." && pwd)}"   # this checkout (worktree-safe); override to redirect SD
 NESVOR_BIN="${NESVOR_BIN:-/home/minsukc/micromamba/envs/nesvor-t2/bin/nesvor}"   # native env (docs/90)
 NESVOR_SRC="$VGGT/baselines/nesvor/NeSVoR"                                          # editable install it runs
 
@@ -97,7 +97,7 @@ recon_one() {
 }
 export -f recon_one; export OUT SD VAR INPUT METHOD MASK_FILE THICK RES NESVOR_BIN
 
-# GPUS=0,1,2 (ids relative to CUDA_VISIBLE_DEVICES, at most 3 — caesar must never use all 4): shard
+# GPUS=0,1,2,3 (ids relative to CUDA_VISIBLE_DEVICES, at most 4; T=12 -> 3 fits per GPU): shard
 # the phases round-robin, phase p -> GPU p mod N, ONE worker per GPU running its phases one after
 # another (exactly one fit per GPU at a time; J is ignored). Unset = the original J path on one GPU.
 PHYS=()
@@ -114,8 +114,8 @@ if [ -n "${GPUS:-}" ]; then
       PHYS+=("$g")
     fi
   done
-  if [ ${#PHYS[@]} -lt 1 ] || [ ${#PHYS[@]} -gt 3 ] || [ "$(printf '%s\n' "${PHYS[@]}" | sort -u | wc -l)" -ne ${#PHYS[@]} ]; then
-    echo "FATAL: GPUS needs 1-3 distinct GPUs, got '$GPUS'"; exit 1
+  if [ ${#PHYS[@]} -lt 1 ] || [ ${#PHYS[@]} -gt 4 ] || [ "$(printf '%s\n' "${PHYS[@]}" | sort -u | wc -l)" -ne ${#PHYS[@]} ]; then
+    echo "FATAL: GPUS needs 1-4 distinct GPUs, got '$GPUS'"; exit 1
   fi
 fi
 NGPU=$(( ${#PHYS[@]} > 0 ? ${#PHYS[@]} : 1 ))

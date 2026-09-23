@@ -55,23 +55,32 @@ def translate_native(stack_xyz, shifts_mm_xy, spacing_xy):
     return out
 
 
-def run_subject(models, config, ds, subj, variant, input_name, anchor, out_root, batch_size):
+def run_subject(models, config, ds, subj, variant, input_name, anchor, out_root, batch_size, arm=None):
     """models: one model copy per device; the T phases are split into contiguous blocks, one
     thread per device (phases are independent). One model -> the original sequential loop."""
     sd = paths.subject_dir(ds, subj)
     man = json.load(open(sd / "manifest.json"))
     T, ref_plane = int(man["T"]), int(man["scatter"]["ref_plane"])
-    arm = f"dangi_{input_name}" if input_name != "gated" else "dangi"
+    arm = arm or (f"dangi_{input_name}" if input_name != "gated" else "dangi")
     out_dir = os.path.join(out_root, ds, "out", subj, arm, f"recon_{variant}")
     os.makedirs(out_dir, exist_ok=True)
     if os.path.exists(os.path.join(out_dir, "stamp.json")) and not args.overwrite:
         return "cached"
     stack_dir = "scatter" if input_name == "scatter" else variant
+    # Timed span (docs/120 §3, one definition for every method in its table): preprocess +
+    # centre prediction + slice translation for all T phases. The stack reads happen BEFORE the
+    # timer and the NIfTI writes AFTER it (both GPFS-bound and recorded separately in timing.json).
+    t0 = time.monotonic()
+    imgs = []
+    for k in range(T):
+        img = nib.load(sd / stack_dir / f"stack_t{k:02d}.nii.gz")
+        native = np.asarray(img.dataobj, dtype=np.float32)              # forces the read now
+        imgs.append((native, nib.Nifti1Image(native, img.affine, img.header)))
+    io_load = time.monotonic() - t0
     centres_log, t0 = {}, time.monotonic()
 
     def one_phase(k, model):
-        img = nib.load(sd / stack_dir / f"stack_t{k:02d}.nii.gz")
-        native = np.asarray(img.dataobj, dtype=np.float32)
+        native, img = imgs[k]
         spacing = np.linalg.norm(img.affine[:3, :3], axis=0)
         slices, _ = preprocess(img, config)  # (Z,192,192) on Dangi's grid
         centres = predict_centers(model, normalize(slices), batch_size)  # (Z,2) x,y px @1.5625
@@ -79,17 +88,21 @@ def run_subject(models, config, ds, subj, variant, input_name, anchor, out_root,
                       "mean": centres.mean(axis=0)}[anchor]
         shifts_mm = (anchor_point(centres, anchor_arg, config) - centres) * config.spacing_mm
         corrected = translate_native(native, shifts_mm, spacing[:2])
-        nib.save(nib.Nifti1Image(corrected, img.affine), os.path.join(out_dir, f"vol_t{k:02d}.nii.gz"))
-        return dict(centres_px=centres.tolist(), shifts_mm=shifts_mm.tolist())
+        return corrected, dict(centres_px=centres.tolist(), shifts_mm=shifts_mm.tolist())
 
     def block(r, ks):
         return [(k, one_phase(k, models[r])) for k in ks]
 
     blocks = [b.tolist() for b in np.array_split(np.arange(T), len(models))]
     with ThreadPoolExecutor(len(models)) as ex:
-        for part in ex.map(block, range(len(models)), blocks):
-            centres_log.update({f"t{k:02d}": v for k, v in part})
+        parts = list(ex.map(block, range(len(models)), blocks))
     total = time.monotonic() - t0
+    t0 = time.monotonic()
+    for part in parts:
+        for k, (corrected, log) in part:
+            nib.save(nib.Nifti1Image(corrected, imgs[k][1].affine), os.path.join(out_dir, f"vol_t{k:02d}.nii.gz"))
+            centres_log[f"t{k:02d}"] = log
+    io_save = time.monotonic() - t0
     json.dump(centres_log, open(os.path.join(out_dir, "centres.json"), "w"))
     json.dump(dict(engine="dangi_stage_a", input_stack=input_name, anchor=anchor,
                    checkpoint=os.path.abspath(args.checkpoint),
@@ -98,6 +111,9 @@ def run_subject(models, config, ds, subj, variant, input_name, anchor, out_root,
     tj = os.path.join(os.path.dirname(out_dir), "timing.json")
     timing = json.load(open(tj)) if os.path.exists(tj) else {}
     timing[variant] = dict(total_sec=total, per_phase_sec=total / T,
+                           io_load_sec=io_load, io_save_sec=io_save,
+                           span="preprocess+predict+translate, all T phases; stack reads before / "
+                                "NIfTI writes after the timer (docs/120 §3)",
                            device=str(next(models[0].parameters()).device), gpus=len(models))
     json.dump(timing, open(tj, "w"), indent=2)
     return f"{total:.1f}s"
@@ -117,16 +133,18 @@ def main():
                     help="bundle root (default) or a mirror tree such as temp/dangi/eval for a dry pass")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--batch-size", type=int, default=32)
+    ap.add_argument("--arm-name", default=None,
+                    help="output arm dir (default dangi_<input> / dangi); use a NEW name for a timing run")
     ap.add_argument("--overwrite", action="store_true",
                     help="regenerate even subjects with an existing stamp.json (e.g. to re-time on a different device)")
-    ap.add_argument("--gpus", default=None, help="comma-separated GPU ids (at most 3): split each "
+    ap.add_argument("--gpus", default=None, help="comma-separated GPU ids (at most 4): split each "
                     "subject's phases across them, one model copy per GPU; overrides --device")
     args = ap.parse_args()
     devices = [args.device]
     if args.gpus is not None:
         ids = [int(g) for g in args.gpus.split(",")]
-        if len(set(ids)) != len(ids) or not 1 <= len(ids) <= 3:
-            ap.error("--gpus needs 1-3 distinct ids (caesar: never all 4 GPUs)")
+        if len(set(ids)) != len(ids) or not 1 <= len(ids) <= 4:
+            ap.error("--gpus needs 1-4 distinct ids")
         devices = [f"cuda:{g}" for g in ids]
     models = []
     for d in devices:
@@ -138,7 +156,7 @@ def main():
             subjects = [s for s in subjects if s in set(args.subjects)]
         for subj in subjects:
             status = run_subject(models, config, ds, subj, args.variant, args.input, args.anchor,
-                                 args.out_root, args.batch_size)
+                                 args.out_root, args.batch_size, args.arm_name)
             print(f"{ds}/{subj}: {status}", flush=True)
 
 
