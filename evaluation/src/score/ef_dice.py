@@ -400,6 +400,11 @@ def score(args):
                     r[f"dice_{arm}_{name}_ES"] = dice(args.seg_dir, c, sidx, arm, es, es, lab)
                     r[f"hd95_{arm}_{name}_ED"] = hd95(args.seg_dir, c, sidx, arm, ed, ed, lab)
                     r[f"hd95_{arm}_{name}_ES"] = hd95(args.seg_dir, c, sidx, arm, es, es, lab)
+        # Stroke volume (mL) = EDV - ESV; undefined where ESV is (structure vanished).
+        for p in ("", "rv_"):
+            for arm in ("gt", "clean", "breath"):
+                if r.get(f"{p}edv_{arm}") is not None and r.get(f"{p}esv_{arm}") is not None:
+                    r[f"{p}sv_{arm}"] = r[f"{p}edv_{arm}"] - r[f"{p}esv_{arm}"]
         rows.append(r); per_cohort.setdefault(c, []).append(r)
 
     agg = {}
@@ -416,8 +421,8 @@ def score(args):
                 d[f"{arm}_ef_spearman"] = float(stats.spearmanr(g, p).correlation)
                 d[f"{arm}_ef_mae_pct"] = float(np.mean(np.abs(p - g)))
             # paired MAE vs the same subject's GT value, for each absolute-volume metric
-            for key, unit in [("edv", "ml"), ("esv", "ml"), ("lvm", "g"),
-                              ("rv_ef", "pct"), ("rv_edv", "ml"), ("rv_esv", "ml")]:
+            for key, unit in [("edv", "ml"), ("esv", "ml"), ("sv", "ml"), ("lvm", "g"),
+                              ("rv_ef", "pct"), ("rv_edv", "ml"), ("rv_esv", "ml"), ("rv_sv", "ml")]:
                 pairs = [(x[f"{key}_gt"], x[f"{key}_{arm}"]) for x in rs
                          if x.get(f"{key}_gt") is not None and x.get(f"{key}_{arm}") is not None]
                 if pairs:
