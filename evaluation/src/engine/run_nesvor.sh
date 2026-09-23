@@ -58,7 +58,7 @@ mkdir -p "/tmp/vggt-nesvor_${USER}"
 recon_one() {
   set -u   # xargs spawns a fresh shell that does NOT inherit the parent's set -u; re-arm it here so a
            # future unexported var in this body fails loudly instead of expanding to an empty path.
-  local p=$1; local pp; pp=$(printf "%02d" "$p")
+  local p=$1; local gpu=${2:-}; local pp; pp=$(printf "%02d" "$p")
   local final="$OUT/vol_t${pp}.nii.gz"
   if [ -f "$final" ] && gzip -t "$final" 2>/dev/null; then echo "t$pp cached"; return; fi
   local wd="$OUT/work_t${pp}"; rm -rf "$wd"; mkdir -p "$wd"
@@ -66,7 +66,8 @@ recon_one() {
   # so J>1 fits never share it.
   local scr="/tmp/vggt-nesvor_${USER}/scr_${VAR}_t${pp}"; rm -rf "$scr"; mkdir -p "$scr"
   local t0; t0=$(date +%s)
-  TMPDIR="$scr" "$NESVOR_BIN" reconstruct \
+  # GPUS mode pins this fit to one physical GPU (it then sees it as device 0); else inherit.
+  env ${gpu:+CUDA_VISIBLE_DEVICES=$gpu} TMPDIR="$scr" "$NESVOR_BIN" reconstruct \
       --input-stacks  "$SD/$INPUT/stack_t${pp}.nii.gz" \
       --stack-masks   "$SD/${MASK_FILE:-mask_heart.nii.gz}" \
       --sample-mask   "$SD/${MASK_FILE:-mask_heart.nii.gz}" \
@@ -96,10 +97,41 @@ recon_one() {
 }
 export -f recon_one; export OUT SD VAR INPUT METHOD MASK_FILE THICK RES NESVOR_BIN
 
+# GPUS=0,1,2 (ids relative to CUDA_VISIBLE_DEVICES, at most 3 — caesar must never use all 4): shard
+# the phases round-robin, phase p -> GPU p mod N, ONE worker per GPU running its phases one after
+# another (exactly one fit per GPU at a time; J is ignored). Unset = the original J path on one GPU.
+PHYS=()
+if [ -n "${GPUS:-}" ]; then
+  IFS=, read -ra _g <<< "$GPUS"
+  IFS=, read -ra _vis <<< "${CUDA_VISIBLE_DEVICES:-}"
+  for g in "${_g[@]}"; do
+    [[ "$g" =~ ^[0-9]+$ ]] || { echo "FATAL: bad GPU id '$g'"; exit 1; }
+    g=$((10#$g))                                     # "00"/"08" -> 0/8
+    if [ ${#_vis[@]} -gt 0 ]; then
+      [ "$g" -lt ${#_vis[@]} ] || { echo "FATAL: GPU id $g not in CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"; exit 1; }
+      PHYS+=("${_vis[$g]}")
+    else
+      PHYS+=("$g")
+    fi
+  done
+  if [ ${#PHYS[@]} -lt 1 ] || [ ${#PHYS[@]} -gt 3 ] || [ "$(printf '%s\n' "${PHYS[@]}" | sort -u | wc -l)" -ne ${#PHYS[@]} ]; then
+    echo "FATAL: GPUS needs 1-3 distinct GPUs, got '$GPUS'"; exit 1
+  fi
+fi
+NGPU=$(( ${#PHYS[@]} > 0 ? ${#PHYS[@]} : 1 ))
+
+# Already complete (stamped + all T volumes valid) -> exit before rewriting provenance/total_wall.sec,
+# which would otherwise record ~0 s and this invocation's GPU setup for volumes an earlier run made.
+if [ -f "$OUT/stamp.json" ]; then
+  _ok=0; for f in "$OUT"/vol_t*.nii.gz; do [ -f "$f" ] && gzip -t "$f" 2>/dev/null && _ok=$((_ok + 1)); done
+  [ "$_ok" -eq "$T" ] && { echo "RECON_DONE $SUBJ $VAR  (already complete + stamped; nothing rewritten)"; exit 0; }
+fi
+
 # Provenance (once per subject/variant) — engine, command, params, container identity, hardware
 # (GPU + SLURM allocation), parallelism, timing. Mirrors run_svrtk3d.sh's block.
 JINFO=$(scontrol show job "${SLURM_JOB_ID:-none}" 2>/dev/null | grep -oE 'cpu=[0-9]+,mem=[0-9]+[MG]' | head -1)
-GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+if [ ${#PHYS[@]} -gt 0 ]; then _q=(-i "$(IFS=,; echo "${PHYS[*]}")"); else _q=(-i "${CUDA_VISIBLE_DEVICES:-0}"); _q[1]=${_q[1]%%,*}; fi
+GPU=$(nvidia-smi "${_q[@]}" --query-gpu=index,name --format=csv,noheader 2>/dev/null | paste -sd';')
 {
   echo "engine          : NeSVoR 'nesvor reconstruct' (INR SVR, single gated stack, per-phase)"
   echo "command         : nesvor reconstruct --input-stacks <$INPUT/stack_tNN.nii.gz> \\"
@@ -114,12 +146,23 @@ GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
   echo "--- hardware / parallelism (for the compute-cost comparison) ---"
   echo "host            : $(hostname)   SLURM job ${SLURM_JOB_ID:-none}"
   echo "gpu             : ${GPU:-unknown}   SLURM alloc: ${JINFO:-unknown}"
-  echo "parallelism     : J=$J concurrent NeSVoR fits on 1 GPU (each fit is single-GPU)"
+  if [ ${#PHYS[@]} -gt 0 ]; then
+    echo "parallelism     : GPUS=$GPUS -> physical GPUs ${PHYS[*]}: phase p on GPU p mod ${#PHYS[@]}, one fit per GPU at a time (each fit is single-GPU)"
+  else
+    echo "parallelism     : J=$J concurrent NeSVoR fits on 1 GPU (each fit is single-GPU)"
+  fi
 } > "$OUT/provenance.txt"
 
-echo "=== $METHOD : $SUBJ / $VAR : thick=${THICK} res=${RES}mm reg=none J=$J ==="
+echo "=== $METHOD : $SUBJ / $VAR : thick=${THICK} res=${RES}mm reg=none $([ ${#PHYS[@]} -gt 0 ] && echo "GPUS=$GPUS" || echo "J=$J") ==="
 T_ALL0=$(date +%s)
-seq 0 $((T-1)) | xargs -P "$J" -I{} bash -c 'recon_one {}'
+if [ ${#PHYS[@]} -gt 0 ]; then
+  for i in "${!PHYS[@]}"; do
+    ( for ((p = i; p < T; p += ${#PHYS[@]})); do recon_one "$p" "${PHYS[$i]}"; done ) &
+  done
+  wait
+else
+  seq 0 $((T-1)) | xargs -P "$J" -I{} bash -c 'recon_one {}'
+fi
 T_ALL=$(( $(date +%s) - T_ALL0 ))
 echo "$T_ALL" > "$OUT/total_wall.sec"
 _ndone=$(ls "$OUT"/time_t*.sec 2>/dev/null | wc -l)
@@ -127,10 +170,16 @@ _pmean=$(cat "$OUT"/time_t*.sec 2>/dev/null | awk '{s+=$1;n++}END{if(n)printf "%
 { echo "--- timing ---";
   echo "invocation_wall_sec : $T_ALL   (THIS invocation only. Cached phases are skipped instantly, so on a";
   echo "                      resumed/partial run this is NOT the full-subject wall — do not read it as such.)";
+  if [ ${#PHYS[@]} -gt 0 ]; then
+  echo "                      With GPUS ($NGPU GPUs) this is the per-subject wall with phases in parallel.";
+  echo "per_phase_sec       : see time_t*.sec (${_ndone} files, mean ${_pmean}s). One fit per GPU at a time, so";
+  echo "                      each is a single-GPU per-phase wall (host CPU/IO shared by $NGPU concurrent fits).";
+  else
   echo "per_phase_sec       : see time_t*.sec (${_ndone} files, mean ${_pmean}s). At J=1 each is the TRUE";
   echo "                      single-GPU per-phase wall (the fair compute-cost unit). At J>1 they are";
   echo "                      contention-inflated (concurrent fits share one GPU). For the headline compute";
   echo "                      cost use J=1 per-phase times from a fresh (non-resumed) run.";
+  fi
 } >> "$OUT/provenance.txt"
 # Per-variant stamp (paths.recon_stamp): config identity of the run that wrote recon_<VAR>/.
 # Written ONLY when every phase has a valid volume — a partial run stays unstamped, which the

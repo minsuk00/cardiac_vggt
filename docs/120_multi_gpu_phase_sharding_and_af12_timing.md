@@ -149,6 +149,23 @@ build, GPFS I/O) is harness overhead, **not profiled yet**.
 | VGGT `final518_diff1000`, `--gpus 0,1,2` | — | — | — | — | — | pending (§5) |
 | VGGT `final518_diff1000`, 1 GPU (same machine) | — | — | — | — | — | pending (§5) |
 
+## 6b. Same GPU config for the other methods (2026-09-23)
+
+- **CiNeVol** (one model per subject): data-parallel fit + sharded export, `run_cinevol.py --gpus` — docs/121.
+- **Dangi**: `run_dangi.py --gpus 0,1,2` — one model per GPU, contiguous phase blocks, one thread per
+  GPU; `timing.json` gains `gpus`. Caesar, 47 af12 test subjects (outputs in `temp/dangi_gpu/`):
+  564/564 volumes + 94/94 JSONs **bit-identical** to the unmodified script, 1 GPU and 2 GPUs;
+  `total_sec` 2.1 → 1.44 s with 2 GPUs (3 not tested: another user held GPU 2). `--gpus 1` alone
+  touches only that GPU (nvidia-smi).
+- **NeSVoR**: `GPUS=0,1,2 bash run_nesvor.sh ...` — one worker per GPU, phase p on GPU p mod N, one
+  fit per GPU at a time (`CUDA_VISIBLE_DEVICES=<physical>` + `--device 0`); unset = original `J` path.
+  Provenance records the mapping and the GPUs' names; a stamped, complete subject now exits before
+  rewriting `total_wall.sec`/provenance (previously a rerun reset `total_wall.sec` to 0). GPU count is
+  NOT in `stamp.json` (the scorer requires identical clean/breath stamps). **Tested only with a stub
+  `nesvor`** (mapping, concurrency, id validation, failure, rerun): `nesvor-t2` is not installed on
+  caesar, so no real NeSVoR fit has run with `GPUS`.
+- For the table: use new arm names so 1-GPU and N-GPU runs never share an arm (stamped subjects are skipped).
+
 ## 7. Files
 
 - `evaluation/src/engine/run_vggt.py` — `--gpus` (commit `8de17e1`).

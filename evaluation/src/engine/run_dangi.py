@@ -25,6 +25,7 @@ compute-cost timing column, CPU for a throwaway pass.
     ... --out-root temp/dangi/eval    # dry pass outside the bundles
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import sys
@@ -54,7 +55,9 @@ def translate_native(stack_xyz, shifts_mm_xy, spacing_xy):
     return out
 
 
-def run_subject(model, config, ds, subj, variant, input_name, anchor, out_root, batch_size):
+def run_subject(models, config, ds, subj, variant, input_name, anchor, out_root, batch_size):
+    """models: one model copy per device; the T phases are split into contiguous blocks, one
+    thread per device (phases are independent). One model -> the original sequential loop."""
     sd = paths.subject_dir(ds, subj)
     man = json.load(open(sd / "manifest.json"))
     T, ref_plane = int(man["T"]), int(man["scatter"]["ref_plane"])
@@ -65,7 +68,8 @@ def run_subject(model, config, ds, subj, variant, input_name, anchor, out_root, 
         return "cached"
     stack_dir = "scatter" if input_name == "scatter" else variant
     centres_log, t0 = {}, time.monotonic()
-    for k in range(T):
+
+    def one_phase(k, model):
         img = nib.load(sd / stack_dir / f"stack_t{k:02d}.nii.gz")
         native = np.asarray(img.dataobj, dtype=np.float32)
         spacing = np.linalg.norm(img.affine[:3, :3], axis=0)
@@ -76,7 +80,15 @@ def run_subject(model, config, ds, subj, variant, input_name, anchor, out_root, 
         shifts_mm = (anchor_point(centres, anchor_arg, config) - centres) * config.spacing_mm
         corrected = translate_native(native, shifts_mm, spacing[:2])
         nib.save(nib.Nifti1Image(corrected, img.affine), os.path.join(out_dir, f"vol_t{k:02d}.nii.gz"))
-        centres_log[f"t{k:02d}"] = dict(centres_px=centres.tolist(), shifts_mm=shifts_mm.tolist())
+        return dict(centres_px=centres.tolist(), shifts_mm=shifts_mm.tolist())
+
+    def block(r, ks):
+        return [(k, one_phase(k, models[r])) for k in ks]
+
+    blocks = [b.tolist() for b in np.array_split(np.arange(T), len(models))]
+    with ThreadPoolExecutor(len(models)) as ex:
+        for part in ex.map(block, range(len(models)), blocks):
+            centres_log.update({f"t{k:02d}": v for k, v in part})
     total = time.monotonic() - t0
     json.dump(centres_log, open(os.path.join(out_dir, "centres.json"), "w"))
     json.dump(dict(engine="dangi_stage_a", input_stack=input_name, anchor=anchor,
@@ -85,7 +97,8 @@ def run_subject(model, config, ds, subj, variant, input_name, anchor, out_root, 
               open(os.path.join(out_dir, "stamp.json"), "w"))
     tj = os.path.join(os.path.dirname(out_dir), "timing.json")
     timing = json.load(open(tj)) if os.path.exists(tj) else {}
-    timing[variant] = dict(total_sec=total, per_phase_sec=total / T, device=str(next(model.parameters()).device))
+    timing[variant] = dict(total_sec=total, per_phase_sec=total / T,
+                           device=str(next(models[0].parameters()).device), gpus=len(models))
     json.dump(timing, open(tj, "w"), indent=2)
     return f"{total:.1f}s"
 
@@ -106,14 +119,25 @@ def main():
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--overwrite", action="store_true",
                     help="regenerate even subjects with an existing stamp.json (e.g. to re-time on a different device)")
+    ap.add_argument("--gpus", default=None, help="comma-separated GPU ids (at most 3): split each "
+                    "subject's phases across them, one model copy per GPU; overrides --device")
     args = ap.parse_args()
-    model, config = load_model(args.checkpoint, args.device)
+    devices = [args.device]
+    if args.gpus is not None:
+        ids = [int(g) for g in args.gpus.split(",")]
+        if len(set(ids)) != len(ids) or not 1 <= len(ids) <= 3:
+            ap.error("--gpus needs 1-3 distinct ids (caesar: never all 4 GPUs)")
+        devices = [f"cuda:{g}" for g in ids]
+    models = []
+    for d in devices:
+        model, config = load_model(args.checkpoint, d)
+        models.append(model)
     for ds in args.sources:
         subjects, _ = paths.filter_by_split(ds, paths.subjects(ds), args.split)
         if args.subjects:
             subjects = [s for s in subjects if s in set(args.subjects)]
         for subj in subjects:
-            status = run_subject(model, config, ds, subj, args.variant, args.input, args.anchor,
+            status = run_subject(models, config, ds, subj, args.variant, args.input, args.anchor,
                                  args.out_root, args.batch_size)
             print(f"{ds}/{subj}: {status}", flush=True)
 
