@@ -37,13 +37,16 @@ export J=${J:-1}
 SPLITS=${SPLITS:-"val test"}
 INPUTS=${INPUTS:-"gated scatter"}
 SOURCES=${SOURCES:-"cmrx2023 cmrx2024 cmrx2025 acdc mnms miitt ocmr"}
-echo "shard $SLURM_ARRAY_TASK_ID / $SLURM_ARRAY_TASK_COUNT  (J=$J, gpu: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1))  splits=[$SPLITS] inputs=[$INPUTS]"
+# N_SHARDS overrides the shard count so one split can span two submissions (e.g. --array=6-10 on
+# another partition with N_SHARDS=11 runs shards 6..10 of the same 11-way split).
+N_SHARDS=${N_SHARDS:-$SLURM_ARRAY_TASK_COUNT}
+echo "shard $SLURM_ARRAY_TASK_ID / $N_SHARDS (J=$J, gpu: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1))  splits=[$SPLITS] inputs=[$INPUTS]"
 rc=0
 for SPLIT in $SPLITS; do
   for INPUT in $INPUTS; do
     echo "=== nesvor  split=$SPLIT  input=$INPUT ==="
     $PY evaluation/src/engine/run_baselines.py --method nesvor --variant breath --split "$SPLIT" \
-        --input "$INPUT" --sources $SOURCES --shard "$SLURM_ARRAY_TASK_ID" "$SLURM_ARRAY_TASK_COUNT" || rc=1
+        --input "$INPUT" --sources $SOURCES --shard "$SLURM_ARRAY_TASK_ID" "$N_SHARDS" || rc=1
   done
 done
 exit $rc

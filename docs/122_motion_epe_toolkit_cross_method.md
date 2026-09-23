@@ -1,5 +1,10 @@
 # 122 — Breathing-motion EPE for every method: one slot contract, fixed axes, common slice set
 
+> **Update 2026-09-23:** an `hrv12` arm now exists (docs/123) and every script here runs on it
+> unchanged (`<method>.py hrv12`). Its CiNeVol arm is the checkpointed `cinevol` fit, so pass
+> `--arm-name cinevol` (not `cinevol_motion`). af12 NiftyMIC is now 180/180; af12 NeSVoR's timing
+> arm is `nesvor_4gpu_scatter` after the `a4290b5` launcher fix.
+
 > **TL;DR & takeaway**
 > Every reconstruction method is now scored for breathing-motion tracking by the same rule:
 > predicted per-slice shift vs the TRUE simulated shift (mm), error demeaned per subject, on the

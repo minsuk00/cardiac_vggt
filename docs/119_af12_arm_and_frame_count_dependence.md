@@ -274,7 +274,7 @@ table, see §1). Results: `figs/rhythm24/af12_results_table.png`,
 - `regular24`/`hrv24` CiNeVol arms (would give the paired regular→AF control CiNeVol currently
   lacks, matching what docs/118 already did for Fetal-vs-VGGT) — not started, ~1 day each.
 - A `regular12`/`hrv12` pair, if the paper ends up wanting the full dose-response at both frame
-  budgets — not started.
+  budgets — `hrv12` built and reconstructed, docs/123; `regular12` not started.
 - §2's 12-vs-24 Fetal EF degradation (docs §2b) is directionally consistent with the full-180 af12
   vs af24 result (§3b) but was only n=10 at the probe stage; the full-180 numbers in §3 are the ones
   to cite.
