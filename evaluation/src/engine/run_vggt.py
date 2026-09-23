@@ -52,6 +52,11 @@ Run:
   micromamba run -n svr env PYTHONPATH=training:. python evaluation/src/engine/run_vggt.py \
       --dataset cmrx2024 --ckpt scratch/logs/<run>/ckpts/checkpoint_last.pt \
       --model-name augaggr224hw2_ep300
+
+Add `--gpus 0,1,2` to split each subject's T phases across GPUs (one model copy + thread per
+GPU, ~2.8-2.9x per subject at 518px). Each phase is the same B=1 forward, so outputs match the
+1-GPU run (bit-identical under torch.use_deterministic_algorithms; otherwise only the splat's
+scatter_add_ float-order noise, ~5e-7, which 1-GPU runs also show run-to-run).
 """
 import argparse
 import glob
@@ -62,6 +67,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import nibabel as nib
@@ -217,26 +223,38 @@ def pin_scatter(batch, ds, scatter):
     return changed
 
 
-@torch.no_grad()
-def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bundle=None, scatter=None,
-                splat_res=None, gated=False):
-    """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack).
-    `splat_res`: the run's own loss.volume.splat_res — render with the point density it trained on.
-    `gated` (DIAGNOSTIC ONLY, default off): every companion slot is pinned to the queried phase `t`
-    (the same-phase stack SVRTK-gated receives), removing phase scatter as an information limit.
-    Breathing stays the frozen bundle's. Not a deployable input regime — a ceiling row only."""
+def prepare_batch(ds, seq_index, phases_bundle, device, dz_bundle=None, scatter=None):
+    """`build_batch` + pin the companion phases to the bundle's frozen scatter draw."""
     batch = build_batch(ds, seq_index, phases_bundle, device, dz_bundle=dz_bundle)
     if scatter is not None:
         n = pin_scatter(batch, ds, scatter)
         if n:
             print(f"    !! {n} companion slot phase(s) re-pinned to the bundle's scatter draw", flush=True)
+    return batch
+
+
+@torch.no_grad()
+def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bundle=None, scatter=None,
+                splat_res=None, gated=False, phases=None, batch=None):
+    """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack).
+    `splat_res`: the run's own loss.volume.splat_res — render with the point density it trained on.
+    `gated` (DIAGNOSTIC ONLY, default off): every companion slot is pinned to the queried phase `t`
+    (the same-phase stack SVRTK-gated receives), removing phase scatter as an information limit.
+    Breathing stays the frozen bundle's. Not a deployable input regime — a ceiling row only.
+    `phases`: sweep only these phases (default all T) — the unit of work `reconstruct_sharded`
+    hands each GPU. `pred_vols` then holds just those phases, in the given order; `ed_pack` is
+    None unless ED_PHASE is among them. `batch`: an already-`prepare_batch`ed batch on `device`
+    (mutated in place), so shards need not rebuild it."""
+    torch.cuda.set_device(device)   # the current device is per-thread; synchronize() below uses it
+    if batch is None:
+        batch = prepare_batch(ds, seq_index, phases_bundle, device, dz_bundle, scatter)
     T = phases_bundle.shape[0]
     D = phases_bundle.shape[1]
     grid_shape = (D, 256, 256)
     z_scale = float(batch["z_scale"].reshape(-1)[0])
 
     pred_vols, per_phase_ms, ed_pack = [], [], None
-    for t in range(T):
+    for t in (range(T) if phases is None else phases):
         batch["timesteps"][0, 0] = int(t)            # slot 0 = the reference at the queried phase
         if gated:
             batch["timesteps"][0, :] = int(t)        # diagnostic: all companions at the queried phase too
@@ -259,6 +277,25 @@ def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bu
                            applied=np.stack([disp_applied[int(round(float(z)))] for z in z_slots])
                            if disp_applied is not None else np.zeros((len(z_slots), 3)))
     return np.stack(pred_vols), per_phase_ms, ed_pack
+
+
+def reconstruct_sharded(models, devices, ds, seq_index, phases_bundle, disp_applied, **kw):
+    """`reconstruct` with the T phases split into contiguous chunks, one thread + model copy per
+    GPU. Each phase is the same independent B=1 forward it is unsharded, so the stitched result is
+    the single-GPU result. One device -> plain `reconstruct`, no thread."""
+    if len(models) == 1:
+        return reconstruct(models[0], ds, seq_index, phases_bundle, devices[0], disp_applied, **kw)
+    chunks = [c.tolist() for c in np.array_split(np.arange(phases_bundle.shape[0]), len(models))]
+    # Build the batch ONCE, then give each shard its own copy on its GPU (reconstruct mutates it).
+    base = prepare_batch(ds, seq_index, phases_bundle, devices[0], kw.get("dz_bundle"), kw.get("scatter"))
+    batches = [{k: v.to(d, copy=True) if torch.is_tensor(v) else v for k, v in base.items()}
+               for d in devices]
+    with ThreadPoolExecutor(len(models)) as ex:
+        parts = list(ex.map(lambda m, d, ph, b: reconstruct(m, ds, seq_index, phases_bundle, d,
+                                                            disp_applied, phases=ph, batch=b, **kw),
+                            models, devices, chunks, batches))
+    return (np.concatenate([p[0] for p in parts]), [ms for p in parts for ms in p[1]],
+            next(p[2] for p in parts if p[2] is not None))
 
 
 def resp_diag(ed_pack, breathing):
@@ -389,7 +426,14 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--note", default="")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--gpus", default="0",
+                    help="comma-separated GPU ids; >1 shards each subject's phases across them "
+                         "(one model copy + thread per GPU). Max 3 — 4 concurrent GPUs shut this "
+                         "machine down.")
     args = ap.parse_args()
+    gpus = [int(g) for g in args.gpus.split(",")]
+    if len(gpus) > 3 or len(set(gpus)) != len(gpus):
+        sys.exit(f"--gpus {args.gpus}: need 1-3 distinct GPUs")
 
     method = paths.canonical_arm(args.model_name, date=args.date)
     gated = args.input == "gated"
@@ -410,9 +454,12 @@ def main():
     ident = {"ckpt": args.ckpt, "ckpt_fingerprint": _ckpt_fingerprint(args.ckpt)}
     check_overwrite(ds_name, subjects, method, ident, args.overwrite)
 
-    device = torch.device("cuda")
+    devices = [torch.device(f"cuda:{g}") for g in gpus]
     t0 = time.perf_counter()
-    model, cfg = load_model_from_run(args.ckpt, device=device)
+    models = []
+    for d in devices:
+        m, cfg = load_model_from_run(args.ckpt, device=d)
+        models.append(m)
     model_load_s = time.perf_counter() - t0
     splat_res = ((cfg.get("loss") or {}).get("volume") or {}).get("splat_res")   # None = native 256²
     metadata = {
@@ -457,15 +504,16 @@ def main():
             # is written for EVERY arm — initialise it or `--arms clean` raises UnboundLocalError
             # AFTER the recons are on disk, leaving an arm with no metadata for check_overwrite.
             timing, rdiag, metadata_draw = {"model_load_sec": model_load_s,
-                                            "gpu": torch.cuda.get_device_name(0)}, {}, {}
+                                            "gpu": torch.cuda.get_device_name(devices[0]),
+                                            "gpus": gpus}, {}, {}
             for breathing, var in [(b, v) for b, v in ((False, "clean"), (True, "breath"))
                                    if v in args.arms]:
                 rv = str(paths.recon_dir(ds_name, subject, method, var))
                 os.makedirs(rv, exist_ok=True)
                 bundle = load_bundle(subj_dir, T, "breath" if breathing else "clean")
                 ts = time.perf_counter()
-                pred_vols, per_phase_ms, ed_pack = reconstruct(
-                    model, dset, seq, bundle, device, disp if breathing else None,
+                pred_vols, per_phase_ms, ed_pack = reconstruct_sharded(
+                    models, devices, dset, seq, bundle, disp if breathing else None,
                     dz_bundle=man["dz_mm"], scatter=man["scatter"], splat_res=splat_res,
                     gated=gated)
                 wall = time.perf_counter() - ts
