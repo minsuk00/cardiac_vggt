@@ -33,10 +33,18 @@ SOURCES=(${SOURCES:-cmrx2023 cmrx2024 cmrx2025 acdc mnms})
 ARM=${ARM:-af12}                 # af12 | hrv12
 export PYTHONPATH=training:.
 COHORTS=$(for S in "${SOURCES[@]}"; do printf '%s_%s ' "$S" "$ARM"; done)
+# SHARDS=a-b (with N_SHARDS=N): run only run_baselines.py shards a..b of N, so the cohort can be
+# split STATICALLY across nodes (e.g. 0-6 here, 7-9 on a second 4x L40S job). Never let two nodes
+# run overlapping shards: run_nesvor.sh has no lock, two writers on one subject corrupt it.
+N_SHARDS=${N_SHARDS:-10}
+SHARDS=${SHARDS:-0-$((N_SHARDS - 1))}
+SHARD_IDS=$(seq "${SHARDS%-*}" "${SHARDS#*-}")
 if [ -n "${DRY_RUN:-}" ]; then
-    METHOD="$NAME" "$PY" evaluation/src/engine/run_baselines.py --method nesvor --variant breath \
-        --split test --input scatter --sources $COHORTS --dry-run; exit $?; fi
-LOG=${LOG:-temp/${ARM}_timing_${ARMDIR}}; mkdir -p "$LOG"
+    for I in $SHARD_IDS; do
+        METHOD="$NAME" "$PY" evaluation/src/engine/run_baselines.py --method nesvor --variant breath \
+            --split test --input scatter --sources $COHORTS --shard "$I" "$N_SHARDS" --dry-run || exit $?
+    done; exit 0; fi
+LOG=${LOG:-temp/${ARM}_timing_${ARMDIR}_shards${SHARDS}of${N_SHARDS}}; mkdir -p "$LOG"
 export CUDA_VISIBLE_DEVICES=$GPUS
 LOCAL_GPUS=$(seq -s, 0 $(( $(tr ',' '\n' <<< "$GPUS" | wc -l) - 1 )))
 
@@ -65,8 +73,13 @@ nvidia-smi --query-gpu=index,name --format=csv,noheader >> "$LOG/run.txt"
 
 # run_baselines.py: split filter (manifest split=test), per-subject THICK + padded MASK_FILE, skips
 # stamped subjects; GPUS reaches run_nesvor.sh through the environment.
-METHOD="$NAME" GPUS="$LOCAL_GPUS" "$PY" evaluation/src/engine/run_baselines.py --method nesvor \
-    --variant breath --split test --input scatter --sources $COHORTS > "$LOG/run_baselines.log" 2>&1; rc=$?
+echo "shards $SHARDS of $N_SHARDS" | tee -a "$LOG/run.txt"
+rc=0
+for I in $SHARD_IDS; do
+    METHOD="$NAME" GPUS="$LOCAL_GPUS" "$PY" evaluation/src/engine/run_baselines.py --method nesvor \
+        --variant breath --split test --input scatter --sources $COHORTS --shard "$I" "$N_SHARDS" \
+        >> "$LOG/run_baselines.log" 2>&1 || rc=$?
+done
 grep -E "^--- \[|RECON_DONE|FAILED" "$LOG/run_baselines.log" | tail -3 | tee -a "$LOG/run.txt"
 kill $MON
 snap > "$LOG/after.txt"
