@@ -98,7 +98,7 @@ def run_subject(ds, subj, arm_name, microbatch, chunk, tmp_root, keep_checkpoint
     sync()
     total = time.perf_counter() - t0
     if keep_checkpoint:
-        shutil.copy(ckpt, os.path.join(out, "last.pt"))   # for cinevol_resp_epe.py (model.offsets)
+        shutil.copy(ckpt, os.path.join(out, "last.pt"))   # for evaluation/src/analysis/motion_epe/cinevol.py (model.offsets)
     shutil.copy(os.path.join(work, "run", "losses.jsonl"), os.path.join(out, "losses.jsonl"))
     last = json.loads(open(os.path.join(work, "run", "losses.jsonl")).read().splitlines()[-1])
     sim = meta["simulation"]

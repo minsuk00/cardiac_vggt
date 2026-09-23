@@ -461,6 +461,12 @@ default; choosing OFF would be a post-hoc pick on the test set); OFF is the abla
 
 ## 11. Does the engine track breathing at all? Direct measurement from its own per-frame pose (2026-09-17)
 
+> **Superseded by docs/122 (2026-09-23).** The axis caveat below is resolved (world Z/Y/X = true
+> dz/dy/dx from the SVRTK source; no axis search), raw `Translation*` is replaced by SVRTK's own
+> `MeanDisplacement*` (MIRTK rotates about the world origin), scoring uses one frame per plane (the
+> scatter slot, with the gate's plane-0 re-roll), not a per-plane average. Conclusion unchanged:
+> Fetal CMR 4D does not track breathing (plain cohort dz 4.65 vs predict-nothing 4.73). Cite docs/122.
+
 §9 inferred "uncorrected breathing" from PSNR behaviour. Direct test: `mirtk reconstructCardiac`
 writes `info.tsv` every run (not only `-debug`) with each input frame's final rigid pose
 (`TranslationX/Y/Z` mm, `RotationX/Y/Z` deg) — confirmed identical to the last SR iteration's table

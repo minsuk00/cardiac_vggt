@@ -74,6 +74,10 @@ Not investigated further; not a defect.
 | `hrv24` | 180 | 24.60 | 0.719 | 0.884 | 6.82 | −4.93 | 0.898/0.860 | 0.85 |
 | `af24` | 180 | 24.52 | 0.715 | 0.883 | 7.07 | −4.84 | 0.905/0.856 | 0.85 |
 
+(The motion EPE column predates docs/122's fixes — produced by the pre-fix `vggt.py`, which skipped
+any subject with a blank slot and reported raw EPE; re-run `evaluation/src/analysis/motion_epe/vggt.py`
+on these arms before citing it. On af12 the fix moved `base` only 0.85 → 0.87.)
+
 Flat within noise across all three — VGGT reconstructs each frame independently and never
 conditions on rhythm, so this is the expected null result for it.
 

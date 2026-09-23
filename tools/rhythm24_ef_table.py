@@ -108,7 +108,7 @@ def main():
     out = {"arm": a.arm, "methods": {}, "paired_vs_fetal": {}}
 
     img = image_metrics(a.arm)
-    rp = os.path.join(ROOT, "temp", "rhythm24_ef", f"{a.arm}_resp_epe.json")     # tools/rhythm24_resp_epe.py
+    rp = os.path.join(ROOT, "temp", "rhythm24_ef", f"{a.arm}_resp_epe.json")     # evaluation/src/analysis/motion_epe/vggt.py
     resp = json.load(open(rp)) if os.path.exists(rp) else {}
     print(f"=== {a.arm} ===   (motion EPE = breathing through-plane EPE vs the TRUE frame-wise shift; "
           f"VGGT only -- Fetal predicts no per-slice shift)")
