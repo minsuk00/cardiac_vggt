@@ -60,6 +60,12 @@ INPUT="${INPUT:-$VAR}"
 if [ "$INPUT" = scatter ]; then METHOD="${METHOD:-niftymic_scatter}"; else METHOD="${METHOD:-niftymic}"; fi
 SD="$VGGT/scratch/eval/${EVAL_DATASET:?EVAL_DATASET must name a source dir: cmrx2023|cmrx2024|cmrx2025|acdc|mnms|miitt|ocmr}/out/$SUBJ"
 SD_REAL="$(realpath "$SD")"          # scratch/ is a symlink; bind the real GPFS path
+# The mask may be a RELATIVE symlink out of the subject dir (the af12 bundles link
+# mask_heart*.nii.gz to the sibling _af24 cohort: ../../../<src>_af24/out/<subj>/...), which is
+# dangling inside a container that binds only $SD_REAL — every phase then fails with
+# FileNotExistent (2026-09-23, 180/180 subjects). Bind the RESOLVED file at its own path instead.
+MASK_REAL="$(realpath "$SD/${MASK_FILE:-mask_heart.nii.gz}")"
+[ -f "$MASK_REAL" ] || { echo "FATAL: mask $SD/${MASK_FILE:-mask_heart.nii.gz} -> $MASK_REAL missing"; exit 1; }
 OUT="$SD/$METHOD/recon_$VAR"; mkdir -p "$OUT"
 # Stage the .sif on node-local /tmp once per node (12 container starts per subject; GPFS is slow
 # for repeated reads of a 2.85 GB file). Same pattern as the mirtk shim / run_nesvor.sh.
@@ -80,10 +86,11 @@ recon_one() {
   # Thread caps: ITK (registration/resampling) + OpenMP/BLAS (scipy LSMR) — J phases x OMP threads.
   SINGULARITYENV_ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="$OMP" SINGULARITYENV_OMP_NUM_THREADS="$OMP" \
   SINGULARITYENV_OPENBLAS_NUM_THREADS="$OMP" SINGULARITYENV_MKL_NUM_THREADS="$OMP" \
-  "$SING" exec --bind "$SD_REAL:/data" --bind "$PATCH:$PATCH_DST" --bind "$PATCH2:$PATCH2_DST" "$SIF_LOCAL" \
+  "$SING" exec --bind "$SD_REAL:/data" --bind "$MASK_REAL:/mask/${MASK_FILE:-mask_heart.nii.gz}" \
+      --bind "$PATCH:$PATCH_DST" --bind "$PATCH2:$PATCH2_DST" "$SIF_LOCAL" \
     niftymic_reconstruct_volume \
       --filenames "/data/$INPUT/stack_t${pp}.nii.gz" \
-      --filenames-masks "/data/${MASK_FILE:-mask_heart.nii.gz}" \
+      --filenames-masks "/mask/${MASK_FILE:-mask_heart.nii.gz}" \
       --output "/data/$rel/vol.nii.gz" \
       --slice-thicknesses "$THICK" \
       --isotropic-resolution "$RES" \
@@ -104,7 +111,7 @@ recon_one() {
     echo "t$pp FAIL (see $OUT/log_t${pp}.txt)"
   fi
 }
-export -f recon_one; export OUT SD_REAL VAR INPUT METHOD MASK_FILE THICK RES ITERMAX OMP SING SIF_LOCAL PATCH PATCH_DST PATCH2 PATCH2_DST
+export -f recon_one; export OUT SD_REAL MASK_REAL VAR INPUT METHOD MASK_FILE THICK RES ITERMAX OMP SING SIF_LOCAL PATCH PATCH_DST PATCH2 PATCH2_DST
 
 # Content id of the container — same "v2:<size>:<sha256 of first+last 64 MiB>[:16]" as run_svrtk3d.sh.
 container_id() {
