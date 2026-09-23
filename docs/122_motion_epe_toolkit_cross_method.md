@@ -12,12 +12,12 @@
 > `phase_per_plane[z]`, reference plane at frame 0). One script per method in
 > `evaluation/src/analysis/motion_epe/`, shared rules in `common.py`, cross-method table on the
 > slices every method kept in `common_set.py`.
-> **Result (af12, 1839 common slices, 180 subjects, through-plane dz):** VGGT `base` **0.87 mm**
-> (corr 0.98) vs CiNeVol 4.23 (given the TRUE breath level as input), Fetal CMR 4D 4.86,
-> predict-nothing 4.72. **Plain cohort (1807 common slices):** Fetal 4.65, NiftyMIC 4.71, SVRTK 3D
-> 4.69, NeSVoR 6.36 vs predict-nothing 4.73 — **no classical method tracks through-plane
-> breathing**; NeSVoR tracks in-plane only (dy 1.67 / dx 1.09 vs 1.97 / 1.23). SVRTK / NiftyMIC /
-> NeSVoR / Dangi have not run on af12 yet; their af12 rows need that campaign.
+> **Result (af12, 1804 common slices, 180 subjects, through-plane dz):** VGGT `base` **0.87 mm**
+> (corr 0.98) vs CiNeVol 4.23 (given the TRUE breath level as input), NiftyMIC 4.69, SVRTK 3D 4.79,
+> Fetal CMR 4D 4.80, predict-nothing 4.72 — **no classical method tracks through-plane breathing**,
+> and none beats predict-nothing in-plane either (Dangi has direction signal but is over-scaled).
+> **Plain cohort (1807 common slices):** same picture; NeSVoR tracks in-plane only (dy 1.67 / dx
+> 1.09 vs 1.97 / 1.23). af12 NeSVoR (`nesvor_4gpu_scatter`) is still running — its row is pending.
 > Supersedes docs/105 §11's axis caveat and numbers, and the "not yet run/written" items of docs/119 §6.
 
 ## 1. The contract
@@ -61,17 +61,25 @@ raw `Translation*` is not the slice's shift (af12: mean |TranslationZ| 3.77 vs |
 
 ## 3. Results
 
-af12 (`common_set.py`, 1839 common slices, 180 subjects; truth agreed across methods on every slice):
+af12 (`common_set.py`, 1804 common slices, 180 subjects, 8 methods; truth agreed across methods on
+every slice). Arms: `svrtk3d_debug_scatter`, `niftymic_scatter`, `dangi_scatter_4gpu`,
+`cinevol_motion`, `fetal_cmr_4d`. EPE demeaned (corr):
 
-| method | dz EPE (demeaned) | raw | corr |
+| method | dz | dy | dx |
 |---|---|---|---|
-| VGGT `base` | **0.87** | 0.88 | 0.98 |
-| VGGT `diff1000` | 0.91 | 0.89 | 0.98 |
-| VGGT `hw0` | 0.93 | 0.93 | 0.97 |
-| VGGT `nogather` | 2.42 | 2.34 | 0.81 |
-| CiNeVol (`cinevol_motion`) | 4.23 | 5.21 | 0.32 |
-| Fetal CMR 4D | 4.86 | 5.87 | 0.13 |
-| predict nothing | 4.72 | 4.92 | 0 |
+| VGGT `base` | **0.87** (0.98) | — | — |
+| VGGT `diff1000` | 0.92 (0.98) | — | — |
+| VGGT `hw0` | 0.92 (0.97) | — | — |
+| VGGT `nogather` | 2.42 (0.81) | — | — |
+| CiNeVol | 4.23 (0.32) | — | — |
+| NiftyMIC | 4.69 (0.08) | 1.97 (0.14) | 1.21 (0.18) |
+| SVRTK 3D | 4.79 (0.13) | 1.96 (0.07) | 1.21 (0.10) |
+| Fetal CMR 4D | 4.80 (0.15) | 2.02 (0.12) | 1.30 (0.04) |
+| Dangi | — | 3.09 (0.33) | 3.25 (0.19) |
+| predict nothing | 4.72 | 1.98 | 1.22 |
+
+(VGGT / CiNeVol predict dz only. Restricted to VGGT + CiNeVol + Fetal the common set is 1839 slices
+and the dz numbers move ≤ 0.06 mm.)
 
 Plain cohort (1807 common slices, 180 subjects; Fetal arm `fetal_cmr_4d_motion`):
 
@@ -97,8 +105,8 @@ miscalibrated (unverified cause).
 - Checked: af12 `scatter/` (`tools/build_af_scatter.py`, 180/180 byte-identical to the claimed
   breath frames; the checker also passes on pooled-built plain `scatter/`); `common_set.py` aborts on
   an injected truth mismatch (fault-injected).
-- **Not exercised:** the four scatter baselines on af12 (not run), the `regular_frozen24` path (no
-  VGGT outputs there).
+- **Not exercised:** NeSVoR on af12 (still running), the `regular_frozen24` path (no VGGT outputs
+  there).
 
 ## 5. Usage
 
@@ -117,6 +125,9 @@ SVRTK must run with `DEBUG=1` so the per-slice `.dof` files are kept.
 
 ## 6. Open
 
-- Run SVRTK / NiftyMIC / NeSVoR / Dangi on af12 (needs a go), then the full af12 common-set table.
+- af12 NeSVoR: when `nesvor_4gpu_scatter` is 180/180, run `nesvor.py af12 --arm-name
+  nesvor_4gpu_scatter` and re-run `common_set.py` with it.
+- af12 image metrics + EF/Dice for SVRTK / NiftyMIC / Dangi / NeSVoR are not scored yet (only
+  motion EPE is) — `run.py` then the `ef_dice.py` chain, as in docs/119 §3.
 - docs/118's `af24` "motion EPE" column was produced by the pre-fix `vggt.py` (subject skip, raw
   epe); re-run `vggt.py af24` before citing it.
