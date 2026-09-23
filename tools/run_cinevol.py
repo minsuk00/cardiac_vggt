@@ -10,7 +10,7 @@ Per subject, from scratch (CiNeVol has no training set -- the fit IS its inferen
 Writes the harness's arm contract (evaluation/paths.py): <subject>/<arm>/recon_breath/
 {vol_t*.nii.gz, provenance.txt, total_wall.sec, losses.jsonl, stamp.json}. stamp.json is written
 LAST and a stamped subject is skipped, exactly like run_baselines.py. The checkpoint is NOT kept
-unless --keep-checkpoint is passed (then also last.pt -- for tools/cinevol_resp_epe.py, which
+unless --keep-checkpoint is passed (then also last.pt -- for evaluation/src/analysis/motion_epe/cinevol.py, which
 queries the fitted model's own respiratory offset field; see that file for the analysis).
 
     source baselines/cinevol/env.sh
@@ -144,18 +144,18 @@ def main():
     ap.add_argument("--microbatch", type=int, default=None, help="pixels per forward on one GPU "
                     "(memory only; default 8192 on 1 GPU, 32768/N = one chunk per GPU on N GPUs)")
     ap.add_argument("--gpus", default="0", help="comma-separated GPU ids (relative to CUDA_VISIBLE_DEVICES, "
-                    "at most 3): each fit step's batch and the frame export are split across them")
+                    "at most 4): each fit step's batch and the frame export are split across them")
     ap.add_argument("--chunk", type=int, default=65536, help="export voxels per forward (memory only)")
     ap.add_argument("--tmp", default=f"/tmp/cinevol_{os.environ.get('USER', 'user')}")
     ap.add_argument("--keep-checkpoint", action="store_true", help="also copy last.pt into the "
-                    "published recon dir (~80 MB/subject) -- for tools/cinevol_resp_epe.py")
+                    "published recon dir (~80 MB/subject) -- for evaluation/src/analysis/motion_epe/cinevol.py")
     ap.add_argument("--shard", nargs=2, type=int, metavar=("I", "N"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--build-only", action="store_true", help="compile/load the Grid4D encoder and exit")
     a = ap.parse_args()
     gpus = [int(g) for g in a.gpus.split(",")]
-    if len(set(gpus)) != len(gpus) or not 1 <= len(gpus) <= 3:
-        ap.error("--gpus needs 1-3 distinct ids (caesar: never all 4 GPUs)")
+    if len(set(gpus)) != len(gpus) or not 1 <= len(gpus) <= 4:
+        ap.error("--gpus needs 1-4 distinct ids")
     devices = [f"cuda:{g}" for g in gpus]
     if a.microbatch is None:
         a.microbatch = 8192 if len(gpus) == 1 else -(-32768 // len(gpus))
