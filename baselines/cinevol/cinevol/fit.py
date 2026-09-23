@@ -1,5 +1,7 @@
 """Fit one CiNeVol model to one subject's observed pixels."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import copy
 import json
 import os
 from pathlib import Path
@@ -56,8 +58,74 @@ def batch_gradient(model, batch, noise, microbatch):
     return logged
 
 
+def sharded_batch_gradient(models, devices, batch, noise, microbatch, pool):
+    """batch_gradient with the batch split into one contiguous part per GPU (replica).
+
+    Same pixels, same PSF noise, same n/count weights: only the summation order of the
+    per-part bias, gradients and logged terms differs. Leaves the summed gradient in every
+    replica's .grad."""
+    count = len(batch["value"])
+    parts = [(int(p[0]), int(p[-1]) + 1) for p in np.array_split(np.arange(count), len(models))]
+
+    def bias(r):
+        torch.cuda.set_device(devices[r])      # Grid4D launches on the current device
+        a, b = parts[r]
+        part = {k: v[a:b].to(devices[r]) for k, v in batch.items()}
+        nz, total = noise[a:b].to(devices[r]), torch.zeros((), device=devices[r])
+        with torch.no_grad():
+            for start, sub in chunks(part, microbatch):
+                n = len(sub["value"])
+                xyz = training_samples(sub, nz[start:start + n])
+                expand = lambda x: x[:, None].expand(n, nz.shape[1])
+                out = models[r](xyz, expand(sub["cardiac"]), expand(sub["respiratory"]),
+                                expand(sub["slice_index"]), expand(sub["frame_index"]))
+                total += out["bias"].abs().mean() * (n / count)
+        return part, nz, total
+
+    staged = list(pool.map(bias, range(len(models))))
+    global_abs_bias = sum(float(s[2]) for s in staged)
+
+    def grad(r):
+        torch.cuda.set_device(devices[r])
+        part, nz, _ = staged[r]
+        gab = torch.tensor(global_abs_bias, dtype=torch.float32, device=devices[r])
+        logged = {}
+        for start, sub in chunks(part, microbatch):
+            n = len(sub["value"])
+            xyz = training_samples(sub, nz[start:start + n])
+            terms = loss_terms(models[r], sub, xyz, gab)
+            objective = weighted_loss(terms, models[r].config) * (n / count)
+            if not torch.isfinite(objective):
+                raise FloatingPointError("Non-finite objective; stopping instead of discarding invalid values")
+            objective.backward()
+            for k, value in terms.items():
+                logged[k] = logged.get(k, 0.) + float(value.detach()) * (n / count)
+        return logged
+
+    logs = list(pool.map(grad, range(len(models))))
+    # All-reduce: sum every replica's gradient on GPU 0, copy the sum back to each replica.
+    for ps in zip(*(m.parameters() for m in models)):
+        gs = [p.grad for p in ps if p.grad is not None]
+        if not gs:
+            continue
+        total = sum(g.to(devices[0]) for g in gs)
+        for p in ps:
+            p.grad = total.to(p.device, copy=True)
+    logged = {k: sum(l.get(k, 0.) for l in logs) for k in logs[0]}
+    logged["total"] = sum(models[0].config["loss_weights"][k] * v for k, v in logged.items())
+    return logged
+
+
 def fit(manifest, output, profile="invivo", backend="grid4d", device="cuda", microbatch=1024,
-        seed=7, smoke=False, resume=False, checkpoint_every=25):
+        seed=7, smoke=False, resume=False, checkpoint_every=25, devices=None):
+    """devices: list of CUDA devices to shard each step's batch over (one model replica each,
+    gradients summed); None or one device -> the original single-device path."""
+    devices = list(devices) if devices else [device]
+    device = devices[0]
+    if len(devices) > 1 and (len(set(devices)) != len(devices) or not all(d.startswith("cuda") for d in devices)):
+        raise ValueError(f"Sharding needs distinct CUDA devices, got {devices}")
+    if len(devices) > 1 and resume:   # replicas' optimizers would share the restored `step` tensors
+        raise ValueError("Resume is only supported on one device")
     if microbatch < 1 or checkpoint_every < 1:
         raise ValueError("Microbatch and checkpoint interval must be positive")
     if device.startswith("cuda") and not torch.cuda.is_available():
@@ -77,6 +145,7 @@ def fit(manifest, output, profile="invivo", backend="grid4d", device="cuda", mic
     except BlockingIOError:
         lock.close()
         raise RuntimeError(f"Another process is fitting {output}")
+    pool = None
     try:
         if last.exists() and not resume:
             raise FileExistsError(f"{last} already exists. Use --resume or a new --output directory.")
@@ -96,13 +165,19 @@ def fit(manifest, output, profile="invivo", backend="grid4d", device="cuda", mic
         choices = config["implementation_choices"]
         optimizer = torch.optim.AdamW(model.optimizer_groups(), lr=opt_config["learning_rate"],
                                       betas=tuple(choices["adam_betas"]), eps=choices["adam_eps"])
+        # Identical replicas (copies of the same init) + optimizers on the other devices.
+        models = [model] + [copy.deepcopy(model).to(d) for d in devices[1:]]
+        optimizers = [optimizer] + [torch.optim.AdamW(m.optimizer_groups(), lr=opt_config["learning_rate"],
+                                                      betas=tuple(choices["adam_betas"]), eps=choices["adam_eps"])
+                                    for m in models[1:]]
         start, previous_seconds = 0, 0.
         if resume:
             state = load_checkpoint(last)
             if state["fingerprint"] != dataset.fingerprint or state["config"] != config:
                 raise ValueError("Resume manifest/data/configuration differs from checkpoint")
-            model.load_state_dict(state["model"])
-            optimizer.load_state_dict(state["optimizer"])
+            for m, o in zip(models, optimizers):
+                m.load_state_dict(state["model"])
+                o.load_state_dict(state["optimizer"])
             rng.set_state(state["sampling_rng"])
             torch.set_rng_state(state["torch_rng"])
             if device.startswith("cuda") and state["cuda_rng"] is not None:
@@ -125,31 +200,46 @@ def fit(manifest, output, profile="invivo", backend="grid4d", device="cuda", mic
         write_json(output / "subject.json", {**dataset.meta, "source_manifest": str(dataset.path)})
         write_json(output / "environment.json", {
             "python": platform.python_version(), "torch": torch.__version__, "cuda": torch.version.cuda,
-            "device": torch.cuda.get_device_name() if device.startswith("cuda") else "cpu",
+            "device": torch.cuda.get_device_name(device) if device.startswith("cuda") else "cpu",
+            "devices": devices,
             "seed": seed, "microbatch": microbatch, "fingerprint": dataset.fingerprint,
             "NeSVoR_reviewed_commit": "730ddaa3711a2304386de34193ea4b957892fe7b",
             "Grid4D_commit": "a8992a9bd18b1828d2890a190421bca8bf0d2e80",
         })
         setup_seconds = time.perf_counter() - t_start
-        if device.startswith("cuda"):
-            torch.cuda.reset_peak_memory_stats()
-            torch.cuda.synchronize()
+        sharded = len(devices) > 1
+        pool = ThreadPoolExecutor(len(devices)) if sharded else None
+        cuda_devices = [d for d in devices if d.startswith("cuda")]
+        for d in cuda_devices:
+            torch.cuda.reset_peak_memory_stats(d)
+            torch.cuda.synchronize(d)
         t_fit = time.perf_counter()
         print(f"{'SMOKE ONLY' if smoke else 'PAPER CONFIGURATION'}: {opt_config['steps_per_subject']} steps; "
-              f"{opt_config['batch_observed_pixels']} pixels/step; {config['psf_samples']['fitting']} PSF samples; {dataset.n:,} observations", flush=True)
-        model.train()
+              f"{opt_config['batch_observed_pixels']} pixels/step; {config['psf_samples']['fitting']} PSF samples; {dataset.n:,} observations"
+              + (f"; sharded over {devices}" if sharded else ""), flush=True)
+        for m in models:
+            m.train()
         with open(output / "losses.jsonl", "a", buffering=1) as log:
             for step in range(start + 1, opt_config["steps_per_subject"] + 1):
-                batch = dataset.sample(opt_config["batch_observed_pixels"], rng, device)
+                # Sharded: sample on CPU (same indices/noise as the 1-GPU stream), each replica copies its part.
+                batch = dataset.sample(opt_config["batch_observed_pixels"], rng, "cpu" if sharded else device)
                 noise = torch.randn(len(batch["value"]), config["psf_samples"]["fitting"], 3,
-                                    generator=rng).to(device)
-                optimizer.zero_grad(set_to_none=True)
-                terms = batch_gradient(model, batch, noise, microbatch)
+                                    generator=rng).to("cpu" if sharded else device)
+                for o in optimizers:
+                    o.zero_grad(set_to_none=True)
+                if sharded:
+                    terms = sharded_batch_gradient(models, devices, batch, noise, microbatch, pool)
+                else:
+                    terms = batch_gradient(model, batch, noise, microbatch)
                 if any(p.grad is not None and not torch.isfinite(p.grad).all() for p in model.parameters()):
                     raise FloatingPointError("Non-finite model gradient")
-                optimizer.step()
-                if device.startswith("cuda"):
-                    torch.cuda.synchronize()
+                if sharded:
+                    list(pool.map(lambda r: (torch.cuda.set_device(devices[r]), optimizers[r].step()),
+                                  range(len(devices))))
+                else:
+                    optimizer.step()
+                for d in cuda_devices:
+                    torch.cuda.synchronize(d)
                 elapsed = previous_seconds + time.perf_counter() - t_fit
                 row = dict(step=step, optimization_seconds=elapsed, **terms)
                 log.write(json.dumps(row, allow_nan=False) + "\n")
@@ -168,10 +258,13 @@ def fit(manifest, output, profile="invivo", backend="grid4d", device="cuda", mic
                     os.replace(output / "last.pt.tmp", last)
         write_json(output / "timing_fit.json", {"setup_seconds_this_invocation": setup_seconds,
                    "optimization_seconds": previous_seconds + time.perf_counter() - t_fit,
-                   "peak_gpu_bytes": torch.cuda.max_memory_allocated() if device.startswith("cuda") else 0,
+                   "peak_gpu_bytes": max((torch.cuda.max_memory_allocated(d) for d in cuda_devices), default=0),
+                   "devices": devices,
                    "complete": True, "steps": opt_config["steps_per_subject"], "smoke": smoke})
         return last
     finally:
+        if pool is not None:
+            pool.shutdown()
         lock.close()
 
 
@@ -183,6 +276,7 @@ def main():
     p.add_argument("--backend", choices=["torch", "grid4d"], default="grid4d")
     p.add_argument("--device", default="cuda")
     p.add_argument("--microbatch", type=int, default=1024)
+    p.add_argument("--devices", nargs="+", default=None, help="shard each step over these CUDA devices")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--smoke", action="store_true", help="Reduced architecture and budget for software verification ONLY")
     p.add_argument("--resume", action="store_true")
