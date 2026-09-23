@@ -165,6 +165,14 @@ valid recon but its timings are cold-cache-inflated** (3.10 ± 0.84 s; §6a) —
 |---|---|---|---|---|---|---|
 | VGGT `final518_diff1000`, `--gpus 0,1,2,3` (`_4gpu_v2`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **1.96 ± 0.54 s** (median 1.78) | **164 ms** | 3 phases/GPU, sequential B=1 forwards; `cache_warm_sec` 0.06 s mean (outside the span) |
 | VGGT `final518_diff1000`, 1 GPU — forward+splat only (`vggt_final518_diff1000_ep300`, existing arm, Σ `per_phase_ms`) | Great Lakes, 1× L40S | torch 2.13.0+cu130 | 180 | 8.16 ± 2.48 s | 680 ms | reference: its `total_sec` (9.74 ± 3.07) is cold-cache-inflated (§6a), so the forward sum (+ ~0.1 s warm overhead) is the fair 1-GPU number; not re-run |
+| Dangi Stage A, `--gpus 0,1,2,3` (`dangi_scatter_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **0.132 ± 0.026 s** (median 0.123) | **11 ms** | 3 phases/GPU; span = preprocess+predict+translate; stack reads (0.68 s) / NIfTI writes (0.92 s) per subject are outside it (`io_load_sec`/`io_save_sec`); run 13:08–13:12, only our PID on the GPUs, existing files untouched. 1↔4 GPU outputs bit-identical (P001, 12/12) |
+| NeSVoR, `GPUS=0,1,2,3` (`nesvor_scatter_4gpu`) | gl1706, 4× L40S | nesvor-t2 (docs/90) | **1** (P001 test; cohort pending) | 363 s | 30.3 s | 12 independent per-phase fits, phase p on GPU p mod 4, 3 sequential per GPU; per-fit 140 s (first wave, one-time warm-up) then 111–112 s; span = `total_wall.sec` (includes each `nesvor reconstruct` process start + stack read, inherent to the CLI). Cohort ≈ 180 × 6 min ≈ **18 h**, to run on the 3-day job after CiNeVol (`RESUME=1`, P001 kept) |
+| CiNeVol, `--gpus 0,1,2,3` (`cinevol_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130, Grid4D cu130 build | pending | (one-subject check: fit 65.9 s, export 3.5 s, total 78.0 s) | — | one joint 4D INR per subject: data-parallel fit (one 8192-px microbatch per GPU, grads summed) + export 3 frames/GPU (docs/121); the check subject was deleted so the cohort run regenerates it. Cohort ≈ 180 × 78 s ≈ **4 h** on the 3-day job (`tools/af12_cinevol_timing.sh`) |
+
+Existing single-GPU references for the baselines (different GPU, indicative only): Dangi
+`scratch/eval/*/out/*/dangi_scatter` ~3.5 s `total_sec` on A40 — a span that *included* the file
+I/O; NeSVoR `nesvor_scatter` on the gated cohorts 157 s per fit at J=1 on A40 → ~31 min per
+subject; CiNeVol `cinevol` on af12 fit 203–215 s + export 13–15 s on A40.
 
 Speedup 4 GPUs vs 1: **4.16×** (1.96 s vs the 1-GPU forward sum 8.16 s; the forwards alone shard
 8.16 → 1.88 s = 4.3×, slightly super-linear because each GPU runs only 3 phases). Per cohort (4
@@ -227,6 +235,17 @@ env / different GPU, not the sharding.
   caesar, so no real NeSVoR fit has run with `GPUS`.
 - For the table: use new arm names so 1-GPU and N-GPU runs never share an arm (stamped subjects are skipped).
 
+**Follow-up on Great Lakes (gl1706, 4× L40S, 2026-09-23 13:00, commit `7267efc`):** both caps
+raised 3→4. `run_dangi.py` additionally moved the stack reads before and the NIfTI writes after the
+timer (`io_load_sec`/`io_save_sec`; the §3 span excludes input reads/output writes and for Dangi
+the GPFS I/O was most of the old number) and gained `--arm-name`; 1↔4 GPU outputs re-verified
+bit-identical (P001, 12/12 volumes + centres). `run_nesvor.sh` had `VGGT=/home/minsukc/vggt`
+hardcoded (ignores the worktree; now defaults to the script's own checkout, overridable) — its
+4-GPU mapping was re-verified with a stub through that override, then with a **real** fit
+(P001: 12/12 phases, 363 s, §6 table). Cohort launchers `tools/af12_dangi_timing.sh`,
+`tools/af12_nesvor_timing.sh` (same guards/monitor/snapshot as the VGGT and CiNeVol ones; guards
+fault-injected; NeSVoR `RESUME=1`).
+
 ## 7. Files
 
 - `evaluation/src/engine/run_vggt.py` — `--gpus` (commit `8de17e1`; cap 3→4 on 2026-09-23).
@@ -236,7 +255,7 @@ env / different GPU, not the sharding.
   output redirect / deterministic switch / process-pool variant, `run_original.py`, `compare.py`,
   `magnitude.py`), and `af12_logs/` of the cancelled run (monitor CSV, before/after snapshots).
 
-## 8. Plan for the other GPU methods (same 4 GPUs, one patient at a time, §3 span) — not done
+## 8. Plan for the other GPU methods (same 4 GPUs, one patient at a time, §3 span) — implemented (§6b); Dangi cohort done, CiNeVol + NeSVoR cohorts pending on the 3-day job
 
 The rule: every GPU method is timed on one patient using all 4 GPUs, split along whatever axis its
 structure allows, with no change to the method's math. Status of the af12 arms as of 2026-09-23:
