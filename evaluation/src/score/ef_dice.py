@@ -365,9 +365,12 @@ def score(args):
         r = {"cohort": c, "subject": subj, "ef_gt": ef_of(gt)}
         r["edv_gt"], r["esv_gt"] = vols_of(gt, gtvox)
         r["lvm_gt"] = lvm_of(args.seg_dir, c, sidx, "gt", ed, gtvox)
+        # Per-frame volume curves (mL), kept so any curve metric can be recomputed without re-seg.
+        r["lv_curve_gt"] = (gt * gtvox / 1000.0).tolist()
         if gt_rv is not None:
             r["rv_ef_gt"] = ef_of(gt_rv)
             r["rv_edv_gt"], r["rv_esv_gt"] = vols_of(gt_rv, gtvox)
+            r["rv_curve_gt"] = (gt_rv * gtvox / 1000.0).tolist()
         for arm in ("clean", "breath"):
             # LV, RV, and Dice/HD95 gate INDEPENDENTLY — an unsegmentable LV must not
             # suppress a valid RV, and overlap metrics only need the ED/ES segs to exist.
@@ -376,10 +379,21 @@ def score(args):
                 r[f"ef_{arm}"] = ef_of(cur)
                 r[f"edv_{arm}"], r[f"esv_{arm}"] = vols_of(cur, vox)
                 r[f"lvm_{arm}"] = lvm_of(args.seg_dir, c, sidx, arm, ed, vox)
+                # Volume-curve error: frame-by-frame |pred - GT| (same phase index), mean over
+                # frames, / GT EDV -> % of EDV. Defined even when the LV vanishes (EF undefined).
+                lv_ml = cur * vox / 1000.0
+                r[f"lv_curve_{arm}"] = lv_ml.tolist()
+                r[f"lv_curve_nmae_{arm}"] = float(np.mean(np.abs(lv_ml - gt * gtvox / 1000.0))
+                                                  / r["edv_gt"] * 100.0)
             rv, rvvox = curve(args.seg_dir, c, sidx, arm, T, lab=RV)
             if rv is not None:
                 r[f"rv_ef_{arm}"] = ef_of(rv)
                 r[f"rv_edv_{arm}"], r[f"rv_esv_{arm}"] = vols_of(rv, rvvox)
+                rv_ml = rv * rvvox / 1000.0
+                r[f"rv_curve_{arm}"] = rv_ml.tolist()
+                if gt_rv is not None:
+                    r[f"rv_curve_nmae_{arm}"] = float(np.mean(np.abs(rv_ml - gt_rv * gtvox / 1000.0))
+                                                      / r["rv_edv_gt"] * 100.0)
             if all(os.path.isfile(seg_path(args.seg_dir, c, sidx, arm, t)) for t in {ed, es}):
                 for name, lab in [("LV", LV), ("MYO", MYO), ("RV", RV)]:
                     r[f"dice_{arm}_{name}_ED"] = dice(args.seg_dir, c, sidx, arm, ed, ed, lab)
@@ -409,6 +423,10 @@ def score(args):
                 if pairs:
                     gg, pp = map(np.array, zip(*pairs))
                     d[f"{arm}_{key}_mae_{unit}"] = float(np.mean(np.abs(pp - gg)))
+            for key in ("lv_curve_nmae", "rv_curve_nmae"):
+                vals = [x[f"{key}_{arm}"] for x in rs if x.get(f"{key}_{arm}") is not None]
+                if vals:
+                    d[f"{arm}_{key}_pct"] = float(np.mean(vals))
             for name in ("LV", "MYO", "RV"):
                 for ph in ("ED", "ES"):
                     for met in ("dice", "hd95"):
