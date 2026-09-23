@@ -1,19 +1,23 @@
-# 120 — Multi-GPU phase sharding for `run_vggt.py`, and the af12 inference-timing benchmark (in progress)
+# 120 — Multi-GPU phase sharding for `run_vggt.py`, and the af12 inference-timing benchmark
 
 > **TL;DR & takeaway**
-> `run_vggt.py --gpus 0,1,2` (commit `8de17e1`) splits each subject's T phases across up to 3 GPUs
-> (one model copy + one thread per GPU, batch built once and copied). Verified on caesar with the 518
-> `final518_diff1000` model: outputs are **bit-identical** to the unmodified script under
-> `torch.use_deterministic_algorithms` (84/84 files, 3 subjects × clean/breath, 1-GPU and 3-GPU), and
-> **~2.8–3.0× faster per subject**. Batching the 12 phases on one GPU was measured and rejected
-> (slower: a single phase already saturates the GPU). **The af12 timing benchmark is NOT done:** the
-> caesar run was cancelled because another user's job shared GPU 0 and ~18 CPU cores mid-run
-> (timings contaminated). It must be redone on a quiet machine — §5 is the exact procedure. Also
-> open: new vs existing af12 recons differ by more than float noise (worst-phase PSNR 40–48 dB,
-> max voxel diff ~1.0) with **identical code** — the environment differed (torch cu126 vs cu130,
-> RTX 6000 Ada vs L40S); cause unverified (§4).
+> `run_vggt.py --gpus 0,1,2,3` splits each subject's T phases across up to 4 GPUs (one model copy +
+> one thread per GPU, batch built once per subject and copied; commit `8de17e1`, cap raised 3→4 on
+> 2026-09-23). Outputs are **bit-identical** to the unmodified script under
+> `torch.use_deterministic_algorithms` (84/84 files, caesar) and, on Great Lakes L40S with the pinned
+> cu130 env, **equal to the existing 1-GPU af12 arm to float noise** (2160/2160 phases, max |diff|
+> ≤ 7.8e-7, ≥ 155 dB — the 40–48 dB discrepancy seen on caesar was its off-spec cu126 env, §4).
+> **af12 timing (§6, 180 test subjects, 4× L40S): VGGT `final518_diff1000` = 1.96 ± 0.54 s per
+> subject, 164 ms per volume, 4.16× the same-GPU-type 1-GPU forward time (8.16 ± 2.48 s).**
+> Pitfall (§6a): a first attempt read 3.10 s because the monai preprocess of each subject ran
+> lazily *inside* the timed span on a cold cache (~1 s); `run_vggt.py` now warms it before the
+> timer (`cache_warm_sec`), verified draw-identical. Batching phases on one GPU was measured and rejected
+> (slower: one phase already saturates the GPU). Other methods get added to §6 under the §3
+> definition, each split over the same 4 GPUs the way its structure allows (per phase for NeSVoR /
+> Dangi; data-parallel fit for CiNeVol — §8).
 
-Session 2026-09-22/23. Worktree `~/vggt-afsim`, branch `exp/af-sim`.
+Sessions 2026-09-22/23 (caesar, sharding + cancelled first timing run) and 2026-09-23 (Great Lakes
+`gl1706`, the reported timing). Worktree `~/vggt-afsim`, branch `exp/af-sim`.
 
 ## 1. Goal (what the user asked for)
 
@@ -110,7 +114,7 @@ build, GPFS I/O) is harness overhead, **not profiled yet**.
   scored metrics (PSNR/NCC/EF/Dice) change materially. Sharding itself is ruled out (same-machine
   1-vs-3-GPU diff is ~6e-7).
 
-## 5. TODO for the next agent (on the new machine)
+## 5. Procedure (done 2026-09-23 on gl1706 — results in §6)
 
 1. **Machine:** 3 identical idle GPUs (same model), low CPU load, the repo's pinned env
    (`torch 2.13.0+cu130`, check `python -c "import torch;print(torch.__version__)"`). If on Great
@@ -142,12 +146,69 @@ build, GPFS I/O) is harness overhead, **not profiled yet**.
 6. **Write results into §6** (machine, GPU model, env, commit, n, mean ± sd, per-volume, speedup) and
    add a line to `docs/README.md` (already added for this doc).
 
-## 6. Results table (fill in; other methods to be added under the §3 definition)
+## 6. Results (other methods to be added under the §3 definition)
+
+Both runs 2026-09-23 on Great Lakes `gl1706` (spgpu2, SLURM job 61762307: 4× **NVIDIA L40S**,
+16 cores), `svr` env **torch 2.13.0+cu130**, repo `22a72c7` + the 3→4 cap change (+ the §6a
+cache warm-up for the reported run), ckpt
+`210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt`, launcher
+`GPUS=0,1,2,3 NAME=<arm> bash tools/af12_vggt_timing.sh` (`--split test --arms breath --input
+scatter`, the same args as every af12 VGGT arm). n = 180 = all af12 test subjects (cmrx2023 26,
+cmrx2024 38, cmrx2025 46, acdc 21, mnms 49), first subjects **included**. Logs
+`temp/af12_timing_<arm>/` (gitignored).
+
+**Reported run** = arm `vggt_final518_diff1000_ep300_4gpu_v2` (11:44–12:01, monai cache warm,
+§6a). The first attempt, arm `vggt_final518_diff1000_ep300_4gpu` (11:07–11:29), is **kept as a
+valid recon but its timings are cold-cache-inflated** (3.10 ± 0.84 s; §6a) — do not cite them.
 
 | method | machine / GPU(s) | env | n | per subject (mean ± sd) | per volume | notes |
 |---|---|---|---|---|---|---|
-| VGGT `final518_diff1000`, `--gpus 0,1,2` | — | — | — | — | — | pending (§5) |
-| VGGT `final518_diff1000`, 1 GPU (same machine) | — | — | — | — | — | pending (§5) |
+| VGGT `final518_diff1000`, `--gpus 0,1,2,3` (`_4gpu_v2`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **1.96 ± 0.54 s** (median 1.78) | **164 ms** | 3 phases/GPU, sequential B=1 forwards; `cache_warm_sec` 0.06 s mean (outside the span) |
+| VGGT `final518_diff1000`, 1 GPU — forward+splat only (`vggt_final518_diff1000_ep300`, existing arm, Σ `per_phase_ms`) | Great Lakes, 1× L40S | torch 2.13.0+cu130 | 180 | 8.16 ± 2.48 s | 680 ms | reference: its `total_sec` (9.74 ± 3.07) is cold-cache-inflated (§6a), so the forward sum (+ ~0.1 s warm overhead) is the fair 1-GPU number; not re-run |
+
+Speedup 4 GPUs vs 1: **4.16×** (1.96 s vs the 1-GPU forward sum 8.16 s; the forwards alone shard
+8.16 → 1.88 s = 4.3×, slightly super-linear because each GPU runs only 3 phases). Per cohort (4
+GPUs): cmrx2023 1.63 ± 0.24, cmrx2024 1.79 ± 0.22, cmrx2025 2.09 ± 0.67, acdc 1.82 ± 0.59,
+mnms 2.21 ± 0.52 s — the spread follows each subject's slice count D. Non-forward work inside the
+span (batch build + per-GPU copies + thread join + stitching) is **0.08 s/subject** (profiled per
+component on 3 subjects: `prepare_batch` 0.06–0.09 s, copies ≤ 0.04 s, stitch 0.005 s).
+
+### 6a. Pitfall found and fixed: lazy monai preprocessing inside the timed span
+
+The first attempt measured 3.10 ± 0.84 s with ~1.2 s/subject of non-forward time, first
+misattributed to batch build. Profiling the same subjects afterwards gave `prepare_batch` ≈ 0.06 s
+and `total ≈ forwards`. The difference: `MRIDataset` builds its monai `PersistentDataset` entry
+(GPFS NIfTI load, `Orientationd`, in-plane resample, normalize, ~1 s) **lazily on the first
+`get_data`**, which `build_batch` calls *inside* the timed span; `make_dataset` (before the timer)
+only constructs the object. On a node that has never seen the cohort every subject is cold —
+evidence: 182 entries in `/tmp/vggt-mri_${USER}_monai_cache` with mtimes in the 11:07–11:29 window,
+none after. The existing 1-GPU arm (`total_sec` 9.74 vs forward sum 8.16 → 1.58 s "overhead") and
+the caesar numbers (§4) carry the same bias.
+
+Fix (`run_vggt.py`, before the timer, once per subject): `dset.get_data(seq_index=seq,
+img_per_seq=dset.num_slices)` and record its cost as `timing.json → cache_warm_sec`. Safe: for a
+non-train split the draw is a local `random.Random(seq_index)` — verified on two subjects that two
+calls return identical arrays for all 9 batch keys and leave the global `random`/torch/numpy RNG
+untouched, and the `_4gpu_v2` recons equal the existing arm (below). **Rule for every method added
+to this table: warm/preload the subject's inputs outside the timed span** (NeSVoR/CiNeVol read the
+bundle stacks directly, but check for lazy first-touch costs the same way — profile one subject
+twice).
+
+**Run audit** (`monitor.csv`, 2 s cadence; 1991 samples first run, 1651 reported run): only the
+run's own five `run_vggt.py` PIDs (one per cohort process) ever appeared on the four GPUs;
+`before.txt`/`after.txt` snapshot: first run 0 lines; reported run **2160 added lines, 0
+modified/deleted** — `<subject>/scatter/stack_t{00..11}.nii.gz` for all 180 subjects, written
+11:55–12:00 by another process (`run_vggt.py` never writes stacks; provenance to be confirmed with
+the user — presumably a baseline-input export). 1-min load ≤ 6.1 throughout (≤ 5.8 in that window;
+acdc/mnms timings show no anomaly). The node was **shared** with three other users' jobs (their own
+GPUs/cores under SLURM cgroups; only memory/PCIe bandwidth shared) — accepted by the user as not
+material.
+
+**Volumes vs the existing arm** (`tools/compare_af12_recons.py`, all 2160 breath phases, both
+arms): max |diff| 4.8e-7 – 9.5e-7, mean |diff| ≤ 2e-9, worst-phase PSNR 154.9–163.8 dB per cohort —
+i.e. the splat's `scatter_add_` float-order noise (§2), nothing else. This closes §4: on the pinned
+cu130 env the sharded output equals the existing arm; caesar's 40–48 dB discrepancy was its cu126
+env / different GPU, not the sharding.
 
 ## 6b. Same GPU config for the other methods (2026-09-23)
 
@@ -168,9 +229,34 @@ build, GPFS I/O) is harness overhead, **not profiled yet**.
 
 ## 7. Files
 
-- `evaluation/src/engine/run_vggt.py` — `--gpus` (commit `8de17e1`).
+- `evaluation/src/engine/run_vggt.py` — `--gpus` (commit `8de17e1`; cap 3→4 on 2026-09-23).
 - `tools/af12_vggt_timing.sh` — guarded, monitored af12 launcher (this doc).
 - `tools/compare_af12_recons.py` — new-vs-existing af12 recon comparison, all phases.
 - `temp/gpushard/` (caesar only, gitignored) — verification harness (`run_vggt.py` test copy with
   output redirect / deterministic switch / process-pool variant, `run_original.py`, `compare.py`,
   `magnitude.py`), and `af12_logs/` of the cancelled run (monitor CSV, before/after snapshots).
+
+## 8. Plan for the other GPU methods (same 4 GPUs, one patient at a time, §3 span) — not done
+
+The rule: every GPU method is timed on one patient using all 4 GPUs, split along whatever axis its
+structure allows, with no change to the method's math. Status of the af12 arms as of 2026-09-23:
+CiNeVol exists (1× A40, ~199 s fit + 14 s export per subject); **NeSVoR and Dangi have no af12
+arms** (they exist only on the gated-cine cohorts `scratch/eval/<src>/out`).
+
+- **Dangi** (`run_dangi.py`): 12 independent per-phase slice-CNN passes → 3 phases/GPU (one model
+  copy + thread per GPU, as VGGT). I/O-bound, ~3.5 s/subject on 1 GPU (docs/100 §10a); sharding is
+  for consistency, not speed.
+- **NeSVoR** (`run_nesvor.sh`): already 12 *independent* INR fits per subject (one per phase,
+  ~157 s each on A40 at J=1) → 3 fits/GPU: give each fit its own `CUDA_VISIBLE_DEVICES`, run 4 at
+  a time (one per GPU). Exact (nothing is shared between fits). ~8 min/subject → ~24 h for 180
+  subjects; needs its own allocation.
+- **CiNeVol** (`baselines/cinevol/cinevol/fit.py`): ONE 4D INR per subject, phases share all
+  parameters — no phase axis. Current step = 32,768 sampled pixels processed as 4 exact
+  gradient-accumulation microbatches of 8,192 (`batch_gradient`, `--microbatch 8192`), preceded by
+  a no-grad pre-pass computing the batch-wide `global_abs_bias`. 4-GPU version = data-parallel:
+  identical model + AdamW replicas, every rank draws the same sample stream (same CPU `rng`), takes
+  microbatch `rank`, all-reduce (sum) the bias scalar, then all-reduce (sum) the grads, identical
+  `optimizer.step()` on every rank; logging/checkpoints from rank 0; export 3 frames/GPU. Same
+  gradient as today up to float summation order (not bit-identical). Verify on 2–3 subjects against
+  the existing single-GPU fit before running the cohort. Expected fit speedup < 4× (per-step
+  all-reduce of the Grid4D hash grid + MLP at ~0.4 s/step).
