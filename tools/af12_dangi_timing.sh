@@ -17,21 +17,22 @@ GPUS=${GPUS:-0,1,2,3}
 NAME=${NAME:?set NAME (the arm name, e.g. dangi_scatter_4gpu)}
 PY=${PY:-/home/minsukc/micromamba/envs/svr/bin/python}
 MAX_LOAD=${MAX_LOAD:-8}          # node-wide load; other users' cgroups on a shared node count too
-SOURCES=${SOURCES:-cmrx2023_af12 cmrx2024_af12 cmrx2025_af12 acdc_af12 mnms_af12}
-LOG=${LOG:-temp/af12_timing_${NAME}}; mkdir -p "$LOG"
+ARM=${ARM:-af12}                 # af12 | hrv12
+SOURCES=${SOURCES:-cmrx2023_$ARM cmrx2024_$ARM cmrx2025_$ARM acdc_$ARM mnms_$ARM}
+LOG=${LOG:-temp/${ARM}_timing_${NAME}}; mkdir -p "$LOG"
 export CUDA_VISIBLE_DEVICES=$GPUS
 LOCAL_GPUS=$(seq -s, 0 $(( $(tr ',' '\n' <<< "$GPUS" | wc -l) - 1 )))
 
-if compgen -G "evaluation/volumes/*_af12/out/*/${NAME}" > /dev/null; then
-    echo "REFUSING: ${NAME} already exists for an af12 subject (pick another NAME):"
-    ls -d evaluation/volumes/*_af12/out/*/${NAME} | head; exit 1; fi
+if compgen -G "evaluation/volumes/*_${ARM}/out/*/${NAME}" > /dev/null; then
+    echo "REFUSING: ${NAME} already exists for an $ARM subject (pick another NAME):"
+    ls -d evaluation/volumes/*_${ARM}/out/*/${NAME} | head; exit 1; fi
 if [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; then
     echo "REFUSING: a process is already on a GPU"; nvidia-smi; exit 1; fi
 LOAD=$(awk '{print $1}' /proc/loadavg)
 if awk -v l="$LOAD" -v m="$MAX_LOAD" 'BEGIN{exit !(l>m)}'; then
     echo "REFUSING: 1-min load average $LOAD > $MAX_LOAD (another job is using the CPU)"; exit 1; fi
 
-snap() { find evaluation/volumes/*_af12/out -type f -printf '%p %s %T@\n' | grep -v "/${NAME}/" | sort; }
+snap() { find evaluation/volumes/*_${ARM}/out -type f -printf '%p %s %T@\n' | grep -v "/${NAME}/" | sort; }
 snap > "$LOG/before.txt"
 ( while true; do
     ts=$(date +%s.%N); la=$(awk '{print $1}' /proc/loadavg)
@@ -49,7 +50,7 @@ $PY evaluation/src/engine/run_dangi.py --split test --input scatter --arm-name "
 kill $MON
 snap > "$LOG/after.txt"
 if diff -q "$LOG/before.txt" "$LOG/after.txt" > /dev/null; then echo "existing files untouched: OK"
-else echo "!! existing af12 files CHANGED — see diff $LOG/before.txt $LOG/after.txt"; rc=1; fi
+else echo "!! existing $ARM files CHANGED — see diff $LOG/before.txt $LOG/after.txt"; rc=1; fi
 awk -F', ' '/ app,/{print $2}' "$LOG/monitor.csv" | sort -u > "$LOG/gpu_pids.txt"
 echo "PIDs seen on GPUs during the run: $(tr '\n' ' ' < "$LOG/gpu_pids.txt")  (only ours => clean)"
 echo "end $(date -Is) rc=$rc" | tee -a "$LOG/run.txt"

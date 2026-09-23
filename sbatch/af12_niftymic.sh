@@ -39,7 +39,8 @@ export J=${J:-8} OMP=${OMP:-2}
 
 N_SHARDS=${N_SHARDS:-30}
 IDX=${SLURM_ARRAY_TASK_ID:-0}
-SOURCES=$(for s in cmrx2023 cmrx2024 cmrx2025 acdc mnms; do printf '%s_af12 ' "$s"; done)
+ARM=${ARM:-af12}                 # af12 | hrv12:  sbatch --export=ALL,ARM=hrv12 --job-name=hrv12_niftymic ...
+SOURCES=$(for s in cmrx2023 cmrx2024 cmrx2025 acdc mnms; do printf '%s_%s ' "$s" "$ARM"; done)
 DRYRUN=""; [ "${1:-}" = "--dry-run" ] && DRYRUN="--dry-run"
 
 echo "=== task $IDX/$N_SHARDS  J=$J OMP=$OMP  cpu=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2)  host=$(hostname) ==="
