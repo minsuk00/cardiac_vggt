@@ -166,10 +166,32 @@ valid recon but its timings are cold-cache-inflated** (3.10 ± 0.84 s; §6a) —
 | VGGT `final518_diff1000`, `--gpus 0,1,2,3` (`_4gpu_v2`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **1.96 ± 0.54 s** (median 1.78) | **164 ms** | 3 phases/GPU, sequential B=1 forwards; `cache_warm_sec` 0.06 s mean (outside the span) |
 | VGGT `final518_diff1000`, 1 GPU — forward+splat only (`vggt_final518_diff1000_ep300`, existing arm, Σ `per_phase_ms`) | Great Lakes, 1× L40S | torch 2.13.0+cu130 | 180 | 8.16 ± 2.48 s | 680 ms | reference: its `total_sec` (9.74 ± 3.07) is cold-cache-inflated (§6a), so the forward sum (+ ~0.1 s warm overhead) is the fair 1-GPU number; not re-run |
 | Dangi Stage A, `--gpus 0,1,2,3` (`dangi_scatter_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **0.132 ± 0.026 s** (median 0.123) | **11 ms** | 3 phases/GPU; span = preprocess+predict+translate; stack reads (0.68 s) / NIfTI writes (0.92 s) per subject are outside it (`io_load_sec`/`io_save_sec`); run 13:08–13:12, only our PID on the GPUs, existing files untouched. 1↔4 GPU outputs bit-identical (P001, 12/12) |
-| NeSVoR, `GPUS=0,1,2,3` (`nesvor_scatter_4gpu`) | gl1706, 4× L40S | nesvor-t2 (docs/90) | **1** (P001 test; cohort pending) | 363 s | 30.3 s | 12 independent per-phase fits, phase p on GPU p mod 4, 3 sequential per GPU; per-fit 140 s (first wave, one-time warm-up) then 111–112 s; span = `total_wall.sec` (includes each `nesvor reconstruct` process start + stack read, inherent to the CLI). Cohort ≈ 180 × 6 min ≈ **18 h**, to run on the 3-day job after CiNeVol (`RESUME=1`, P001 kept) |
+| NeSVoR, `GPUS=0,1,2,3` (`nesvor_4gpu_scatter`) | gl1706, 4× L40S | nesvor-t2 (docs/90) | pending (cohort run after CiNeVol) | (P001 test: 363 s — see note) | — | 12 independent per-phase fits, phase p on GPU p mod 4, 3 sequential per GPU; span = `total_wall.sec` (includes each `nesvor reconstruct` process start + stack read, inherent to the CLI). P001 test: per-fit 140 s (first wave, warm-up) then 111–112 s. **That test was run with the WRONG config** — the first launcher called `run_nesvor.sh` directly, which silently fell back to `THICK=8` and the unpadded `mask_heart.nii.gz` instead of the per-subject thickness + `mask_heart_pad10.nii.gz` that `run_baselines.py` supplies (the benchmark `nesvor_scatter` arm is correct). P001 deleted; the launcher now goes through `run_baselines.py` (dry-run thickness per source identical to the benchmark arm). Cohort ≈ 180 × 6 min ≈ **18 h** |
 | CiNeVol, `--gpus 0,1,2,3` (`cinevol_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130, Grid4D cu130 build | pending | (one-subject check: fit 65.9 s, export 3.5 s, total 78.0 s) | — | one joint 4D INR per subject: data-parallel fit (one 8192-px microbatch per GPU, grads summed) + export 3 frames/GPU (docs/121); the check subject was deleted so the cohort run regenerates it. Cohort ≈ 180 × 78 s ≈ **4 h** on the 3-day job (`tools/af12_cinevol_timing.sh`) |
+| **CPU methods** (`standard`, 16 CPUs, 48 GB, one subject at a time — the §6c rule) | | | | | | |
+| SVRTK 3D (`svrtk3d_scatter`, `sbatch/af12_svrtk.sh`, job 61778231) | 13 nodes, Xeon Gold 6154 | mirtk `svrtk.sif`, J=8 phases × OMP=2, `DEBUG=0` | **113** (of 180, §6c) | **167.4 ± 21.8 s** | **13.9 s** | run 13:2x–14:03, 0 failed tasks. All 180: 151.2 ± 30.5 s; the 67 subjects the scheduler put on Xeon Gold 6254 ran 123.9 ± 22.7 s (same D: 110 vs 153 s at D=9, 120 vs 164 s at D=10) — excluded from the headline, §6c |
+| Fetal CMR 4D (`fetal_cmr_4d`, existing arm, docs/115) | Xeon Gold 6154 | mirtk, one joint 4D solve, OMP=16 | **152** (of 180) | **517.0 ± 142.0 s** | **43.1 s** | all 180: 505.6 ± 151.5 s; 28 subjects on 6254: 444.1 ± 183.1 s (excluded, §6c) |
+| NiftyMIC v2 (`niftymic_scatter`, `sbatch/af12_niftymic.sh`, job 61780493) | Xeon Gold 6154 | `niftymic.sif`, J=8 × OMP=2, iter-max 10 | **168** (of 180) | **232.5 ± 48.7 s** | **19.4 s** | run 14:4x–15:23, 0 failed tasks; all 180: 231.6 ± 48.9 s; 12 subjects on 6254: 218.6 ± 50.3 s (excluded, §6c). First submission (61779662) failed 180/180: the af12 bundles' `mask_heart*.nii.gz` are relative symlinks into the `_af24` cohort, dangling inside NiftyMIC's subject-dir-only container bind — fixed by binding the resolved mask (`6454088`) |
+| SVRTK 3D `-debug` (`svrtk3d_debug_scatter`, `sbatch/af12_svrtk_debug.sh`, job 61779663) | — | as SVRTK + `-debug` (.dof per slice) | — | not a timing arm (159 s/subject observed) | — | motion-EPE analysis input only (`evaluation/src/analysis/motion_epe/svrtk3d.py`); separate arm, never touches `svrtk3d_scatter` |
 
-Existing single-GPU references for the baselines (different GPU, indicative only): Dangi
+### 6c. CPU methods: allocation and the CPU-model rule
+
+CPU methods (SVRTK, NiftyMIC, Fetal CMR 4D) cannot use the 4-GPU split; their unit is the
+benchmark's fixed CPU allocation — `standard`, **16 CPUs, 48 GB, one subject per task**
+(`eval_baseline_svrtk_v2.sh` / `rhythm24_fetal.sh`, byte for byte), SVRTK/NiftyMIC as J=8 phases ×
+OMP=2 threads, Fetal 4D as one OMP=16 joint solve — and their span is the runner's own
+`total_wall.sec` (all T phases of a fresh, non-resumed invocation).
+
+`standard` has no CPU feature tags, so the scheduler mixes **Xeon Gold 6154** (Skylake, 3.0 GHz)
+and **Xeon Gold 6254** (Cascade Lake, 3.1 GHz) nodes; the 6254 is ~26 % faster on these solves at
+equal slice count (measured, SVRTK: 153 → 110 s at D=9, 164 → 120 s at D=10; mean per-phase 95 → 69
+s; the mechanism — clock + DDR4-2933 bandwidth — is a plausible but unprofiled hypothesis). The
+recons are identical either way (same container, deterministic solves); only the wall differs.
+**Rule (user decision 2026-09-23): the reported number is the mean over the subjects that ran on
+the 6154** — the CPU every earlier SVRTK/NiftyMIC/Fetal4D timing was taken on — and it stands in
+for the test-set mean: the 6154 subset is representative (SVRTK: 113 subjects, 13 nodes, CV 13 %,
+per-node means 14.6–17.9 s/slice, mean D 11.2 vs 10.94 for all 180 ⇒ a D-adjusted full-set estimate
+of ~170 s vs 167 s measured). The 6254 subsets are recorded here for provenance and not reported.
 `scratch/eval/*/out/*/dangi_scatter` ~3.5 s `total_sec` on A40 — a span that *included* the file
 I/O; NeSVoR `nesvor_scatter` on the gated cohorts 157 s per fit at J=1 on A40 → ~31 min per
 subject; CiNeVol `cinevol` on af12 fit 203–215 s + export 13–15 s on A40.
