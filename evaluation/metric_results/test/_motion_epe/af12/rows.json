@@ -324,5 +324,69 @@
   "epe_demeaned": 1.2412673209846083,
   "applied_abs": 1.3098303414782064,
   "n": 180
+ },
+ "nesvor_dz": {
+  "epe": 6.5219764461315375,
+  "epe_demeaned": 6.5219764461315375,
+  "epe_raw": 7.160837443161725,
+  "applied_abs": 4.921389417953844,
+  "n": 180,
+  "input": "scatter_t00",
+  "pred_axis": "sz",
+  "pred_sign": -1.0,
+  "pooled_corr": -0.010553121097980324
+ },
+ "predict_nothing_nesvor_dz": {
+  "epe_demeaned": 4.719885330381552,
+  "applied_abs": 4.921389417953844,
+  "n": 180
+ },
+ "nesvor_dy": {
+  "epe": 1.671772545255508,
+  "epe_demeaned": 1.671772545255508,
+  "epe_raw": 2.0729759146963067,
+  "applied_abs": 2.0668712313893187,
+  "n": 180,
+  "input": "scatter_t00",
+  "pred_axis": "sy",
+  "pred_sign": 1.0,
+  "pooled_corr": 0.48871699949426095
+ },
+ "predict_nothing_nesvor_dy": {
+  "epe_demeaned": 1.97825997077018,
+  "applied_abs": 2.0668712313893187,
+  "n": 180
+ },
+ "nesvor_dx": {
+  "epe": 1.0858653928808701,
+  "epe_demeaned": 1.0858653928808701,
+  "epe_raw": 1.381013459127645,
+  "applied_abs": 1.2916333015227717,
+  "n": 180,
+  "input": "scatter_t00",
+  "pred_axis": "sx",
+  "pred_sign": 1.0,
+  "pooled_corr": 0.48537584674974166
+ },
+ "predict_nothing_nesvor_dx": {
+  "epe_demeaned": 1.220084723836222,
+  "applied_abs": 1.2916333015227717,
+  "n": 180
+ },
+ "nesvor": {
+  "epe": 6.5219764461315375,
+  "epe_demeaned": 6.5219764461315375,
+  "epe_raw": 7.160837443161725,
+  "applied_abs": 4.921389417953844,
+  "n": 180,
+  "input": "scatter_t00",
+  "pred_axis": "sz",
+  "pred_sign": -1.0,
+  "pooled_corr": -0.010553121097980324
+ },
+ "predict_nothing_nesvor": {
+  "epe_demeaned": 4.719885330381552,
+  "applied_abs": 4.921389417953844,
+  "n": 180
  }
 }

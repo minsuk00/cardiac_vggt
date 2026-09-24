@@ -1,0 +1,31 @@
+
+=== dz: 1803 common slices, 180 subjects, 9 methods ===
+method                                  EPE demeaned   raw EPE   corr
+cinevol                                         4.19      5.18   0.34
+fetal_cmr_4d                                    4.80      5.84   0.17
+nesvor                                          6.41      6.99   0.02
+niftymic                                        4.71      5.03   0.07
+svrtk3d                                         4.80      5.68   0.12
+vggt_final518_base_ep300                        0.87      0.88   0.98
+vggt_final518_diff1000_ep300                    0.92      0.90   0.98
+vggt_final518_hw0_ep300                         0.92      0.92   0.97
+vggt_final518_nogather_ep300                    2.40      2.35   0.81
+predict_nothing                                 4.73      4.95   0.00
+
+=== dy: 1803 common slices, 180 subjects, 5 methods ===
+method                                  EPE demeaned   raw EPE   corr
+dangi                                           3.14      4.78   0.32
+fetal_cmr_4d                                    2.02      2.17   0.11
+nesvor                                          1.68      2.10   0.41
+niftymic                                        1.97      2.44   0.11
+svrtk3d                                         1.96      2.15   0.07
+predict_nothing                                 1.98      2.07   0.00
+
+=== dx: 1803 common slices, 180 subjects, 5 methods ===
+method                                  EPE demeaned   raw EPE   corr
+dangi                                           3.24      4.35   0.20
+fetal_cmr_4d                                    1.28      1.44   0.05
+nesvor                                          1.09      1.38   0.40
+niftymic                                        1.21      1.45   0.17
+svrtk3d                                         1.21      1.37   0.07
+predict_nothing                                 1.22      1.29   0.00
