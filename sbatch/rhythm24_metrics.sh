@@ -40,6 +40,8 @@ PY=/home/minsukc/micromamba/envs/svr/bin/python
 ARM=${ARM:-af24}
 METHODS=(fetal_cmr_4d vggt_final518_base_ep300 vggt_final518_diff1000_ep300
          vggt_final518_nogather_ep300 vggt_final518_hw0_ep300)
+# METHOD_LIST="a b c" overrides the list (e.g. the classical baselines); size --array to 5 x its length.
+[ -n "${METHOD_LIST:-}" ] && read -ra METHODS <<< "$METHOD_LIST"
 # One task per (method, source) -- the SAME index layout as rhythm24_seg.sh STAGE=pred, so tasks
 # 0-4 are fetal and 5-24 the four VGGT arms. run.py scores + aggregates per (dataset, method), so
 # tasks share no output.
