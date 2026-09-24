@@ -278,7 +278,8 @@ Full table (`tools/rhythm24_ef_table.py af12`, unit-peak PSNR; EF over subjects 
   their function (the two arms differ only in rhythm; the mechanism is not measured).
 
 Files: `evaluation/metric_results/test/<src>_af12/{<arm>.json, ef/<arm>.json}`,
-`.../_tables/af12_ef_table.json`. The af12 EF jsons of the earlier campaign (VGGT ×4, Fetal,
+`.../_tables/af12_ef_table.json` — full map of every result location (image, EF, segs, EPE) in
+docs/123 §5a. The af12 EF jsons of the earlier campaign (VGGT ×4, Fetal,
 `cinevol_masked`) were imported into the same `ef/` layout from the cluster's `temp/rhythm24_ef/af12/`
 (the re-scored-with-curves copies); `tools/rhythm24_ef_table.py` reproduces every §3c number from them.
 
