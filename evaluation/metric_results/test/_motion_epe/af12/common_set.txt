@@ -1,0 +1,20 @@
+
+=== dz: 1839 common slices, 180 subjects, 6 methods ===
+method                                  EPE demeaned   raw EPE   corr
+vggt_final518_base_ep300                        0.87      0.88   0.98
+vggt_final518_diff1000_ep300                    0.91      0.89   0.98
+vggt_final518_hw0_ep300                         0.93      0.93   0.97
+vggt_final518_nogather_ep300                    2.42      2.34   0.81
+cinevol_motion                                  4.23      5.21   0.32
+fetal_cmr_4d                                    4.86      5.87   0.13
+predict_nothing                                 4.72      4.92   0.00
+
+=== dy: 1970 common slices, 180 subjects, 1 methods ===
+method                                  EPE demeaned   raw EPE   corr
+fetal_cmr_4d                                    2.08      2.21   0.12
+predict_nothing                                 2.04      2.12   0.00
+
+=== dx: 1970 common slices, 180 subjects, 1 methods ===
+method                                  EPE demeaned   raw EPE   corr
+fetal_cmr_4d                                    1.31      1.45   0.05
+predict_nothing                                 1.24      1.31   0.00
