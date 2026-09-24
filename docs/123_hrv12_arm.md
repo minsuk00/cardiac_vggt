@@ -154,6 +154,27 @@ rhythm arm; unverified whether the traces are byte-identical.
 EPE `.../_motion_epe/hrv12/` (per-method slice dumps, `rows.json`, `common_set_8methods.txt`);
 EF table `.../_tables/hrv12_ef_table.json` (`tools/rhythm24_ef_table.py hrv12 --json …`).
 
+### 5a. Where the results live (af12 AND hrv12 — start here)
+
+`<src>` ∈ {acdc, cmrx2023, cmrx2024, cmrx2025, mnms}; `<arm>` = cohort suffix (`af12`, `hrv12`);
+`<method>` = arm dir name (e.g. `vggt_final518_diff1000_ep300`, `cinevol_masked`,
+`svrtk3d_debug_scatter`). Everything under `evaluation/metric_results/` is **git-tracked**; the
+rest is on GPFS (repo link `scratch/`).
+
+| what | where | notes |
+|---|---|---|
+| Image metrics, cohort summary | `evaluation/metric_results/test/<src>_<arm>/<method>.json` | `per_subject[]` has `breath_psnr_unit_peak` (headline), `breath_ssim`, `breath_ncc`; pool the 5 `<src>` files for one number per method |
+| Image metrics, per subject | `scratch/eval/<src>_<arm>/out/<subject>/<method>/metrics.json` (+ scored `cine_breath.nii.gz`) | GPFS |
+| EF / EDV / ESV / SV / Dice / HD95 / LV curve | `evaluation/metric_results/test/<src>_<arm>/ef/<method>.json` | `per_subject[]` (`ef_breath`, `ef_gt`, `dice_breath_LV_ED`, …) + `aggregate` |
+| EF table (all methods, one arm, paired vs Fetal) | `evaluation/metric_results/test/_tables/<arm>_ef_table.json` | regenerate: `python tools/rhythm24_ef_table.py <arm> --json …` |
+| nnU-Net segmentations (every frame) | `scratch/eval/_rhythm24_segs/<arm>/<method>__<src>_<arm>/` | `ef_manifest.json` maps file names to subjects; GT segs are cached per subject in `scratch/eval/<src>_<arm>/out/<subject>/seg_gt_3d_fullres/`. Exception: af12's A40 `cinevol_masked` segs are in `scratch/cinevol/segs/af12/` (skip `*.PARTIAL_BAD.bak`) |
+| Motion EPE, per method | `evaluation/metric_results/test/_motion_epe/<arm>/<method>.json` | per-slice dumps; `rows.json` = per-method summary rows |
+| Motion EPE, cross-method table | `evaluation/metric_results/test/_motion_epe/<arm>/common_set_8methods.txt` | af12's `common_set.txt` is an older 6-method table, superseded |
+| Recons | `scratch/eval/<src>_<arm>/out/<subject>/<method>/recon_breath/` | CiNeVol `last.pt` checkpoints kept there |
+
+Superseded locations (do not read): `temp/rhythm24_ef/<arm>/` (old EF), `temp/motion_epe/<arm>/`
+(old EPE), `test/_ef/<method>.json` (main-campaign cross-cohort EF, not these arms).
+
 ## 6. Scoring notes (2026-09-24)
 
 - **PSF bug fixed before scoring (`0b1fbe8`).** `pose_psf.base_method` stripped only ONE arm-name
