@@ -6,10 +6,15 @@
 > simulation. A direct 12-frame simulation is identical to the truncation (measured on the old
 > `cmrx2024_hrv` cohort: positions + scatter draw 38/38, voxels byte-identical), so the arm is
 > reproducible either way. Recons: VGGT ×4, Fetal CMR 4D, SVRTK, NiftyMIC, Dangi and CiNeVol
-> **done 180/180** (2026-09-23); NeSVoR running (spgpu2, 11 shards, ~9 h). **No scores yet** —
-> image metrics, EF/Dice and motion EPE are the next step (§5). Side finding: two CiNeVol fits of
-> the same subject differ from each other about as much as from GT (§4), so hrv12 uses ONE
-> CiNeVol fit (checkpoint kept) for both image metrics and EPE.
+> **done 180/180** (2026-09-23); NeSVoR still running (166/180 on 2026-09-24). **Scored (§5, all
+> 180/180, NeSVoR pending):** VGGT `diff1000` wins every image metric against every baseline
+> (unit-peak PSNR 24.59 vs CiNeVol-masked 24.26, +0.34 dB, p = 5e-4; vs Fetal +1.89 dB) and tracks
+> breathing (dz EPE 0.92 mm vs ≥ 4.19 for all baselines, predict-nothing 4.73). **But on hrv12 it
+> LOSES EF to both CiNeVol (7.88 vs 5.58 pp, p = 4e-5) and Fetal (7.88 vs 5.98 pp, p = 3e-4)** —
+> unlike af12, where it beats CiNeVol and ties Fetal (docs/119 §3d). SVRTK / NiftyMIC / Dangi collapse
+> on function (EF MAE 38–42 pp, near-static hearts), like VGGT `nogather`/`hw0`. Side finding: two
+> CiNeVol fits of the same subject differ from each other about as much as from GT (§4), so hrv12
+> uses ONE CiNeVol fit (checkpoint kept) for image metrics, EF and EPE.
 
 ## 1. Build
 
@@ -83,14 +88,90 @@ inter-slice gaps.
 hrv12 therefore runs CiNeVol **once** with `--keep-checkpoint` under the default arm name
 `cinevol`, and both image metrics and motion EPE (`motion_epe/cinevol.py --arm-name cinevol`)
 read that fit. It ran on caesar with the same GPU/CUDA build as af12's `cinevol_motion`. For a
-like-for-like af12 row, rescore af12's image metrics from `cinevol_motion` (not done).
+like-for-like af12 row, af12's image metrics and EF were re-scored from `cinevol_motion` as arm
+`cinevol_motion_masked` (2026-09-24, docs/119 §3d): pooled it equals the A40 fit (PSNR 23.27 vs
+23.28, EF MAE 10.50 vs 10.29) even though the two fits differ per subject.
 
-## 5. Next (not done)
+## 5. Results (2026-09-24; n = 180, NeSVoR pending)
 
-1. Image metrics (`evaluation/src/score/run.py --method <arm> --datasets <src>_hrv12 --split test`,
-   A40) for all 8 arms; CiNeVol via `tools/cinevol_maskzero_score.py --arm hrv12`.
-   `rhythm24_metrics.sh` / `rhythm24_seg.sh` hard-code Fetal + VGGT only — SVRTK, NiftyMIC,
-   NeSVoR, Dangi need adding (the same four are also still unscored on af12).
-2. EF/Dice (`rhythm24_seg.sh STAGE=pred`, after 1; GT seg cache already linked from hrv24).
-3. Motion EPE (`motion_epe/<method>.py hrv12` → `common_set.py`), results into docs/122.
-4. NeSVoR scoring once its run finishes.
+Scored on caesar (RTX 6000 Ada, 3 GPUs) except the VGGT EF, which ran on one L40S (`spgpu2`).
+Image metrics on caesar reproduce the A40 scorer to ≤ 1.3e-6 dB PSNR, identical SSIM/NCC
+(5 af12 VGGT subjects re-scored and compared, originals restored). Unit-peak PSNR (the headline),
+breath variant, mean over the 5 source cohorts pooled. EF MAE over subjects with a defined ES
+volume (`n_ef`; the segmenter found no LV in some frame for the rest — `tools/rhythm24_ef_table.py`'s
+rule, same for every method).
+
+| | PSNR | SSIM | NCC | EF MAE (pp) (n_ef) | EF bias | SV MAE (mL) | Dice LV ED/ES |
+|---|---|---|---|---|---|---|---|
+| VGGT base | **24.61** | 0.715 | **0.886** | 8.74 (180) | −7.77 | 18.1 | 0.899/0.852 |
+| **VGGT diff1000** | 24.59 | **0.719** | 0.884 | 7.88 (180) | −6.54 | 17.0 | **0.900/0.861** |
+| VGGT nogather (ablation) | 23.87 | 0.686 | 0.864 | 39.00 (180) | −39.00 | 61.1 | 0.834/0.750 |
+| VGGT hw0 (ablation) | 23.76 | 0.686 | 0.860 | 43.67 (180) | −43.67 | 66.2 | 0.819/0.737 |
+| CiNeVol (masked) | 24.26 | 0.696 | 0.872 | **5.58** (179) | −2.72 | **12.4** | 0.897/0.856 |
+| Fetal CMR 4D | 22.71 | 0.621 | 0.814 | 5.98 (179) | +0.02 | 12.6 | 0.856/0.789 |
+| SVRTK 3D (`svrtk3d_debug_scatter`) | 21.94 | 0.584 | 0.787 | 38.45 (177) | −37.96 | 60.7 | 0.760/0.690 |
+| NiftyMIC | 20.09 | 0.562 | 0.794 | 40.81 (178) | −40.44 | 63.8 | 0.762/0.695 |
+| Dangi | 21.33 | 0.537 | 0.748 | 42.39 (179) | −42.25 | 64.8 | 0.771/0.694 |
+| NeSVoR | pending | | | | | | |
+
+(Unmasked `cinevol`: PSNR 24.43 / SSIM 0.723 / NCC 0.876 — as-saved, not the reported row, docs/119 §1.)
+
+Paired Wilcoxon, VGGT `diff1000` vs each (image n = 180; EF on subjects both define):
+- vs CiNeVol: PSNR +0.34 dB (p = 5e-4, 104/180), SSIM +0.023 (p = 3e-8), NCC +0.013 (p = 9e-5);
+  **EF |err| +2.32 pp worse** (p = 4e-5, VGGT better in 65/179).
+- vs Fetal: PSNR +1.89 dB (p = 5e-29, 170/180), SSIM +0.098, NCC +0.071 (all p < 1e-28);
+  **EF |err| +1.93 pp worse** (p = 3e-4, 67/179).
+- vs SVRTK / NiftyMIC / Dangi: PSNR +2.66 / +4.51 / +3.26 dB, EF |err| −30.5 / −32.9 / −34.7 pp
+  (all p < 1e-29).
+
+**hrv12 vs af12 (docs/119 §3d).** VGGT's numbers barely move between the two rhythms (PSNR 24.59 vs
+24.50, EF 7.88 vs 7.49). The baselines move a lot: CiNeVol PSNR 24.26 vs 23.27 and EF 5.58 vs 10.50;
+Fetal EF 5.98 vs 7.79. The two arms differ only in rhythm, so this is consistent with the near-regular
+HRV rhythm letting the cardiac-phase baselines recover function at 12 frames, and AF taking it away
+while VGGT is unaffected. Hypothesis for the mechanism, not measured: with near-regular beats, 12 frames of one beat sample the cycle evenly enough for
+CiNeVol's phase model and Fetal's self-gate, while AF's irregular RR breaks that.
+
+**Breathing-motion EPE** (docs/122 toolkit, `common_set.py`, 1803 common slices, 180 subjects;
+demeaned EPE mm, corr):
+
+| method | dz | dy | dx |
+|---|---|---|---|
+| VGGT `base` | **0.87** (0.98) | — | — |
+| VGGT `diff1000` / `hw0` | 0.92 / 0.92 | — | — |
+| VGGT `nogather` | 2.40 (0.81) | — | — |
+| CiNeVol | 4.19 (0.34) | — | — |
+| NiftyMIC | 4.71 (0.07) | 1.97 | 1.21 |
+| SVRTK 3D | 4.80 (0.12) | 1.96 | 1.21 |
+| Fetal CMR 4D | 4.80 (0.17) | 2.02 | 1.28 |
+| Dangi | — | 3.14 | 3.24 |
+| predict nothing | 4.73 | 1.98 | 1.22 |
+
+Within 0.05 mm of af12 on every row (docs/122 §3) — the breathing simulation does not depend on the
+rhythm arm; unverified whether the traces are byte-identical.
+
+**Files** (all git-tracked): image `evaluation/metric_results/test/<src>_hrv12/<arm>.json`; EF
+`.../<src>_hrv12/ef/<arm>.json` (per-frame seg masks on GPFS, `scratch/eval/_rhythm24_segs/hrv12/`);
+EPE `.../_motion_epe/hrv12/` (per-method slice dumps, `rows.json`, `common_set_8methods.txt`);
+EF table `.../_tables/hrv12_ef_table.json` (`tools/rhythm24_ef_table.py hrv12 --json …`).
+
+## 6. Scoring notes (2026-09-24)
+
+- **PSF bug fixed before scoring (`0b1fbe8`).** `pose_psf.base_method` stripped only ONE arm-name
+  suffix, so `svrtk3d_debug_scatter` → `svrtk3d_debug`, `nesvor_4gpu_scatter` → `nesvor_4gpu`,
+  `cinevol_motion` → itself: none in `PSF_METHODS`, so they would have been scored **without the PSF
+  blur** (and NeSVoR also without its intensity self-normalisation). It now strips repeatedly and
+  knows `_4gpu` / `_motion`. Every arm name already in `metric_results/` resolves as before, so no
+  existing score changes. (`fetal_cmr_4d_mb3` is still unresolved — pre-existing, untouched.)
+- Drivers: `rhythm24_metrics.sh` / `rhythm24_seg.sh` take `METHOD_LIST="…"` (`eaf6041`); EF now lands
+  in `evaluation/metric_results/test/<cohort>/ef/<method>.json` (was gitignored `temp/rhythm24_ef/`).
+  `tools/cinevol_maskzero_score.py --src-arm` masks any CiNeVol fit (`12f57b9`).
+- Speed on caesar: image metrics are CPU-bound per process (~20 s/subject); 3 processes per GPU gave
+  ~25 subjects/min. nnU-Net `3d_fullres` ran at ~1.7 s/volume (vs 4.0 on an A40).
+- nnU-Net on caesar: `micromamba` env `nnunet` (python 3.10, torch 2.3.1+cu121, nnunet 1.7.1,
+  numpy 1.26.4); Task114 weights read over the sshfs GPFS mount through
+  `/home/minsukc/vggt/tools/nnunet_mnms_eval/env.sh`.
+
+## 7. Next
+
+1. NeSVoR (`nesvor_scatter`) once 180/180: `run.py`, `rhythm24_seg.sh STAGE=pred`,
+   `motion_epe/nesvor.py hrv12 --arm-name nesvor_scatter`, then re-run `common_set.py`.

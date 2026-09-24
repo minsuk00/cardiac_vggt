@@ -5,6 +5,11 @@
 > `--arm-name cinevol` (not `cinevol_motion`). af12 NiftyMIC is now 180/180; af12 NeSVoR's timing
 > arm is `nesvor_4gpu_scatter` after the `a4290b5` launcher fix.
 
+> **Update 2026-09-24:** hrv12 EPE is done for every method but NeSVoR (§3, 1803 common slices):
+> within 0.05 mm of af12 on every row, VGGT `base` 0.87 mm dz. All EPE outputs now live git-tracked
+> in `evaluation/metric_results/test/_motion_epe/<arm>/` (af12's docs/122 dumps were imported there
+> from the cluster; `common_set.py` on them reproduces the §3 af12 table exactly).
+
 > **TL;DR & takeaway**
 > Every reconstruction method is now scored for breathing-motion tracking by the same rule:
 > predicted per-slice shift vs the TRUE simulated shift (mm), error demeaned per subject, on the
@@ -81,6 +86,25 @@ every slice). Arms: `svrtk3d_debug_scatter`, `niftymic_scatter`, `dangi_scatter_
 (VGGT / CiNeVol predict dz only. Restricted to VGGT + CiNeVol + Fetal the common set is 1839 slices
 and the dz numbers move ≤ 0.06 mm.)
 
+hrv12 (added 2026-09-24; 1803 common slices, 180 subjects, 8 methods; arms `svrtk3d_debug_scatter`,
+`niftymic_scatter`, `dangi_scatter`, `cinevol` (the checkpointed fit, docs/123 §4), `fetal_cmr_4d`):
+
+| method | dz | dy | dx |
+|---|---|---|---|
+| VGGT `base` | **0.87** (0.98) | — | — |
+| VGGT `diff1000` | 0.92 (0.98) | — | — |
+| VGGT `hw0` | 0.92 (0.97) | — | — |
+| VGGT `nogather` | 2.40 (0.81) | — | — |
+| CiNeVol | 4.19 (0.34) | — | — |
+| NiftyMIC | 4.71 (0.07) | 1.97 (0.11) | 1.21 (0.17) |
+| SVRTK 3D | 4.80 (0.12) | 1.96 (0.07) | 1.21 (0.07) |
+| Fetal CMR 4D | 4.80 (0.17) | 2.02 (0.11) | 1.28 (0.05) |
+| Dangi | — | 3.14 (0.32) | 3.24 (0.20) |
+| predict nothing | 4.73 | 1.98 | 1.22 |
+
+Every row is within 0.05 mm of af12: breathing is simulated independently of the rhythm arm
+(unverified whether the traces are byte-identical).
+
 Plain cohort (1807 common slices, 180 subjects; Fetal arm `fetal_cmr_4d_motion`):
 
 | method | dz | dy | dx |
@@ -112,7 +136,7 @@ miscalibrated (unverified cause).
 
 ```bash
 export PYTHONPATH=training:.
-D=temp/motion_epe/af12; mkdir -p $D
+D=evaluation/metric_results/test/_motion_epe/af12; mkdir -p $D   # git-tracked since 2026-09-24 (was temp/motion_epe/af12)
 python evaluation/src/analysis/motion_epe/vggt.py af12 --slices-dir $D --json $D/rows.json
 python evaluation/src/analysis/motion_epe/fetal_cmr_4d.py af12 --slices $D/fetal.json --json $D/rows.json
 source baselines/cinevol/env.sh && $CINEVOL_PY evaluation/src/analysis/motion_epe/cinevol.py af12 --slices $D/cinevol.json --json $D/rows.json
@@ -125,9 +149,9 @@ SVRTK must run with `DEBUG=1` so the per-slice `.dof` files are kept.
 
 ## 6. Open
 
-- af12 NeSVoR: when `nesvor_4gpu_scatter` is 180/180, run `nesvor.py af12 --arm-name
-  nesvor_4gpu_scatter` and re-run `common_set.py` with it.
-- af12 image metrics + EF/Dice for SVRTK / NiftyMIC / Dangi / NeSVoR are not scored yet (only
-  motion EPE is) — `run.py` then the `ef_dice.py` chain, as in docs/119 §3.
+- NeSVoR on af12 (`nesvor_4gpu_scatter`, 154/180) and hrv12 (`nesvor_scatter`, 166/180, both
+  2026-09-24): when 180/180, run `nesvor.py <arm> --arm-name <dir>` and re-run `common_set.py`.
+  Both arm names now get PSF + self-norm in image scoring (`pose_psf` fix `0b1fbe8`, docs/123 §6).
+- ~~af12 image metrics + EF/Dice for SVRTK / NiftyMIC / Dangi~~ — done, docs/119 §3d.
 - docs/118's `af24` "motion EPE" column was produced by the pre-fix `vggt.py` (subject skip, raw
   epe); re-run `vggt.py af24` before citing it.

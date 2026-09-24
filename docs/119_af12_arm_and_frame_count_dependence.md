@@ -15,7 +15,9 @@
 > **statistical tie** (7.47 vs 7.79 pp, p = 0.43) — unlike at 24 frames, where VGGT wins EF vs Fetal
 > by 6.1 pp (p = 3e-13). **Recommendation: report both `af12` and `af24` rows** — no single frame
 > budget is fair to both baselines, and VGGT's numbers don't depend on which one is picked, which
-> is itself the finding worth stating.
+> is itself the finding worth stating. **(4) Added 2026-09-24 (§3d):** the three classical scatter
+> baselines on `af12` — SVRTK 3D, NiftyMIC, Dangi — lose every image metric (−2.7 to −4.5 dB) and
+> collapse on function (EF MAE 36–41 pp, near-static hearts) vs VGGT `diff1000`; NeSVoR pending.
 
 ## 0. Context
 
@@ -238,6 +240,47 @@ subjects with `tools/run_cinevol.py --keep-checkpoint` (arm dir `cinevol_motion`
 per subject, 180/180 landed) for the respiratory-motion EPE analysis of docs/119 §6. Seeded
 (`seed=7`) but not bit-reproducible on GPU, and run on mixed L40S / RTX 6000 Ada, so it is kept as
 its own arm: its volumes and timing are NOT scored and it never replaces `cinevol`/`cinevol_masked`.
+*(Superseded 2026-09-24: it IS now scored, as `cinevol_motion_masked` — §3d — so af12, like hrv12,
+has one CiNeVol fit behind image metrics, EF and EPE.)*
+
+### 3d. Classical scatter baselines on `af12` (added 2026-09-24): SVRTK, NiftyMIC, Dangi, + CiNeVol refit
+
+Scored on caesar (RTX 6000 Ada) with the unmodified chain (`rhythm24_metrics.sh` → `rhythm24_seg.sh
+STAGE=pred`, now with `METHOD_LIST`), 0 failures, n = 180 each. Arms: `svrtk3d_debug_scatter` (the
+`-debug` rerun that kept the `.dof` files the motion EPE needs; the timing arm `svrtk3d_scatter` is
+the same engine and is not scored), `niftymic_scatter`, `dangi_scatter_4gpu`, `cinevol_motion_masked`
+(= `cinevol_motion` × `mask_heart_pad10`, `tools/cinevol_maskzero_score.py --src-arm cinevol_motion`).
+**Scored only after fixing `pose_psf.base_method` (`0b1fbe8`)**: it stripped one arm-name suffix, so
+`svrtk3d_debug_scatter` and `cinevol_motion` would have been scored without the PSF blur their base
+methods get (docs/123 §6). caesar reproduces the A40 image scorer to ≤ 1.3e-6 dB (5 subjects checked).
+Full table (`tools/rhythm24_ef_table.py af12`, unit-peak PSNR; EF over subjects with a defined ESV):
+
+| | PSNR | SSIM | NCC | EF MAE (pp) (n_ef) | EF bias | SV MAE (mL) | Dice LV ED/ES |
+|---|---|---|---|---|---|---|---|
+| VGGT base | **24.53** | 0.711 | **0.884** | 8.89 (180) | −7.46 | 16.8 | **0.903**/0.850 |
+| **VGGT diff1000** | 24.50 | **0.715** | 0.883 | **7.49** (180) | −6.21 | 15.3 | 0.902/**0.857** |
+| CiNeVol (masked, A40 fit) | 23.28 | 0.648 | 0.842 | 10.29 (180) | −7.90 | 20.3 | 0.848/0.801 |
+| CiNeVol (masked, `cinevol_motion` fit) | 23.27 | 0.648 | 0.842 | 10.50 (180) | −8.10 | 20.1 | 0.845/0.804 |
+| Fetal CMR 4D | 22.23 | 0.595 | 0.797 | 7.79 (178) | −3.07 | 15.2 | 0.834/0.752 |
+| SVRTK 3D | 21.82 | 0.578 | 0.783 | 35.69 (180) | −35.48 | 55.8 | 0.784/0.697 |
+| NiftyMIC | 20.03 | 0.558 | 0.790 | 39.05 (180) | −38.58 | 59.7 | 0.774/0.704 |
+| Dangi | 21.28 | 0.533 | 0.748 | 40.79 (179) | −40.79 | 61.1 | 0.782/0.690 |
+| NeSVoR | pending (recon 154/180 on 2026-09-24) | | | | | | |
+
+- The three classical scatter baselines lose **everything** to VGGT `diff1000` (paired Wilcoxon,
+  all p < 1e-30): PSNR −2.68 (SVRTK) / −4.47 (NiftyMIC) / −3.22 dB (Dangi); EF |err| +28.2 / +31.6 /
+  +33.3 pp. Their EF failure is the same shape as VGGT `nogather`/`hw0`: bias ≈ −MAE, i.e. a
+  near-static heart (one 3D volume, no cardiac-phase model).
+- The two CiNeVol fits agree when pooled (PSNR 23.27 vs 23.28, EF 10.50 vs 10.29; VGGT vs each: PSNR
+  +1.24 / +1.23 dB, EF −3.01 / −2.80 pp, all p < 1e-4) although they differ per subject (docs/123 §4).
+- Contrast with `hrv12` (docs/123 §5): same VGGT numbers, but there CiNeVol and Fetal **beat** VGGT
+  on EF (5.58 / 5.98 vs 7.88 pp) — consistent with AF being what costs the phase-model baselines
+  their function (the two arms differ only in rhythm; the mechanism is not measured).
+
+Files: `evaluation/metric_results/test/<src>_af12/{<arm>.json, ef/<arm>.json}`,
+`.../_tables/af12_ef_table.json`. The af12 EF jsons of the earlier campaign (VGGT ×4, Fetal,
+`cinevol_masked`) were imported into the same `ef/` layout from the cluster's `temp/rhythm24_ef/af12/`
+(the re-scored-with-curves copies); `tools/rhythm24_ef_table.py` reproduces every §3c number from them.
 
 ## 4. Cleanup done this session
 
@@ -268,6 +311,8 @@ table, see §1). Results: `figs/rhythm24/af12_results_table.png`,
 ## 6. Not done / open
 
 - ~~VGGT `base`/`nogather`/`hw0` on `af12`~~ — done, §3c.
+- ~~SVRTK / NiftyMIC / Dangi image metrics + EF/Dice on `af12`~~ — done, §3d. NeSVoR
+  (`nesvor_4gpu_scatter`) pending its recon.
 - ~~Motion EPE column for `af12`, and the CiNeVol ψ-conditioned EPE~~ — done, docs/122
   (af12 dz: VGGT `base` 0.87 mm, CiNeVol 4.23, Fetal 4.86, predict-nothing 4.72; scripts now in
   `evaluation/src/analysis/motion_epe/`).
