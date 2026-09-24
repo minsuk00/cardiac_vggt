@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-"""EF / Dice comparison table for a 24-frame rhythm arm (docs/115), from the per-(method, cohort)
-ef_dice score jsons that sbatch/rhythm24_seg.sh writes to temp/rhythm24_ef/<arm>/.
+"""EF / Dice comparison table for a rhythm arm (docs/115), from the per-(method, cohort) ef_dice score
+jsons that sbatch/rhythm24_seg.sh writes to evaluation/metric_results/test/<src>_<arm>/ef/.
 
 Reports per method: n, EF MAE / bias / slope / r (predicted vs GT EF), EDV/ESV MAE, LV + MYO Dice,
 then each VGGT arm PAIRED against fetal_cmr_4d on the subjects both scored (|EF err|, Wilcoxon),
@@ -26,10 +26,10 @@ def short(m):
 
 def load(arm):
     D = {}
-    for f in sorted(glob.glob(os.path.join(ROOT, "temp", "rhythm24_ef", arm, "*__*.json"))):
-        m = os.path.basename(f)[:-5].split("__")[0]
-        if m == "gt":
-            continue
+    # evaluation/metric_results/test/<src>_<arm>/ef/<method>.json (rhythm24_seg.sh since 2026-09-23;
+    # older runs wrote temp/rhythm24_ef/<arm>/<method>__<cohort>.json).
+    for f in sorted(glob.glob(os.path.join(ROOT, "evaluation", "metric_results", "test", f"*_{arm}", "ef", "*.json"))):
+        m = os.path.basename(f)[:-5]
         for s in json.load(open(f))["per_subject"]:
             # Keep a subject whose EF is undefined (ef_dice: the LV vanished in >= 1 frame, so ESV
             # and EF are None). Its EDV and Dice ARE defined and are part of the method's record --
