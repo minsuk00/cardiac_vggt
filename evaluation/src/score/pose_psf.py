@@ -83,10 +83,17 @@ def base_method(method):
     self-gated arm receives — a silent handicap having nothing to do with timing/coverage, which is
     the only thing under test. '_oracle_balanced' must be checked before '_oracle' would otherwise
     partially match, though endswith() on the full literal suffix already makes this safe either
-    order — kept first for readability."""
-    for suf in ("_scatter", "_debug", "_norobust", "_oracle_balanced", "_oracle"):
-        if method.endswith(suf):
-            return method[: -len(suf)]
+    order — kept first for readability.
+    Suffixes are stripped REPEATEDLY: 'svrtk3d_debug_scatter' -> 'svrtk3d', 'nesvor_4gpu_scatter'
+    -> 'nesvor' (a single strip left '_debug' / '_4gpu' and silently dropped PSF + self-norm).
+    '_4gpu' = same engine sharded over 4 GPUs; '_motion' = cinevol fit kept for motion EPE."""
+    stripped = True
+    while stripped:
+        stripped = False
+        for suf in ("_scatter", "_debug", "_norobust", "_oracle_balanced", "_oracle", "_4gpu", "_motion"):
+            if method.endswith(suf):
+                method, stripped = method[: -len(suf)], True
+                break
     return method
 
 
