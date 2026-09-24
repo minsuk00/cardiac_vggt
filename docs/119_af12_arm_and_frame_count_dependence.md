@@ -16,8 +16,8 @@
 > by 6.1 pp (p = 3e-13). **Recommendation: report both `af12` and `af24` rows** — no single frame
 > budget is fair to both baselines, and VGGT's numbers don't depend on which one is picked, which
 > is itself the finding worth stating. **(4) Added 2026-09-24 (§3d):** the three classical scatter
-> baselines on `af12` — SVRTK 3D, NiftyMIC, Dangi — lose every image metric (−2.7 to −4.5 dB) and
-> collapse on function (EF MAE 36–41 pp, near-static hearts) vs VGGT `diff1000`; NeSVoR pending.
+> baselines on `af12` — SVRTK 3D, NiftyMIC, Dangi, NeSVoR — lose every image metric (−2.7 to −4.5 dB)
+> and collapse on function (EF MAE 36–41 pp, near-static hearts) vs VGGT `diff1000`.
 
 ## 0. Context
 
@@ -243,7 +243,7 @@ its own arm: its volumes and timing are NOT scored and it never replaces `cinevo
 *(Superseded 2026-09-24: it IS now scored, as `cinevol_motion_masked` — §3d — so af12, like hrv12,
 has one CiNeVol fit behind image metrics, EF and EPE.)*
 
-### 3d. Classical scatter baselines on `af12` (added 2026-09-24): SVRTK, NiftyMIC, Dangi, + CiNeVol refit
+### 3d. Classical scatter baselines on `af12` (added 2026-09-24): SVRTK, NiftyMIC, Dangi, NeSVoR, + CiNeVol refit
 
 Scored on caesar (RTX 6000 Ada) with the unmodified chain (`rhythm24_metrics.sh` → `rhythm24_seg.sh
 STAGE=pred`, now with `METHOD_LIST`), 0 failures, n = 180 each. Arms: `svrtk3d_debug_scatter` (the
@@ -265,11 +265,12 @@ Full table (`tools/rhythm24_ef_table.py af12`, unit-peak PSNR; EF over subjects 
 | SVRTK 3D | 21.82 | 0.578 | 0.783 | 35.69 (180) | −35.48 | 55.8 | 0.784/0.697 |
 | NiftyMIC | 20.03 | 0.558 | 0.790 | 39.05 (180) | −38.58 | 59.7 | 0.774/0.704 |
 | Dangi | 21.28 | 0.533 | 0.748 | 40.79 (179) | −40.79 | 61.1 | 0.782/0.690 |
-| NeSVoR | pending (recon 154/180 on 2026-09-24) | | | | | | |
+| NeSVoR (`nesvor_4gpu_scatter`) | 20.91 | 0.567 | 0.787 | 41.19 (180) | −41.19 | 60.5 | 0.801/0.687 |
 
-- The three classical scatter baselines lose **everything** to VGGT `diff1000` (paired Wilcoxon,
-  all p < 1e-30): PSNR −2.68 (SVRTK) / −4.47 (NiftyMIC) / −3.22 dB (Dangi); EF |err| +28.2 / +31.6 /
-  +33.3 pp. Their EF failure is the same shape as VGGT `nogather`/`hw0`: bias ≈ −MAE, i.e. a
+- The four classical scatter baselines lose **everything** to VGGT `diff1000` (paired Wilcoxon,
+  all p < 1e-30): PSNR −2.68 (SVRTK) / −4.47 (NiftyMIC) / −3.22 (Dangi) / −3.59 dB (NeSVoR); EF |err|
+  +28.2 / +31.6 / +33.3 / +33.7 pp. NeSVoR is the timing arm `nesvor_4gpu_scatter` (docs/120), scored
+  with PSF + self-normalisation (needs the `0b1fbe8` fix; added after its recon finished 2026-09-24). Their EF failure is the same shape as VGGT `nogather`/`hw0`: bias ≈ −MAE, i.e. a
   near-static heart (one 3D volume, no cardiac-phase model).
 - The two CiNeVol fits agree when pooled (PSNR 23.27 vs 23.28, EF 10.50 vs 10.29; VGGT vs each: PSNR
   +1.24 / +1.23 dB, EF −3.01 / −2.80 pp, all p < 1e-4) although they differ per subject (docs/123 §4).
@@ -312,8 +313,7 @@ table, see §1). Results: `figs/rhythm24/af12_results_table.png`,
 ## 6. Not done / open
 
 - ~~VGGT `base`/`nogather`/`hw0` on `af12`~~ — done, §3c.
-- ~~SVRTK / NiftyMIC / Dangi image metrics + EF/Dice on `af12`~~ — done, §3d. NeSVoR
-  (`nesvor_4gpu_scatter`) pending its recon.
+- ~~SVRTK / NiftyMIC / Dangi / NeSVoR image metrics + EF/Dice on `af12`~~ — done, §3d.
 - ~~Motion EPE column for `af12`, and the CiNeVol ψ-conditioned EPE~~ — done, docs/122
   (af12 dz: VGGT `base` 0.87 mm, CiNeVol 4.23, Fetal 4.86, predict-nothing 4.72; scripts now in
   `evaluation/src/analysis/motion_epe/`).
