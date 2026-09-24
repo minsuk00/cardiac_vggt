@@ -36,8 +36,8 @@ import aggregate                                                   # noqa: E402
 
 # `cinevol_maskzero` (23 subjects, 2026-09-21) was the first attempt with the half-slice bug above and
 # is left in place, unused; the corrected arm has its own name so the two can never be mixed.
+# --src-arm cinevol_motion -> cinevol_motion_masked (af12's EPE fit, docs/123 s4).
 SRC_ARM, ARM = "cinevol", "cinevol_masked"
-pose_psf.PSF_METHODS = tuple(pose_psf.PSF_METHODS) + (ARM,)      # same PSF treatment as cinevol
 SOURCES = ("cmrx2023", "cmrx2024", "cmrx2025", "acdc", "mnms")
 
 
@@ -75,10 +75,14 @@ def make_zeroed(ds, s):
 
 
 def main():
+    global SRC_ARM, ARM
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", default="af24")
     ap.add_argument("--sources", nargs="+", default=list(SOURCES))
+    ap.add_argument("--src-arm", default=SRC_ARM)
     a = ap.parse_args()
+    SRC_ARM, ARM = a.src_arm, f"{a.src_arm}_masked"
+    pose_psf.PSF_METHODS = tuple(pose_psf.PSF_METHODS) + (ARM,)  # same PSF treatment as cinevol
     t0 = time.time()
     for src in a.sources:
         ds = f"{src}_{a.arm}"
