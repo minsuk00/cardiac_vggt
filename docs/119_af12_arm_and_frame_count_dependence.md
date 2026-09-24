@@ -248,7 +248,8 @@ has one CiNeVol fit behind image metrics, EF and EPE.)*
 Scored on caesar (RTX 6000 Ada) with the unmodified chain (`rhythm24_metrics.sh` → `rhythm24_seg.sh
 STAGE=pred`, now with `METHOD_LIST`), 0 failures, n = 180 each. Arms: `svrtk3d_debug_scatter` (the
 `-debug` rerun that kept the `.dof` files the motion EPE needs; the timing arm `svrtk3d_scatter` is
-the same engine and is not scored), `niftymic_scatter`, `dangi_scatter_4gpu`, `cinevol_motion_masked`
+the same engine and produces the same volumes — 2156/2160 phases byte-identical, the other 4 within
+3e-8 — so it is not scored separately, docs/120 §6), `niftymic_scatter`, `dangi_scatter_4gpu`, `cinevol_motion_masked`
 (= `cinevol_motion` × `mask_heart_pad10`, `tools/cinevol_maskzero_score.py --src-arm cinevol_motion`).
 **Scored only after fixing `pose_psf.base_method` (`0b1fbe8`)**: it stripped one arm-name suffix, so
 `svrtk3d_debug_scatter` and `cinevol_motion` would have been scored without the PSF blur their base
