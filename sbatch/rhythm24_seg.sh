@@ -41,6 +41,8 @@ ARM=${ARM:-af24}
 STAGE=${STAGE:?set STAGE=gt|pred}
 METHODS=(fetal_cmr_4d vggt_final518_base_ep300 vggt_final518_diff1000_ep300
          vggt_final518_nogather_ep300 vggt_final518_hw0_ep300)
+# METHOD_LIST="a b c" overrides the list (e.g. the classical baselines); size --array to 5 x its length.
+[ -n "${METHOD_LIST:-}" ] && read -ra METHODS <<< "$METHOD_LIST"
 # The five sources a rhythm arm was built for -- NOT paths.DATASETS (it also lists miitt/ocmr, and
 # the task index is (method, source): a phantom source silently drops real pairs).
 SOURCES=(cmrx2023 cmrx2024 cmrx2025 acdc mnms)
@@ -54,7 +56,10 @@ else
   [ "$IDX" -lt $(( ${#METHODS[@]} * NS )) ] || { echo "task $IDX: nothing to do"; exit 0; }
   TAG="${METHODS[$((IDX / NS))]}"; DUMP_ARGS=(--method "$TAG")
 fi
-OUT="$REPO/temp/rhythm24_ef/${ARM}/${TAG}__${DS}.json"
+# Git-tracked beside the cohort's image-metric summaries: metric_results/<split>/<cohort>/ef/<method>.json
+# (NOT test/_ef/<method>.json, the main campaign's cross-cohort file). Pre-2026-09-23 runs wrote
+# temp/rhythm24_ef/<ARM>/<method>__<cohort>.json.
+OUT="$REPO/evaluation/metric_results/$SPLIT/${DS}/ef/${TAG}.json"
 WORK=/tmp/rhythm24_seg_${USER}_${SLURM_JOB_ID:-local}_${IDX}
 echo "=== task $IDX  stage=$STAGE  $TAG  $DS  SEG_CFG=$SEG_CFG  gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1) ==="
 echo "out: $OUT"
