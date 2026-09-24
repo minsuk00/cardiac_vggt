@@ -20,9 +20,10 @@
 > **Result (af12, 1804 common slices, 180 subjects, through-plane dz):** VGGT `base` **0.87 mm**
 > (corr 0.98) vs CiNeVol 4.23 (given the TRUE breath level as input), NiftyMIC 4.69, SVRTK 3D 4.79,
 > Fetal CMR 4D 4.80, predict-nothing 4.72 — **no classical method tracks through-plane breathing**,
-> and none beats predict-nothing in-plane either (Dangi has direction signal but is over-scaled).
+> and only NeSVoR beats predict-nothing in-plane (Dangi has direction signal but is over-scaled).
 > **Plain cohort (1807 common slices):** same picture; NeSVoR tracks in-plane only (dy 1.67 / dx
-> 1.09 vs 1.97 / 1.23). af12 NeSVoR (`nesvor_4gpu_scatter`) is still running — its row is pending.
+> 1.09 vs 1.97 / 1.23), and the same on af12 / hrv12 (dz 6.38 / 6.41, worst of all; dy 1.66 / 1.68).
+> All 9 methods are now scored on af12 and hrv12 (tables: `common_set_9methods.txt`).
 > Supersedes docs/105 §11's axis caveat and numbers, and the "not yet run/written" items of docs/119 §6.
 
 ## 1. The contract
@@ -66,9 +67,10 @@ raw `Translation*` is not the slice's shift (af12: mean |TranslationZ| 3.77 vs |
 
 ## 3. Results
 
-af12 (`common_set.py`, 1804 common slices, 180 subjects, 8 methods; truth agreed across methods on
+af12 (`common_set.py`, 1804 common slices, 180 subjects, 9 methods; truth agreed across methods on
 every slice). Arms: `svrtk3d_debug_scatter`, `niftymic_scatter`, `dangi_scatter_4gpu`,
-`cinevol_motion`, `fetal_cmr_4d`. EPE demeaned (corr):
+`cinevol_motion`, `fetal_cmr_4d`, `nesvor_4gpu_scatter` (added 2026-09-24; adding it left the common
+set at 1804 and every other row unchanged). EPE demeaned (corr):
 
 | method | dz | dy | dx |
 |---|---|---|---|
@@ -81,13 +83,15 @@ every slice). Arms: `svrtk3d_debug_scatter`, `niftymic_scatter`, `dangi_scatter_
 | SVRTK 3D | 4.79 (0.13) | 1.96 (0.07) | 1.21 (0.10) |
 | Fetal CMR 4D | 4.80 (0.15) | 2.02 (0.12) | 1.30 (0.04) |
 | Dangi | — | 3.09 (0.33) | 3.25 (0.19) |
+| NeSVoR | 6.38 (0.02) | **1.66** (0.42) | **1.09** (0.39) |
 | predict nothing | 4.72 | 1.98 | 1.22 |
 
 (VGGT / CiNeVol predict dz only. Restricted to VGGT + CiNeVol + Fetal the common set is 1839 slices
 and the dz numbers move ≤ 0.06 mm.)
 
-hrv12 (added 2026-09-24; 1803 common slices, 180 subjects, 8 methods; arms `svrtk3d_debug_scatter`,
-`niftymic_scatter`, `dangi_scatter`, `cinevol` (the checkpointed fit, docs/123 §4), `fetal_cmr_4d`):
+hrv12 (added 2026-09-24; 1803 common slices, 180 subjects, 9 methods; arms `svrtk3d_debug_scatter`,
+`niftymic_scatter`, `dangi_scatter`, `cinevol` (the checkpointed fit, docs/123 §4), `fetal_cmr_4d`,
+`nesvor_scatter`):
 
 | method | dz | dy | dx |
 |---|---|---|---|
@@ -100,6 +104,7 @@ hrv12 (added 2026-09-24; 1803 common slices, 180 subjects, 8 methods; arms `svrt
 | SVRTK 3D | 4.80 (0.12) | 1.96 (0.07) | 1.21 (0.07) |
 | Fetal CMR 4D | 4.80 (0.17) | 2.02 (0.11) | 1.28 (0.05) |
 | Dangi | — | 3.14 (0.32) | 3.24 (0.20) |
+| NeSVoR | 6.41 (0.02) | **1.68** (0.41) | **1.09** (0.40) |
 | predict nothing | 4.73 | 1.98 | 1.22 |
 
 Every row is within 0.05 mm of af12: breathing is simulated independently of the rhythm arm
@@ -129,8 +134,7 @@ miscalibrated (unverified cause).
 - Checked: af12 `scatter/` (`tools/build_af_scatter.py`, 180/180 byte-identical to the claimed
   breath frames; the checker also passes on pooled-built plain `scatter/`); `common_set.py` aborts on
   an injected truth mismatch (fault-injected).
-- **Not exercised:** NeSVoR on af12 (still running), the `regular_frozen24` path (no VGGT outputs
-  there).
+- **Not exercised:** the `regular_frozen24` path (no VGGT outputs there).
 
 ## 5. Usage
 
@@ -149,9 +153,8 @@ SVRTK must run with `DEBUG=1` so the per-slice `.dof` files are kept.
 
 ## 6. Open
 
-- NeSVoR on af12 (`nesvor_4gpu_scatter`, 154/180) and hrv12 (`nesvor_scatter`, 166/180, both
-  2026-09-24): when 180/180, run `nesvor.py <arm> --arm-name <dir>` and re-run `common_set.py`.
-  Both arm names now get PSF + self-norm in image scoring (`pose_psf` fix `0b1fbe8`, docs/123 §6).
+- ~~NeSVoR on af12 / hrv12~~ — done 2026-09-24 (§3, `common_set_9methods.txt`). Both NeSVoR arm
+  names get PSF + self-norm in image scoring (`pose_psf` fix `0b1fbe8`, docs/123 §6).
 - ~~af12 image metrics + EF/Dice for SVRTK / NiftyMIC / Dangi~~ — done, docs/119 §3d.
 - docs/118's `af24` "motion EPE" column was produced by the pre-fix `vggt.py` (subject skip, raw
   epe); re-run `vggt.py af24` before citing it.

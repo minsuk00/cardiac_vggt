@@ -5,14 +5,14 @@
 > 12 frames per slice of the existing `hrv24` bundles, built by the same tool with no new
 > simulation. A direct 12-frame simulation is identical to the truncation (measured on the old
 > `cmrx2024_hrv` cohort: positions + scatter draw 38/38, voxels byte-identical), so the arm is
-> reproducible either way. Recons: VGGT ×4, Fetal CMR 4D, SVRTK, NiftyMIC, Dangi and CiNeVol
-> **done 180/180** (2026-09-23); NeSVoR still running (166/180 on 2026-09-24). **Scored (§5, all
-> 180/180, NeSVoR pending):** VGGT `diff1000` wins every image metric against every baseline
+> reproducible either way. Recons: VGGT ×4, Fetal CMR 4D, SVRTK, NiftyMIC, Dangi, CiNeVol and NeSVoR
+> **done 180/180**. **Scored (§5, all 9 methods, 180/180, 2026-09-24):** VGGT `diff1000` wins every
+> image metric against every baseline
 > (unit-peak PSNR 24.59 vs CiNeVol-masked 24.26, +0.34 dB, p = 5e-4; vs Fetal +1.89 dB) and tracks
 > breathing (dz EPE 0.92 mm vs ≥ 4.19 for all baselines, predict-nothing 4.73). **But on hrv12 it
 > LOSES EF to both CiNeVol (7.88 vs 5.58 pp, p = 4e-5) and Fetal (7.88 vs 5.98 pp, p = 3e-4)** —
-> unlike af12, where it beats CiNeVol and ties Fetal (docs/119 §3d). SVRTK / NiftyMIC / Dangi collapse
-> on function (EF MAE 38–42 pp, near-static hearts), like VGGT `nogather`/`hw0`. Side finding: two
+> unlike af12, where it beats CiNeVol and ties Fetal (docs/119 §3d). SVRTK / NiftyMIC / Dangi / NeSVoR
+> collapse on function (EF MAE 38–42 pp, near-static hearts), like VGGT `nogather`/`hw0`. Side finding: two
 > CiNeVol fits of the same subject differ from each other about as much as from GT (§4), so hrv12
 > uses ONE CiNeVol fit (checkpoint kept) for image metrics, EF and EPE.
 
@@ -92,7 +92,7 @@ like-for-like af12 row, af12's image metrics and EF were re-scored from `cinevol
 `cinevol_motion_masked` (2026-09-24, docs/119 §3d): pooled it equals the A40 fit (PSNR 23.27 vs
 23.28, EF MAE 10.50 vs 10.29) even though the two fits differ per subject.
 
-## 5. Results (2026-09-24; n = 180, NeSVoR pending)
+## 5. Results (2026-09-24; n = 180, all 9 methods)
 
 Scored on caesar (RTX 6000 Ada, 3 GPUs) except the VGGT EF, which ran on one L40S (`spgpu2`).
 Image metrics on caesar reproduce the A40 scorer to ≤ 1.3e-6 dB PSNR, identical SSIM/NCC
@@ -112,7 +112,7 @@ rule, same for every method).
 | SVRTK 3D (`svrtk3d_debug_scatter`) | 21.94 | 0.584 | 0.787 | 38.45 (177) | −37.96 | 60.7 | 0.760/0.690 |
 | NiftyMIC | 20.09 | 0.562 | 0.794 | 40.81 (178) | −40.44 | 63.8 | 0.762/0.695 |
 | Dangi | 21.33 | 0.537 | 0.748 | 42.39 (179) | −42.25 | 64.8 | 0.771/0.694 |
-| NeSVoR | pending | | | | | | |
+| NeSVoR (`nesvor_scatter`) | 21.03 | 0.573 | 0.791 | 42.44 (180) | −42.44 | 63.6 | 0.795/0.689 |
 
 (Unmasked `cinevol`: PSNR 24.43 / SSIM 0.723 / NCC 0.876 — as-saved, not the reported row, docs/119 §1.)
 
@@ -121,8 +121,8 @@ Paired Wilcoxon, VGGT `diff1000` vs each (image n = 180; EF on subjects both def
   **EF |err| +2.32 pp worse** (p = 4e-5, VGGT better in 65/179).
 - vs Fetal: PSNR +1.89 dB (p = 5e-29, 170/180), SSIM +0.098, NCC +0.071 (all p < 1e-28);
   **EF |err| +1.93 pp worse** (p = 3e-4, 67/179).
-- vs SVRTK / NiftyMIC / Dangi: PSNR +2.66 / +4.51 / +3.26 dB, EF |err| −30.5 / −32.9 / −34.7 pp
-  (all p < 1e-29).
+- vs SVRTK / NiftyMIC / Dangi / NeSVoR: PSNR +2.66 / +4.51 / +3.26 / +3.56 dB, EF |err| −30.5 /
+  −32.9 / −34.7 / −34.6 pp (all p < 1e-29).
 
 **hrv12 vs af12 (docs/119 §3d).** VGGT's numbers barely move between the two rhythms (PSNR 24.59 vs
 24.50, EF 7.88 vs 7.49). The baselines move a lot: CiNeVol PSNR 24.26 vs 23.27 and EF 5.58 vs 10.50;
@@ -144,14 +144,19 @@ demeaned EPE mm, corr):
 | SVRTK 3D | 4.80 (0.12) | 1.96 | 1.21 |
 | Fetal CMR 4D | 4.80 (0.17) | 2.02 | 1.28 |
 | Dangi | — | 3.14 | 3.24 |
+| NeSVoR | 6.41 (0.02) | **1.68** (0.41) | **1.09** (0.40) |
 | predict nothing | 4.73 | 1.98 | 1.22 |
+
+(9-method table, `common_set_9methods.txt`; adding NeSVoR leaves the common set at 1803 slices and
+every other row unchanged. NeSVoR is the only baseline that tracks in-plane breathing, and is the
+worst through-plane — as on af12 and the plain cohort, docs/122.)
 
 Within 0.05 mm of af12 on every row (docs/122 §3) — the breathing simulation does not depend on the
 rhythm arm; unverified whether the traces are byte-identical.
 
 **Files** (all git-tracked): image `evaluation/metric_results/test/<src>_hrv12/<arm>.json`; EF
 `.../<src>_hrv12/ef/<arm>.json` (per-frame seg masks on GPFS, `scratch/eval/_rhythm24_segs/hrv12/`);
-EPE `.../_motion_epe/hrv12/` (per-method slice dumps, `rows.json`, `common_set_8methods.txt`);
+EPE `.../_motion_epe/hrv12/` (per-method slice dumps, `rows.json`, `common_set_9methods.txt`);
 EF table `.../_tables/hrv12_ef_table.json` (`tools/rhythm24_ef_table.py hrv12 --json …`).
 
 ### 5a. Where the results live (af12 AND hrv12 — start here)
@@ -169,7 +174,7 @@ rest is on GPFS (repo link `scratch/`).
 | EF table (all methods, one arm, paired vs Fetal) | `evaluation/metric_results/test/_tables/<arm>_ef_table.json` | regenerate: `python tools/rhythm24_ef_table.py <arm> --json …` |
 | nnU-Net segmentations (every frame) | `scratch/eval/_rhythm24_segs/<arm>/<method>__<src>_<arm>/` | `ef_manifest.json` maps file names to subjects; GT segs are cached per subject in `scratch/eval/<src>_<arm>/out/<subject>/seg_gt_3d_fullres/`. Exception: af12's A40 `cinevol_masked` segs are in `scratch/cinevol/segs/af12/` (skip `*.PARTIAL_BAD.bak`) |
 | Motion EPE, per method | `evaluation/metric_results/test/_motion_epe/<arm>/<method>.json` | per-slice dumps; `rows.json` = per-method summary rows |
-| Motion EPE, cross-method table | `evaluation/metric_results/test/_motion_epe/<arm>/common_set_8methods.txt` | af12's `common_set.txt` is an older 6-method table, superseded |
+| Motion EPE, cross-method table | `evaluation/metric_results/test/_motion_epe/<arm>/common_set_9methods.txt` | all 9 methods incl. NeSVoR; `common_set_8methods.txt` (pre-NeSVoR, identical other rows) and af12's `common_set.txt` (older 6-method table) are superseded |
 | Recons | `scratch/eval/<src>_<arm>/out/<subject>/<method>/recon_breath/` | CiNeVol `last.pt` checkpoints kept there |
 
 Superseded locations (do not read): `temp/rhythm24_ef/<arm>/` (old EF), `temp/motion_epe/<arm>/`
@@ -192,7 +197,7 @@ Superseded locations (do not read): `temp/rhythm24_ef/<arm>/` (old EF), `temp/mo
   numpy 1.26.4); Task114 weights read over the sshfs GPFS mount through
   `/home/minsukc/vggt/tools/nnunet_mnms_eval/env.sh`.
 
-## 7. Next
+## 7. Status
 
-1. NeSVoR (`nesvor_scatter`) once 180/180: `run.py`, `rhythm24_seg.sh STAGE=pred`,
-   `motion_epe/nesvor.py hrv12 --arm-name nesvor_scatter`, then re-run `common_set.py`.
+All 9 methods scored on hrv12 (NeSVoR added 2026-09-24 after its recon reached 180/180: image
+metrics, EF/Dice, EPE, 0 failures). Nothing pending for this arm.
