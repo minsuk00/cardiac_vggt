@@ -5,9 +5,9 @@ Curves are the stored per-frame LV volumes (evaluation/metric_results/test/<coho
 simulator's time unit is the nominal R-R (DT = 1/12), shown as seconds assuming a nominal R-R of 1 s
 (state that in the caption). Frame f covers [f/12, (f+1)/12) s and is plotted at its midpoint. Lines are drawn
 with shape-preserving PCHIP interpolation through the 12 samples (no overshoot beyond neighbouring
-samples). Style/palette match tools/render_runtime_accuracy.py.
+samples). Style/palette match _paper_figures/render_runtime_accuracy.py.
 
-    python tools/render_vtc_figure.py --cohort mnms_af12 --subject MNMs_Q4W5Z8 --out temp/vtc_figure
+    python _paper_figures/render_vtc_figure.py --cohort mnms_af12 --subject MNMs_Q4W5Z8 --out temp/vtc_figure
 """
 import argparse
 import json
@@ -110,7 +110,7 @@ def main():
     ap.add_argument("--subject", default="CMRx23_Train_P045")  # paper figure; earlier draft: mnms_af12 MNMs_Q4W5Z8
     ap.add_argument("--out", default="temp/vtc_figure")
     ap.add_argument("--table", default="temp/allphase_seg/paper_tables_v2.json",
-                    help="tools/paper_results_table.py --json output, for the combined runtime+VTC variants")
+                    help="_paper_figures/paper_results_table.py --json output, for the combined runtime+VTC variants")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     paper_rc()

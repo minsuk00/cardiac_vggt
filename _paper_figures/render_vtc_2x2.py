@@ -4,7 +4,7 @@ Left column = runtime vs VTC err. (paper_results_table.py --json: af12_main / hr
 Runtime was measured on af12 only (docs/120 §6), so the HRV row reuses the af12 runtimes -- say so in
 the caption. Right column = LV curves of one subject under each rhythm (render_vtc_figure style).
 
-    python tools/render_vtc_2x2.py --subject CMRx23_Train_P045 --out temp/vtc_2x2
+    python _paper_figures/render_vtc_2x2.py --subject CMRx23_Train_P045 --out temp/vtc_2x2
 """
 import argparse
 import json

@@ -8,7 +8,7 @@ All inputs are saved eval outputs (no inference). True through-plane shifts come
 _motion_epe/af12/<arm>.json (resp_diag/ed_dvf applied shifts are stale for rhythm cohorts).
 Delta is saved for the first target frame only (ed_dvf.npz).
 
-Usage: micromamba run -n svr python tools/render_ablation_motion.py [--subject cohort/id] --out <png|pdf>
+Usage: micromamba run -n svr python _paper_figures/render_ablation_motion.py [--subject cohort/id] --out <png|pdf>
 """
 import argparse
 import glob

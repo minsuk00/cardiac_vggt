@@ -2,10 +2,10 @@
 
 y = LV volume–time curve (VTC) error (% EDV): mean per-phase |V_pred(t) - V_gt(t)| / EDV_gt. Chosen over
 EF MAE because it scores all 12 phases, not just the ED/ES extremes.
-Numbers come from tools/paper_results_table.py --json (the same file the paper table is built from),
+Numbers come from _paper_figures/paper_results_table.py --json (the same file the paper table is built from),
 so figure and table cannot drift.
 
-    python tools/render_runtime_accuracy.py --table temp/allphase_seg/paper_tables.json --out temp/runtime_accuracy_drafts
+    python _paper_figures/render_runtime_accuracy.py --table temp/allphase_seg/paper_tables.json --out temp/runtime_accuracy_drafts
 """
 import argparse
 import json
@@ -44,12 +44,14 @@ OFFS = {"Ours": (8, 0, "left"), "CiNeVol": (-8, 0, "right"), "Fetal CMR 4D": (0,
         "Dangi et al.": (8, 0, "left")}
 
 
-def paper_rc(family="serif"):
+def paper_rc(family="sans-serif"):
+    # paper figures use Arial (user decision 2026-09-25; install: docs/127 §9); math in STIX sans so
+    # \mathcal{L} keeps its calligraphic form
     plt.rcParams.update({
         "font.family": family,
         "font.serif": ["Nimbus Roman", "Times New Roman", "DejaVu Serif"],
-        "font.sans-serif": ["Nimbus Sans", "Helvetica", "Arial", "DejaVu Sans"],
-        "mathtext.fontset": "stix",
+        "font.sans-serif": ["Arial", "DejaVu Sans"],
+        "mathtext.fontset": "stixsans",
         "font.size": 8, "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7, "legend.fontsize": 7,
         "axes.edgecolor": INK, "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
         "xtick.minor.width": 0.4, "ytick.minor.width": 0.4, "xtick.color": INK, "ytick.color": INK,

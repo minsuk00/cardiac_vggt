@@ -112,9 +112,11 @@ Everything below is the agent-facing record.
   bottom-left).
 - **Fig. 7 uses flip only** (`render_ablation_motion.py --flip-v`). For P093 slice 4 the heuristic gave
   rot −19° + flip. The user rejected the rotation: the standard view only needs RV left and anterior up,
-  not an exact RV–LV angle. **Open inconsistency:** Fig. 6 still applies its rotation (4° / 57°). The
-  57° for E3L8U8 does real work, because without it the RV sits above the LV. Nobody decided whether
-  Fig. 6 should also be flip-only.
+  not an exact RV–LV angle. **Fig. 6 keeps its rotation (user decision, 2026-09-25).** Its 57° for
+  E3L8U8 is needed: with flip only (`render_motion_edes.py --flip-only`, compared in
+  `figs/fonts/reference_conditioning_rotate_vs_fliponly.png`) the RV sits above the LV. The angle is the
+  RV-centroid→LV-centroid direction (GT seg labels 3→1, frame 0) rotated to horizontal; exact horizontal
+  is a convention, not a requirement of the standard view.
 - **Arrows only** (`--no-map --arrow-color "#F39078"` in both scripts): no magma map and no colour bar.
   Arrows stay at true length with grid step 11, as in Fig. 7. A 2× length, sparser, thicker-arrow variant
   was tried and **rejected** because it broke the match with Fig. 7.
@@ -125,15 +127,17 @@ Everything below is the agent-facing record.
 - **Caption text is not coloured.** The paper loads `xcolor`, but `#F39078` text on white has about 2.3:1
   contrast. The colours are named in words ("blue inset").
 
-## 5. Reproduce the paper figures (verified pixel-identical to Overleaf `1cfff5b`)
+## 5. Reproduce the paper figures (verified pixel-identical to Overleaf `1cfff5b`, pre-Arial)
+
+The renderers now live in `_paper_figures/` (moved from `tools/`; index in `_paper_figures/README.md`).
 
 ```bash
 # Fig. 6 (fields in scratch/motion_edes/sweep80_save, GPFS)
-PYTHONPATH=tools micromamba run -n svr python tools/render_motion_edes.py --dump scratch/motion_edes/sweep80_save \
+micromamba run -n svr python _paper_figures/render_motion_edes.py --dump scratch/motion_edes/sweep80_save \
   --af cmrx2024/CMRx24_Train_P007,6,CMRx24_Train_P007_z6f9 --hrv mnms/MNMs_E3L8U8,7,MNMs_E3L8U8_z7f0 \
   --no-map --arrow-color "#F39078" --out reference_conditioning.pdf
 # Fig. 7 (saved eval outputs only, no inference)
-PYTHONPATH=tools micromamba run -n svr python tools/render_ablation_motion.py \
+micromamba run -n svr python _paper_figures/render_ablation_motion.py \
   --subject cmrx2023_af12/CMRx23_Train_P093 --tight --flip-v --no-map --arrow-color "#F39078" --out ablation_motion.pdf
 ```
 
@@ -170,10 +174,34 @@ regenerated with step 4 of §3 (`CMRx24_Train_P007:6:9`, `MNMs_E3L8U8:7:0`).
 ## 8. Files
 
 - Code: `tools/pick_motion_candidates.py`, `tools/sweep_input_frame.py`, `tools/rank_input_frame_sweep.py`,
-  `tools/render_motion_edes_gallery.py`, `tools/render_motion_edes.py`, `tools/render_ablation_motion.py`
-  (`tools/dump_vggt_motion.py` made the earliest drafts on the frozen evaluation input).
+  `tools/render_motion_edes_gallery.py`, `_paper_figures/render_motion_edes.py`,
+  `_paper_figures/render_ablation_motion.py` (`tools/dump_vggt_motion.py` made the earliest drafts on the
+  frozen evaluation input).
 - Data (GPFS, not git): `scratch/motion_edes/sweep80/` (scores), `scratch/motion_edes/sweep80_save/`
   (fields + scores of the 15 saved picks).
 - Figures (git): `figs/motion_edes/motion_edes_arrows.png`, `figs/motion_edes/ablation_motion_arrows.png`
   (the paper versions), `figs/motion_edes/gallery_{AF,HRV}.png` (selection).
-- Open: page count after adding Fig. 6; Fig. 6 rotation vs Fig. 7 flip-only (§4).
+- Open: page count after adding Fig. 6.
+
+## 9. Arial for every paper figure (2026-09-25, Overleaf `65c253f`)
+
+User decision: all figures the user makes (runtime/VTC, reference conditioning, ablation motion, real RT;
+Figs. 1–4 are made by others) use **Arial**. `paper_rc()` in `_paper_figures/render_runtime_accuracy.py` sets
+`font.family` to Arial and math to `stixsans`; `make_rt_figure.py` sets the same rcParams directly.
+`stixsans` because the Arial `custom` mathtext loses the calligraphic ℒ in `$\mathcal{L}_{\mathrm{obs}}$`.
+
+- **Arial is not installed on caesar by default**, and matplotlib silently falls back to DejaVu Sans. It was
+  installed per user: the four `arial*.ttf` files from conda-forge `mscorefonts-0.0.1-3` (sha256
+  `dd72bd1b…0947dc`) copied to `~/.local/share/fonts/`, then `fc-cache -f` and
+  `rm ~/.cache/matplotlib/fontlist-*.json`. Check with
+  `python -c "import matplotlib.font_manager as f; print(f.findfont('Arial'))"`, which must not print
+  DejaVu. Do the same on any other machine (e.g. Great Lakes) before rendering.
+- **Content check:** with the pre-Arial `paper_rc`, each script reproduced the Overleaf PDF pixel-identically
+  (runtime/VTC, reference conditioning, ablation motion; real RT except its row labels, which the command
+  now sets to the paper's "Healthy volunteer" / "AF patient"). So the Arial versions differ only in fonts.
+  To load an old `render_runtime_accuracy.py` for such a check, put it first on `sys.path` and use
+  `runpy.run_path`: the script's own directory (`_paper_figures/`) otherwise shadows `PYTHONPATH`.
+- Embedded fonts after the switch: ArialMT and Arial-BoldMT, plus STIX only for math glyphs (ℒ, →, †).
+- The runtime/VTC figure needs `temp/allphase_seg/paper_tables_v2.json`. `temp/` is gitignored, so on a new
+  machine rebuild it: `_paper_figures/seg_allphase_dice_hd95.py` (about 2 min on 16 CPUs) →
+  `paper_results_table.py --json` (the regenerated HRV table matched the paper's table exactly).

@@ -7,7 +7,7 @@ volume). Used to pick an input frame that moves visibly toward BOTH targets for 
 Always writes --out/scores/<rhythm>/<subject>_z{z}.json: per frame, mean in-plane motion (mm, heart ROI,
 rigid heart-ROI shift removed) toward ED and ES. With --save (all frames) or --save-frame F (one frame), also
 writes --out/<rhythm>/<subject>_z{z}f{f}/motion_t{tt}.nii.gz + motion_meta.json, the tools/dump_vggt_motion.py
-format (ED and ES targets only), which tools/render_motion_edes.py reads as '<source>/<subject>,z,<subject>_z{z}f{f}'.
+format (ED and ES targets only), which _paper_figures/render_motion_edes.py reads as '<source>/<subject>,z,<subject>_z{z}f{f}'.
 Fields are ~32 MB per target, so score first and save only the picked frames.
 
 Run (GPU node; one process per GPU, split the candidate list):
