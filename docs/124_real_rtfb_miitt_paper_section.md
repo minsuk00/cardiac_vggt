@@ -4,7 +4,7 @@
 > VGGT `final518_diff1000` runs zero-shot, with no code change, on REAL real-time free-breathing
 > ungated MIITT scans: the cardiomyopathy + AF patient (D=12) and Volunteer1 (D=13). Neither is in
 > `pooled_curated_v2` (0 MIITT lines). Two qualitative results go into the paper as **Sec. 4.4
-> "Real Free-Breathing Reconstruction"** (Overleaf, figure `figures/real_rt.pdf`).
+> "Real Free-Breathing Ungated Acquisitions"** (Overleaf, figure `figures/real_rt.pdf`).
 > (1) **Spatial:** in long-axis (LAX) cuts, the naive stack (frame f of every slice) has visible
 > stair-steps; ours from the same input is a coherent ventricle.
 > (2) **Temporal:** ours beats regularly (volunteer) or irregularly (AF), and the naive stack shows
@@ -37,7 +37,7 @@
 | **Frame-f stacks (LAX panels)** | `tools/run_vggt_rt_stacked.py`: every slot = frame f of its plane, one forward each | `stacked_vs_ours_180/<subj>/frame_XXX/{input,ours}.nii.gz` (all 180 f, AFib + Volunteer1); also `stacked_vs_ours_all/` (f = 0,10,..,170, + Volunteer4) and `stacked_vs_ours/` (hand-picked) |
 | LV curves (2D) | `tools/rt_lv_curve_2d.py`: nnU-Net Task114 **2d** per frame, LV px × voxel volume | `lvseg2d/lv_curves.json`, `lv_curves_noref.json` (reference slab z6 excluded) |
 | Alignment score | nnU-Net 2d on all 720 frame-f volumes (input + ours) | `alignseg2d/seg/`, `lax_filtered/scores.json` |
-| **Paper figure** | `tools/make_rt_figure.py --row MIITT_Volunteer1:20:volunteer1:"Healthy volunteer" --row MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"AF patient"` | `figure/rt_figure_noref.{png,pdf}` → Overleaf `figures/real_rt.pdf` |
+| **Paper figure** | `tools/make_rt_figure.py --row MIITT_Volunteer1:20:volunteer1:"Healthy volunteer" --row MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"AF patient"` | `figure/rt_figure_short.{png,pdf}` (final, compact layout) → Overleaf `figures/real_rt.pdf` |
 
 Browsing/QC renderers: `render_rt_stacked_frames.py` (candidate naive stacks),
 `render_rt_stacked_vs_ours.py`, `render_rt_lax_candidates.py` (all-frame LAX sheets),
