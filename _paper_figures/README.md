@@ -29,6 +29,36 @@ HRV table matched the paper's appendix table exactly (2026-09-25).
 
 **Verified 2026-09-25:** all four commands above regenerate the Overleaf PDFs (commit `65c253f`) pixel-identically.
 
+**Editable PowerPoint version:** `export_pptx.py` runs the four commands above unchanged and writes **one deck,
+`_paper_figures/paper_figures.pptx` (committed), one slide per figure at 1:1 physical size** (paper order);
+scratch renders go to `temp/pptx_work`.
+- **Every text** the figure draws is a native PowerPoint text box: tick labels, axis labels, titles, legend entries,
+  headers and numbers, in Arial at the same size, colour, weight, rotation and position. Math becomes real text with
+  sub/superscript runs (ℒ in Cambria Math).
+- **Each axes panel** (image, curves, arrows, markers, ticks, spines) is its own transparent PNG at 600 dpi, cropped
+  to what it draws. Each inset is a separate picture. Figure-level graphics (legend samples, header rules) are one
+  more PNG.
+- **Verified 2026-09-25**, against the Overleaf PDFs:
+  - **Every picture layer** aligns at shift (0, 0), by best-shift search at 400 dpi (0.18 pt).
+  - **Every text box** matches the PDF's words by string and position.
+  - **Rendered glyphs** (LibreOffice render vs PDF raster, per text box): median offset 0 in both directions and
+    almost all within ±0.18 pt. The exceptions are labels containing math glyphs (↓, †, →, ℒ), off by up to about
+    1.8 pt, because PowerPoint draws them with Arial or Cambria Math instead of matplotlib's STIX, and a few
+    labels off by about 0.4 pt.
+  - The deck passes the pptx skill's validator.
+- **How it stays exact (each fix answered a measured failure):**
+  - Layers and text positions both come from the PDF backend, like the paper figure: Agg repacked legends and moved
+    the crop box by 0.7 pt.
+  - Text positions are recorded in the same bbox-cropped save as the layers.
+  - Text is hidden with alpha 0, not `set_visible(False)`, because hiding it repacks legends.
+  - Text is placed by **baseline**: a top-anchored box with the baseline `BASE_FROM_TOP` = 1.00 font-size below its
+    top (measured in LibreOffice; PowerPoint unverified). The baseline sits max(descent of the text, descent of
+    "lp") above matplotlib's bbox bottom, as in `Text._get_layout`. Centring boxes left text 0.9–1.8 pt low.
+  - Width slack goes on the side away from the alignment edge.
+  - Tick locators are frozen to the PDF draw, and rcParams are reset between renderers.
+- It needs python-pptx, which is not in `svr`: `pip install --target <dir> python-pptx`, then
+  `PYTHONPATH=<dir>:training:.`.
+
 **Helpers in `tools/`:**
 - Reference-conditioning selection: `pick_motion_candidates.py`, `sweep_input_frame.py`,
   `rank_input_frame_sweep.py`, `render_motion_edes_gallery.py`.
