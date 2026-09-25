@@ -45,10 +45,10 @@ def main():
 
     # Per subject: two grid rows (LAX view 1 on top, LAX view 2 below); columns = naive stack | ours |
     # spacer | LV curve (spanning both LAX rows).
-    fig = plt.figure(figsize=(12.5, 3.9 * len(args.row)))
-    outer = fig.add_gridspec(len(args.row), 1, hspace=0.18)
+    fig = plt.figure(figsize=(12.5, 2.9 * len(args.row)))
+    outer = fig.add_gridspec(len(args.row), 1, hspace=0.12)
     for i, spec in enumerate(args.row):
-        gs = outer[i].subgridspec(2, 4, width_ratios=[1, 1, 0.3, 4.0], wspace=0.06, hspace=0.12)
+        gs = outer[i].subgridspec(2, 4, width_ratios=[0.72, 0.72, 0.3, 4.0], wspace=0.04, hspace=0.04)
         subj, f, cname, label = spec.split(":", 3)
         f = int(f)
         fd = os.path.join(args.root, "stacked_vs_ours_180", subj, f"frame_{f:03d}")
@@ -66,7 +66,7 @@ def main():
                 if j == 0:
                     a.set_ylabel(f"LAX view {r + 1}", fontsize=9)
                     if r == 0:
-                        a.annotate(label, xy=(-0.28, 0.0), xycoords="axes fraction", rotation=90,
+                        a.annotate(label, xy=(-0.36, 0.0), xycoords="axes fraction", rotation=90,
                                    ha="center", va="center", fontsize=10)
         a = fig.add_subplot(gs[:, 3])
         for kind, style in (("naive", dict(color="0.55", lw=1.2, label="Naive stack")),
