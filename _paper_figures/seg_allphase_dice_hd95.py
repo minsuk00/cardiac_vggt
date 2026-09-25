@@ -7,7 +7,7 @@ which gives identical distances to the full-volume EDT (max |diff| 0.0, checked)
 ED/ES = argmax/argmin of the GT LV volume, as in ef_dice.py, so the ED/ES entries reproduce the stored
 dice_breath_*_ED/ES and hd95_breath_*_ED/ES exactly (checked: max |diff| 0 on af12 + hrv12, 9 methods).
 
-    PYTHONPATH=training:. python tools/seg_allphase_dice_hd95.py --procs 8 --out temp/allphase_seg/seg_allphase.json
+    PYTHONPATH=training:. python _paper_figures/seg_allphase_dice_hd95.py --procs 8 --out temp/allphase_seg/seg_allphase.json
 """
 import argparse
 import json

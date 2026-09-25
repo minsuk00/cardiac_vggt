@@ -10,7 +10,7 @@ ED/ES = reference frame with max/min GT LV volume.
 Motion fields: tools/dump_vggt_motion.py (<dump>/<rhythm>/<subject>/) or tools/sweep_input_frame.py
 (<dump>/<rhythm>/<subject>_z{z}f{f}/, input frame of plane z overridden).
 
-Usage: PYTHONPATH=tools micromamba run -n svr python tools/render_motion_edes.py --dump scratch/motion_edes/sweep \
+Usage: micromamba run -n svr python _paper_figures/render_motion_edes.py --dump scratch/motion_edes/sweep \
     --af cmrx2024/CMRx24_Train_P055,3,CMRx24_Train_P055_z3f9 --hrv mnms/MNMs_O5U2U7,4,MNMs_O5U2U7_z4f2 --out x.png
 """
 import argparse
@@ -39,13 +39,13 @@ def up(a2d, order):
     return zoom(a2d, 518 / 256, order=order)
 
 
-def sax_standard(img, seg):
+def sax_standard(img, seg, rotate_rv_lv=True):
     """Standard cardiology SAX view of one (y, x) slice: rotate so the RV centroid (label 3) is left of the LV
     centroid (label 1), then flip vertically if needed so the body surface nearest the heart (anterior chest
     wall) is at the top. The bundle affines are placeholders, so anterior is read from anatomy, not metadata.
-    Returns (angle for scipy.ndimage.rotate, flip)."""
+    rotate_rv_lv=False: no rotation, flip only (as Fig. 7). Returns (angle for scipy.ndimage.rotate, flip)."""
     d = np.argwhere(seg == 1).mean(0) - np.argwhere(seg == 3).mean(0)          # RV -> LV, (dy, dx)
-    ang = float(np.degrees(np.arctan2(d[0], d[1])))
+    ang = float(np.degrees(np.arctan2(d[0], d[1]))) if rotate_rv_lv else 0.0
     im, s = rotate(img, ang, reshape=False, order=1), rotate(seg, ang, reshape=False, order=0)
     body = binary_fill_holes(binary_opening(im > np.percentile(img[img > 0], 20), iterations=2))
     edge = np.argwhere(body & ~binary_erosion(body))
@@ -67,7 +67,7 @@ def orient_field(f, ang, flip):
     return np.stack([g[::-1, :, 0], -g[::-1, :, 1]], -1) if flip else g
 
 
-def load_rhythm(spec, rh, dump):
+def load_rhythm(spec, rh, dump, rotate_rv_lv=True):
     """spec 'source/subject,z[,dump name]' -> dict with input, ED/ES fields, reference crops, view box."""
     parts = spec.split(",")
     src, sid = parts[0].split("/")
@@ -99,7 +99,8 @@ def load_rhythm(spec, rh, dump):
     out["inp"] = up(inp, 1)
 
     # standard SAX orientation (RV left, anterior up), from the GT seg of this plane; same plane for the refs
-    ang, flip = sax_standard(inp, nib.load(f"{sd}/seg_gt_3d_fullres/seg_t00.nii.gz").get_fdata()[:, :, z].T)
+    ang, flip = sax_standard(inp, nib.load(f"{sd}/seg_gt_3d_fullres/seg_t00.nii.gz").get_fdata()[:, :, z].T,
+                             rotate_rv_lv)
     out["label"] += f" rot {ang:.0f}{' flip' if flip else ''}"
     m = out["m"] = orient(m, ang, flip, 0)
     out["inp"] = orient(out["inp"], ang, flip, 1)
@@ -138,8 +139,10 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--no-map", action="store_true", help="arrows only: no magnitude overlay, no colour bar")
     ap.add_argument("--arrow-color", default="white")
+    ap.add_argument("--flip-only", action="store_true", help="no RV-LV rotation, vertical flip only (as Fig. 7)")
     a = ap.parse_args()
-    R = [("AF", load_rhythm(a.af, "af12", a.dump)), ("HRV", load_rhythm(a.hrv, "hrv12", a.dump))]
+    R = [("AF", load_rhythm(a.af, "af12", a.dump, not a.flip_only)),
+         ("HRV", load_rhythm(a.hrv, "hrv12", a.dump, not a.flip_only))]
     vmax = np.percentile(np.concatenate([np.hypot(d["f"][..., 0], d["f"][..., 1])[r["m"]]
                                          for _, r in R for d in r["targets"].values()]), 98)
 

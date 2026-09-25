@@ -5,9 +5,9 @@ One row per subject. Left: orthogonal LAX cuts (x-z, y-z) through the LV centre 
 stacked input (frame f of every slice) and of ours at the same f (tools/run_vggt_rt_stacked.py
 outputs). Right: LV volume over the 4.5 s recording, naive stack vs ours (tools/rt_lv_curve_2d.py).
 
-    PYTHONPATH=training:. python tools/make_rt_figure.py --root scratch/temp/miitt_afib_rt \
-        --row MIITT_Volunteer1:20:volunteer1:"Volunteer (sinus rhythm)" \
-        --row MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"Patient (atrial fibrillation)" \
+    PYTHONPATH=training:. python _paper_figures/make_rt_figure.py --root scratch/temp/miitt_afib_rt \
+        --row MIITT_Volunteer1:20:volunteer1:"Healthy volunteer" \
+              MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"AF patient" \
         --out scratch/temp/miitt_afib_rt/figure/rt_figure
 """
 import argparse
@@ -29,6 +29,7 @@ from render_rt_orthoviews import lv_centre                # noqa: E402
 from render_rt_lax_candidates import lax_cut              # noqa: E402
 
 FRAME_MS = 25.0
+plt.rcParams.update({"font.family": "Arial", "mathtext.fontset": "stixsans", "pdf.fonttype": 42})   # paper fonts
 
 
 def main():
