@@ -104,6 +104,10 @@ def main():
     ap.add_argument("--window", choices=["slice", "heart"], default="slice",
                     help="display window top = 99.5th percentile of the whole slice or of the heart ROI")
     ap.add_argument("--gamma", type=float, default=1.0, help="display gamma (<1 brightens dark tissue)")
+    ap.add_argument("--no-map", action="store_true", help="panel (b) arrows only: no magnitude overlay, no colour bar")
+    ap.add_argument("--arrow-color", default="white")
+    ap.add_argument("--flip-v", action="store_true",
+                    help="flip panel (b) vertically (anterior up, standard SAX view); arrows flipped with it")
     a = ap.parse_args()
     efs = {k: ef_rows(k) for _, k in ARMS}
     epes = {k: json.load(open(f"{RES}/_motion_epe/af12/{method(k)}.json"))["slices"] for _, k in ARMS}
@@ -131,7 +135,12 @@ def main():
     m = heart518(sd, z_sel)
     inp = nib.load(f"{sd}/breath/stack_t{j_sel:02d}.nii.gz").get_fdata()[:, :, z_sel].T
     inp518 = zoom(inp, 518 / 256, order=1)
-    ys, xs = np.where(m)                               # square crop centred on the heart ROI
+    if a.flip_v:
+        m, inp518 = m[::-1], inp518[::-1]
+        for k in dvf:                                   # flip rows and the y component of the field
+            dvf[k] = dict(dvf[k]); dl = dvf[k]["delta"][..., ::-1, :, :].copy(); dl[..., 1] *= -1
+            dvf[k]["delta"] = dl
+    ys, xs = np.where(m)                              # square crop centred on the heart ROI
     cy, cx = int(ys.mean()), int(xs.mean())
     h = int(max(ys.max() - ys.min(), xs.max() - xs.min()) / 2 + 12)
     y0, y1, x0, x1 = cy - h, cy + h, cx - h, cx + h
@@ -171,12 +180,13 @@ def main():
         a2.imshow(np.clip(inp518 / wmax, 0, 1) ** a.gamma, cmap="gray", vmin=0, vmax=1)
         show = np.ones_like(m) if a.full_field else m
         mag = np.where(show, np.hypot(f[..., 0], f[..., 1]), np.nan)
-        im = a2.imshow(mag, cmap="magma", vmin=0, vmax=vmax, alpha=0.6)
+        if not a.no_map:
+            im = a2.imshow(mag, cmap="magma", vmin=0, vmax=vmax, alpha=0.6)
         st = 11
         yy, xx = np.mgrid[st // 2:518:st, st // 2:518:st] if a.full_field else \
             np.mgrid[y0 + st // 2:y1:st, x0 + st // 2:x1:st]
         keep = show[yy, xx]
-        a2.quiver(xx[keep], yy[keep], f[yy, xx, 0][keep], f[yy, xx, 1][keep], color="white",
+        a2.quiver(xx[keep], yy[keep], f[yy, xx, 0][keep], f[yy, xx, 1][keep], color=a.arrow_color,
                   angles="xy", scale_units="xy", scale=1 / (PX_PER_MM * ARROW_X), width=0.009,
                   headwidth=3.5, headlength=3.5, headaxislength=3)
         a2.set_xlim(x0, x1); a2.set_ylim(y1, y0)
@@ -220,10 +230,11 @@ def main():
            Line2D([], [], ls="-", color=ORANGE, lw=1.4))]
     fig.legend(hs, ["Ground truth", "Predicted"], loc="outside lower center", ncol=2, frameon=False,
                fontsize=7, handlelength=2.2, columnspacing=1.5)
-    cb = fig.colorbar(im, ax=ax[1, :], fraction=0.025, pad=0.01)
-    cb.set_label("mm", fontsize=6.5, labelpad=1)
-    cb.ax.tick_params(labelsize=6)
-    cb.outline.set_linewidth(0.4)
+    if not a.no_map:
+        cb = fig.colorbar(im, ax=ax[1, :], fraction=0.025, pad=0.01)
+        cb.set_label("mm", fontsize=6.5, labelpad=1)
+        cb.ax.tick_params(labelsize=6)
+        cb.outline.set_linewidth(0.4)
     # (a)/(b)/(c): one shared x, a fixed gap left of the outermost y-label, each centred on its row.
     # Placed after the layout is final (then frozen), so the image row's narrower axes can't shift (b).
     fig.canvas.draw()

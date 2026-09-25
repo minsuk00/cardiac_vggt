@@ -22,7 +22,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
-from scipy.ndimage import zoom
+from scipy.ndimage import binary_erosion, binary_fill_holes, binary_opening, rotate, zoom
 
 from render_runtime_accuracy import TEXTW, paper_rc
 
@@ -31,11 +31,40 @@ VOL, RES = f"{EV}/volumes", f"{EV}/metric_results/test"
 ARM = "vggt_final518_diff1000_ep300"
 PX_PER_MM = 518 / (256 * 1.4)
 MARGIN, PAD = 12, 0.015
-REF = "#29B6F6"   # outline colour of the reference-frame inset
+INS = 0.30     # inset side, fraction of the panel; always bottom-right
+REF = "#6D8EAE"   # outline colour of the reference-frame inset
 
 
 def up(a2d, order):
     return zoom(a2d, 518 / 256, order=order)
+
+
+def sax_standard(img, seg):
+    """Standard cardiology SAX view of one (y, x) slice: rotate so the RV centroid (label 3) is left of the LV
+    centroid (label 1), then flip vertically if needed so the body surface nearest the heart (anterior chest
+    wall) is at the top. The bundle affines are placeholders, so anterior is read from anatomy, not metadata.
+    Returns (angle for scipy.ndimage.rotate, flip)."""
+    d = np.argwhere(seg == 1).mean(0) - np.argwhere(seg == 3).mean(0)          # RV -> LV, (dy, dx)
+    ang = float(np.degrees(np.arctan2(d[0], d[1])))
+    im, s = rotate(img, ang, reshape=False, order=1), rotate(seg, ang, reshape=False, order=0)
+    body = binary_fill_holes(binary_opening(im > np.percentile(img[img > 0], 20), iterations=2))
+    edge = np.argwhere(body & ~binary_erosion(body))
+    edge = edge[(edge > 2).all(1) & (edge < im.shape[0] - 3).all(1)]           # drop the FOV border
+    dist = np.hypot(*(edge - np.argwhere(s > 0).mean(0)).T)
+    return ang, bool((edge[dist < dist.min() + 15, 0] - np.argwhere(s > 0).mean(0)[0]).mean() > 0)
+
+
+def orient(a, ang, flip, order):
+    r = rotate(a, ang, reshape=False, order=order)
+    return r[::-1] if flip else r
+
+
+def orient_field(f, ang, flip):
+    """Resample a (y, x, [dx, dy]) field like the image and rotate its vectors with it."""
+    t = np.radians(ang)
+    fx, fy = (rotate(f[..., k], ang, reshape=False, order=1) for k in (0, 1))
+    g = np.stack([np.cos(t) * fx + np.sin(t) * fy, -np.sin(t) * fx + np.cos(t) * fy], -1)
+    return np.stack([g[::-1, :, 0], -g[::-1, :, 1]], -1) if flip else g
 
 
 def load_rhythm(spec, rh, dump):
@@ -66,24 +95,25 @@ def load_rhythm(spec, rh, dump):
     assert len(frames) == 1, "ED and ES panels must show the same input frame"
     j = frames.pop()
     out["frame"] = j
-    out["inp"] = up(nib.load(f"{sd}/breath/stack_t{j:02d}.nii.gz").get_fdata()[:, :, z].T, 1)
+    inp = nib.load(f"{sd}/breath/stack_t{j:02d}.nii.gz").get_fdata()[:, :, z].T
+    out["inp"] = up(inp, 1)
 
-    # tight square crop centred on the heart ROI; the inset goes in the corner with the largest
-    # heart-free square, sized to that square (capped)
+    # standard SAX orientation (RV left, anterior up), from the GT seg of this plane; same plane for the refs
+    ang, flip = sax_standard(inp, nib.load(f"{sd}/seg_gt_3d_fullres/seg_t00.nii.gz").get_fdata()[:, :, z].T)
+    out["label"] += f" rot {ang:.0f}{' flip' if flip else ''}"
+    m = out["m"] = orient(m, ang, flip, 0)
+    out["inp"] = orient(out["inp"], ang, flip, 1)
+    for d in out["targets"].values():
+        d["f"] = orient_field(d["f"], ang, flip)
+        d["ref"], d["mr"] = orient(d["ref"], ang, flip, 1), orient(d["mr"], ang, flip, 0)
+
+    # tight square crop centred on the heart ROI; the inset sits bottom-right (may overlap the ROI edge)
     ys, xs = np.where(m)
     cy, cx = (ys.min() + ys.max()) // 2, (xs.min() + xs.max()) // 2
     w = max(ys.max() - ys.min(), xs.max() - xs.min()) + 2 * MARGIN
     y0, x0 = cy - w // 2, cx - w // 2
-    crop = m[y0:y0 + w, x0:x0 + w]
-    best = (0, None)
-    for cyi, cxi in ((1, 1), (1, 0), (0, 1), (0, 0)):     # (bottom?, right?) — bottom-right first
-        c = crop[::-1 if cyi else 1, ::-1 if cxi else 1]
-        s = next((k for k in range(1, w) if c[:k, :k].any()), w) - 1
-        if s > best[0] + 2:
-            best = (s, (cyi, cxi))
-    ins = min(0.42, best[0] / w - 2 * PAD)
     out["box"] = (y0, y0 + w, x0, x0 + w)
-    out["inset"] = ((1 - ins - PAD if best[1][1] else PAD), (PAD if best[1][0] else 1 - ins - PAD), ins, ins)
+    out["inset"] = (1 - INS - PAD, PAD, INS, INS)
     return out
 
 
@@ -106,6 +136,8 @@ def main():
     ap.add_argument("--af", required=True, help="source/subject,z[,dump name]")
     ap.add_argument("--hrv", required=True, help="source/subject,z[,dump name]")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--no-map", action="store_true", help="arrows only: no magnitude overlay, no colour bar")
+    ap.add_argument("--arrow-color", default="white")
     a = ap.parse_args()
     R = [("AF", load_rhythm(a.af, "af12", a.dump)), ("HRV", load_rhythm(a.hrv, "hrv12", a.dump))]
     vmax = np.percentile(np.concatenate([np.hypot(d["f"][..., 0], d["f"][..., 1])[r["m"]]
@@ -124,12 +156,13 @@ def main():
             d = r["targets"][kind]
             a2, f, m = ax[3 * g + 1 + k], d["f"], r["m"]
             gray(a2, r["inp"])
-            im = a2.imshow(np.where(m, np.hypot(f[..., 0], f[..., 1]), np.nan), cmap="magma", vmin=0,
-                           vmax=vmax, alpha=0.6)
+            if not a.no_map:
+                im = a2.imshow(np.where(m, np.hypot(f[..., 0], f[..., 1]), np.nan), cmap="magma", vmin=0,
+                               vmax=vmax, alpha=0.6)
             st = 11
             yy, xx = np.mgrid[y0 + st // 2:y1:st, x0 + st // 2:x1:st]
             keep = m[yy, xx]
-            a2.quiver(xx[keep], yy[keep], f[yy, xx, 0][keep], f[yy, xx, 1][keep], color="white",
+            a2.quiver(xx[keep], yy[keep], f[yy, xx, 0][keep], f[yy, xx, 1][keep], color=a.arrow_color,
                       angles="xy", scale_units="xy", scale=1 / PX_PER_MM, width=0.009,
                       headwidth=3.5, headlength=3.5, headaxislength=3)
             view(a2, r["box"])
@@ -137,26 +170,26 @@ def main():
             # reference frame (defines the target), cropped on its own heart ROI
             ia = a2.inset_axes(r["inset"])
             for sp in ia.spines.values():   # paper_rc hides top/right spines; the outline needs all four
-                sp.set_visible(True); sp.set_edgecolor(REF); sp.set_linewidth(1.4)
+                sp.set_visible(True); sp.set_edgecolor(REF); sp.set_linewidth(1.0)
             gray(ia, d["ref"])
             ry, rx = np.where(d["mr"])
             rc = ((ry.min() + ry.max()) // 2, (rx.min() + rx.max()) // 2)
-            rh = max(ry.max() - ry.min(), rx.max() - rx.min()) // 2 + MARGIN
+            rh = max(ry.max() - ry.min(), rx.max() - rx.min()) // 2 + 2
             ia.set_xlim(rc[1] - rh, rc[1] + rh); ia.set_ylim(rc[0] + rh, rc[0] - rh)
             ia.set_xticks([]); ia.set_yticks([])
-            ia.text(0.06, 0.94, "Ref.", transform=ia.transAxes, fontsize=6, va="top", color=REF,
-                    fontweight="bold")
-    cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.01)
-    cb.set_label("mm", fontsize=6.5, labelpad=1)
-    cb.ax.tick_params(labelsize=6)
-    cb.outline.set_linewidth(0.4)
+    if not a.no_map:
+        cb = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.01)
+        cb.set_label("mm", fontsize=6.5, labelpad=1)
+        cb.ax.tick_params(labelsize=6)
+        cb.outline.set_linewidth(0.4)
     # rhythm header over each group of panels, with a rule underneath (placed once the layout is final)
     fig.canvas.draw()
     rend = fig.canvas.get_renderer()
     to_fig = fig.transFigure.inverted()
     fig.set_layout_engine("none")
-    p, q = ax[0].get_position(), cb.ax.get_position()   # colorbar exactly as tall as the image panels
-    cb.ax.set_position([q.x0, p.y0, q.width, p.height])
+    if not a.no_map:
+        p, q = ax[0].get_position(), cb.ax.get_position()   # colorbar exactly as tall as the image panels
+        cb.ax.set_position([q.x0, p.y0, q.width, p.height])
     for g, (lab, _) in enumerate(R):
         l = to_fig.transform(ax[3 * g].get_window_extent(rend).p0)[0]
         r_ = to_fig.transform(ax[3 * g + 2].get_window_extent(rend).p1)[0]

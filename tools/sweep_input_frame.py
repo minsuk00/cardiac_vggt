@@ -98,7 +98,8 @@ def sweep(model, cfg, splat_res, dev, src, subject, z, a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--subjects", nargs="+", required=True, help="source:subject:z, e.g. mnms:MNMs_O5U2U7:4")
+    ap.add_argument("--subjects", nargs="+", required=True,
+                    help="source:subject:z[:frame], e.g. mnms:MNMs_O5U2U7:4 (frame overrides --save-frame)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--save", action="store_true", help="also save the motion fields of every frame")
     ap.add_argument("--save-frame", type=int, help="also save the motion fields of this frame only")
@@ -108,8 +109,9 @@ def main():
     model, cfg = rv.load_model_from_run(CKPT, device=dev)
     splat_res = ((cfg.get("loss") or {}).get("volume") or {}).get("splat_res")
     for spec in a.subjects:
-        src, subject, z = spec.split(":")
-        sweep(model, cfg, splat_res, dev, src, subject, int(z), a)
+        src, subject, z, *f = spec.split(":")   # optional 4th field: per-subject --save-frame
+        sweep(model, cfg, splat_res, dev, src, subject, int(z),
+              argparse.Namespace(**{**vars(a), "save_frame": int(f[0]) if f else a.save_frame}))
 
 
 if __name__ == "__main__":
