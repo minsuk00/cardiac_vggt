@@ -331,7 +331,8 @@ One JSON per (split, source, arm): `evaluation/metric_results/{val,test}/<src>/<
 One 3-D volume per **each of ~180 real RT frames** (MIITT, spiral, 2.3 mm, 25 ms/frame) by sweeping the
 reference slot; companions = one fixed real frame per z-plane. **Qualitative only; no GT; nothing scored;
 no GT-free self-consistency number defined.** Pre-v2 runs exist for Volunteer1/2/3 + AFib on 224-px
-checkpoints; the volumes directory is currently archived. **PENDING** on the v2 518-px checkpoints.
+checkpoints; the volumes directory is currently archived. **DONE (2026-09-25) on `final518_diff1000`
+for the AF patient + Volunteer1 → paper Sec. 4.4, qualitative, no numbers in text — see docs/124.**
 
 ### 2.8 Do not write
 - "Baselines receive the same input" without saying *which* regime (scatter) — the gated regime gives
@@ -536,6 +537,6 @@ Sec.~\ref{sec:learning} is applied to the inputs in both training and validation
 | Dangi inference re-run on A40 (`--device cuda`) + GPU name stamped in every `timing.json` | runtime column fairness | `run_dangi.py`, `run_vggt.py` |
 | "Mean Dice" definition | Table 2 column | writer decision |
 | Reference-off / breathing-sim-off / frozen-backbone arms at the final recipe | ablation rows | not started |
-| Real-time MIITT on v2 ckpts (+ any GT-free number) | §4.6 | `run_vggt_rt.py` |
+| ~~Real-time MIITT on v2 ckpts~~ DONE → paper Sec. 4.4 (docs/124); GT-free numbers kept as backup only | §4.4 | `run_vggt_rt.py`, `tools/run_vggt_rt_stacked.py`, `tools/make_rt_figure.py` |
 | Missing bib entries (nnU-Net, M&Ms, ACDC, CMRx ×3, OCMR, MIITT, DINOv2, SSIM) | compile | writer |
 | M&Ms field strength / resolution; MIITT & OCMR vendor | appendix data table | cite source papers |

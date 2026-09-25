@@ -80,3 +80,7 @@ micromamba run -n svr env PYTHONPATH=training:. python evaluation/src/engine/run
 Open/next: other arms (518/p2p98/miitt-pooled) are one command each; val-split MIITT subjects for
 the miitt-pooled arm; any future scoring (self-consistency, seg-EF on RT) would consume
 `recon_rt.nii.gz` — none defined yet.
+
+**Update 2026-09-25:** the 518 `final518_diff1000` arm has been run on the AF patient and Volunteer1,
+including a frame-0-companion cine, frame-f naive-stack comparisons and 2D LV-volume curves, and it
+became paper Sec. 4.4. See docs/124.
