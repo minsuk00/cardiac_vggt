@@ -26,7 +26,7 @@ from render_runtime_accuracy import GRID, INK, TEXTW, paper_rc
 
 EV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evaluation")
 VOL, RES = f"{EV}/volumes", f"{EV}/metric_results/test"
-ARMS = [("w/o cardiac-region term", "hw0"), ("w/o $\\mathcal{L}_{\\mathrm{obs}}$", "nogather"),
+ARMS = [("w/o $\\mathcal{L}_{\\mathrm{h}}$", "hw0"), ("w/o $\\mathcal{L}_{\\mathrm{obs}}$", "nogather"),
         ("w/o $\\mathcal{L}_{\\mathrm{smooth}}$", "base"), ("Full", "diff1000")]   # Table 3 row order
 MM_XY = 0.5 * 255 * 1.4          # normalized -> mm (evaluation/src/engine/run_vggt.py MM_PER_NORM)
 PX_PER_MM = 518 / (256 * 1.4)    # 518-grid pixels per mm
@@ -108,6 +108,10 @@ def main():
     ap.add_argument("--arrow-color", default="white")
     ap.add_argument("--flip-v", action="store_true",
                     help="flip panel (b) vertically (anterior up, standard SAX view); arrows flipped with it")
+    ap.add_argument("--crop-margin", type=int, default=12,
+                    help="panel (b): px (518 grid) added around the heart ROI; smaller zooms in (negative crops the ROI)")
+    ap.add_argument("--label-color", default="white", help="panel (b) mm label colour")
+    ap.add_argument("--label-box", action="store_true", help="panel (b) mm label on a translucent white box")
     a = ap.parse_args()
     efs = {k: ef_rows(k) for _, k in ARMS}
     epes = {k: json.load(open(f"{RES}/_motion_epe/af12/{method(k)}.json"))["slices"] for _, k in ARMS}
@@ -142,14 +146,14 @@ def main():
             dvf[k]["delta"] = dl
     ys, xs = np.where(m)                              # square crop centred on the heart ROI
     cy, cx = int(ys.mean()), int(xs.mean())
-    h = int(max(ys.max() - ys.min(), xs.max() - xs.min()) / 2 + 12)
+    h = int(max(ys.max() - ys.min(), xs.max() - xs.min()) / 2 + a.crop_margin)
     y0, y1, x0, x1 = cy - h, cy + h, cx - h, cx + h
 
     paper_rc()
     ORANGE, GRAYL = "#D55E00", "#b0b0b0"
     if a.tight:   # shorter plot rows sized so the square image row has no slack
-        fig, ax = plt.subplots(3, 4, figsize=(TEXTW, 3.4), layout="constrained",
-                               gridspec_kw={"height_ratios": [0.8, 1.0, 0.8]})
+        fig, ax = plt.subplots(3, 4, figsize=(TEXTW, 2.8), layout="constrained",
+                               gridspec_kw={"height_ratios": [0.6, 1.0, 0.6]})
         fig.get_layout_engine().set(w_pad=0.005, h_pad=0.005, wspace=0.01, hspace=0.015)
     else:
         fig, ax = plt.subplots(3, 4, figsize=(TEXTW, 4.1), layout="constrained",
@@ -191,7 +195,8 @@ def main():
                   headwidth=3.5, headlength=3.5, headaxislength=3)
         a2.set_xlim(x0, x1); a2.set_ylim(y1, y0)
         a2.set_aspect("equal", adjustable="datalim")
-        a2.text(0.04, 0.96, f"{dmag:.1f} mm", transform=a2.transAxes, fontsize=6.5, va="top", color="white")
+        a2.text(0.04, 0.96, f"{dmag:.1f} mm", transform=a2.transAxes, fontsize=6.5, va="top", color=a.label_color,
+                bbox=dict(boxstyle="square,pad=0.15", fc="white", ec="none", alpha=0.8) if a.label_box else None)
         a2.set_xticks([]); a2.set_yticks([])
         for sp in a2.spines.values():
             sp.set_visible(False)

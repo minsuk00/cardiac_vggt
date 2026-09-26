@@ -13,21 +13,25 @@ Figs. 1–4 (teaser, method, splatting, qualitative comparison) are not made her
 | Overleaf file (`figures/`) | Paper figure | Script | Exact command | Inputs | Doc |
 |---|---|---|---|---|---|
 | `runtime_vtc_af_hrv.pdf` | runtime–accuracy + LV volume–time curves, AF / HRV | `render_vtc_2x2.py` (helpers: `render_vtc_figure.py`, style: `render_runtime_accuracy.py`) | `python _paper_figures/render_vtc_2x2.py --out <dir>` → `<dir>/runtime_vtc_2x2.pdf` (defaults: `--source cmrx2023 --subject CMRx23_Train_P045 --table temp/allphase_seg/paper_tables_v2.json`) | EF jsons `evaluation/metric_results/test/<cohort>/ef/`; table JSON (below) | docs/120 (runtimes) |
-| `reference_conditioning.pdf` | reference-conditioned reconstruction (fixed stack, ED vs ES reference) | `render_motion_edes.py` | `python _paper_figures/render_motion_edes.py --dump scratch/motion_edes/sweep80_save --af cmrx2024/CMRx24_Train_P007,6,CMRx24_Train_P007_z6f9 --hrv mnms/MNMs_E3L8U8,7,MNMs_E3L8U8_z7f0 --no-map --arrow-color "#F39078" --out reference_conditioning.pdf` | saved motion fields (GPFS) from `tools/sweep_input_frame.py`; eval bundles | docs/127 |
-| `ablation_motion.pdf` | motion learned by each loss-ablation arm | `render_ablation_motion.py` | `python _paper_figures/render_ablation_motion.py --subject cmrx2023_af12/CMRx23_Train_P093 --tight --flip-v --no-map --arrow-color "#F39078" --out ablation_motion.pdf` | saved eval outputs (`ed_dvf.npz`, EF jsons, `_motion_epe/af12/`) | docs/127 |
-| `real_rt.pdf` | real free-breathing RT (MIITT volunteer + AF patient) | `make_rt_figure.py` | `PYTHONPATH=training:. python _paper_figures/make_rt_figure.py --root scratch/temp/miitt_afib_rt --row MIITT_Volunteer1:20:volunteer1:"Healthy volunteer" MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"AF patient" --out <path>` → `<path>.pdf` (one `--row` with both values) | RT recon outputs + LV curves under `scratch/temp/miitt_afib_rt/` | docs/124 |
+| `reference_conditioning.pdf` | reference-conditioned reconstruction (fixed stack, ED vs ES reference) | `render_motion_edes.py` | `python _paper_figures/render_motion_edes.py --dump scratch/motion_edes/sweep80_save --af cmrx2024/CMRx24_Train_P007,6,CMRx24_Train_P007_z6f9 --hrv mnms/MNMs_E3L8U8,7,MNMs_E3L8U8_z7f0 --no-map --arrow-color "#F39078" --crop-window-af --gamma-af 0.9 --out reference_conditioning.pdf` (half text width, AF row above HRV; AF window from its crop + gamma 0.9 to brighten, reference insets included) | saved motion fields (GPFS) from `tools/sweep_input_frame.py`; eval bundles | docs/127 |
+| `ablation_motion.pdf` | motion learned by each loss-ablation arm | `render_ablation_motion.py` | `python _paper_figures/render_ablation_motion.py --subject cmrx2023_af12/CMRx23_Train_P093 --tight --flip-v --no-map --arrow-color "#F39078" --crop-margin -12 --label-color black --label-box --out ablation_motion.pdf` | saved eval outputs (`ed_dvf.npz`, EF jsons, `_motion_epe/af12/`) | docs/127 |
+| `real_rt.pdf` | real free-breathing RT (MIITT volunteer + AF patient) | `make_rt_figure.py` | `PYTHONPATH=training:. python _paper_figures/make_rt_figure.py --root scratch/temp/miitt_afib_rt --row MIITT_Volunteer1:20:volunteer1:"Healthy volunteer":0 MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"AF patient":90 --gamma 1.3 --out <path>` → `<path>.pdf` (one `--row` with both values; last field = LAX cut angle, 0 = view 1, 90 = view 2; half text width, placed beside `reference_conditioning.pdf`) | RT recon outputs + LV curves under `scratch/temp/miitt_afib_rt/` | docs/124 |
 
 **Table numbers** (typed into the Overleaf tables and read by the runtime/VTC figure):
 
 ```bash
 PYTHONPATH=training:. python _paper_figures/seg_allphase_dice_hd95.py --procs 16 --out temp/allphase_seg/seg_allphase.json
-python _paper_figures/paper_results_table.py --seg temp/allphase_seg/seg_allphase.json --json temp/allphase_seg/paper_tables_v2.json
+PYTHONPATH=training:. python _paper_figures/paper_results_table.py --seg temp/allphase_seg/seg_allphase.json --json temp/allphase_seg/paper_tables_v2.json
 ```
 
-`temp/` is gitignored, so rebuild the JSON on a new machine (the first step takes about 2 min on 16 CPUs). The rebuilt
-HRV table matched the paper's appendix table exactly (2026-09-25).
+`temp/` is gitignored, so rebuild the JSON on a new machine (the first step takes about 2 min on 16 CPUs). The second
+prints Tables 2–5 (AF/HRV main, AF/HRV ablation with Disp.) with 4 digits, leading 0 counted (0.883, 24.50, 167.4), as
+in the paper since Overleaf `4df5183` (2026-09-26); all 181 table cells were checked against this output.
 
-**Verified 2026-09-25:** all four commands above regenerate the Overleaf PDFs (commit `65c253f`) pixel-identically.
+**2026-09-25 revision** (Overleaf commits `8a83bbe`, `18457e7`, `52afcc5`): the four PDFs there are the outputs of exactly the commands above.
+The earlier versions (Overleaf `65c253f`) had different layouts (full-width one-row `reference_conditioning`,
+taller `runtime_vtc_af_hrv` without point labels, taller `ablation_motion --tight`, full-width `real_rt` with both
+LAX views and a dashed no-reference curve); to regenerate them, use this directory's git history.
 
 **Editable PowerPoint version:** `export_pptx.py` runs the four commands above unchanged and writes **one deck,
 `_paper_figures/paper_figures.pptx` (committed), one slide per figure at 1:1 physical size** (paper order);

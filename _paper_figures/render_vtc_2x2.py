@@ -26,6 +26,9 @@ HRV_FILE = {"nesvor_4gpu_scatter": "nesvor_scatter", "dangi_scatter_4gpu": "dang
             "cinevol_motion_masked": "cinevol_masked"}
 ROWS = [("AF", "af12", "af12_main"), ("HRV", "hrv12", "hrv12_appendix")]
 TITLES = {"AF": "(a) Atrial fibrillation (AF)", "HRV": "(b) Heart rate variability (HRV)"}
+LABELED = ("Ours", "CiNeVol", "Dangi et al.")   # direct labels in the runtime panels; the rest via the legend
+LABEL_OFFS = {"AF": {"Ours": (7, 0, "left"), "CiNeVol": (0, -11, "center"), "Dangi et al.": (7, 0, "left")},
+              "HRV": {"Ours": (0, -11, "center"), "CiNeVol": (0, -11, "center"), "Dangi et al.": (7, 0, "left")}}
 
 
 def pareto(ax, pts, xmax):
@@ -67,7 +70,7 @@ def main():
     s = 1.8                                               # drawn at 1.8x text width, fonts scaled to match
     plt.rcParams.update({k: plt.rcParams[k] * s for k in
                          ("font.size", "axes.labelsize", "xtick.labelsize", "ytick.labelsize", "legend.fontsize")})
-    fig = plt.figure(figsize=(TEXTW * s, 2.6), layout="constrained")
+    fig = plt.figure(figsize=(TEXTW * s, 2.0), layout="constrained")
     subs = fig.subfigures(1, 2, wspace=0.02)
     axs = [s.subplots(1, 2) for s in subs]               # (a) AF: runtime, VTC | (b) HRV: runtime, VTC
     ymax = 0
@@ -79,6 +82,7 @@ def main():
         pareto(a0, [(x, v[ra.Y]) for _, x, v in P], 2500)
         for st, x, v in P:
             ra.mark(a0, st, x, v[ra.Y], 22, 48)
+        ra.label_pts(a0, [p for p in P if p[0][0] in LABELED], ra.Y, LABEL_OFFS[name], fs=6 * s)
         ra.log_x(a0, 0.07, 2500)
         a0.set_ylim(0, 25)
         a0.set_ylabel(ra.YLAB)
