@@ -127,8 +127,11 @@ def view(a2, box):
         sp.set_visible(False)
 
 
-def gray(a2, img):
-    a2.imshow(np.clip(img / np.percentile(img, 99.5), 0, 1), cmap="gray", vmin=0, vmax=1)
+def gray(a2, img, gamma=1.0, box=None):
+    """Display window [0, p99.5] then gamma (<1 brightens dark tissue), as training/trainer_viz._display_gamma.
+    box=(y0, y1, x0, x1): take the p99.5 over the displayed crop only, not the whole slice."""
+    w = img if box is None else img[max(box[0], 0):box[1], max(box[2], 0):box[3]]
+    a2.imshow(np.clip(img / np.percentile(w, 99.5), 0, 1) ** gamma, cmap="gray", vmin=0, vmax=1)
 
 
 def main():
@@ -140,6 +143,10 @@ def main():
     ap.add_argument("--no-map", action="store_true", help="arrows only: no magnitude overlay, no colour bar")
     ap.add_argument("--arrow-color", default="white")
     ap.add_argument("--flip-only", action="store_true", help="no RV-LV rotation, vertical flip only (as Fig. 7)")
+    ap.add_argument("--gamma-af", type=float, default=1.0, help="display gamma of the AF row")
+    ap.add_argument("--gamma-hrv", type=float, default=1.0, help="display gamma of the HRV row")
+    ap.add_argument("--crop-window-af", action="store_true",
+                    help="AF row: display window from the displayed crop, not the whole slice")
     a = ap.parse_args()
     R = [("AF", load_rhythm(a.af, "af12", a.dump, not a.flip_only)),
          ("HRV", load_rhythm(a.hrv, "hrv12", a.dump, not a.flip_only))]
@@ -147,18 +154,23 @@ def main():
                                          for _, r in R for d in r["targets"].values()]), 98)
 
     paper_rc()
-    fig, ax = plt.subplots(1, 6, figsize=(TEXTW, 1.17), layout="constrained")
+    # half text width: one row per rhythm (AF on top), columns Input | ED target | ES target
+    fig, ax = plt.subplots(2, 3, figsize=(TEXTW / 2, 1.93), layout="constrained")
     fig.get_layout_engine().set(w_pad=0.005, h_pad=0.005, wspace=0.01, hspace=0.01)
-    for g, (_, r) in enumerate(R):
-        a0 = ax[3 * g]
-        gray(a0, r["inp"])
+    for g, (lab, r) in enumerate(R):
+        gm = a.gamma_af if lab == "AF" else a.gamma_hrv
+        wb = r["box"] if lab == "AF" and a.crop_window_af else None
+        a0 = ax[g, 0]
+        gray(a0, r["inp"], gm, wb)
         view(a0, r["box"])
-        a0.set_title("Input", fontsize=7, pad=2)
+        a0.set_ylabel(lab, fontsize=8, fontweight="bold", labelpad=2)
+        if g == 0:
+            a0.set_title("Input", fontsize=7, pad=2)
         y0, y1, x0, x1 = r["box"]
         for k, kind in enumerate(("ED", "ES")):
             d = r["targets"][kind]
-            a2, f, m = ax[3 * g + 1 + k], d["f"], r["m"]
-            gray(a2, r["inp"])
+            a2, f, m = ax[g, 1 + k], d["f"], r["m"]
+            gray(a2, r["inp"], gm, wb)
             if not a.no_map:
                 im = a2.imshow(np.where(m, np.hypot(f[..., 0], f[..., 1]), np.nan), cmap="magma", vmin=0,
                                vmax=vmax, alpha=0.6)
@@ -169,15 +181,16 @@ def main():
                       angles="xy", scale_units="xy", scale=1 / PX_PER_MM, width=0.009,
                       headwidth=3.5, headlength=3.5, headaxislength=3)
             view(a2, r["box"])
-            a2.set_title(f"{kind} target", fontsize=7, pad=2)
+            if g == 0:
+                a2.set_title(f"{kind} target", fontsize=7, pad=2)
             # reference frame (defines the target), cropped on its own heart ROI
             ia = a2.inset_axes(r["inset"])
             for sp in ia.spines.values():   # paper_rc hides top/right spines; the outline needs all four
                 sp.set_visible(True); sp.set_edgecolor(REF); sp.set_linewidth(1.0)
-            gray(ia, d["ref"])
             ry, rx = np.where(d["mr"])
             rc = ((ry.min() + ry.max()) // 2, (rx.min() + rx.max()) // 2)
             rh = max(ry.max() - ry.min(), rx.max() - rx.min()) // 2 + 2
+            gray(ia, d["ref"], gm, (rc[0] - rh, rc[0] + rh, rc[1] - rh, rc[1] + rh) if wb else None)
             ia.set_xlim(rc[1] - rh, rc[1] + rh); ia.set_ylim(rc[0] + rh, rc[0] - rh)
             ia.set_xticks([]); ia.set_yticks([])
     if not a.no_map:
@@ -185,20 +198,6 @@ def main():
         cb.set_label("mm", fontsize=6.5, labelpad=1)
         cb.ax.tick_params(labelsize=6)
         cb.outline.set_linewidth(0.4)
-    # rhythm header over each group of panels, with a rule underneath (placed once the layout is final)
-    fig.canvas.draw()
-    rend = fig.canvas.get_renderer()
-    to_fig = fig.transFigure.inverted()
-    fig.set_layout_engine("none")
-    if not a.no_map:
-        p, q = ax[0].get_position(), cb.ax.get_position()   # colorbar exactly as tall as the image panels
-        cb.ax.set_position([q.x0, p.y0, q.width, p.height])
-    for g, (lab, _) in enumerate(R):
-        l = to_fig.transform(ax[3 * g].get_window_extent(rend).p0)[0]
-        r_ = to_fig.transform(ax[3 * g + 2].get_window_extent(rend).p1)[0]
-        top = to_fig.transform((0, ax[3 * g].title.get_window_extent(rend).y1))[1] + 0.02
-        fig.add_artist(plt.Line2D([l + 0.01, r_ - 0.01], [top, top], color="k", lw=0.6))
-        fig.text((l + r_) / 2, top + 0.015, lab, ha="center", va="bottom", fontsize=8, fontweight="bold")
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     fig.savefig(a.out, dpi=300, bbox_inches="tight", pad_inches=0.02)
     print("wrote", a.out, "|", "; ".join(f"{lab} {r['label']} frame {r['frame']} targets "

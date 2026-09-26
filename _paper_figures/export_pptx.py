@@ -37,14 +37,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIGS = {   # Overleaf name -> (renderer, argv with {o} = output stem); the same commands as README.md, paper order
     "reference_conditioning": ("render_motion_edes.py", [
         "--dump", "scratch/motion_edes/sweep80_save", "--af", "cmrx2024/CMRx24_Train_P007,6,CMRx24_Train_P007_z6f9",
-        "--hrv", "mnms/MNMs_E3L8U8,7,MNMs_E3L8U8_z7f0", "--no-map", "--arrow-color", "#F39078", "--out", "{o}.pdf"]),
+        "--hrv", "mnms/MNMs_E3L8U8,7,MNMs_E3L8U8_z7f0", "--no-map", "--arrow-color", "#F39078", "--crop-window-af",
+        "--gamma-af", "0.9", "--out", "{o}.pdf"]),
     "runtime_vtc_af_hrv": ("render_vtc_2x2.py", ["--out", "{o}_dir"]),
     "ablation_motion": ("render_ablation_motion.py", [
         "--subject", "cmrx2023_af12/CMRx23_Train_P093", "--tight", "--flip-v", "--no-map", "--arrow-color", "#F39078",
-        "--out", "{o}.pdf"]),
+        "--crop-margin", "-12", "--label-color", "black", "--label-box", "--out", "{o}.pdf"]),
     "real_rt": ("make_rt_figure.py", [
-        "--root", "scratch/temp/miitt_afib_rt", "--row", "MIITT_Volunteer1:20:volunteer1:Healthy volunteer",
-        "MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:AF patient", "--out", "{o}"]),
+        "--root", "scratch/temp/miitt_afib_rt", "--row", "MIITT_Volunteer1:20:volunteer1:Healthy volunteer:0",
+        "MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:AF patient:90", "--gamma", "1.3", "--out", "{o}"]),
 }
 DPI = 600                     # raster resolution of the graphic layers
 BASE_FROM_TOP = 1.0           # first-line baseline below a top-anchored text box's top, in font sizes (Arial;
