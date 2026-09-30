@@ -113,6 +113,9 @@ ARMS = {
     # built only under temp/, never into scratch/eval. Per-plane RNG streams do not depend on
     # n_frames, so frames 0..23 are bit-identical to af24 -- the probe asserts this.
     "af48":             ("af",      False, 4 * T),
+    # 48-frame HRV: same rule (never into scratch/eval; docs/126 builds both 48-frame arms under the
+    # GPFS dir scratch/interp/eval48 via --eval-root, since temp/ is under $HOME).
+    "hrv48":            ("hrv",     False, 4 * T),
 }
 
 # Rhythms solved with pos_physio (cut-off / hold / volume-matched resume) rather than the uniform
