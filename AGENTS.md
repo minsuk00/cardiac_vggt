@@ -179,7 +179,7 @@ Multiple agents share this single working tree — a bare `git switch` with unco
 - **Checkpoint loads auto-stage to node-local `/tmp`** (`vggt/utils/checkpoint_stage.py`, docs/50) — GPFS `torch.load` is ~266s vs ~5s from `/tmp`. Training stages only immutable base/seed weights; inference stages every load. Byte-identical; falls back to the original path on failure.
 - Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
 - Local pilots: `WANDB_MODE=offline`. The cluster script (`sbatch/train_final_518.sh`) sets `WANDB_MODE=online`.
-- Hydra custom resolvers (`rev_ts:`, `backbone_tag:`, `aug_tag:`) are registered in `training/launch.py` (`backbone_ps:` in `training/data/__init__.py`). For standalone `compose()`: `import launch` registers them all, or at minimum `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`.
+- Hydra custom resolvers (`rev_ts:`, `backbone_tag:`, `aug_tag:`, `backbone_ps:`) live in `training/resolvers.py`. For standalone `compose()`: `from resolvers import register_all; register_all()` (idempotent; `launch.py` and `data/__init__.py` call it too). Don't re-register `rev_ts` with your own lambda — its timestamp is computed once per process so `exp_name`/`log_dir` can't drift.
 
 ## Testing
 

@@ -30,8 +30,9 @@ def main():
     p.add_argument("--out", required=True)
     a = p.parse_args()
 
-    import launch  # noqa: F401  registers the custom resolvers
+    from resolvers import register_all
     from hydra import compose, initialize_config_dir
+    register_all()
     txt = open(os.path.join(REPO, "sbatch", "train_final_518.sh")).read()
     resolved = {}
     for arm, ov in sbatch_overrides(txt).items():

@@ -1,4 +1,4 @@
-from omegaconf import OmegaConf
+from resolvers import register_all
 
 from .datasets.mri_dataset import MRIDataset
 
@@ -12,7 +12,7 @@ def backbone_patch_size(backbone: str) -> int:
     raise ValueError(f"Unknown backbone {backbone!r}: cannot derive patch_size")
 
 
-# Registered here (imported by every consumer that instantiates datasets/models from the
+# Registered here too (imported by every consumer that instantiates datasets/models from the
 # config) so `patch_size: ${backbone_ps:${backbone}}` resolves in standalone compose()
-# scripts too, not just training/launch.py.
-OmegaConf.register_new_resolver("backbone_ps", backbone_patch_size, replace=True)
+# scripts, not just training/launch.py.
+register_all()

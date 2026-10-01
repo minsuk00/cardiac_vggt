@@ -8,10 +8,10 @@ import argparse
 import os
 import signal
 import subprocess
-import time
 
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
+from resolvers import register_all
 from trainer import Trainer
 
 
@@ -43,23 +43,8 @@ def _install_requeue_handler():
 
     signal.signal(signal.SIGUSR1, _handler)
 
-# Custom resolver for reverse-chronological sorting
-# Use a fixed value per-run so all config accesses match
-REVERSE_TS = str(2000000000 - int(time.time()))
-OmegaConf.register_new_resolver("rev_ts", lambda: REVERSE_TS)
-# Compact WandB tags for experiment dimensions commonly compared in the dashboard.
-OmegaConf.register_new_resolver(
-    "backbone_tag", lambda name: "dinov3" if str(name).startswith("dinov3_") else "dinov2"
-)
-OmegaConf.register_new_resolver(
-    "aug_tag",
-    lambda enabled, tier: (
-        "noaug" if not enabled else {"aggressive": "aug_agg"}[str(tier)]
-    ),
-)
-# Patch size derives from the backbone (`backbone_ps` resolver) so config cannot express
-# a mismatch; registered in data/__init__.py so standalone compose() scripts get it too.
-import data  # noqa: F401  (side effect: registers the backbone_ps resolver)
+# Custom resolvers (rev_ts, backbone_tag, aug_tag, backbone_ps) — see resolvers.py.
+register_all()
 
 
 def main():

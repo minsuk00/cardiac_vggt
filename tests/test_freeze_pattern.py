@@ -17,7 +17,6 @@ so this test tracks the config's flags automatically.
 import sys
 import os
 import pytest
-from omegaconf import OmegaConf
 
 # Make training/ importable for direct imports.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
@@ -26,8 +25,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 def _load_cfg():
     from hydra import compose, initialize_config_dir
+    from resolvers import register_all
 
-    OmegaConf.register_new_resolver("rev_ts", lambda: "test", replace=True)
+    register_all()
 
     cfg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):

@@ -4,7 +4,6 @@ import sys
 import pytest
 import torch
 import torch.nn as nn
-from omegaconf import OmegaConf
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -12,21 +11,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 def _compose(name):
     from hydra import compose, initialize_config_dir
-    import data  # noqa: F401  (registers the backbone_ps resolver)
+    from resolvers import register_all
 
-    OmegaConf.register_new_resolver("rev_ts", lambda: "test", replace=True)
-    OmegaConf.register_new_resolver(
-        "backbone_tag",
-        lambda name: "dinov3" if str(name).startswith("dinov3_") else "dinov2",
-        replace=True,
-    )
-    OmegaConf.register_new_resolver(
-        "aug_tag",
-        lambda enabled, tier: (
-            "noaug" if not enabled else {"aggressive": "aug_agg"}[str(tier)]
-        ),
-        replace=True,
-    )
+    register_all()
     config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=config_dir):
         return compose(config_name=name)

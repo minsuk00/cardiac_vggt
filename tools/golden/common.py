@@ -47,8 +47,9 @@ def fingerprint(batch):
 
 
 def compose(overrides):
-    import launch  # noqa: F401  registers the custom resolvers
+    from resolvers import register_all
     from hydra import compose as _compose, initialize_config_dir
+    register_all()
     with initialize_config_dir(version_base=None, config_dir=os.path.join(REPO, "training", "config")):
         return _compose(config_name="default", overrides=overrides)
 
