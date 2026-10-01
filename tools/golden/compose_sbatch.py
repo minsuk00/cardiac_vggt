@@ -13,16 +13,16 @@ from omegaconf import OmegaConf
 
 
 def sbatch_overrides(txt):
+    """-> {arm: (config name, overrides)} as the script would launch each arm."""
     peak = re.search(r'^PEAK_LR="(.*?)"', txt, re.M).group(1)
     recipe = re.search(r'^RECIPE_OVERRIDES="(.*?)"', txt, re.M | re.S).group(1)
     aug = re.search(r'^AUG_OVERRIDES="(.*?)"', txt, re.M).group(1)
-    arms = dict(re.findall(r'^\s*(\w+)\)\s*ARM_OVERRIDES="(.*?)"', txt, re.M))
-    out = {}
-    for arm, arm_ov in arms.items():
-        s = (recipe.replace("${PEAK_LR}", peak).replace("${ARM_OVERRIDES}", arm_ov)
-             .replace("${EXPERIMENT_OVERRIDES:-}", "").replace("\\\n", " "))
-        out[arm] = s.split() + aug.split() + ["exp_name=golden"]
-    return out
+    arms = dict(re.findall(r'^\s*(\w+)\)\s*CONFIG="(.*?)"', txt, re.M))
+    s = (recipe.replace("${PEAK_LR}", peak).replace("${EXPERIMENT_OVERRIDES:-}", "")
+         .replace("\\\n", " "))
+    assert "$" not in s, f"unparsed shell variable in RECIPE_OVERRIDES: {s}"
+    return {arm: (config, s.split() + aug.split() + ["exp_name=golden"])
+            for arm, config in arms.items()}
 
 
 def main():
@@ -35,9 +35,9 @@ def main():
     register_all()
     txt = open(os.path.join(REPO, "sbatch", "train_final_518.sh")).read()
     resolved = {}
-    for arm, ov in sbatch_overrides(txt).items():
+    for arm, (config, ov) in sbatch_overrides(txt).items():
         with initialize_config_dir(version_base=None, config_dir=os.path.join(REPO, "training", "config")):
-            cfg = compose(config_name="default", overrides=ov)
+            cfg = compose(config_name=config, overrides=ov)
         resolved[arm] = OmegaConf.to_container(cfg, resolve=True)
     dump(resolved, a.out)
     print(f"composed {len(resolved)} arms: {sorted(resolved)}")

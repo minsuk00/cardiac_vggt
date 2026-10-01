@@ -1,0 +1,9 @@
+# Paper ablation ARM=nogather (sbatch/train_final_518.sh): ablation_base without the gather loss.
+defaults:
+  - default
+  - _self_
+
+loss:
+  volume:
+    diffusion_weight: 0.0
+    gather_weight: 0.0

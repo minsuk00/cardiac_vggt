@@ -19,7 +19,7 @@ run `training/launch.py`; `training` is what lets the Hydra configs resolve thei
 
 ## Training
 
-Entry point: `training/launch.py` (Hydra, single GPU). Config: `training/config/default.yaml`.
+Entry point: `training/launch.py` (Hydra, single GPU). Config: `training/config/default.yaml` = the paper recipe (the `diff1000` arm); ablation arms are `training/config/ablation_<arm>.yaml`.
 
 ```bash
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default

@@ -1,0 +1,9 @@
+# Paper ablation ARM=base (sbatch/train_final_518.sh): the paper recipe (default.yaml) without
+# the diffusion regularizer — no-reg, heart 0.5, gather 0.5.
+defaults:
+  - default
+  - _self_
+
+loss:
+  volume:
+    diffusion_weight: 0.0

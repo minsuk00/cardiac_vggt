@@ -1,0 +1,9 @@
+# Paper ablation ARM=diff1000_nogather (sbatch/train_final_518.sh): the paper recipe
+# (default.yaml, diffusion 1000) without the gather loss.
+defaults:
+  - default
+  - _self_
+
+loss:
+  volume:
+    gather_weight: 0.0

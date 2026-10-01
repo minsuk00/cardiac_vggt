@@ -1,0 +1,9 @@
+# Paper ablation ARM=hw2 (sbatch/train_final_518.sh): ablation_base with heart-L1 weight 2.0.
+defaults:
+  - default
+  - _self_
+
+loss:
+  volume:
+    diffusion_weight: 0.0
+    heart_weight: 2.0

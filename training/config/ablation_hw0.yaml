@@ -1,0 +1,9 @@
+# Paper ablation ARM=hw0 (sbatch/train_final_518.sh): ablation_base without the heart-L1 term.
+defaults:
+  - default
+  - _self_
+
+loss:
+  volume:
+    diffusion_weight: 0.0
+    heart_weight: 0.0

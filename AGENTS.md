@@ -35,7 +35,7 @@ pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/  # GPU aug — see note 
 Entry point: `training/launch.py` (Hydra).
 
 ```bash
-# Active config
+# Active config = the paper recipe (ablation arms: --config ablation_<arm>)
 PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
     training/launch.py --config default
 
@@ -58,8 +58,9 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 - `CKPT_ONLY=<ckpt_path>` → **fresh** exp dir + new wandb run, loading from `<ckpt_path>` via `checkpoint.resume_checkpoint_path` (`strict=false`). **GOTCHA (docs/37):** this is a **FULL resume** (weights + optimizer + `prev_epoch`), NOT weights-only — a full `checkpoint_last.pt` can silently do zero training. For a real warm-start, strip to `{"model": ...}` first (`torch.save({'model': torch.load(ckpt)['model']}, out)`). Full mechanics: docs/37 + docs/65.
 
 **Configs** (`training/config/`) — **one complete config + thin experiment overrides** (flattened 2026-08-01):
-- `default.yaml` — **THE config.** Complete and runnable on its own (`--config default`): cohort, sampling, logging, loss, optimizer, augmentation, aggft freeze. One file, one truth.
-- `exp_dinov3.yaml`, `default_224.yaml` — thin overrides of `default.yaml` (DINOv3 backbone; 224-px input). Retired variants live in `training/config/_archive/`.
+- `default.yaml` — **THE config and THE PAPER RECIPE** (= `ARM=diff1000` of `sbatch/train_final_518.sh`: 518 input, `splat_res: 518`, `diffusion_weight: 1000`, 300 epochs). Complete and runnable on its own (`--config default`): cohort, sampling, logging, loss, optimizer, augmentation, aggft freeze. One file, one truth.
+- `ablation_{base,nogather,hw2,hw0,diff1000_nogather}.yaml` — the paper's ablation arms, each `default.yaml` + its loss-weight overrides (`base`/`nogather`/`hw2`/`hw0` are no-reg, `diffusion_weight: 0.0`). `train_final_518.sh` maps `ARM=<arm>` to `default` (diff1000) or `ablation_<arm>`.
+- `exp_dinov3.yaml`, `default_224.yaml` — thin overrides of `default.yaml` (DINOv3 backbone; the earlier 224-px no-reg recipe). Both pin `splat_res: null` / `diffusion_weight: 0.0` (and dinov3 `max_epochs: 200`) so they are unchanged by `default.yaml` becoming the paper recipe. Retired variants live in `training/config/_archive/`.
 - The old three-layer config chain (`default → mri_finetune → mri_volume`) is gone; `exp_name` deliberately keeps the `mri_volume` family name (log-dir + wandb continuity). Why it was removed + flattening verification: docs/61 + docs/65.
 - Legacy variants (`mri_finetune_*`, `mri_p001_overfit`, `mri_volume_overfit`) and their sbatch scripts live under `_archive/legacy_configs/` and `_archive/legacy_sbatch/`.
 

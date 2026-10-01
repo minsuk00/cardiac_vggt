@@ -17,18 +17,19 @@
 # --- Configuration ---
 # ============================================================================================
 # FINAL-MODEL SWEEP, 2026-09-11 — six arms on the curated-v2 split (docs/97, 628/90/180).
-# Base recipe = the paper recipe (no-reg, gather 0.5, heart-L1 0.5, aggressive aug, resp on,
+# Base recipe (ARM=base) = the then-paper 224 recipe (no-reg, gather 0.5, heart-L1 0.5, aggressive aug, resp on,
 # cosine 5e-5 -> 0 over 300 epochs, seed 42) at img_size=518 with the DENSE training splat
 # (loss.volume.splat_res=518). Rationale: on pooled1337 the 518-input + 518-splat combination
 # is the only thing that reproduced the old-518 EF (MAE ~10.3 vs 12.9 for 224 no-reg); 224+518
 # splat and 518+native splat did not (session FINAL-MODEL-RUNS, real nnU-Net EF, n=144).
-# Every arm below differs from `base` by exactly the listed override(s):
-#   ARM=base          diffusion 0, heart 0.5                    (the candidate ship recipe)
-#   ARM=diff1000      + loss.volume.diffusion_weight=1000       (old-518 / Run A regularizer)
-#   ARM=hw2           + loss.volume.heart_weight=2.0            (pooled1337: MAE 13.0->11.7, r held)
-#   ARM=hw0           + loss.volume.heart_weight=0.0            (heart-L1 ablation vs base)
-#   ARM=nogather      loss.volume.gather_weight=0.0                (gather-loss ablation vs base)
-#   ARM=diff1000_nogather  diff1000 + nogather
+# Every arm below differs from `base` by exactly the listed override(s), and each arm is its
+# own config in training/config/ (diff1000 shipped as the paper model, so it is default.yaml):
+#   ARM=base          diffusion 0, heart 0.5                    ablation_base.yaml
+#   ARM=diff1000      + loss.volume.diffusion_weight=1000       default.yaml  (THE PAPER MODEL)
+#   ARM=hw2           + loss.volume.heart_weight=2.0            ablation_hw2.yaml
+#   ARM=hw0           + loss.volume.heart_weight=0.0            ablation_hw0.yaml
+#   ARM=nogather      + loss.volume.gather_weight=0.0           ablation_nogather.yaml
+#   ARM=diff1000_nogather  diff1000 + nogather                  ablation_diff1000_nogather.yaml
 # Score with sbatch/eval_pooled_val.sh (v2 val is the default split) -> sbatch/eval_ef_dice.sh.
 # Submit: ARM=<arm> bash $0  (from a login node, or `unset ${!SLURM_@}` first inside an
 # interactive job). ~30 min/epoch on an L40S at 518/518 -> ~6 days per arm.
@@ -38,34 +39,31 @@
 # VGGT-1B (config default resume path, strict=false) — leave RESUME_FROM and CKPT_ONLY empty.
 # aggft (only `*patch_embed*` frozen). ⚠️ LR: 5e-5 peak, never 3e-4 (killed two arms, see
 # sbatch/_archive/train_pooled1337_dpt_augaggressive_224.sh).
-CONFIG="default"
 PEAK_LR="5e-5"
 
 ARM="${ARM:-base}"
 case "$ARM" in
-  base)         ARM_OVERRIDES="" ;;
-  diff1000)     ARM_OVERRIDES="loss.volume.diffusion_weight=1000.0" ;;
-  hw2)          ARM_OVERRIDES="loss.volume.heart_weight=2.0" ;;
-  hw0)          ARM_OVERRIDES="loss.volume.heart_weight=0.0" ;;
-  nogather)     ARM_OVERRIDES="loss.volume.gather_weight=0.0" ;;
-  diff1000_nogather) ARM_OVERRIDES="loss.volume.diffusion_weight=1000.0 loss.volume.gather_weight=0.0" ;;
+  base)         CONFIG="ablation_base" ;;
+  diff1000)     CONFIG="default" ;;
+  hw2)          CONFIG="ablation_hw2" ;;
+  hw0)          CONFIG="ablation_hw0" ;;
+  nogather)     CONFIG="ablation_nogather" ;;
+  diff1000_nogather) CONFIG="ablation_diff1000_nogather" ;;
   *) echo "ERROR: ARM must be base|diff1000|hw2|hw0|nogather|diff1000_nogather (got '$ARM')"; exit 1 ;;
 esac
 
-# The full base recipe is spelled out (even where it equals default.yaml) so it persists
-# VERBATIM across requeues and cannot drift if default.yaml is edited mid-run.
+# The shared recipe is spelled out (even though it equals default.yaml) so it persists
+# VERBATIM across requeues and cannot drift if default.yaml is edited mid-run. The loss
+# weights are NOT listed: they are what distinguishes the arms, so they live in $CONFIG
+# (CONFIG is pinned in REQUEUE_STATE too); an override here would shadow the arm's config.
 RECIPE_OVERRIDES="max_epochs=300 \
 img_size=518 \
 split_file=training/splits/pooled_curated_v2.txt \
 dataset_name=curated898 \
 limit_train_batches=628 \
 model.gradient_checkpointing=true \
-loss.volume.diffusion_weight=0.0 \
-loss.volume.gather_weight=0.5 \
-loss.volume.heart_weight=0.5 \
 loss.volume.splat_res=518 \
 optim.optimizer.lr=${PEAK_LR} \
-${ARM_OVERRIDES} \
 ${EXPERIMENT_OVERRIDES:-}"
 
 AUG_OVERRIDES="data.augmentation.enable=true data.augmentation.tier=aggressive"
@@ -111,12 +109,15 @@ sleep $((SLURM_PROCID * 2))  # stagger startup
 export WANDB_MODE=online
 
 # --- Build Hydra overrides ---
-# REQUEUE_STATE pins exp_name (and EXTRA_OVERRIDES) across requeues so checkpoint auto-detect
+# REQUEUE_STATE pins exp_name (and CONFIG, EXTRA_OVERRIDES) across requeues so checkpoint auto-detect
 # finds checkpoint_last.pt instead of a fresh rev_ts dir. (See _archive/legacy_sbatch/train_mri_volume.sh for detail.)
+# State files written before CONFIG was pinned carry no CONFIG line; those runs used
+# CONFIG=default with every changed key (epochs, splat_res, loss weights) in EXTRA_OVERRIDES.
 REQUEUE_STATE="/home/minsukc/vggt/slurm_logs/.requeue_${SLURM_JOB_ID}.env"
 
 if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
     # Requeue restart: reuse pinned exp_name, resume from THIS run's checkpoint_last.pt.
+    CONFIG="default"  # pre-CONFIG-pin state files (see above); overwritten by `source` otherwise
     source "$REQUEUE_STATE"
     OVERRIDES="exp_name=${EXP_NAME} ${EXTRA_OVERRIDES}"
     WANDB_DIR=$(ls -dt "./scratch/logs/${EXP_NAME}/wandb/wandb/"{run,offline-run}-*/ 2>/dev/null | head -1)
@@ -165,7 +166,7 @@ else
         echo "Fresh-from-base run: exp_name=${EXP_NAME}"
         echo "  recipe: ${EXTRA_OVERRIDES}"
     fi
-    { echo "EXP_NAME=${EXP_NAME}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
+    { echo "EXP_NAME=${EXP_NAME}"; echo "CONFIG=${CONFIG}"; echo "EXTRA_OVERRIDES=\"${EXTRA_OVERRIDES}\""; } > "$REQUEUE_STATE"
 fi
 
 echo "Running: python ... --config $CONFIG $OVERRIDES"

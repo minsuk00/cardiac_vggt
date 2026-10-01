@@ -1,9 +1,11 @@
-# THE config. Complete and runnable on its own:
+# THE config — and THE PAPER RECIPE: this file resolves to exactly the paper model's run
+# (ARM=diff1000 of sbatch/train_final_518.sh: 518 input, 518 training splat, diffusion 1000,
+# 300 epochs). Complete and runnable on its own:
 #
 #   PYTHONPATH=training:. python training/launch.py --config default
 #
-# Experiment variants live in `exp_*.yaml` and inherit this file, overriding only what they
-# change.
+# The paper's ablation arms are `ablation_*.yaml`; other experiment variants (`exp_*.yaml`,
+# `default_224.yaml`) — all inherit this file, overriding only what they change.
 #
 # Flattened 2026-08-01 from the old three-layer chain `default -> mri_finetune -> mri_volume`.
 # That chain was a trap: `mri_finetune` was a HALF config (no `loss.volume` ⇒
@@ -81,7 +83,7 @@ limit_train_batches: 628
 # len(val_targets) = 90 val subjects x {ED, ES} = 180 entries. Only applies with
 # ef_val_sweep=false.
 limit_val_batches: 180
-max_epochs: 200
+max_epochs: 300
 val_epoch_freq: 1
 # Target-phase control. null = uniform sampling per call (multi-phase). Set to an int (e.g. 0)
 # to force every sample to use that phase as the target — 0 reproduces the ED-only pipeline.
@@ -213,7 +215,7 @@ logging:
 # ── Checkpointing ─────────────────────────────────────────────────────────────────────────
 checkpoint:
   save_dir: "${logging.log_dir}/ckpts"
-  save_freq: 50  # 3 numbered archives over 200 epochs (50/100/150) + checkpoint_last each epoch
+  save_freq: 50  # a numbered archive every 50 epochs + checkpoint_last each epoch
   resume_checkpoint_path: "./scratch/base_weights/vggt1b_base.pt"
   strict: false
   # Keep the best val epoch's WEIGHTS (docs/64). Both pooled1337 runs peaked at epoch ~10-15
@@ -373,7 +375,7 @@ loss:
     # (metric_coverage_*, hole_frac_heart's absolute 0.5 threshold) see ~4.1× fewer splatted
     # points at 518 — never compare hole_frac/coverage across the port.
     #
-    # splat_res — TRAINING-TIME point density of the splat. null (default) = native 256²
+    # splat_res — TRAINING-TIME point density of the splat. null = native 256²
     # points per slice. An int R resamples BOTH the field and the native slice to R² before
     # scattering (bilinear, align_corners=True), so R == img_size reproduces the pre-docs/73
     # model-res splat (what the old 518 arm jyctv2mm trained against: 518² up-sampled points).
@@ -384,7 +386,8 @@ loss:
     # offline `evaluation/` render reads it from the run's run_meta too (run_vggt.py, 2026-09-13).
     # Coverage/hole_frac are NOT comparable
     # between splat_res arms and native arms (same series break as docs/73).
-    splat_res: null
+    # 518 = the paper recipe (sbatch/train_final_518.sh: 518 input + dense 518 splat).
+    splat_res: 518
     #
     # L2 diffusion (Tikhonov) smoothness ‖∇u‖² on the DVF (VoxelMorph-style). 0.0 ⇒ no-op.
     # DVF is in normalized [-1,1] coords ⇒ gradients are tiny, so a meaningful penalty is
@@ -395,12 +398,14 @@ loss:
     # it by α²: recovering the ~25% missing contraction amplitude (α≈1.30) costs 0.22% of the
     # objective. So this term is NOT the binding constraint on contraction amplitude — do not
     # reason about amplitude/EF from its weight.
-    # 0.0 = NO-REG, the default since 2026-08-28: the docs/90-corseg sweep (branch
-    # arm/corseg-dice) trained the diffusion=0 arm and it WON on per-patient EF ranking
-    # (r 0.792→0.837, bootstrap CI [+0.005,+0.082]) with bias/SV unchanged; the TD-loss arm
-    # failed the pre-registered rule (docs/91 §6 on arm/twophase-diff) — no-reg is the paper
-    # model. Set 1000.0 to reproduce the pre-2026-08-28 diffusion arm.
-    diffusion_weight: 0.0
+    # History: 0.0 (NO-REG) was the default 2026-08-28 → the paper-recipe switch: the
+    # docs/90-corseg sweep (branch arm/corseg-dice, 224 input) trained the diffusion=0 arm and
+    # it WON on per-patient EF ranking (r 0.792→0.837, bootstrap CI [+0.005,+0.082]) with
+    # bias/SV unchanged; the TD-loss arm failed the pre-registered rule (docs/91 §6 on
+    # arm/twophase-diff). The final 518/518 sweep (sbatch/train_final_518.sh) shipped the
+    # diff1000 arm as the paper model, so 1000.0 is the default now; the no-reg arms are
+    # `ablation_{base,nogather,hw2,hw0}.yaml` (diffusion_weight 0.0).
+    diffusion_weight: 1000.0
     # Coverage-free gather-placement AUXILIARY (docs/37, docs/38): |sample_volume(V_gt, p) −
     # input_I|, a "pull" term restoring the sharp through-plane placement gradient the splat
     # ÷coverage flattens. Same [0,1] intensity scale as the primary L1 ⇒ a direct ratio.
