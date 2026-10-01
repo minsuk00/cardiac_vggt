@@ -26,7 +26,6 @@ multi-phase contract, and produces:
                                                             across subjects despite D
                                                             varying (docs/58)
     z_indices       (S, 1)   (z_i - (D-1)/2) * dz / Z_HALF_MM
-    t_indices       (S, 1)   t_i / T * 2 - 1, T=12  (cyclic — wraps at +1)
     gt_target_volume (D, H, W) = phases_splat[t_target]
     anatomy_bbox    (6,) int64  — (z0, z1, y0, y1, x0, x1) from content_mask
     content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad (x/y only now)
@@ -407,7 +406,7 @@ class MRIDataset(Dataset):
         #     random (with replacement) over the in-bbox planes.
         #   • t per slot is a random phase WITH replacement, used ONLY to extract the
         #     slice's image CONTENT — input cardiac phase is NEVER a model input
-        #     (t_indices/target_t are inert; real-time CMR carries no phase label).
+        #     (real-time CMR carries no phase label).
         #
         # Train vs val differ ONLY in the RNG source (determinism + no global-RNG
         # leak): train → global `random` (fresh each epoch); val → a private
@@ -508,8 +507,6 @@ class MRIDataset(Dataset):
         images_list = []
         scanner_coords_list = []
         z_indices_list = []
-        t_indices_list = []
-        target_t_indices_list = []
         timesteps_list = []
         slice_indices_list = []
 
@@ -586,15 +583,8 @@ class MRIDataset(Dataset):
             sc = np.stack([x_norm, y_norm, np.full_like(x_norm, z_val)], axis=-1).astype(np.float32)
             scanner_coords_list.append(sc)
 
-            # z / t indices (per-slot scalar embeddings).
+            # z index (per-slot scalar embedding).
             z_indices_list.append(np.array([z_val], dtype=np.float32))
-            t_val = (t_idx / max(1, T_total)) * 2.0 - 1.0  # cyclic, wrap at +1
-            t_indices_list.append(np.array([t_val], dtype=np.float32))
-            # target_t index: the GLOBAL reconstruction target phase, same value for
-            # every slot (broadcast query). Normalized identically to t_indices so the
-            # separate target_t_embedder sees the same cyclic domain.
-            target_t_val = (t_target / max(1, T_total)) * 2.0 - 1.0
-            target_t_indices_list.append(np.array([target_t_val], dtype=np.float32))
 
             timesteps_list.append(t_idx)
             slice_indices_list.append(z_i)
@@ -643,8 +633,6 @@ class MRIDataset(Dataset):
             "timesteps": timesteps_list,
             "slice_indices": slice_indices_list,
             "z_indices": z_indices_list,
-            "t_indices": t_indices_list,
-            "target_t_indices": target_t_indices_list,
             "seq_name": seq_name,
             "gt_target_volume": gt_target_volume,
             "t_target": np.array([t_target], dtype=np.int64),

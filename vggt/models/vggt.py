@@ -58,9 +58,7 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             images = images.unsqueeze(0)
 
         z_indices = batch.get("z_indices") if batch is not None else None
-        t_indices = batch.get("t_indices") if batch is not None else None
-        target_t_indices = batch.get("target_t_indices") if batch is not None else None
-        aggregated_tokens_list, patch_start_idx = self.aggregator(images, z_indices=z_indices, t_indices=t_indices, target_t_indices=target_t_indices)
+        aggregated_tokens_list, patch_start_idx = self.aggregator(images, z_indices=z_indices)
 
         predictions = {}
 

@@ -220,7 +220,7 @@ class Aggregator(nn.Module):
             if hasattr(self.patch_embed, "mask_token"):
                 self.patch_embed.mask_token.requires_grad_(False)
 
-    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None, t_indices: Optional[torch.Tensor] = None, target_t_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
+    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].

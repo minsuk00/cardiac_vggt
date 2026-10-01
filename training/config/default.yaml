@@ -20,8 +20,7 @@
 # plane, marked via VGGT's native camera_token anchor, so the model reads the target phase
 # from slot-0's image content. This fixes BOTH the flat-EF amplitude regression and the
 # target_t=k/12 phase-timing ambiguity. Requires the aggregator finetune (aggft) below so the
-# camera_token / z_embedder can specialize. `target_t_indices` is still emitted by the dataset
-# but is INERT (the legacy target_t conditioning was removed → the model ignores it).
+# camera_token / z_embedder can specialize.
 
 defaults:
   - _self_

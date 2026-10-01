@@ -52,7 +52,7 @@ class TrainerVizMixin:
 
         Returns only the core every caller needs identically; each caller adds its own
         extras (`gt_target_volume`/`anatomy_bbox` for the identity baseline, `z_indices`/
-        `t_indices`/`phases` for the filmstrip). Extracted 2026-08-01: this block was
+        `phases` for the filmstrip). Extracted 2026-08-01: this block was
         duplicated verbatim in `_compute_identity_baseline` and `_log_cardiac_cycle_filmstrip`,
         including two copies of the nested `st()` helper. The duplication is what makes a
         batch-contract change dangerous — when native-z added `dz_mm`/`z_scale`, a site that
@@ -372,8 +372,6 @@ class TrainerVizMixin:
                 return torch.from_numpy(np.stack(data[k]).astype(dt)).unsqueeze(0).to(self.device)
             batch = self._subject_device_batch(data, subj_idx)
             batch["z_indices"] = st("z_indices")
-            batch["t_indices"] = st("t_indices")
-            S = batch["images"].shape[1]
             # Full canonical phase bundle → per-phase V_gt without re-sampling inputs.
             phases_bundle = torch.from_numpy(
                 np.asarray(data["phases"]).astype(np.float32)).to(self.device)  # (T, D, H, W)
@@ -397,7 +395,6 @@ class TrainerVizMixin:
             # only slot-0's phase (and image) change. We set timesteps[0]=t and re-extract through
             # the SAME val input pipeline: when breathing is on slot 0 is corrupted exactly as in
             # val (scattered slots 1..S-1 re-extract identically each phase); else a clean reslice.
-            # (target_t_indices is set below but inert when use_target_t=false.)
             import torch.nn.functional as _F
             ref_zmid = None
             hw = batch["images"].shape[-1]
@@ -405,9 +402,6 @@ class TrainerVizMixin:
                 _bb = np.asarray(data["anatomy_bbox"]).astype(np.int64)
                 ref_zmid = (int(_bb[0]) + int(_bb[1])) // 2
             for t in range(T_total):
-                t_norm = (t / max(1, T_total)) * 2.0 - 1.0  # match dataset normalization
-                batch["target_t_indices"] = torch.full(
-                    (1, S, 1), t_norm, dtype=torch.float32, device=self.device)
                 if self.reference_slot:
                     batch["timesteps"][:, 0] = t  # slot 0 observes the target phase t
                     if do_resp:

@@ -61,8 +61,7 @@ def _build_batch(seq_idx):
     batch = {
         "images": imgs, "scanner_coords": st("scanner_coords"),
         "world_points": st("world_points"),  # scanner_coords + Δ_elastix
-        "z_indices": st("z_indices"), "t_indices": st("t_indices"),
-        "target_t_indices": st("target_t_indices"),
+        "z_indices": st("z_indices"),
         "timesteps": torch.from_numpy(np.stack(data["timesteps"]).astype(np.int64)).unsqueeze(0),
         "slice_indices": torch.from_numpy(np.stack(data["slice_indices"]).astype(np.int64)).unsqueeze(0),
     }

@@ -106,8 +106,6 @@ def main():
             "images": imgs.to(device),
             "scanner_coords": stack("scanner_coords").to(device),
             "z_indices": stack("z_indices").to(device),
-            "t_indices": stack("t_indices").to(device),
-            "target_t_indices": stack("target_t_indices").to(device),
             "gt_target_volume": torch.from_numpy(data["gt_target_volume"].astype(np.float32)).unsqueeze(0).to(device),
         }
 

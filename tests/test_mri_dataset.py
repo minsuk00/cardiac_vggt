@@ -355,19 +355,6 @@ def test_train_timesteps_in_range_and_may_equal_target(train_ds):
             all_phases.add(int(t))
     assert len(all_phases) >= 6, f"train input phases should spread widely; saw {sorted(all_phases)}"
 
-def test_target_t_indices_present_and_broadcast(train_ds):
-    """target_t_indices: one per slot, ALL equal, and == (t_target/T)*2-1 (matches the
-    t_indices normalization). This is the global target-phase query broadcast to every slot."""
-    for i in range(8):
-        s = train_ds.get_data(i, img_per_seq=8)
-        t_target = int(np.asarray(s["t_target"]).item())
-        tti = s["target_t_indices"]
-        assert len(tti) == len(s["timesteps"]), "one target_t_index per slot"
-        expected = (t_target / SYN_T) * 2.0 - 1.0
-        vals = [float(np.asarray(v).reshape(-1)[0]) for v in tti]
-        assert all(abs(v - expected) < 1e-6 for v in vals), \
-            f"target_t_indices must all == {expected} (t_target={t_target}); got {vals}"
-
 def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, monai_cache_dir):
     from data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
@@ -507,8 +494,7 @@ def test_z_indices_in_range(train_ds):
 # ── 8. Static mode ────────────────────────────────────────────────────────────
 
 def test_static_mode_all_same_timestep(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """Static mode is PRESERVED by the decoupling change: every slot == t_target, and
-    target_t_indices still equals norm(t_target)."""
+    """Static mode: every slot == t_target."""
     from data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
                     mode="static", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
@@ -516,9 +502,6 @@ def test_static_mode_all_same_timestep(synthetic_root, split_file, common_conf, 
     t_target = int(np.asarray(s["t_target"]).item())
     for t in s["timesteps"]:
         assert t == t_target, f"Static mode: slot t={t} != t_target={t_target}"
-    expected = (t_target / SYN_T) * 2.0 - 1.0
-    for v in s["target_t_indices"]:
-        assert abs(float(np.asarray(v).reshape(-1)[0]) - expected) < 1e-6
 
 
 # ── 9. Decoupled-target val sampling (deterministic, decoupled from t_target) ──
@@ -557,9 +540,6 @@ def test_val_sampling_deterministic_across_instances(synthetic_root, split_file,
             f"val timesteps not reproducible at seq_index={seq_index}"
         assert [int(z) for z in sa["slice_indices"]] == [int(z) for z in sb["slice_indices"]], \
             f"val z not reproducible at seq_index={seq_index}"
-        va = [float(np.asarray(v).reshape(-1)[0]) for v in sa["target_t_indices"]]
-        vb = [float(np.asarray(v).reshape(-1)[0]) for v in sb["target_t_indices"]]
-        assert va == vb, f"val target_t_indices not reproducible at seq_index={seq_index}"
         # z must still be distinct planes (sampled WITHOUT replacement within the bbox).
         zs = [int(z) for z in sa["slice_indices"]]
         assert len(set(zs)) == len(zs), f"val z must be distinct (no replacement); got {zs}"
