@@ -123,7 +123,7 @@ Camera / depth / track heads disabled in mri_volume config.
 [FROZEN] labels show the legacy head-only freeze; the shipped default (aggft) also trains the attention blocks + z_embedder + camera_token — see `optim.frozen_module_names` under Key knobs.
 ```
 
-Checkpoints save the **full 941M state dict** (~3.8 GB each), not just the trainable head. Optimizer + scaler state included.
+Checkpoints save the **full 941M state dict** (~3.8 GB each), not just the trainable head, plus optimizer state (`checkpoint_last.pt`).
 
 ## Inference / inspection
 
