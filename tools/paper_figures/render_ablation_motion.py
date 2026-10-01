@@ -8,7 +8,7 @@ All inputs are saved eval outputs (no inference). True through-plane shifts come
 _motion_epe/af12/<arm>.json (resp_diag/ed_dvf applied shifts are stale for rhythm cohorts).
 Delta is saved for the first target frame only (ed_dvf.npz).
 
-Usage: micromamba run -n svr python _paper_figures/render_ablation_motion.py [--subject cohort/id] --out <png|pdf>
+Usage: micromamba run -n svr python tools/paper_figures/render_ablation_motion.py [--subject cohort/id] --out <png|pdf>
 """
 import argparse
 import glob
@@ -24,7 +24,7 @@ from scipy.ndimage import zoom
 
 from render_runtime_accuracy import GRID, INK, TEXTW, paper_rc
 
-EV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evaluation")
+EV = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "evaluation")
 VOL, RES = f"{EV}/volumes", f"{EV}/metric_results/test"
 ARMS = [("w/o $\\mathcal{L}_{\\mathrm{h}}$", "hw0"), ("w/o $\\mathcal{L}_{\\mathrm{obs}}$", "nogather"),
         ("w/o $\\mathcal{L}_{\\mathrm{smooth}}$", "base"), ("Full", "diff1000")]   # Table 3 row order

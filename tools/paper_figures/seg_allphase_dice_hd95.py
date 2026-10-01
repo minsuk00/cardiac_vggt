@@ -7,7 +7,7 @@ which gives identical distances to the full-volume EDT (max |diff| 0.0, checked)
 ED/ES = argmax/argmin of the GT LV volume, as in ef_dice.py, so the ED/ES entries reproduce the stored
 dice_breath_*_ED/ES and hd95_breath_*_ED/ES exactly (checked: max |diff| 0 on af12 + hrv12, 9 methods).
 
-    PYTHONPATH=training:. python _paper_figures/seg_allphase_dice_hd95.py --procs 8 --out temp/allphase_seg/seg_allphase.json
+    PYTHONPATH=training:. python tools/paper_figures/seg_allphase_dice_hd95.py --procs 8 --out temp/allphase_seg/seg_allphase.json
 """
 import argparse
 import json
@@ -18,7 +18,7 @@ import nibabel as nib
 import numpy as np
 from scipy.ndimage import binary_erosion, distance_transform_edt
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SEG = f"{ROOT}/scratch/eval/_rhythm24_segs"
 SRCS = ["acdc", "cmrx2023", "cmrx2024", "cmrx2025", "mnms"]
 VGGT = ["vggt_final518_diff1000_ep300", "vggt_final518_base_ep300", "vggt_final518_nogather_ep300",

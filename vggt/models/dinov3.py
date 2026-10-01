@@ -69,7 +69,7 @@ class DINOv3ViTL16PatchEmbed(nn.Module):
             from transformers import DINOv3ViTConfig, DINOv3ViTModel
         except ImportError as exc:
             raise ImportError(
-                "The DINOv3 backbone requires requirements-dinov3.txt. "
+                "The DINOv3 backbone requires transformers (see requirements.txt). "
                 "The default DINOv2 backbone does not require Transformers."
             ) from exc
 

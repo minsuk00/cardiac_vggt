@@ -14,8 +14,8 @@ Each renderer runs unchanged (commands = README.md). savefig is patched: right a
 
 python-pptx is not in the svr env; install it anywhere and put it on PYTHONPATH:
     pip install --target /tmp/pylib python-pptx
-    PYTHONPATH=/tmp/pylib:training:. micromamba run -n svr python _paper_figures/export_pptx.py
-    (writes _paper_figures/paper_figures.pptx; scratch in temp/pptx_work)
+    PYTHONPATH=/tmp/pylib:training:. micromamba run -n svr python tools/paper_figures/export_pptx.py
+    (writes tools/paper_figures/paper_figures.pptx; scratch in temp/pptx_work)
 """
 import argparse
 import os
@@ -299,14 +299,14 @@ def build_pptx(out, margin=0.25):
                 if base:
                     run._r.get_or_add_rPr().set("baseline", "-25000" if base < 0 else "30000")
         slide.notes_slide.notes_text_frame.text = (
-            f"{s['name']}: rendered by _paper_figures/{FIGS[s['name']][0]} (see _paper_figures/README.md). "
+            f"{s['name']}: rendered by tools/paper_figures/{FIGS[s['name']][0]} (see tools/paper_figures/README.md). "
             "Text = native text boxes; each panel = its own PNG layer.")
     prs.save(out)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=HERE, help="directory for paper_figures.pptx (default: _paper_figures/)")
+    ap.add_argument("--out", default=HERE, help="directory for paper_figures.pptx (default: tools/paper_figures/)")
     ap.add_argument("--work", default="temp/pptx_work", help="scratch dir for the renders and layer PNGs")
     ap.add_argument("--only", nargs="+", choices=list(FIGS), default=list(FIGS))
     a = ap.parse_args()

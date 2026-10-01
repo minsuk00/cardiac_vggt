@@ -6,7 +6,7 @@ centre of the naively stacked input (frame f of every slice, top) and of ours at
 (tools/run_vggt_rt_stacked.py outputs). Right: LV volume over the 4.5 s recording, naive stack vs ours
 (tools/rt_lv_curve_2d.py). Display window = p99.5 of the subject's two shown cuts (shared), then gamma.
 
-    PYTHONPATH=training:. python _paper_figures/make_rt_figure.py --root scratch/temp/miitt_afib_rt \
+    PYTHONPATH=training:. python tools/paper_figures/make_rt_figure.py --root scratch/temp/miitt_afib_rt \
         --row MIITT_Volunteer1:20:volunteer1:"Healthy volunteer":0 \
               MIITT_Patient_2024Jan04_Cardiomyopathy_AFib:170:afib:"AF patient":90 \
         --out scratch/temp/miitt_afib_rt/figure/rt_figure
@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "evaluation", "src", "engine"))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import run_vggt_rt as rt                                  # noqa: E402

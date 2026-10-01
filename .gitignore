@@ -1,5 +1,7 @@
 _XCAT
 scratch
+# figures live on GPFS; `figs` is a local symlink to scratch/figs
+/figs
 /data
 /eval
 /baselines/fc_svr

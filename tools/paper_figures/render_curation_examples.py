@@ -5,7 +5,7 @@ centroid (heart_seg labels 1,2): along x (fixed y) and along y (fixed x). Neares
 physical aspect, so a slice acquired at a different breath-hold position shows as a step. Frame 0. Each
 panel is W_MM wide by the full stack height; column widths follow that aspect so panels tile with no gaps.
 
-Usage: micromamba run -n svr python _paper_figures/render_curation_examples.py --out curation_examples.pdf
+Usage: micromamba run -n svr python tools/paper_figures/render_curation_examples.py --out curation_examples.pdf
 """
 import argparse
 import glob

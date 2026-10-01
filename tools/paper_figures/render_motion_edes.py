@@ -10,7 +10,7 @@ ED/ES = reference frame with max/min GT LV volume.
 Motion fields: tools/dump_vggt_motion.py (<dump>/<rhythm>/<subject>/) or tools/sweep_input_frame.py
 (<dump>/<rhythm>/<subject>_z{z}f{f}/, input frame of plane z overridden).
 
-Usage: micromamba run -n svr python _paper_figures/render_motion_edes.py --dump scratch/motion_edes/sweep \
+Usage: micromamba run -n svr python tools/paper_figures/render_motion_edes.py --dump scratch/motion_edes/sweep \
     --af cmrx2024/CMRx24_Train_P055,3,CMRx24_Train_P055_z3f9 --hrv mnms/MNMs_O5U2U7,4,MNMs_O5U2U7_z4f2 --out x.png
 """
 import argparse
@@ -26,7 +26,7 @@ from scipy.ndimage import binary_erosion, binary_fill_holes, binary_opening, rot
 
 from render_runtime_accuracy import TEXTW, paper_rc
 
-EV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "evaluation")
+EV = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "evaluation")
 VOL, RES = f"{EV}/volumes", f"{EV}/metric_results/test"
 ARM = "vggt_final518_diff1000_ep300"
 PX_PER_MM = 518 / (256 * 1.4)

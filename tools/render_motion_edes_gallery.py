@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Candidate gallery for the reference-conditioning figure (_paper_figures/render_motion_edes.py): one row per
+"""Candidate gallery for the reference-conditioning figure (tools/paper_figures/render_motion_edes.py): one row per
 candidate, [Input | ED target | ES target], one PNG per rhythm, each row on its own colour scale. Used to pick
 the AF and HRV examples by eye (docs/127).
 
@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_paper_figures"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_figures"))
 from render_motion_edes import PX_PER_MM, REF, gray, load_rhythm, view
 
 

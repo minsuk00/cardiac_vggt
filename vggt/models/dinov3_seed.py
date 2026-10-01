@@ -122,7 +122,7 @@ def build_seed(base_path: Path, output_path: Path, hf_cache: Path, overwrite: bo
     try:
         from transformers import DINOv3ViTModel
     except ImportError as exc:
-        raise ImportError("Install requirements-dinov3.txt before running this tool") from exc
+        raise ImportError("Install transformers (see requirements.txt) before running this tool") from exc
 
     hf_cache.mkdir(parents=True, exist_ok=True)
     base_state = _load_model_state(base_path)

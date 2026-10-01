@@ -32,7 +32,8 @@ from loss import _splat_preds_native, _resize_field                             
 from vggt.utils.splat import sample_volume                                      # noqa: E402
 from inference.load_run import load_model_from_run, mri_dataset_kwargs          # noqa: E402
 
-CKPT = os.path.join(ROOT, "scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt")
+CKPT = os.environ.get("INTERP_CKPT") or os.path.join(
+    ROOT, "scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt")
 INPLANE_MM = 1.4
 MM_PER_NORM = np.array([0.5 * 255 * INPLANE_MM, 0.5 * 255 * INPLANE_MM, Z_HALF_MM])  # (x, y, z)
 N_SPECIAL = 5          # 1 camera(+z+ref) token + 4 registers per slot (patch_start_idx)

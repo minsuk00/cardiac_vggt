@@ -8,7 +8,7 @@ percentile of that dataset (see SUBJECTS; selection printed by --select).
 Reads (read-only): scratch/eval/<src>_af12/out/<subject>/{gt/gt_tXX, <METHOD>/recon_breath/vol_tXX,
 mask_heart_pad10, manifest.json}; evaluation/metric_results/test/<src>_af12/{,ef/}<METHOD>.json.
 
-    python _paper_figures/render_full_cine_examples.py [--select]
+    python tools/paper_figures/render_full_cine_examples.py [--select]
 """
 import argparse
 import json
@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 METHOD = "vggt_final518_diff1000_ep300"
 SRCS = ["acdc", "cmrx2023", "cmrx2024", "cmrx2025", "mnms"]
 SUBJECTS = [("acdc", "ACDC_patient115"), ("cmrx2023", "CMRx23_Train_P111"), ("cmrx2024", "CMRx24_Train_P048"),

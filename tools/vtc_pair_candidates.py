@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_paper_figures"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_figures"))
 from render_vtc_2x2 import curves  # noqa: E402
 from render_vtc_figure import METHODS, smooth  # noqa: E402
 from render_runtime_accuracy import INK  # noqa: E402

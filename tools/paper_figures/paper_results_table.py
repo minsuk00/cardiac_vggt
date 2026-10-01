@@ -3,7 +3,7 @@
 Sources (all read-only):
   image      evaluation/metric_results/test/<src>_<arm>/<method>.json       (unit-peak PSNR, SSIM, NCC; heart ROI)
   function   evaluation/metric_results/test/<src>_<arm>/ef/<method>.json    (EDV/ESV/EF/LVM MAE, VTC error)
-  Dice/HD95  _paper_figures/seg_allphase_dice_hd95.py output                         (mean over LV, MYO, RV x all 12 phases)
+  Dice/HD95  tools/paper_figures/seg_allphase_dice_hd95.py output                         (mean over LV, MYO, RV x all 12 phases)
   Resp. EPE  common_set.py (evaluation/src/analysis/motion_epe/) re-run on _motion_epe/<arm>/*.json slice dumps
              at full precision (its dz block = the checked-in common_set_9methods.txt at 2 decimals; dz, demeaned, mm)
   runtime    docs/120 §6 (af12, s per subject = full 12-phase cine; GPU 4x L40S, CPU 16 cores Xeon Gold 6154);
@@ -15,7 +15,7 @@ VTC error = per subject mean_t |V_pred(t) - V_gt(t)| / EDV_gt x 100 (stored lv_c
 Pooled means over subjects; Dice/HD95 pooled over (subject, structure, phase), NaN skipped (as ef_dice.py).
 Numbers print with 4 digits, a leading 0 counted (0.883, 7.490, 24.50, 167.4), as in the paper tables.
 
-    python _paper_figures/paper_results_table.py --seg <seg_allphase.json> [--json out.json]
+    python tools/paper_figures/paper_results_table.py --seg <seg_allphase.json> [--json out.json]
 """
 import argparse
 import glob
@@ -29,7 +29,7 @@ from multiprocessing import Pool
 
 import numpy as np
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RES = f"{ROOT}/evaluation/metric_results/test"
 SRCS = ["acdc", "cmrx2023", "cmrx2024", "cmrx2025", "mnms"]
 # display name -> (af12 arm, hrv12 arm, EPE row name af12, EPE row name hrv12)
@@ -158,7 +158,7 @@ def show(title, rows, cols):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seg", required=True, help="_paper_figures/seg_allphase_dice_hd95.py output")
+    ap.add_argument("--seg", required=True, help="tools/paper_figures/seg_allphase_dice_hd95.py output")
     ap.add_argument("--json")
     a = ap.parse_args()
     seg = json.load(open(a.seg))

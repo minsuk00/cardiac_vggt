@@ -2,10 +2,10 @@
 
 y = LV volume–time curve (VTC) error (% EDV): mean per-phase |V_pred(t) - V_gt(t)| / EDV_gt. Chosen over
 EF MAE because it scores all 12 phases, not just the ED/ES extremes.
-Numbers come from _paper_figures/paper_results_table.py --json (the same file the paper table is built from),
+Numbers come from tools/paper_figures/paper_results_table.py --json (the same file the paper table is built from),
 so figure and table cannot drift.
 
-    python _paper_figures/render_runtime_accuracy.py --table temp/allphase_seg/paper_tables.json --out temp/runtime_accuracy_drafts
+    python tools/paper_figures/render_runtime_accuracy.py --table temp/allphase_seg/paper_tables.json --out temp/runtime_accuracy_drafts
 """
 import argparse
 import json
