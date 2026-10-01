@@ -16,7 +16,9 @@ import numpy as np
 import pytest
 import torch
 
-from trainer_viz import TrainerVizMixin, _display_gamma
+import monitor as monitor_module
+from monitor import Monitor, pitch_bucket
+from monitor_panels import display_gamma
 from train_utils.val_logging import (
     pick_one_index_per_source,
     pick_planes,
@@ -37,7 +39,7 @@ CMRX25 = "/root/CMRxRecon2025/Cine_combined/CMRx25_train_Center001_UIH_30T_umr78
 
 def test_display_gamma_brightens_only_the_display_scale():
     image = np.array([-1.0, 0.0, 0.5, 1.0, 2.0], dtype=np.float32)
-    shown = _display_gamma(image, vmax=1.0)
+    shown = display_gamma(image, vmax=1.0)
     np.testing.assert_allclose(shown, [0.0, 0.0, 0.5 ** 0.7, 1.0, 1.0])
     assert shown[2] > image[2]
 
@@ -109,38 +111,26 @@ def test_pick_visual_indices_covers_requested_source_vendors():
     assert picks == (0, 1, 2, 3, 4, 5, 6, 8, 9)
 
 
-def test_ordinary_val_visuals_log_only_es_half_of_sweep():
-    class Viz(TrainerVizMixin):
-        _ED_ES_SUBJECTS = (0,)
+def test_ordinary_val_visuals_log_only_es_half_of_sweep(monkeypatch):
+    calls = []
+    monkeypatch.setattr(monitor_module.panels, "log_volume_and_dvf",
+                        lambda *a, **k: calls.append("volume"))
+    monkeypatch.setattr(monitor_module.panels, "log_lookup",
+                        lambda *a, **k: calls.append("lookup"))
+    ds = SimpleNamespace(subjects=[ACDC], val_targets=[(0, 0), (0, 6)], t_target_fixed=None)
+    log_conf = SimpleNamespace(log_visual_frequency={"val": 1}, log_visuals=True)
+    m = Monitor(log_conf, None, None, ds, "cpu")
+    m._visual_subjects = (0,)
 
-        def __init__(self):
-            self.logging_conf = SimpleNamespace(
-                log_visual_frequency={"val": 1}, log_visuals=True,
-            )
-            self.steps = {"train": 7}
-            self._val_iter = 0
-            self.calls = []
-            self.ds = SimpleNamespace(subjects=[ACDC], val_targets=[(0, 0), (0, 6)])
+    m._log_visuals({"seq_index": torch.tensor([[0]])}, "val", 0, 7)
+    assert calls == []
 
-        def _get_mri_dataset(self):
-            return self.ds
+    m._log_visuals({"seq_index": torch.tensor([[1]])}, "val", 1, 7)
+    assert calls == ["volume", "lookup"]
 
-        def _log_volume_and_dvf_to_wandb(self, *args, **kwargs):
-            self.calls.append("volume")
-
-        def _log_lookup_to_wandb(self, *args, **kwargs):
-            self.calls.append("lookup")
-
-    viz = Viz()
-    viz._log_visuals_to_wandb({"seq_index": torch.tensor([[0]])}, "val", 0)
-    assert viz.calls == []
-
-    viz._log_visuals_to_wandb({"seq_index": torch.tensor([[1]])}, "val", 1)
-    assert viz.calls == ["volume", "lookup"]
-
-    viz.calls.clear()
-    viz._log_visuals_to_wandb({"seq_index": torch.tensor([[2]])}, "val", 2)
-    assert viz.calls == []
+    calls.clear()
+    m._log_visuals({"seq_index": torch.tensor([[2]])}, "val", 2, 7)
+    assert calls == []
 
 
 @pytest.mark.parametrize("D", [5, 6, 8, 11, 12, 18, 21])
@@ -202,66 +192,67 @@ def test_seq_index_to_subject_degrades_quietly():
 
 
 def test_pitch_bucket_splits_at_10mm():
-    from trainer import Trainer
-    assert Trainer._pitch_bucket(12.0) == "coarse_ge10mm"
-    assert Trainer._pitch_bucket(10.0) == "coarse_ge10mm"
-    assert Trainer._pitch_bucket(9.6) == "fine_lt10mm"
-    assert Trainer._pitch_bucket(5.0) == "fine_lt10mm"
-    assert Trainer._pitch_bucket(None) is None
+    assert pitch_bucket(12.0) == "coarse_ge10mm"
+    assert pitch_bucket(10.0) == "coarse_ge10mm"
+    assert pitch_bucket(9.6) == "fine_lt10mm"
+    assert pitch_bucket(5.0) == "fine_lt10mm"
+    assert pitch_bucket(None) is None
 
 
 # ── Non-finite guard (docs/60 item 4) ────────────────────────────────────────
 # The guard must suppress LOGGING ONLY. Training control flow (backward / skip) lives in
-# _run_steps_on_batch_chunks and must be unaffected, so these tests pin both halves:
+# trainer.train_step (tests/test_checkpoint_roundtrip.py) and must be unaffected, so these
+# tests pin both halves:
 # a finite batch behaves exactly as before, and a NaN batch is counted, named, and kept
 # out of the AverageMeters — but the step counter still advances either way.
 
 def _finite_stub():
-    from types import SimpleNamespace
-    from collections import defaultdict
-    from trainer import Trainer
-    stub = SimpleNamespace()
-    stub.steps = {"train": 7, "val": 0}
-    stub._nonfinite_logged = defaultdict(int)
-    stub._logged = []
-    stub._log_scalar = lambda k, v, s: stub._logged.append((k, v, s))
-    stub._log_if_finite = Trainer._log_if_finite.__get__(stub)
-    return stub
+    m = Monitor(SimpleNamespace(), None, None, None, "cpu")
+    m._logged = []
+    m.scalar = lambda k, v, s: m._logged.append((k, v, s))
+    return m
+
+
+def _guard(m, data, phase):
+    return m._log_if_finite(data, phase, step=0, train_step=7)
 
 
 def test_finite_objective_passes_through_untouched():
-    import torch
     stub = _finite_stub()
-    assert stub._log_if_finite({"objective": torch.tensor(0.02)}, "train") is True
+    assert _guard(stub, {"objective": torch.tensor(0.02)}, "train") is True
     assert stub._logged == [], "a healthy batch must not emit a nonfinite scalar"
-    assert stub._nonfinite_logged["train"] == 0
+    assert stub.nonfinite_logged["train"] == 0
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
 def test_nonfinite_objective_is_blocked_and_counted(bad):
-    import torch
     stub = _finite_stub()
-    ok = stub._log_if_finite(
-        {"objective": torch.tensor(bad), "seq_name": ["CMRx24_Train_P011"]}, "train")
+    ok = _guard(stub, {"objective": torch.tensor(bad), "seq_name": ["CMRx24_Train_P011"]}, "train")
     assert ok is False
-    assert stub._nonfinite_logged["train"] == 1
+    assert stub.nonfinite_logged["train"] == 1
     assert stub._logged and stub._logged[0][0] == "train/optim/nonfinite_logged_cumulative"
+    assert stub._logged[0][2] == 7, "logged at the TRAIN step"
 
 
 def test_nonfinite_guard_covers_val_too():
     """Val had no finiteness check at all before docs/60, and NaN is a value rather than
     an exception, so it flowed through every surrounding try/except silently."""
-    import torch
     stub = _finite_stub()
-    assert stub._log_if_finite({"objective": torch.tensor(float("nan"))}, "val") is False
-    assert stub._nonfinite_logged["val"] == 1
+    assert _guard(stub, {"objective": torch.tensor(float("nan"))}, "val") is False
+    assert stub.nonfinite_logged["val"] == 1
 
 
 def test_guard_never_raises_on_a_malformed_batch():
     """If the guard itself breaks it must fail OPEN (log anyway), never take down a run."""
     stub = _finite_stub()
-    assert stub._log_if_finite({"objective": object()}, "train") is True
-    assert stub._log_if_finite({}, "train") is True          # no objective key at all
+    assert _guard(stub, {"objective": object()}, "train") is True
+    assert _guard(stub, {}, "train") is True          # no objective key at all
+
+
+def _resp_monitor(record):
+    """A Monitor with NO wandb writer whose on-disk scalar mirror calls `record(name, value)`."""
+    run_log = SimpleNamespace(scalar=lambda name, value, step, epoch=None: record(name, value))
+    return Monitor(SimpleNamespace(), run_log, None, None, "cpu")
 
 
 def test_resp_scalars_are_written_without_wandb():
@@ -269,15 +260,8 @@ def test_resp_scalars_are_written_without_wandb():
     GPU, never persisted), so it must reach disk even with no wandb writer. It used to sit
     behind `if not self.wandb_writer: return`. A WANDB_MODE=offline run still builds a
     writer, so only this test covers the no-writer path."""
-    import torch
-    from types import SimpleNamespace
-    from trainer import Trainer
-
-    stub = SimpleNamespace()
-    stub.wandb_writer = None                       # the case that used to silently no-op
-    stub.written = []
-    stub._log_scalar = lambda k, v, s: stub.written.append(k)
-    stub._log_resp_disp_scalar = Trainer._log_resp_disp_scalar.__get__(stub)
+    written = []
+    m = _resp_monitor(lambda k, v: written.append(k))
 
     S, D = 4, 8
     batch = {
@@ -287,25 +271,18 @@ def test_resp_scalars_are_written_without_wandb():
         "phases": torch.zeros(1, 12, D, 8, 8),
     }
     batch["resp_disp_mm"][0, 0, 0] = 100.0          # slot 0 driven far off the slab
-    stub._log_resp_disp_scalar(batch, step=0, prefix="train")
+    m.resp_disp(batch, step=0, prefix="train")
 
-    assert any("frac_slots_offslab" in k for k in stub.written), stub.written
-    assert any("disp_frac_of_extent" in k for k in stub.written)
+    assert any("frac_slots_offslab" in k for k in written), written
+    assert any("disp_frac_of_extent" in k for k in written)
 
 
 def test_resp_offslab_counts_slots_that_leave_the_slab():
     """Landing plane = z_i + d/dz; outside [0, D-1] is zero-padded. With 1 of 4 slots
     driven off, the fraction must be 0.25 — not 0, which is what a broken sign or a
     wrong dz would give."""
-    import torch
-    from types import SimpleNamespace
-    from trainer import Trainer
-
-    stub = SimpleNamespace()
-    stub.wandb_writer = None
-    stub.vals = {}
-    stub._log_scalar = lambda k, v, s: stub.vals.__setitem__(k.split("/")[-1], v)
-    stub._log_resp_disp_scalar = Trainer._log_resp_disp_scalar.__get__(stub)
+    vals = {}
+    m = _resp_monitor(lambda k, v: vals.__setitem__(k.split("/")[-1], v))
 
     S, D = 4, 8
     batch = {
@@ -315,12 +292,12 @@ def test_resp_offslab_counts_slots_that_leave_the_slab():
         "phases": torch.zeros(1, 12, D, 8, 8),
     }
     batch["resp_disp_mm"][0, 3, 0] = 100.0          # slot 3 (z=3) -> plane 13 > D-1=7
-    stub._log_resp_disp_scalar(batch, step=0, prefix="val")
-    assert stub.vals["frac_slots_offslab"] == pytest.approx(0.25)
+    m.resp_disp(batch, step=0, prefix="val")
+    assert vals["frac_slots_offslab"] == pytest.approx(0.25)
 
     batch["resp_disp_mm"].zero_()                   # nobody leaves
-    stub._log_resp_disp_scalar(batch, step=0, prefix="val")
-    assert stub.vals["frac_slots_offslab"] == pytest.approx(0.0)
+    m.resp_disp(batch, step=0, prefix="val")
+    assert vals["frac_slots_offslab"] == pytest.approx(0.0)
 
 
 def test_resp_offslab_dimmed_has_no_false_floor_at_zero_displacement():

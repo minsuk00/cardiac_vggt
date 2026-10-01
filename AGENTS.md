@@ -162,7 +162,7 @@ Files in `log_dir`: `run_meta.jsonl` (one line per process launch), `metrics.jso
 **Prefer `metric_psnr_3d_bbox` as the honest number** (`_full` is inflated by X/Y padding for small-FOV subjects). **Don't compare PSNR across the canonical-grid or native-z refactors** — treat post-2026-07-31 runs as a fresh series.
 
 - **GT-referenced ship-decision metrics (val-only, `docs/38`):** recov_frac_heart, psnr_3d_static vs psnr_3d_motion, hole_frac_heart, and the breathing `metric_resp_*` family. **Decision rule: a change wins iff recov_frac↑ & psnr_motion↑ WITHOUT hole_frac↑.** Gated val-only ⇒ training bit-identical.
-- Per-metric definitions, panel/visual cadence, identity-Δ startup baseline, tags, and fixed-phase gating: docs/38 + docs/60 + docs/65. `save_val_volumes` (default true) dumps per-subject pred+GT NIfTIs to `${log_dir}/val_volumes/` (~360 MB, overwritten each epoch). All diagnostic logging is `try/except`-wrapped — never raises into training.
+- Per-metric definitions, panel/visual cadence, identity-Δ startup baseline, tags, and fixed-phase gating: docs/38 + docs/60 + docs/65. `save_val_volumes` (default true) dumps per-subject pred+GT NIfTIs to `${log_dir}/val_volumes/` (~360 MB, overwritten each epoch). All diagnostic logging lives in `training/monitor.py` (`Monitor`; figures in `monitor_panels.py`) and is `try/except`-wrapped — never raises into training.
 
 ## SLURM
 

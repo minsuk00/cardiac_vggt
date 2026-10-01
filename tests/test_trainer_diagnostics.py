@@ -1,14 +1,13 @@
-"""Tests for the val-only diagnostics added to Trainer:
+"""Tests for the val-only diagnostics in `Monitor`:
   - per-phase PSNR accumulator behavior (in `_update_and_log_scalars`)
   - gating: diagnostics are skipped when `t_target_fixed` is not None
   - training-time scalar logging is unchanged (train path doesn't touch the new code)
 
-These tests don't instantiate a full Trainer (heavy: the 1B model + dataloaders).
-Instead they bind the methods to a stub object and verify behavior in isolation.
+A `Monitor` is cheap to build (no model, no dataloaders), so these tests construct a real
+one with stub logging collaborators.
 """
 import os
 import sys
-from collections import defaultdict
 from types import SimpleNamespace
 
 import pytest
@@ -41,48 +40,35 @@ def _make_data(t_targets, B=None, V_shape=(2, 4, 4)):
     }
 
 
-def _make_stub_trainer(t_target_fixed=None):
-    """Stub Trainer-like object that has just enough state for the val-only methods we test."""
-    from trainer import Trainer
-    stub = SimpleNamespace()
-    stub.t_target_fixed = t_target_fixed
-    # Two parallel accumulators after the canonical-grid refactor: `_full` over
-    # the whole cube; `_bbox` over the subject's geometric content region.
-    stub._per_phase_val_psnr_full = defaultdict(list)
-    stub._per_phase_val_psnr_bbox = defaultdict(list)
-    # `_motion` = voxels that move across the cardiac cycle (the val_motion panel).
-    stub._per_phase_val_psnr_motion = defaultdict(list)
-    stub.logging_conf = SimpleNamespace(log_freq=1)
-    # Mock scalar log to a list we can assert against.
-    stub._logged = []
-    stub._log_scalar = lambda key, val, step: stub._logged.append((key, float(val), step))
-    # State the per-subject val record needs (docs/60). Without these the call raises
-    # AttributeError from inside the per-sample loop, which the outer try/except swallows —
-    # silently truncating the per-phase accumulation for the rest of the batch.
-    stub._val_strata = defaultdict(list)
-    stub.epoch = 0
-    stub.steps = {"train": 0, "val": 0}
-    stub.run_log = SimpleNamespace(subject_row=lambda row: None)
-    stub._get_mri_dataset = lambda: None
-    stub._pitch_bucket = Trainer._pitch_bucket
-    stub._record_val_subject = Trainer._record_val_subject.__get__(stub)
-    # Bind only the methods we test.
-    stub._update_and_log_scalars = Trainer._update_and_log_scalars.__get__(stub)
-    stub._get_scalar_log_keys = lambda phase: []  # no scalar meters needed for these tests
-    return stub
+def _make_monitor(t_target_fixed=None, val_ds=None, wandb_writer=None, log_dir="/tmp"):
+    """A real Monitor with stub collaborators; scalars are captured in `m._logged`."""
+    from monitor import Monitor
+    log_conf = SimpleNamespace(log_freq=1, log_dir=log_dir, scalar_keys_to_log=None)
+    # The per-subject val record writes a row per sample; a missing run_log would raise
+    # inside the per-sample loop, which the outer try/except swallows — silently
+    # truncating the per-phase accumulation for the rest of the batch.
+    run_log = SimpleNamespace(subject_row=lambda row: None)
+    m = Monitor(log_conf, run_log, wandb_writer, val_ds, "cpu")
+    m.t_target_fixed = t_target_fixed
+    m._logged = []
+    m.scalar = lambda key, val, step: m._logged.append((key, float(val), step))
+    return m
+
+
+def _accumulate(m, data, phase="val"):
+    m._update_and_log_scalars(data, phase=phase, step=0, train_step=0, meters={})
 
 
 # ── 1. Per-phase accumulator behavior ─────────────────────────────────────────
 
 def test_per_phase_accumulator_buckets_correctly():
     """Val batches at different t_targets fill the right buckets."""
-    stub = _make_stub_trainer(t_target_fixed=None)
+    m = _make_monitor(t_target_fixed=None)
     # Three val batches, each B=2, varying t_targets.
     for t_targets in [[0, 1], [0, 5], [11, 3]]:
-        data = _make_data(t_targets)
-        stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
+        _accumulate(m, _make_data(t_targets))
     # Expected: bucket 0 has 2 entries; bucket 1 has 1; bucket 3 has 1; bucket 5 has 1; bucket 11 has 1.
-    counts = {t: len(v) for t, v in stub._per_phase_val_psnr_full.items()}
+    counts = {t: len(v) for t, v in m.val_psnr["full"].items()}
     assert counts == {0: 2, 1: 1, 5: 1, 3: 1, 11: 1}, f"unexpected per-phase counts: {counts}"
 
 
@@ -101,72 +87,76 @@ def _make_data_with_phases(t_targets, V_shape=(2, 4, 4), T=4):
 
 def test_per_phase_motion_accumulator_buckets_correctly():
     """When `phases` is present, motion PSNR buckets by t_target like full/bbox."""
-    stub = _make_stub_trainer(t_target_fixed=None)
+    m = _make_monitor(t_target_fixed=None)
     for t_targets in [[0, 1], [0, 5]]:
-        stub._update_and_log_scalars(_make_data_with_phases(t_targets), phase="val", step=0, loss_meters={})
-    counts = {t: len(v) for t, v in stub._per_phase_val_psnr_motion.items()}
+        _accumulate(m, _make_data_with_phases(t_targets))
+    counts = {t: len(v) for t, v in m.val_psnr["motion"].items()}
     assert counts == {0: 2, 1: 1, 5: 1}, f"unexpected motion counts: {counts}"
     # Every accumulated value is a finite PSNR.
-    assert all(torch.isfinite(torch.tensor(v)).all() for v in stub._per_phase_val_psnr_motion.values())
+    assert all(torch.isfinite(torch.tensor(v)).all() for v in m.val_psnr["motion"].values())
 
 
 def test_motion_accumulator_empty_without_phases():
     """No `phases` in the batch → motion accumulator stays empty, full still fills."""
-    stub = _make_stub_trainer(t_target_fixed=None)
-    stub._update_and_log_scalars(_make_data([0, 1]), phase="val", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr_motion) == 0
-    assert sum(len(v) for v in stub._per_phase_val_psnr_full.values()) == 2  # full path unaffected
+    m = _make_monitor(t_target_fixed=None)
+    _accumulate(m, _make_data([0, 1]))
+    assert len(m.val_psnr["motion"]) == 0
+    assert sum(len(v) for v in m.val_psnr["full"].values()) == 2  # full path unaffected
 
 
 def test_per_phase_accumulator_skipped_for_train_phase():
     """Train-phase calls must not populate the val accumulator."""
-    stub = _make_stub_trainer(t_target_fixed=None)
-    data = _make_data([3, 5])
-    stub._update_and_log_scalars(data, phase="train", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr_full) == 0, \
-        f"train phase incorrectly populated val accumulator: {dict(stub._per_phase_val_psnr_full)}"
+    m = _make_monitor(t_target_fixed=None)
+    _accumulate(m, _make_data([3, 5]), phase="train")
+    assert len(m.val_psnr["full"]) == 0, \
+        f"train phase incorrectly populated val accumulator: {dict(m.val_psnr['full'])}"
 
 
 def test_per_phase_accumulator_runs_when_t_target_fixed():
     """Fixed-target val NOW accumulates (bucketed under the single fixed phase) so the motion
     scalar can still be logged. Previously the whole block was skipped, which dropped motion —
     the headline metric — for single-phase runs. The per-phase full/bbox panels are filtered
-    out at LOG time (val_epoch), not here: this path just fills the accumulators.
+    out at LOG time (end_val), not here: this path just fills the accumulators.
     """
-    stub = _make_stub_trainer(t_target_fixed=0)
+    m = _make_monitor(t_target_fixed=0)
     # Two val batches (B=2 each), phases present so motion is computed; all t_target=0.
     for _ in range(2):
-        stub._update_and_log_scalars(_make_data_with_phases([0, 0]), phase="val", step=0, loss_meters={})
+        _accumulate(m, _make_data_with_phases([0, 0]))
     # Motion + full bucket under the one fixed phase 0 (4 samples total).
-    assert {t: len(v) for t, v in stub._per_phase_val_psnr_motion.items()} == {0: 4}, \
-        f"fixed-target motion not accumulated under phase 0: {dict(stub._per_phase_val_psnr_motion)}"
-    assert {t: len(v) for t, v in stub._per_phase_val_psnr_full.items()} == {0: 4}
+    assert {t: len(v) for t, v in m.val_psnr["motion"].items()} == {0: 4}, \
+        f"fixed-target motion not accumulated under phase 0: {dict(m.val_psnr['motion'])}"
+    assert {t: len(v) for t, v in m.val_psnr["full"].items()} == {0: 4}
+
+
+def test_fixed_phase_logs_only_motion_panels():
+    """The log-time half of the gate above: single-phase val emits val/psnr/motion only."""
+    m = _make_monitor(t_target_fixed=0)
+    _accumulate(m, _make_data_with_phases([0, 0]))
+    m._log_per_phase_psnr(step=5)
+    names = [k for k, _, _ in m._logged]
+    assert names and all(k.startswith("val/psnr/motion/") for k in names), names
 
 
 def test_per_phase_accumulator_handles_missing_keys():
     """If the batch is missing V_canon/V_gt/t_target (legacy supervised pipeline?),
     the diagnostic should silently skip — never raise."""
-    stub = _make_stub_trainer(t_target_fixed=None)
-    data = {"images": torch.zeros(1, 1)}  # only the batch-size key, nothing else
-    stub._update_and_log_scalars(data, phase="val", step=0, loss_meters={})
-    assert len(stub._per_phase_val_psnr_full) == 0
+    m = _make_monitor(t_target_fixed=None)
+    _accumulate(m, {"images": torch.zeros(1, 1)})  # only the batch-size key, nothing else
+    assert len(m.val_psnr["full"]) == 0
 
 
 # ── 2. Visual diagnostics ─────────────────────────────────────────────────────
 
 def test_motion_mask_example_logs_under_val_motion():
-    """`_log_motion_mask_example` renders an image and logs it under `media_others/val_motion_mask_example`;
+    """`log_motion_mask_example` renders an image and logs it under `media_others/val_motion_mask_example`;
     and returns silently when there's no wandb writer."""
     import matplotlib
     matplotlib.use("Agg")
     import numpy as np
-    from trainer import Trainer
+    from monitor_panels import log_motion_mask_example
 
     # No wandb → silent no-op.
-    stub = SimpleNamespace(wandb_writer=None)
-    stub._get_mri_dataset = lambda: None
-    stub._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub)
-    stub._log_motion_mask_example(0)  # must not raise
+    log_motion_mask_example(None, None, (0,), 0)  # must not raise
 
     # With wandb + a mock dataset → logs exactly the media_others/val_motion_mask_example key.
     class MockDS:
@@ -185,37 +175,22 @@ def test_motion_mask_example_logs_under_val_motion():
             return {"phases": phases, "anatomy_bbox": np.array([0, D, 0, H, 0, W])}
 
     logged = []
-    stub2 = SimpleNamespace()
-    stub2.wandb_writer = SimpleNamespace(log=lambda key, val, step: logged.append((key, step)))
-    stub2._get_mri_dataset = lambda: MockDS()
-    # `_ED_ES_SUBJECTS` is a property on the real class; a SimpleNamespace stub needs the
-    # resolved value. One index per source, matching what the property would compute.
-    stub2._ED_ES_SUBJECTS = (0, 6, 12)
-    stub2._log_motion_mask_example = Trainer._log_motion_mask_example.__get__(stub2)
-    stub2._log_motion_mask_example(99)
+    writer = SimpleNamespace(log=lambda key, val, step: logged.append((key, step)))
+    # One index per source, matching what Monitor.visual_subjects would compute.
+    log_motion_mask_example(writer, MockDS(), (0, 6, 12), 99)
     assert ("media_others/val_motion_mask_example", 99) in logged, f"image not logged: {logged}"
 
 
 def test_filmstrip_skipped_without_wandb():
     """No wandb_writer → method returns silently, no error."""
-    from trainer import Trainer
-    stub = SimpleNamespace()
-    stub.wandb_writer = None
-    stub._get_mri_dataset = lambda: None
-    stub._log_cardiac_cycle_filmstrip = Trainer._log_cardiac_cycle_filmstrip.__get__(stub)
-    stub._log_cardiac_cycle_filmstrip(log_step=0)  # must not raise
+    m = _make_monitor()
+    m._log_cardiac_cycle_filmstrip(model=None, step=0)  # must not raise
 
 
 # ── 3. Identity baseline gating ───────────────────────────────────────────────
 
 def test_baseline_skipped_when_no_dataset():
-    """If `_get_mri_dataset()` returns None, baseline computation must skip gracefully."""
-    from trainer import Trainer
-    stub = SimpleNamespace()
-    stub.t_target_fixed = None
-    stub.device = "cpu"
-    stub.logging_conf = SimpleNamespace(log_dir="/tmp")
-    stub._get_mri_dataset = lambda: None
-    stub._log_scalar = lambda *a, **kw: None
-    stub._compute_identity_baseline = Trainer._compute_identity_baseline.__get__(stub)
-    stub._compute_identity_baseline()  # must not raise
+    """With no val dataset, baseline computation must skip gracefully."""
+    m = _make_monitor()
+    m._compute_identity_baseline()  # must not raise
+    assert m.identity_baseline == {}
