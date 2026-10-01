@@ -1,4 +1,4 @@
-"""MRIDataset — VGGT-MRI dataset, native-z canonical-grid edition (docs/58).
+"""MRIDataset — VGGT-MRI dataset on the in-plane canonical grid with native z (docs/58).
 
 Each subject's 12 cine phases live on disk as `sax_frame_{tt:02d}.nii.gz`. A
 monai `PersistentDataset` preprocess pipeline (see `training/data/preprocess.py`)
@@ -26,11 +26,11 @@ multi-phase contract, and produces:
                                                             PHYSICAL (z_mm/Z_HALF_MM)
                                                             so it's also comparable
                                                             across subjects despite D
-                                                            varying (docs/58)
+                                                            varying
     z_indices       (S, 1)   (z_i - (D-1)/2) * dz / Z_HALF_MM
     gt_target_volume (D, H, W) = phases_splat[t_target]
     anatomy_bbox    (6,) int64  — (z0, z1, y0, y1, x0, x1) from content_mask
-    content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad (x/y only now)
+    content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad (x/y only)
     phases          (T, D, H, W) float16 — full canonical bundle, needed by
                                           the GPU aug (gpu_aug.py) to augment all 12
                                           phases consistently then re-extract
@@ -38,12 +38,6 @@ multi-phase contract, and produces:
     t_target        (1,) int64
     dz_mm           (1,) float32 — this subject's own native z spacing
     z_scale         (1,) float32 — Z_HALF_MM / dz_mm; required by splat.py
-
-Drops (vs the legacy implementation):
-    - scipy.ndimage.map_coordinates / cv2.resize / np.pad of inputs
-    - per-subject `half_extent` / `center_mm` normalization
-    - DVF NIfTI loading + `gt_dvfs` / `scale_factors` (deprecated)
-    - cardiac_mask_vol loading (intensity mask was a side-effect of letterbox)
 """
 
 from __future__ import annotations
@@ -76,12 +70,10 @@ from data.preprocess import (
 # ──────────────────────────────────────────────────────────────────────────────
 # Canonical-grid constants (single source of truth; mirror preprocess.py)
 # ──────────────────────────────────────────────────────────────────────────────
-# In-plane shape (H, W) — FIXED for every subject (native-z only stops resampling Z;
-# X/Y are still resampled to this same 256×256 grid for everyone). There is no
-# fixed D anymore: each subject's canonical grid is (D, 256, 256) with D = that
-# subject's own native slice count (docs/58).
+# In-plane shape (H, W) — FIXED for every subject. There is no fixed D: each
+# subject's canonical grid is (D, 256, 256) with D = its own native slice count.
 CANONICAL_HW = (TARGET_SHAPE[1], TARGET_SHAPE[0])  # (256, 256)
-INPUT_IMG_SIZE = 518  # default model-input resolution (37×14; any multiple of 14 runs — docs/73)
+INPUT_IMG_SIZE = 518  # default model-input resolution (37×14; any multiple of 14 runs)
 
 
 def validate_patch_grid(target_size, patch_size):
@@ -146,8 +138,7 @@ class MRIDataset(Dataset):
         patch_size=14,
     ):
         """
-        Args mirrors the legacy MRIDataset for Hydra-config compatibility.
-        New args:
+        Args:
             cache_dir: where monai PersistentDataset stores cached tensors.
                        Defaults to /tmp/vggt-mri_<USER>_monai_cache.
         """
@@ -157,13 +148,11 @@ class MRIDataset(Dataset):
         self.split_file = os.path.abspath(split_file) if split_file else None
         self.mode = mode
         self.num_slices = num_slices
-        # Input-image resolution R (config `img_size`). Fully threaded since the native-splat
-        # port (2026-08-13): `get_data`'s own resize and the `scanner_coords` normalization
-        # read it here, and `gpu_aug`/`respiratory` extraction derive R from the batch's own
-        # scanner_coords (`R = batch["scanner_coords"].shape[-2]`), so every `images`
-        # builder matches. Any
-        # multiple of the configured patch size runs — the pretrained position embeddings
-        # are interpolated dynamically. 224 is trained/validated for DINOv2 (docs/72); changing R starts
+        # Input-image resolution R (config `img_size`). `get_data`'s own resize and the
+        # `scanner_coords` normalization read it here, and `gpu_aug`/`respiratory` extraction
+        # derive R from the batch's own scanner_coords (`R = batch["scanner_coords"].shape[-2]`),
+        # so every `images` builder matches. Any multiple of the configured patch size runs —
+        # the pretrained position embeddings are interpolated dynamically. Changing R starts
         # a fresh numeric series — it is not a free knob for comparisons.
         self.target_size, self.patch_size = validate_patch_grid(target_size, patch_size)
         # See the block in get_data: skip building `images` because the trainer's
@@ -185,8 +174,8 @@ class MRIDataset(Dataset):
         # Reference-slice conditioning: when True, slot 0 is forced to OBSERVE the
         # target phase at the mid-ventricular plane (z = bbox z-center), and the remaining
         # slots are scattered with that plane excluded. The model reads the target phase from
-        # slot-0's image content (via the native camera_token anchor) instead of a target_t
-        # index. Default False → legacy decoupled sampling (slot 0 not special).
+        # slot-0's image content (via the native camera_token anchor). Default False → slot 0
+        # is not special.
         self.reference_slot = bool(reference_slot)
         # One-frame-per-slice (the sparse-acquisition extreme): when True, S is forced per subject
         # to the subject's in-FOV plane count so every in-bbox z plane appears EXACTLY once (no
@@ -197,22 +186,18 @@ class MRIDataset(Dataset):
         # plane's one frame).
         self.one_frame_per_slice = bool(one_frame_per_slice)
 
-        # ── Subject discovery (same split-file format as before) ──────────
+        # ── Subject discovery ─────────────────────────────────────────────
         self.subjects = self._find_subjects()
         logging.info(f"MRIDataset [{split}]: {len(self.subjects)} subjects from {self.split_file}")
-        # Exactly one pass over the cohort per epoch. NOT `max(1000, N)` (docs/59 F6): with
-        # N=940 that gave 1000 draws indexed `seq_index % 940`, so the 60-subject residual
-        # `subj_idx ∈ 0..59` was drawn TWICE every epoch — a set that is invariant to seed and
-        # epoch, so it never averages out. Since the split file is written `sorted()` and
-        # `ACDC_sax/…` sorts first, those 60 were all ACDC, oversampling the finest-pitch,
-        # pathology-labelled source 1.60× (14.5% of samples on 9.0% of subjects) — precisely
-        # the imbalance pooling was meant to remove.
+        # Exactly one pass over the cohort per epoch. A fixed epoch length not equal to N
+        # (e.g. `max(1000, N)`) would draw the same `seq_index % N` residual subjects twice
+        # every epoch, a bias that never averages out over seeds or epochs.
         self.len_train = len(self.subjects)
 
         # ── EF val sweep (opt-in, val-only): reconstruct each subject at its GT ED and ES ──
         # instead of the coupled seq_index%T phase. Builds an explicit (subj_idx, t_target) list
         # of length 2*N (all ED first, then all ES) from cardiac_phase.csv, so seq_index deterministically
-        # enumerates a 30x{ED,ES} sweep. Needed for the predicted-EF metric (docs: EF-aware val).
+        # enumerates an N x {ED,ES} sweep. Needed for the predicted-EF metric.
         self.val_targets = None
         self.cardiac_phase_csv = None
         if ef_val_sweep and self.split.lower() == "val" and self.subjects:
@@ -226,12 +211,9 @@ class MRIDataset(Dataset):
             # `[(i, ED) for every subject] + [(i, ES) for every subject]`, i.e. 2N long, and
             # `get_data` indexes it by `seq_index % len(val_targets)`. Leaving len_train at N
             # caps `__len__` (and therefore the dataloader) at N, so `seq_index` only ever
-            # reaches 0..N-1 — the ED half — and EVERY ES entry is silently unreachable.
-            # EF = (EDV - ESV)/EDV, so that leaves the predicted-EF metric with no ES volume
-            # and nothing to compute from; `trainer.py`'s `limit_val_batches = len(val_targets)`
-            # cannot rescue it, because a dataloader cannot yield more samples than the dataset
-            # declares. Measured before this line existed: ES half reached 0/133, and only 133
-            # of the expected 266 volumes were written to `ef_tmp/pred/`.
+            # reaches 0..N-1 — the ED half — and EVERY ES entry is silently unreachable
+            # (`trainer.py`'s `limit_val_batches` cannot rescue it: a dataloader cannot yield
+            # more samples than the dataset declares).
             self.len_train = len(self.val_targets)
 
         # ── monai PersistentDataset cache ─────────────────────────────────
@@ -280,7 +262,7 @@ class MRIDataset(Dataset):
                     else:
                         missing.append(path)
                         logging.warning(f"MRIDataset: subject path not found, skipping: {path}")
-        # Post-condition (docs/59 F17): the split file is the contract for how many subjects
+        # Post-condition: the split file is the contract for how many subjects
         # this run trains/evaluates on. Warn-and-skip alone means a rename or a GPFS mount
         # hiccup silently shrinks the cohort, with only a startup warning that is easy to lose
         # — and every downstream number (epoch length, val means) would quietly change.
@@ -310,8 +292,7 @@ class MRIDataset(Dataset):
                 missing.append(sid); continue
             ed, es = ed_es[sid]
             # Fail loud if a subject's ED/ES falls outside the canonical phase count — else
-            # get_data's `% T_total` would silently reconstruct the WRONG phase. All CMRx val
-            # subjects have T=12 (ED/ES < 12); this guards a future split that adds T!=12 data.
+            # get_data's `% T_total` would silently reconstruct the WRONG phase.
             if not (0 <= ed < NUM_PHASES and 0 <= es < NUM_PHASES):
                 raise ValueError(f"ef_val_sweep: {sid} has ED={ed}/ES={es} outside [0,{NUM_PHASES}); "
                                  "incompatible with the canonical 12-phase grid.")
@@ -327,7 +308,7 @@ class MRIDataset(Dataset):
         """One DataLoader sample: `get_data` at the slot budget `num_slices`, as tensors.
 
         The budget is passed explicitly (not left to `get_data`'s fallback) because that is
-        what arms the docs/59 F19 `S > budget` guard.
+        what arms the `S > budget` guard in `_sample_slots`.
         """
         return to_tensors(self.get_data(seq_index=seq_index, img_per_seq=self.num_slices))
 
@@ -348,7 +329,7 @@ class MRIDataset(Dataset):
         cached = self.cache[subj_idx]
         # ConcatItemsd(dim=0) stacks 12 × (1, X, Y, Z) → (T=12, X=256, Y=256, Z=D)
         # (the per-phase channel dim is absorbed into T; D = this subject's own native
-        # slice count under native-z). content_mask keeps its channel dim: (1, 256, 256, D).
+        # slice count). content_mask keeps its channel dim: (1, 256, 256, D).
         phases = cached["phases"]                # (T, X, Y, Z)
         content_mask = cached["content_mask"]    # (1, X, Y, Z)
         dz = float(cached["dz_mm"])               # this subject's own native z spacing (mm)
@@ -396,7 +377,7 @@ class MRIDataset(Dataset):
             "phases": phases_full,
             # This subject's own native z spacing (mm) and the derived voxel-index scale
             # (z_scale = Z_HALF_MM / dz) — required by splat.py's push/pull, loss.py's direct
-            # splat/sample_volume call sites, and the respiratory mm->voxel conversion (docs/58).
+            # splat/sample_volume call sites, and the respiratory mm->voxel conversion.
             "dz_mm": np.array([dz], dtype=np.float32),
             "z_scale": np.array([z_scale], dtype=np.float32),
             # Stable per-sample id → deterministic val respiratory seeding (mirrors
@@ -424,8 +405,8 @@ class MRIDataset(Dataset):
         """
         # ── S = requested slot budget (multi-frame; NOT capped by T or bbox) ──
         # Multi-frame-per-slice allows phase reuse (t with replacement) and plane
-        # reuse (LV-weighted extras), so S is no longer clamped to T_total or the
-        # in-FOV z extent. Full z-coverage is GUARANTEED below (every in-bbox plane
+        # reuse (extras), so S is not clamped to T_total or the in-FOV z extent.
+        # Full z-coverage is GUARANTEED below (every in-bbox plane
         # appears ≥once), so V_canon has no coverage holes and the full-volume L1 loss
         # stays valid.
         S = img_per_seq or self.num_slices
@@ -444,10 +425,9 @@ class MRIDataset(Dataset):
         # leak): train → global `random` (fresh each epoch); val → a private
         # `random.Random(seq_index)` (reproducible across epochs/runs).
         #
-        # REFERENCE-SLOT MODE (self.reference_slot, docs/25): slot 0 OBSERVES the
-        # target phase at z_mid; the model reads the target phase from slot-0's image
-        # content via the native camera_token anchor (NOT a target_t index). z_mid is
-        # still covered by other slots/extras — multi-frame redundancy there is desired.
+        # REFERENCE-SLOT MODE (self.reference_slot): slot 0 OBSERVES the target phase at
+        # z_mid; the model reads the target phase from slot-0's image content via the
+        # native camera_token anchor. z_mid may still be drawn again as an extra.
         rng = random if self.split == "train" else random.Random(seq_index)
 
         z_mid = (bbox_z0 + bbox_z1) // 2
@@ -464,20 +444,15 @@ class MRIDataset(Dataset):
             # Force S to the in-FOV plane count → every plane covered exactly once, n_extra=0
             # (the sparse one-frame-per-slice extreme). Ignores the incoming budget S.
             #
-            # ⚠️ CONSEQUENCE (docs/59 F9): under native-z, z is never zero-padded, so
-            # `anatomy_bbox` z-range is always [0, D) ⇒ **S == D exactly**. That makes
-            # `num_slices` stale as a description of the slot count, and — the
-            # operationally important part — the memory budget is no longer a knob at all:
-            # `max_img_per_gpu` was DELETED (docs/59 F9) and batch size is pinned to 1 in
-            # data/loader.py, because under native-z two subjects with the same D but
-            # different pitch collate SILENTLY and would share one z_scale. To cut memory, cut
-            # D (or the model). `num_slices` survives as the S cap enforced just below.
+            # ⚠️ z is never zero-padded, so `anatomy_bbox` z-range is always [0, D) ⇒
+            # **S == D exactly**. Memory is therefore not a knob here: batch size is pinned
+            # to 1 in data/loader.py, because two subjects with the same D but different
+            # pitch would collate SILENTLY and share one z_scale. To cut memory, cut D (or
+            # the model). `num_slices` survives as the S cap enforced just below.
             budget = S
             S = len(z_sequence) + len(coverage)
-            # docs/59 F19: S is now set by the DATA, so nothing else bounds it. Max D in the
-            # current train/val split is 18, but the pool holds D=19/20/21 subjects (all in
-            # test today) — a re-seeded split would silently request more slots than the
-            # memory budget was sized for. Fail loudly instead of OOM-ing mysteriously.
+            # S is set by the DATA, so nothing else bounds it: a subject with a larger D
+            # than the budget was sized for must fail loudly instead of OOM-ing mysteriously.
             #
             # Gated on `img_per_seq is not None`, i.e. only when the caller passed the budget
             # explicitly (`__getitem__` always does). A bare `get_data()` — tools, tests, the
@@ -569,16 +544,14 @@ class MRIDataset(Dataset):
 
             # scanner_coords: per-pixel canonical (x_norm, y_norm, z_norm) for this z.
             # z_norm is PHYSICAL (z_mm / Z_HALF_MM), NOT a fraction of D — D varies per
-            # subject under native-z, but Z_HALF_MM is the same ruler for everyone (docs/58).
+            # subject, but Z_HALF_MM is the same ruler for everyone.
             # z is measured from THIS subject's own mid-plane ((D-1)/2), at its own native
             # spacing dz.
             z_val = (z_i - (D - 1) / 2.0) * dz / Z_HALF_MM
-            # A real `raise`, NOT an `assert` (docs/59 F18): asserts are stripped under
-            # `python -O`, and there is only 5.9% headroom here (max half-span over the
-            # pooled cohort is 85.0 mm of 90). If this were skipped, |z_norm| > 1 would flow
-            # silently into ZIndexEmbedder, whose sinusoids have period 2 — two planes of one
-            # subject would alias to the SAME embedding with no crash. One protocol step away:
-            # D=20 @10mm = 190mm, or D=17 @12mm = 192mm.
+            # A real `raise`, NOT an `assert` (asserts are stripped under `python -O`), and
+            # headroom is small. If this were skipped, |z_norm| > 1 would flow silently into
+            # ZIndexEmbedder, whose sinusoids have period 2 — two planes of one subject would
+            # alias to the SAME embedding with no crash.
             if abs(z_val) > 1.0 + 1e-4:
                 raise ValueError(
                     f"z_norm {z_val:.4f} exceeds Z_HALF_MM={Z_HALF_MM} half-span "
@@ -618,10 +591,8 @@ class MRIDataset(Dataset):
             roi_xyz = np.asarray(nib.load(heart_roi_path).dataobj)          # (X, Y, Z)
             roi_candidate = np.ascontiguousarray(
                 np.transpose(roi_xyz, (2, 1, 0)) > 0).astype(np.uint8)      # (D, H, W)
-            # heart_roi_canonical.nii.gz files predate native-z and may still be on the
-            # OLD fixed (256, 256, 12) grid — warn-and-skip rather than assert, so the ROI
-            # regeneration (workstream: extend assemble_whs.py to all 5 sources) can lag
-            # behind this code change without crashing every batch in the meantime.
+            # Some heart_roi_canonical.nii.gz files may be on a stale grid — warn-and-skip
+            # rather than assert so a stale ROI never crashes a batch.
             if roi_candidate.shape == (D, H_can, W_can):
                 heart_roi_np = roi_candidate
             else:

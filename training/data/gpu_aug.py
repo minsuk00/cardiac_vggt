@@ -1,7 +1,7 @@
 """batchaug GPU augmentation pipeline for VGGT-MRI.
 
 Operates on the cached canonical `(B, T=12, D, H=256, W=256)` phases tensor
-(`D` = this subject's own native slice count, 5-21 — native-z, docs/58; NOT a fixed 12)
+(`D` = this subject's own native slice count, 5-21; NOT a fixed 12)
 that `MRIDataset.get_data` puts in the batch under the `phases` key. One spatial
 affine is sampled per subject (B-dim); the same affine is applied to all 12
 T-phases (T as channel) AND to the `content_mask`, so:
@@ -17,25 +17,9 @@ After aug, the trainer:
     2. Re-extracts `S` input slices from `phases_aug` at the original (t, z) pairs
     3. Recomputes `anatomy_bbox` from the augmented content_mask
 
-batchaug backend is forced to `"pytorch"` at import, and A/B-measured 2026-07-24
-(`tools/ab_batchaug_backend.py`, docs/49) — keep it. batchaug's triton backend
-overrides ONLY intensity transforms (`triton/geometric/` is empty), so of our 3
-active transforms just RandAdjustContrastd + RandBiasFieldd differ; the expensive
-RandAffined is the same code either way. Measured on an A40 with seeded-paired
-interleaved timing (200 rounds): triton is **not faster** — full pipeline
--0.048 ms +/- 0.0044 SEM (0.993x, triton marginally SLOWER), and isolated at
-prob=1.0 -0.013 ms +/- 0.0104 (0.990x, null). Aug is <0.2% of a train step
-anyway, and triton is not bitwise identical (~2e-6). So: no upside, real
-reproducibility cost.
-
-Two measurement traps, both of which produced WRONG published numbers before
-being caught (docs/49): timing must be **seeded-paired** (both backends given
-identical draws per round) or the affine's Bernoulli gate injects ~1.6 ms of
-noise that swamps the effect — unseeded sd 1.139 ms vs seeded 0.062 ms; and
-cross-process GPU clock drift moved pytorch's own median 2.84 -> 2.34 ms, which
-is how an earlier run manufactured a phantom "1.18x triton win". Note also that
-intensity-transform COST is *not* probability-gated: both backends compute
-unconditionally and gate only the output via `torch.where`.
+batchaug backend is forced to `"pytorch"` at import — keep it. The triton backend
+overrides only the intensity transforms, is not faster here, and is not bitwise
+identical, so it costs reproducibility for no speedup (docs/49).
 """
 
 from __future__ import annotations
@@ -59,7 +43,7 @@ from data.respiratory import (
 )
 
 # Local constants (kept in sync with preprocess.py / mri_dataset.py).
-INPUT_IMG_SIZE = 518   # legacy default for standalone callers; gpu_augment_batch derives R from scanner_coords
+INPUT_IMG_SIZE = 518   # default for standalone callers; gpu_augment_batch derives R from scanner_coords
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -92,7 +76,7 @@ def build_gpu_transforms(aug_cfg=None):
     if tier != "aggressive":
         raise ValueError(f"unknown aug tier: {tier!r} (only 'aggressive' exists)")
     logging.info(f"GPU augmentation enabled: tier={tier}")
-    # ARM heart-L1 fix (2026-08-11): `heart_roi_canonical` MUST be warped by the same spatial
+    # `heart_roi_canonical` MUST be warped by the same spatial
     # affine as `phases`/`content_mask` — the heart-L1 loss reads it at TRAIN time against the
     # augmented gt_target_volume, and an unwarped ROI is misaligned with the rotated heart
     # (rotation is ±180°). batchaug tolerates missing keys (base.py `if key in d`),
@@ -113,8 +97,8 @@ def build_gpu_transforms(aug_cfg=None):
     # requires it). See _build_ood_post_ops for why they are not Compose entries.
     transforms = [
         # W-flip: the objective is exactly mirror-equivariant (inputs, gt_target_volume and
-        # scanner_coords all derive from the same array), and ~29% of the pooled CMRx cohort is
-        # mirrored on disk anyway.
+        # scanner_coords all derive from the same array), and part of the cohort is mirrored
+        # on disk anyway.
         _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
         _B.RandAffined(
             keys=keys,
@@ -135,15 +119,14 @@ def build_gpu_transforms(aug_cfg=None):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Aggressive-tier acquisition-artifact post-ops (docs/63 §5)
+# Aggressive-tier acquisition-artifact post-ops (docs/63)
 # ──────────────────────────────────────────────────────────────────────────────
 def _apply_ghosting(x, num_ghosts, intensity, axis):
-    """Phase-encode ghosting (docs/63 §3.4, NOT in batchaug): attenuate periodic
+    """Phase-encode ghosting (NOT in batchaug): attenuate periodic
     k-space lines along one in-plane axis → faint anatomy copies offset by
     FOV/num_ghosts. Comb period = num_ghosts k-LINES (a period-2 comb is the
-    classic half-FOV Nyquist ghost) — NOT axis_len//num_ghosts, which docs/63's
-    snippet had inverted (that puts the replicas ~num_ghosts PIXELS away, i.e. a
-    faint local ripple, no ghosts; prove-it 2026-08-12, blob-probe verified).
+    classic half-FOV Nyquist ghost) — NOT axis_len//num_ghosts (that puts the
+    replicas ~num_ghosts PIXELS away, i.e. a faint local ripple, no ghosts).
     The comb starts at step//2, NOT 0, so the DC line (global brightness) is
     never touched, and it is unioned with its k-space mirror (N−i) so the
     filtered spectrum of a real image stays Hermitian — otherwise `.real` would
@@ -169,7 +152,7 @@ def _apply_ghosting(x, num_ghosts, intensity, axis):
 
 
 def _build_ood_post_ops(keys, mode_dict):
-    """Build the docs/63 acquisition-artifact step that runs AFTER the affine
+    """Build the acquisition-artifact step that runs AFTER the affine
     Compose (gpu_augment_batch applies it as `transforms.vggt_post_ops`,
     inside the same try/except — a failure discards the whole aug_dict, so the
     batch reverts to fully UN-augmented, dropping the successful affine too).
@@ -304,7 +287,7 @@ def gpu_augment_batch(batch, transforms, device,
 
     On EVERY path — including both augmentations off — this function finalizes the
     batch for the loss: the slices are extracted ONCE at native resolution into
-    `batch["images_splat"]` (what the loss splats, docs/73), and `batch["images"]`
+    `batch["images_splat"]` (what the loss splats), and `batch["images"]`
     (the model input, a resample of it) is built when absent/stale. Consequently the
     batch is never "returned unchanged", and mutating `images` afterwards does NOT
     affect the render — rewrite `images_splat` too (or re-call this with aug off).
@@ -348,14 +331,14 @@ def _apply_affine(batch, transforms, device):
     # batchaug grid_sample needs float; mask keeps 0/1 under nearest interp.
     mask_f = mask.to(device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
     aug_dict = {"phases": phases_f, "content_mask": mask_f}
-    # ARM heart-L1 fix: warp the train-time loss ROI with the same affine (nearest).
+    # Warp the train-time loss ROI with the same affine (nearest).
     # get_data omits the key for subjects without a valid ROI — then nothing is added
     # and the batchaug transforms skip it (missing keys are tolerated).
     heart_roi = batch.get("heart_roi_canonical")
     if heart_roi is not None:
         aug_dict["heart_roi_canonical"] = heart_roi.to(
             device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
-    # docs/63 acquisition-artifact post-ops (isotropic zoom / low-res / Gibbs /
+    # Acquisition-artifact post-ops (isotropic zoom / low-res / Gibbs /
     # ghosting), stored on the Compose by build_gpu_transforms. Fetched OUTSIDE the
     # try so a transforms object without them fails loudly instead of silently
     # training un-augmented.
@@ -390,7 +373,7 @@ def _apply_affine(batch, transforms, device):
 
     batch["phases"] = phases_aug.to(phases.dtype)
     batch["content_mask"] = mask_aug_u8
-    # ARM heart-L1 fix: write the warped ROI back (same 0.5-threshold → uint8 as the
+    # Write the warped ROI back (same 0.5-threshold → uint8 as the
     # content mask; nearest interp keeps it 0/1 but the threshold is cheap insurance).
     if heart_roi is not None and "heart_roi_canonical" in aug_dict:
         batch["heart_roi_canonical"] = (
@@ -411,9 +394,9 @@ def _apply_respiratory(batch, respiratory_cfg, device, R, train, resp_generator)
             "respiratory val augmentation requires batch['seq_index'] for determinism"
         )
     phases_cur = batch["phases"].to(device=device, non_blocking=True)
-    D = phases_cur.shape[2]                    # this subject's own native slice count (native-z)
-    # One scalar dz for the whole batch — valid only at batch_size==1. Guard it
-    # (docs/59 F7): same-D-different-dz subjects collate fine, and row 1 would then be
+    D = phases_cur.shape[2]                    # this subject's own native slice count
+    # One scalar dz for the whole batch — valid only at batch_size==1. Guard it:
+    # same-D-different-dz subjects collate fine, and row 1 would then be
     # breathed at row 0's scale, a silent through-plane geometry error.
     _dz = batch["dz_mm"].reshape(-1)
     if not bool((_dz == _dz[0]).all()):
@@ -449,7 +432,7 @@ def _extract_inputs(batch, device, R, rebuild_images):
     so train and val render from the same native content; build the model input `images`
     when `rebuild_images` (affine moved the anatomy) or when it is absent — the dataset
     deferred it (`defer_input_images`), or affine failed on a deferred batch. Otherwise the
-    dataset's own `images` stay (~1 ULP vs this extraction, docs/62 §3)."""
+    dataset's own `images` stay (~1 ULP vs this extraction)."""
     # The fp32 cast is exact for fp16 phases, and extract_slices_from_phases promotes to fp32
     # anyway, so this matches the uncast path bit for bit.
     phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)

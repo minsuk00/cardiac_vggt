@@ -1,6 +1,6 @@
 """The train/val DataLoader: a plain torch DataLoader over an MRIDataset.
 
-Batch size is pinned to 1 (docs/59 F9): under native-z every subject has its own D and dz,
+Batch size is pinned to 1: every subject has its own D and dz,
 and two subjects with the same D but different pitch collate SILENTLY into one batch that
 the loss/aug then splat at a single `z_scale`. To trade memory, change D or the model.
 

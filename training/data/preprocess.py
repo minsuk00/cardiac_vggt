@@ -2,7 +2,7 @@
 
 Produces a cached `(T=12, 1, X=256, Y=256, Z=D)` float16 tensor per subject in
 monai (X, Y, Z) axis order, where `D` is THAT SUBJECT'S OWN native slice count
-(native-z, docs/58 — z is never resampled). The downstream consumer
+(z is never resampled; docs/58). The downstream consumer
 (`mri_dataset.get_data`) permutes to splat-order `(T, D, H=256, W=256)` once at
 cache-load time. `dz_mm` (that subject's real slice pitch) is also cached.
 
@@ -10,8 +10,7 @@ Key invariants this pipeline preserves:
 - In-plane, all subjects map to the same physical extent: 358.4 mm × 358.4 mm.
   Z is NOT resampled — each subject keeps its own native pitch/plane count.
 - Intensity is normalized against phase_00's percentiles for ALL 12 phases,
-  so the unsupervised |V_canon - V_gt| loss isn't biased by per-phase drift
-  (matches the legacy contract at mri_dataset.py:155-169).
+  so the unsupervised |V_canon - V_gt| loss isn't biased by per-phase drift.
 - No interpolation of input slices at training time — Spacingd does the
   in-plane resample once, results are cached on /tmp.
 """
@@ -39,16 +38,15 @@ TARGET_SPACING = (1.4, 1.4, 0.0)        # mm per voxel; ~4% X-downsample for mos
                                         # Z=0.0 → monai's Spacingd keeps each subject's own NATIVE z spacing
                                         # (non-positive pixdim = "use the original", see monai Spacing docs).
                                         # Forcing a fixed z pitch onto a foreign grid destroys planes that
-                                        # don't coincide with it (push/pull mismatch, ≤25dB even with a
-                                        # perfect model) — see docs/58 §6.
+                                        # don't coincide with it (push/pull mismatch).
 TARGET_SHAPE = (256, 256, -1)           # (X, Y, Z) in monai order. Z=-1 → ResizeWithPadOrCropd leaves the
-                                        # (unresampled) z slice count alone — D varies per subject, native-z.
+                                        # (unresampled) z slice count alone — D varies per subject.
 NUM_PHASES = 12
 
 # Half-range (mm) of the physical z-coordinate: z_norm = z_mm / Z_HALF_MM, used everywhere z is
 # normalized to [-1, 1] (mri_dataset.py scanner_coords/z_indices, splat.py z_scale). 90, not the
 # geometric half-extent 72, because ZIndexEmbedder's sinusoids have period 2 in z_norm and would
-# alias within one subject's own stack above ~168mm span (measured pool max: 170mm) — see docs/58 §6.3.
+# alias within one subject's own stack above ~168mm span (docs/58 §6.3).
 Z_HALF_MM = 90.0
 
 
@@ -59,7 +57,7 @@ class ScaleIntensityByT0PercentilesD(MapTransform):
     """Compute intensity percentiles on `ref_key` and apply the same clip-and-
     rescale to all `keys`.
 
-    Preserves mri_dataset.py:155-169's invariant: every phase is normalized
+    Every phase is normalized
     against t=0's intensity statistics so the unsupervised |V_canon - V_gt|
     loss isn't biased by per-phase intensity drift. Output is float in [0, 1].
     """
@@ -147,7 +145,7 @@ class RecordSpacingD(MapTransform):
     """Record the actual Z voxel spacing (mm) of `ref_key` into `output_key`, as a
     plain float, before spatial meta is stripped.
 
-    Under native-z (no z resampling), this is each subject's own acquired slice
+    Since z is not resampled, this is each subject's own acquired slice
     pitch — needed downstream (`z_scale = Z_HALF_MM / dz`) to convert between the
     physical z coordinate and this subject's own voxel index (`splat.py`,
     `mri_dataset.py`). Must run after Spacingd/ResizeWithPadOrCropd (spacing is
@@ -246,14 +244,14 @@ def get_canonical_transforms(
     """Build the deterministic monai pipeline for `PersistentDataset`.
 
     Output dict has `phases`, of shape `(T=num_phases, X, Y, Z)` in monai axis
-    order (Z = this subject's own native slice count, native-z), plus `dz_mm`
+    order (Z = this subject's own native slice count), plus `dz_mm`
     (that subject's native z spacing, a plain float). `mri_dataset.get_data` is
     responsible for permuting `phases` to splat-order at load time.
     """
     phase_keys = [f"phase_{t:02d}" for t in range(num_phases)]
     # Mask propagates through the spatial transforms alongside the phases so its
     # final shape is canonically (1, 256, 256, D) in monai (X, Y, Z) order — Z is this
-    # subject's own native slice count under native-z (docs/58), never resampled — and
+    # subject's own native slice count, never resampled — and
     # marks which voxels came from native data vs zero-pad.
     spatial_keys = phase_keys + ["content_mask"]
     # Per-key interpolation mode: phases bilinear (smooth), mask nearest (binary).
@@ -276,13 +274,10 @@ def get_canonical_transforms(
                 keys=phase_keys, ref_key=phase_keys[0], lower=lower, upper=upper
             ),
             ConcatItemsd(keys=phase_keys, name="phases", dim=0),
-            # Drop the per-phase sources once they are stacked (docs/59 F5). ConcatItemsd
-            # COPIES into `phases` but leaves the 12 float32 originals in the dict, and
-            # PersistentDataset pickles the whole dict — so every cache entry stored the same
-            # data twice (measured: 47.8 MB/subject, of which only the 15.7 MB float16 `phases`
-            # + 0.7 MB mask are ever read by get_data). That is ~3x the per-sample read volume
-            # on EVERY epoch and ~51 GB of /tmp at 1074 subjects instead of ~18 GB.
-            # Backward-compatible: pre-existing "fat" cache entries still load fine.
+            # Drop the per-phase sources once they are stacked. ConcatItemsd COPIES into
+            # `phases` but leaves the 12 float32 originals in the dict, and PersistentDataset
+            # pickles the whole dict — keeping them would ~3x the cache size and per-epoch reads.
+            # Cache entries that still hold them load fine.
             DeleteItemsd(keys=phase_keys),
             CastToTyped(keys=["phases"], dtype=storage_dtype),
             CastToTyped(keys=["content_mask"], dtype=torch.uint8),
@@ -322,14 +317,14 @@ def cache_signature(lower: float = 0.5, upper: float = 99.9) -> str:
     monai `PersistentDataset` keys its cache on the input data dict (file paths),
     NOT on the transform — so changing spacing / shape / normalization would silently
     reuse a stale cache. Append this to the cache dir so any such change auto-routes
-    to a fresh subdir (old cache is harmlessly orphaned on /tmp). NORM_REGION/percentiles
-    are folded in so the non-zero 0.5/99.9 change can't no-op on a warm node.
+    to a fresh subdir (old cache is harmlessly orphaned on /tmp). The normalization
+    region and percentiles are folded in for the same reason.
     """
     import hashlib
 
-    # `slice_order_apex_at_z0` bumps the signature for the docs/58 §10a on-disk slice-order fix
-    # (893 base-first subjects flipped to apex-at-z0 by tools/fix_slice_order.py). The file PATHS
-    # are unchanged, so without this the cache would silently serve pre-flip volumes.
+    # `slice_order_apex_at_z0` tags the on-disk apex-at-z0 slice order (docs/58 §10a). The file
+    # PATHS did not change when the data was flipped, so without it a warm cache would serve
+    # stale volumes.
     sig = repr((TARGET_SPACING, TARGET_SHAPE, NUM_PHASES, "nonzero", lower, upper,
                 "slice_order_apex_at_z0"))
     return hashlib.md5(sig.encode()).hexdigest()[:10]

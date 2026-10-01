@@ -13,14 +13,14 @@ expiration reference — the model learns to *correct* breathing (blind to `r`).
 
 Geometry (splat order, matching `gpu_aug.py` / `mri_dataset.py`):
     phases  (B, T=12, D, H=256, W=256)   spacing (D=Z=dz, H=Y=1.4, W=X=1.4) mm
-    NOTE (native-z, docs/58): D is THIS SUBJECT's own slice count (5-21 across the pooled
-    cohort) and the D-axis spacing is its own pitch `dz` (5-12 mm) — NOT a fixed 12/12.0.
+    NOTE: D is THIS SUBJECT's own slice count (5-21) and the D-axis spacing is its own
+    pitch `dz` (5-12 mm) — NOT a fixed 12/12.0.
     Callers must pass both (`spacing`, and `n_planes` whenever group_ids are given).
     D = SI (through-plane)   H/W = in-plane (AP vs LR not recoverable → AP axis
     is configurable, default H).
 
 `extract_slices_with_respiratory` is a drop-in for `gpu_aug.extract_slices_from_phases`
-(identical I/O contract), so the training hook is a thin add (see docs §5).
+(identical I/O contract).
 
 Single source of truth: the trainer GPU path AND `tools/render_respiratory_examples.py`
 import these functions, so the visualized motion is exactly what training applies.
@@ -74,7 +74,7 @@ def lujan_displacement(r, amplitude_mm, n: int = 3):
 # ──────────────────────────────────────────────────────────────────────────────
 @dataclass
 class RespiratoryConfig:
-    """Config for the respiratory-motion augmentation (see docs §4 for numbers)."""
+    """Config for the respiratory-motion augmentation."""
     enable: bool = False
     amplitude_mm: float = 16.0     # mean SI breath-depth A (mm); peak at full inspiration
     amplitude_jitter: float = 8.0  # +/- uniform jitter on A (mm) → ~8-24mm (tidal → deep)
@@ -88,16 +88,15 @@ class RespiratoryConfig:
                                    # ~200ms burst), while different slices are acquired at different
                                    # breaths. (Amplitude SCALE and tilt DIRECTION are per-SUBJECT, not
                                    # per-plane — see below; only phase r is grouped by plane here.)
-                                   # False → legacy per-slot-iid (each frame its own breath; unrealistic
+                                   # False → per-slot-iid (each frame its own breath; unrealistic
                                    # — lets the splat average breathing away). Grouping key = z-plane.
-    direction_jitter_deg: float = 30.0  # LEGACY fallback (used only when tilt_max_deg is None): max
+    direction_jitter_deg: float = 30.0  # fallback (used only when tilt_max_deg is None): max
                                         # random tilt (deg) of the SI+AP vector off the D axis; 0 → no tilt.
     # Tilt direction θ ~ U(tilt_min_deg, tilt_max_deg) (deg), drawn ONCE PER SUBJECT (broadcast to all
     # its slices), NOT per z-plane: the SAX-stack obliquity (D = LV long axis, ~20-45° off true SI) is
     # fixed acquisition geometry, so every slice of one scan shares one breathing direction. Keep
-    # tilt_min_deg=0 to retain the near-axial (low-tilt) regime. tilt_max_deg=None → legacy
-    # U(0, direction_jitter_deg). This fixes both the old per-plane azimuth incoherence AND the
-    # U(0,30°) tilt undershoot (physical obliquity is ~20-45°) in one change.
+    # tilt_min_deg=0 to retain the near-axial (low-tilt) regime. tilt_max_deg=None →
+    # U(0, direction_jitter_deg).
     tilt_min_deg: float | None = None
     tilt_max_deg: float | None = None
     # Optional fractional per-breath tidal variation on the per-subject amplitude scale (group_by_burst
@@ -144,7 +143,7 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, g
 
     Determinism: pass a `generator`; None → global RNG.
 
-    n_planes: this subject's actual D (native-z, docs/58), used ONLY by the
+    n_planes: this subject's actual D, used ONLY by the
         group_by_burst path to bound the z-plane group index. Required on that path.
     """
     def rand(shape):
@@ -228,7 +227,7 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
                                          group_ids=group_ids, n_planes=n_planes)   # (B,S) each
     v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                   # (B,S,3)
 
-    # Tilt range: prefer explicit tilt_min/max_deg; else fall back to legacy U(0, direction_jitter_deg).
+    # Tilt range: prefer explicit tilt_min/max_deg; else fall back to U(0, direction_jitter_deg).
     if cfg.tilt_max_deg is not None:
         tilt_lo_deg, tilt_hi_deg = float(cfg.tilt_min_deg or 0.0), float(cfg.tilt_max_deg)
     else:
@@ -240,7 +239,6 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
         # ALL its slices (NOT per z-plane), so a subject has one coherent breathing direction. This
         # coherence holds ONLY because every slot's pre-rotation vector is a NON-NEGATIVE scalar × one
         # fixed axis (d_ap ≡ ap_ratio·d_si, d_si ≥ 0); if ap_ratio is ever jittered per-slot it breaks.
-        # (group_ids no longer used here — it now groups only phase/amplitude in sample_displacements.)
         lo, hi = math.radians(tilt_lo_deg), math.radians(tilt_hi_deg)
         theta = (lo + rand((B, 1)) * (hi - lo)).expand(B, S)
         phi = (rand((B, 1)) * (2.0 * math.pi)).expand(B, S)
@@ -259,7 +257,7 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
     - **val** → a per-ROW generator seeded from `seq_index[b]`, so breathing is fully
       reproducible across epochs/runs regardless of how rows are grouped into batches
       (mirrors the dataset's `random.Random(seq_index)` z/t determinism). Per-ROW (not
-      per-batch) because `DynamicBatchSampler` groups variable rows per batch.
+      per-batch) so the draw does not depend on batch composition.
 
     n_planes: see `sample_displacements`. Inert unless `group_ids` is also passed (and
         `cfg.group_by_burst` is set), in which case it is required.
@@ -303,11 +301,9 @@ def extract_slices_with_respiratory_vec(phases, t_seq, z_seq, disp_dhw, spacing,
         t_seq:    (B, S) int64 — cardiac t per slot
         z_seq:    (B, S) int64 — canonical z plane per slot
         disp_dhw: (B, S, 3) float — per-slot (d_D, d_H, d_W) mm (canonical axes)
-        spacing:  (D, H, W) mm. REQUIRED, no default — under native-z, D-axis spacing is
-            this subject's own dz, which varies per subject (docs/58). The old fixed
-            SPACING_MM=(12.0, 1.4, 1.4) default silently understated displacement for
-            any non-12mm subject (e.g. 8mm -> 33% too small); a missed call site must
-            now raise instead of silently corrupting the applied breathing shift.
+        spacing:  (D, H, W) mm. REQUIRED, no default — the D-axis spacing is this
+            subject's own dz, which varies per subject. A fixed default would silently
+            mis-scale the breathing shift; a missed call site must raise instead.
 
     out_size: model-input resolution, as in `gpu_aug.extract_slices_from_phases`
         (default: module INPUT_IMG_SIZE; at out_size == H the resize is an identity).
@@ -388,11 +384,9 @@ def reslice_volume_vec(V, disp_dhw, spacing):
     `disp_dhw` = (d_D, d_H, d_W) mm and resample onto the canonical grid (one
     grid_sample, D_out=D). Returns (D, H, W) float32.
 
-    `spacing` is (D, H, W) mm and is REQUIRED — no default (2026-08-01). It used to default
-    to `SPACING_MM`, whose D-axis 12.0 was correct only for the pre-native-z shared cube.
-    Under native-z every subject keeps its own pitch (5-12 mm, docs/58), so a missed
-    `spacing=` silently breathes that subject at 12 mm: plausible output, wrong physics, no
-    error. `baselines/export_resp_stack.py` was relying on exactly that."""
+    `spacing` is (D, H, W) mm and is REQUIRED — no default. Every subject keeps its own
+    pitch (5-12 mm), so a defaulted spacing would silently breathe it at the wrong scale:
+    plausible output, wrong physics, no error."""
     D, H, W = V.shape
     device = V.device
     inp = V.float().view(1, 1, D, H, W)
