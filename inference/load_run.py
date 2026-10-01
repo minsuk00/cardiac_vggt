@@ -22,11 +22,9 @@ want.
 
 ## Dead kwargs
 
-`VGGT.__init__` absorbs unknown keys through `**kwargs`, so `enable_camera` / `enable_depth` /
-`enable_track` / `enable_refiner` / `refiner_use_coverage` / `grid_shape` — all present in old
-configs and all retired — pass silently and do nothing. They are dropped explicitly here so a
-future reader does not think `enable_refiner=True` still builds a refiner. (That is also why there
-is no `--refiner` flag anywhere in the new harness: it was a no-op.)
+Old configs still carry retired keys (`enable_camera` / `enable_depth` / `enable_track` /
+`enable_refiner` / `refiner_use_coverage` / `grid_shape` …). `VGGT.__init__` rejects unknown
+kwargs, so they are dropped here; always-on flags are dropped after checking the run had them on.
 """
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ import torch
 from vggt.models.vggt import VGGT
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 
-# Retired VGGT kwargs that old configs still carry; `**kwargs` would swallow them silently.
+# Retired VGGT kwargs that old configs still carry; VGGT would reject them.
 DEAD_MODEL_KWARGS = ("enable_camera", "enable_depth", "enable_track", "enable_refiner",
                      "refiner_use_coverage", "grid_shape", "use_t_pose_embedding",
                      "use_target_t_pose_embedding", "_target_")

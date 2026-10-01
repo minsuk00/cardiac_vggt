@@ -105,7 +105,6 @@ def _target_shapes():
             patch_size=16,
             backbone="dinov3_vitl16",
             embed_dim=1024,
-            enable_point=True,
         )
     return {name: tuple(tensor.shape) for name, tensor in model.state_dict().items()}
 
