@@ -12,10 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from vggt.layers import PatchEmbed
 from vggt.layers.block import Block
 from vggt.layers.rope import PositionGetter, RotaryPositionEmbedding2D
-from vggt.layers.vision_transformer import vit_base, vit_giant2, vit_large, vit_small
+from vggt.layers.vision_transformer import vit_large
 from vggt.models.dinov3 import DINOv3ViTL16PatchEmbed
 
 logger = logging.getLogger(__name__)
@@ -62,7 +61,7 @@ class Aggregator(nn.Module):
         qkv_bias (bool): Whether to include bias in QKV projections.
         proj_bias (bool): Whether to include bias in the output projection.
         ffn_bias (bool): Whether to include bias in MLP layers.
-        patch_embed (str): Type of patch embed. e.g., "conv" or "dinov2_vitl14_reg".
+        patch_embed (str): Backbone, "dinov2_vitl14_reg" or "dinov3_vitl16".
         aa_order (list[str]): The order of alternating attention, e.g. ["frame", "global"].
         aa_block_size (int): How many blocks to group under each attention type before switching. If not necessary, set to 1.
         qk_norm (bool): Whether to apply QK normalization.
@@ -187,24 +186,14 @@ class Aggregator(nn.Module):
         init_values=1.0,
         embed_dim=1024,
     ):
-        """
-        Build the patch embed layer. If 'conv', we use a
-        simple PatchEmbed conv layer. Otherwise, we use a vision transformer.
-        """
+        """Build the patch embed backbone (DINOv2 ViT-L/14 or DINOv3 ViT-L/16)."""
 
-        if "conv" in patch_embed:
-            self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=3, embed_dim=embed_dim)
-        elif patch_embed == "dinov3_vitl16":
+        if patch_embed == "dinov3_vitl16":
             if patch_size != 16:
                 raise ValueError(f"dinov3_vitl16 requires patch_size=16, got {patch_size}")
             self.patch_embed = DINOv3ViTL16PatchEmbed(img_size=img_size)
         else:
-            vit_models = {
-                "dinov2_vitl14_reg": vit_large,
-                "dinov2_vitb14_reg": vit_base,
-                "dinov2_vits14_reg": vit_small,
-                "dinov2_vitg2_reg": vit_giant2,
-            }
+            vit_models = {"dinov2_vitl14_reg": vit_large}
 
             if patch_embed not in vit_models:
                 raise ValueError(f"Unknown patch_embed/backbone: {patch_embed!r}")

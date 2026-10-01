@@ -6,10 +6,9 @@
 
 
 import torch
-import torch.nn.functional as F
 
 
-def activate_head(out, activation="norm_exp", conf_activation="expp1"):
+def activate_head(out, activation="linear", conf_activation="expp1"):
     """
     Process network output to extract 3D points and confidence values.
 
@@ -28,25 +27,7 @@ def activate_head(out, activation="norm_exp", conf_activation="expp1"):
     xyz = fmap[:, :, :, :-1]
     conf = fmap[:, :, :, -1]
 
-    if activation == "norm_exp":
-        d = xyz.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-        xyz_normed = xyz / d
-        pts3d = xyz_normed * torch.expm1(d)
-    elif activation == "norm":
-        pts3d = xyz / xyz.norm(dim=-1, keepdim=True)
-    elif activation == "exp":
-        pts3d = torch.exp(xyz)
-    elif activation == "relu":
-        pts3d = F.relu(xyz)
-    elif activation == "inv_log":
-        pts3d = inverse_log_transform(xyz)
-    elif activation == "xy_inv_log":
-        xy, z = xyz.split([2, 1], dim=-1)
-        z = inverse_log_transform(z)
-        pts3d = torch.cat([xy * z, z], dim=-1)
-    elif activation == "sigmoid":
-        pts3d = torch.sigmoid(xyz)
-    elif activation == "linear":
+    if activation == "linear":
         pts3d = xyz
     else:
         raise ValueError(f"Unknown activation: {activation}")
@@ -61,16 +42,3 @@ def activate_head(out, activation="norm_exp", conf_activation="expp1"):
         raise ValueError(f"Unknown conf_activation: {conf_activation}")
 
     return pts3d, conf_out
-
-
-def inverse_log_transform(y):
-    """
-    Apply inverse log transform: sign(y) * (exp(|y|) - 1)
-
-    Args:
-        y: Input tensor
-
-    Returns:
-        Transformed tensor
-    """
-    return torch.sign(y) * (torch.expm1(torch.abs(y)))

@@ -34,15 +34,13 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         else:
             raise ValueError(f"Unknown warp_head_type: {warp_head_type!r} (expected 'dpt' or 'bspline')")
 
-    def forward(self, images: torch.Tensor, query_points: torch.Tensor = None, batch: dict = None):
+    def forward(self, images: torch.Tensor, batch: dict = None):
         """
         Forward pass of the VGGT model.
 
         Args:
             images (torch.Tensor): Input images with shape [S, 3, H, W] or [B, S, 3, H, W], in range [0, 1].
                 B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
-            query_points (torch.Tensor, optional): Unused. Retained for signature compatibility with
-                callers from the original VGGT (tracking was removed). Default: None
             batch (dict, optional): Batch dictionary with the extra inputs the point head needs —
                 z_indices, scanner_coords.
 
@@ -58,9 +56,6 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         # If without batch dimension, add it
         if len(images.shape) == 4:
             images = images.unsqueeze(0)
-
-        if query_points is not None and len(query_points.shape) == 2:
-            query_points = query_points.unsqueeze(0)
 
         z_indices = batch.get("z_indices") if batch is not None else None
         t_indices = batch.get("t_indices") if batch is not None else None

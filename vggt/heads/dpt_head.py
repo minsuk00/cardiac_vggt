@@ -30,14 +30,12 @@ class DPTHead(nn.Module):
         dim_in (int): Input dimension (channels).
         patch_size (int, optional): Patch size. Default is 14.
         output_dim (int, optional): Number of output channels. Default is 4.
-        activation (str, optional): Activation type. Default is "inv_log".
+        activation (str, optional): Activation type. Default is "linear".
         conf_activation (str, optional): Confidence activation type. Default is "expp1".
         features (int, optional): Feature channels for intermediate representations. Default is 256.
         out_channels (List[int], optional): Output channels for each intermediate layer.
         intermediate_layer_idx (List[int], optional): Indices of layers from aggregated tokens used for DPT.
         pos_embed (bool, optional): Whether to use positional embedding. Default is True.
-        feature_only (bool, optional): If True, return features only without the last several layers and activation head. Default is False.
-        down_ratio (int, optional): Downscaling factor for the output resolution. Default is 1.
     """
 
     def __init__(
@@ -45,22 +43,18 @@ class DPTHead(nn.Module):
         dim_in: int,
         patch_size: int = 14,
         output_dim: int = 4,
-        activation: str = "inv_log",
+        activation: str = "linear",
         conf_activation: str = "expp1",
         features: int = 256,
         out_channels: List[int] = [256, 512, 1024, 1024],
         intermediate_layer_idx: List[int] = [4, 11, 17, 23],
         pos_embed: bool = True,
-        feature_only: bool = False,
-        down_ratio: int = 1,
     ) -> None:
         super(DPTHead, self).__init__()
         self.patch_size = patch_size
         self.activation = activation
         self.conf_activation = conf_activation
         self.pos_embed = pos_embed
-        self.feature_only = feature_only
-        self.down_ratio = down_ratio
         self.intermediate_layer_idx = intermediate_layer_idx
 
         self.norm = nn.LayerNorm(dim_in)
@@ -98,19 +92,16 @@ class DPTHead(nn.Module):
         head_features_1 = features
         head_features_2 = 32
 
-        if feature_only:
-            self.scratch.output_conv1 = nn.Conv2d(head_features_1, head_features_1, kernel_size=3, stride=1, padding=1)
-        else:
-            self.scratch.output_conv1 = nn.Conv2d(
-                head_features_1, head_features_1 // 2, kernel_size=3, stride=1, padding=1
-            )
-            conv2_in_channels = head_features_1 // 2
+        self.scratch.output_conv1 = nn.Conv2d(
+            head_features_1, head_features_1 // 2, kernel_size=3, stride=1, padding=1
+        )
+        conv2_in_channels = head_features_1 // 2
 
-            self.scratch.output_conv2 = nn.Sequential(
-                nn.Conv2d(conv2_in_channels, head_features_2, kernel_size=3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0),
-            )
+        self.scratch.output_conv2 = nn.Sequential(
+            nn.Conv2d(conv2_in_channels, head_features_2, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0),
+        )
 
     def forward(
         self,
@@ -130,9 +121,7 @@ class DPTHead(nn.Module):
                 If None or larger than S, all frames are processed at once. Default: 8.
 
         Returns:
-            Tensor or Tuple[Tensor, Tensor]:
-                - If feature_only=True: Feature maps with shape [B, S, C, H, W]
-                - Otherwise: Tuple of (predictions, confidence) both with shape [B, S, 1, H, W]
+            Tuple[Tensor, Tensor]: (predictions, confidence) both with shape [B, S, 1, H, W]
         """
         B, S, _, H, W = images.shape
 
@@ -151,23 +140,14 @@ class DPTHead(nn.Module):
             frames_end_idx = min(frames_start_idx + frames_chunk_size, S)
 
             # Process batch of frames
-            if self.feature_only:
-                chunk_output = self._forward_impl(
-                    aggregated_tokens_list, images, patch_start_idx, frames_start_idx, frames_end_idx
-                )
-                all_preds.append(chunk_output)
-            else:
-                chunk_preds, chunk_conf = self._forward_impl(
-                    aggregated_tokens_list, images, patch_start_idx, frames_start_idx, frames_end_idx
-                )
-                all_preds.append(chunk_preds)
-                all_conf.append(chunk_conf)
+            chunk_preds, chunk_conf = self._forward_impl(
+                aggregated_tokens_list, images, patch_start_idx, frames_start_idx, frames_end_idx
+            )
+            all_preds.append(chunk_preds)
+            all_conf.append(chunk_conf)
 
         # Concatenate results along the sequence dimension
-        if self.feature_only:
-            return torch.cat(all_preds, dim=1)
-        else:
-            return torch.cat(all_preds, dim=1), torch.cat(all_conf, dim=1)
+        return torch.cat(all_preds, dim=1), torch.cat(all_conf, dim=1)
 
     def _forward_impl(
         self,
@@ -231,16 +211,13 @@ class DPTHead(nn.Module):
         # Interpolate fused output to match target image resolution.
         out = custom_interpolate(
             out,
-            (int(patch_h * self.patch_size / self.down_ratio), int(patch_w * self.patch_size / self.down_ratio)),
+            (patch_h * self.patch_size, patch_w * self.patch_size),
             mode="bilinear",
             align_corners=True,
         )
 
         if self.pos_embed:
             out = self._apply_pos_embed(out, W, H)
-
-        if self.feature_only:
-            return out.view(B, S, *out.shape[1:])
 
         out = self.scratch.output_conv2(out)
         preds, conf = activate_head(out, activation=self.activation, conf_activation=self.conf_activation)
