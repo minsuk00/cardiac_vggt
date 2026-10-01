@@ -42,9 +42,6 @@ def _build_from_cfg(cfg, warp_head_type=None):
     return VGGT(
         img_size=518, patch_size=14, embed_dim=1024,
         enable_point=m.enable_point,
-        use_z_pose_embedding=m.use_z_pose_embedding,
-        use_reference_token=m.use_reference_token,
-        train_on_residual_dvf=m.train_on_residual_dvf,
         warp_head_type=warp_head_type or m.warp_head_type,
         bspline_grid_size=m.bspline_grid_size,
     )
@@ -83,10 +80,7 @@ def test_mri_volume_is_aggft(cfg_only):
 
 
 def test_mri_volume_uses_reference_conditioning(cfg_only):
-    """Config wiring: reference ON, the obsolete input/target-phase indices OFF."""
-    m = cfg_only.model
-    assert m.use_reference_token is True
-    assert m.use_z_pose_embedding is True
+    """Config wiring: the dataset puts the reference slice in slot 0."""
     assert cfg_only.reference_slot is True
 
 
@@ -122,10 +116,6 @@ def test_obsolete_phase_embedders_absent(model_with_freeze):
     agg = model_with_freeze.aggregator
     assert not hasattr(agg, "t_embedder"), "t_embedder should not exist (use_t off)"
     assert not hasattr(agg, "target_t_embedder"), "target_t_embedder should not exist (use_target_t off)"
-
-
-def test_use_reference_token_wired(model_with_freeze):
-    assert getattr(model_with_freeze.aggregator, "use_reference_token", False) is True
 
 
 def test_point_head_is_trainable(model_with_freeze):

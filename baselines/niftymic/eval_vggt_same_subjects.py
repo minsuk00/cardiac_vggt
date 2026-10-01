@@ -57,10 +57,7 @@ def main():
     print("Building VGGT-1B (reference-slice conditioning: z-only, no t, camera_token anchor)...")
     model = VGGT(
         img_size=518, patch_size=14, embed_dim=1024,
-        enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
-        use_z_pose_embedding=True, use_t_pose_embedding=False, use_target_t_pose_embedding=False,
-        use_reference_token=True,
-        train_on_residual_dvf=True,
+        enable_point=True,
     ).to(device)
     print(f"Loading checkpoint: {CKPT}")
     # map_location="cpu": the live training job (checkpoint_last.pt is still being

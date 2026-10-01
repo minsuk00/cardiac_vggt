@@ -68,7 +68,6 @@ class Aggregator(nn.Module):
         qk_norm (bool): Whether to apply QK normalization.
         rope_freq (int): Base frequency for rotary embedding. -1 to disable.
         init_values (float): Init scale for layer scale.
-        use_z_pose_embedding (bool): Whether to replace camera token with sinusoidal z index embedding.
     """
 
     def __init__(
@@ -90,25 +89,20 @@ class Aggregator(nn.Module):
         qk_norm=True,
         rope_freq=100,
         init_values=0.01,
-        use_z_pose_embedding=False,
-        use_reference_token=False,
         gradient_checkpointing=True,
         cached_layer_indices=(4, 11, 17, 23),
         **kwargs,
     ):
         super().__init__()
-        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}, use_z_pose_embedding={use_z_pose_embedding}, use_reference_token={use_reference_token}")
+        logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}")
 
-        self.use_z_pose_embedding = use_z_pose_embedding
-        if self.use_z_pose_embedding:
-            self.z_embedder = ZIndexEmbedder(embed_dim=embed_dim)
+        self.z_embedder = ZIndexEmbedder(embed_dim=embed_dim)
 
         # Reference-slice conditioning: mark slot 0 as the target-phase reference via VGGT's
         # NATIVE two-token camera_token (index 0 = first frame, index 1 = the rest) instead of
         # a content-free target_t index. The model reads the target phase from slot-0's image
         # content; this token just says "slot 0 is the anchor". No new module — reuses the
-        # pretrained `self.camera_token` (built below). See docs/25.
-        self.use_reference_token = use_reference_token
+        # pretrained `self.camera_token` (built below).
         self.gradient_checkpointing = gradient_checkpointing
         self.cached_layer_indices = set(cached_layer_indices)
 
@@ -267,27 +261,14 @@ class Aggregator(nn.Module):
 
         _, P, C = patch_tokens.shape
 
-        use_z = getattr(self, "use_z_pose_embedding", False)
-        use_reference_token = getattr(self, "use_reference_token", False)
-        if use_z or use_reference_token:
-            camera_token = 0
-            if use_reference_token:
-                # Native VGGT anchor token: index 0 → slot 0 (the target-phase reference),
-                # index 1 → all other (scattered) slots. Added ON TOP of the per-slot z
-                # embedding so the model both knows each slice's depth AND which slot defines
-                # the query phase. Reuses the pretrained `self.camera_token`. See docs/25.
-                camera_token = camera_token + slice_expand_and_flatten(self.camera_token, B, S)  # [B*S, 1, C]
-            if use_z:
-                if z_indices is None:
-                    raise ValueError("use_z_pose_embedding is True but z_indices not provided in batch.")
-                # (An all-zero-z_indices warning used to sit here; `.all()` is a host-device
-                # sync that graph-breaks every compiled attention block, and z is never all
-                # zero in the canonical pipeline.)
-                z_indices_flat = z_indices.view(B * S, 1).to(images.device)
-                camera_token = camera_token + self.z_embedder(z_indices_flat)  # [B*S, 1, C]
-        else:
-            # Expand camera and register tokens to match batch size and sequence length
-            camera_token = slice_expand_and_flatten(self.camera_token, B, S)
+        # Native VGGT anchor token: index 0 → slot 0 (the target-phase reference), index 1 → all
+        # other (scattered) slots, plus the per-slot z embedding, so the model knows each slice's
+        # depth AND which slot defines the query phase.
+        if z_indices is None:
+            raise ValueError("z_indices not provided in batch.")
+        camera_token = slice_expand_and_flatten(self.camera_token, B, S)  # [B*S, 1, C]
+        z_indices_flat = z_indices.view(B * S, 1).to(images.device)
+        camera_token = camera_token + self.z_embedder(z_indices_flat)  # [B*S, 1, C]
 
         register_token = slice_expand_and_flatten(self.register_token, B, S)
 

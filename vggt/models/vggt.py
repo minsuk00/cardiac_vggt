@@ -15,16 +15,15 @@ from vggt.models.aggregator import Aggregator
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True, use_z_pose_embedding=False, use_reference_token=False, train_on_residual_dvf=False,
+        self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True,
         gradient_checkpointing=True,
         warp_head_type="dpt", bspline_grid_size=32, backbone="dinov2_vitl14_reg", **kwargs
     ):
         super().__init__()
-        self.train_on_residual_dvf = train_on_residual_dvf
+        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, gradient_checkpointing=gradient_checkpointing)
 
-        self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, use_z_pose_embedding=use_z_pose_embedding, use_reference_token=use_reference_token, gradient_checkpointing=gradient_checkpointing)
-
-        point_activation = "linear" if train_on_residual_dvf else "inv_log"
+        # The head predicts a residual DVF; world_points = scanner_coords + DVF.
+        point_activation = "linear"
         if not enable_point:
             self.point_head = None
         elif warp_head_type == "bspline":
@@ -50,10 +49,9 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         Returns:
             dict: A dictionary containing the following predictions:
                 - world_points (torch.Tensor): 3D world coordinates for each pixel with shape [B, S, H, W, 3]
-                  (scanner_coords + predicted DVF when train_on_residual_dvf, else the head output directly).
+                  (scanner_coords + predicted DVF).
                 - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W].
-                - dvfs (torch.Tensor): The predicted normalized T→0 DVF [B, S, H, W, 3]. Only when
-                  train_on_residual_dvf is set.
+                - dvfs (torch.Tensor): The predicted normalized T→0 DVF [B, S, H, W, 3].
                 - images (torch.Tensor): Original input images, preserved for visualization. Only when
                   not self.training (i.e. inference).
         """
@@ -75,16 +73,13 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             if self.point_head is not None:
                 head_output, head_conf = self.point_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx)
 
-                if self.train_on_residual_dvf:
-                    # Head predicted normalized T→0 DVF. world_points = scanner_coords + dvf.
-                    assert batch is not None and "scanner_coords" in batch, "scanner_coords required for residual DVF training but not found in batch."
-                    scanner_coords = batch["scanner_coords"]  # voxel position at time T, normalized mm
-                    dvf = head_output  # predicted T→0 DVF, normalized
-                    assert scanner_coords.shape == dvf.shape, f"scanner_coords {scanner_coords.shape} and dvf {dvf.shape} must share shape and normalization"
-                    world_points = scanner_coords + dvf
-                    predictions["dvfs"] = dvf
-                else:
-                    world_points = head_output
+                # Head predicted normalized T→0 DVF. world_points = scanner_coords + dvf.
+                assert batch is not None and "scanner_coords" in batch, "scanner_coords required for residual DVF but not found in batch."
+                scanner_coords = batch["scanner_coords"]  # voxel position at time T, normalized mm
+                dvf = head_output  # predicted T→0 DVF, normalized
+                assert scanner_coords.shape == dvf.shape, f"scanner_coords {scanner_coords.shape} and dvf {dvf.shape} must share shape and normalization"
+                world_points = scanner_coords + dvf
+                predictions["dvfs"] = dvf
 
                 predictions["world_points"] = world_points
                 predictions["world_points_conf"] = head_conf

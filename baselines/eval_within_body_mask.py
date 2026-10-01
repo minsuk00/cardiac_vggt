@@ -123,9 +123,7 @@ def main():
     device = "cuda"
     print("Building model...")
     model = VGGT(img_size=518, patch_size=14, embed_dim=1024,
-                 enable_camera=False, enable_depth=False, enable_point=True, enable_track=False,
-                 use_z_pose_embedding=True, use_t_pose_embedding=True, use_target_t_pose_embedding=True,
-                 train_on_residual_dvf=True).to(device)
+                 enable_point=True).to(device)
     ck = torch.load(CKPT, map_location=device, weights_only=False)
     model.load_state_dict(ck["model"], strict=False)
     model.eval()

@@ -42,6 +42,8 @@ from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 DEAD_MODEL_KWARGS = ("enable_camera", "enable_depth", "enable_track", "enable_refiner",
                      "refiner_use_coverage", "grid_shape", "use_t_pose_embedding",
                      "use_target_t_pose_embedding", "_target_")
+# Flags that are now always on. A run that recorded one of them as false built a different model.
+ALWAYS_ON_MODEL_KWARGS = ("use_z_pose_embedding", "use_reference_token", "train_on_residual_dvf")
 
 # Pre-40b652a runs recorded neither; every such run was DINOv2/14.
 LEGACY_BACKBONE = "dinov2_vitl14_reg"
@@ -85,6 +87,9 @@ def model_kwargs_from_config(cfg):
     m = dict(cfg.get("model") or {})
     for k in DEAD_MODEL_KWARGS:
         m.pop(k, None)
+    for k in ALWAYS_ON_MODEL_KWARGS:
+        if m.pop(k, True) is not True:
+            raise ValueError(f"run config has model.{k}=false; that model variant is no longer supported")
 
     def pick(key, default=None):
         """model block wins, then config top level, then the default. `None` counts as absent —
