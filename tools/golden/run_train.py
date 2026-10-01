@@ -38,8 +38,10 @@ def main():
         # epoch. max_epochs stays 2: set_seeds uses seed*max_epochs, and step 0's `where` is 0
         # whatever limit_train_batches is, so step 0 still matches the 10-step reference.
         "max_epochs=2", "limit_train_batches=1", "limit_val_batches=1", "ef_val_sweep=false",
-        # The filmstrip's wandb video encoding takes minutes of CPU; G5 `on` covers it.
-        "logging.filmstrip_every_n_val_epochs=1000",
+        # No wandb: its panel/filmstrip video encoding takes minutes of CPU (the filmstrip
+        # fires at epoch 0 whatever its cadence). metrics.jsonl is still written; G5 `on`
+        # covers the visuals.
+        "logging.wandb_writer=null",
         f"exp_name=golden_{a.arm}", f"logging.log_dir={os.path.abspath(a.out)}",
     ]
     if not a.paper_mode:
