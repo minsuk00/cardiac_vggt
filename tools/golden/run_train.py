@@ -42,7 +42,10 @@ def main():
     os.environ.setdefault("WANDB_MODE", "offline")
     overrides = RECIPE + ARMS[a.arm] + [
         # ef_val_sweep=false: the EF sweep ignores limit_val_batches (full 180-sample val).
-        "max_epochs=2", "limit_train_batches=10", "limit_val_batches=3", "ef_val_sweep=false",
+        # Only step 0 is comparable (GPU backward is nondeterministic), so train 1 step per
+        # epoch. max_epochs stays 2: set_seeds uses seed*max_epochs, and step 0's `where` is 0
+        # whatever limit_train_batches is, so step 0 still matches the 10-step reference.
+        "max_epochs=2", "limit_train_batches=1", "limit_val_batches=1", "ef_val_sweep=false",
         f"exp_name=golden_{a.arm}", f"logging.log_dir={os.path.abspath(a.out)}",
     ]
     if not a.paper_mode:
