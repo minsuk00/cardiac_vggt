@@ -139,9 +139,9 @@ def test_splat_res_threads_through_loss_config():
     batch = {"images": images, "images_splat": native, "gt_target_volume": V_gt,
              "z_scale": torch.tensor([(D - 1) / 2.0])}
     preds = {"world_points": wp}
-    l_nat = compute_volume_intensity_loss(preds, batch, tv_weight=0.0)["loss_volume"]
-    l_none = compute_volume_intensity_loss(preds, batch, tv_weight=0.0, splat_res=None)["loss_volume"]
-    l_mod = compute_volume_intensity_loss(preds, batch, tv_weight=0.0, splat_res=hm)["loss_volume"]
+    l_nat = compute_volume_intensity_loss(preds, batch)["loss_volume"]
+    l_none = compute_volume_intensity_loss(preds, batch, splat_res=None)["loss_volume"]
+    l_mod = compute_volume_intensity_loss(preds, batch, splat_res=hm)["loss_volume"]
     V_old, _ = splat_predictions(preds, {"images": images}, (D, hn, hn), (D - 1) / 2.0)
     assert torch.equal(l_nat, l_none)
     assert torch.allclose(l_mod, (V_old - V_gt).abs().mean(), atol=1e-6)

@@ -174,7 +174,7 @@ class TrainerVizMixin:
                     respiratory_cfg=self.respiratory_cfg, train=False)
                 # Identity world_points = scanner_coords (Δ = 0).
                 preds = {"world_points": batch["scanner_coords"]}
-                out = compute_volume_intensity_loss(preds, batch, tv_weight=0.0,
+                out = compute_volume_intensity_loss(preds, batch,
                                                     splat_res=self._loss_splat_res())
                 t = int(data["t_target"].item() if data["t_target"].ndim == 0 else data["t_target"].flatten()[0].item())
                 if "metric_psnr_3d_full" in out:
@@ -424,7 +424,7 @@ class TrainerVizMixin:
                     preds = model(batch["images"], batch=batch)
                     out = compute_volume_intensity_loss(
                         {"world_points": preds["world_points"].float()},
-                        batch, tv_weight=0.0, splat_res=self._loss_splat_res(),
+                        batch, splat_res=self._loss_splat_res(),
                     )
                 V_canon = out["V_canon"][0].float().cpu().numpy()
                 V_gt = out["V_gt"][0].float().cpu().numpy()

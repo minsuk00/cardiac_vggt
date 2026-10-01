@@ -149,7 +149,6 @@ logging:
       keys_to_log:
         - loss_objective
         - loss_volume
-        - loss_pos_tv
         - loss_diffusion
         - loss_gather
         - loss_heart
@@ -174,7 +173,6 @@ logging:
       keys_to_log:
         - loss_objective
         - loss_volume
-        - loss_pos_tv
         - loss_diffusion
         - loss_gather
         - loss_heart
@@ -415,14 +413,6 @@ loss:
     # between splat_res arms and native arms (same series break as docs/73).
     splat_res: null
     #
-    # WARP REGULARIZER = L2 DIFFUSION, not L1 TV (default as of 2026-08-01). Every recent
-    # experiment — the whole docs/46 series of 100-epoch arms (control0/nogather, gather05,
-    # contz, s20, s20contz, dino_ft, aug_moderate, lowdiff100, ftgather/ftctrl) — ran with
-    # tv_weight=0 + diffusion_weight=1000 via the old mri_volume_diffusion.yaml (verified from
-    # those runs' own wandb configs). Making it the default means the shipped config IS the
-    # arm the evidence was collected on, instead of an L1-TV variant nothing was measured under.
-    # That also made the old exp_diffusion.yaml a no-op, so it was deleted.
-    tv_weight: 0.0
     # L2 diffusion (Tikhonov) smoothness ‖∇u‖² on the DVF (VoxelMorph-style). 0.0 ⇒ no-op.
     # DVF is in normalized [-1,1] coords ⇒ gradients are tiny, so a meaningful penalty is
     # O(10-1000). MEASURED, not estimated (2026-08-21, run 213110090_augaggr224hw2_miitt_

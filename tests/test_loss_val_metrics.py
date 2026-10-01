@@ -72,7 +72,7 @@ def _val_batch(B=1, static_samples=(), device="cpu"):
 def _run(batch):
     pos = batch["scanner_coords"] + 0.01          # a small Δ, and NOT the same object
     assert not pos.requires_grad                  # val gate: block only runs without grad
-    return compute_volume_intensity_loss({"world_points": pos}, batch, tv_weight=0.1)
+    return compute_volume_intensity_loss({"world_points": pos}, batch)
 
 
 DOCS38_KEYS = [
@@ -101,7 +101,7 @@ def test_docs38_block_skipped_when_grad_enabled():
     """Train path (world_points requires grad) must skip the extra splats entirely."""
     batch = _val_batch()
     pos = (batch["scanner_coords"] + 0.01).requires_grad_(True)
-    out = compute_volume_intensity_loss({"world_points": pos}, batch, tv_weight=0.1)
+    out = compute_volume_intensity_loss({"world_points": pos}, batch)
     for k in DOCS38_KEYS:
         assert k not in out, f"{k} was computed on the train path (should be val-only)"
 

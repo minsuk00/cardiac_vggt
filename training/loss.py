@@ -72,7 +72,7 @@ class MultitaskLoss(torch.nn.Module):
         # Direct volume-to-volume loss against the GT phase-0 volume loaded from disk.
         if "world_points" in predictions and self.volume is not None and self.volume.get("weight", 0) > 0:
             vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **self.volume)
-            vol_loss = (vol_loss_dict["loss_volume"] + vol_loss_dict["loss_pos_tv"]
+            vol_loss = (vol_loss_dict["loss_volume"]
                         + vol_loss_dict.get("loss_diffusion", 0.0)
                         + vol_loss_dict.get("loss_gather", 0.0)
                         + vol_loss_dict.get("loss_heart", 0.0)) * self.volume["weight"]
@@ -88,8 +88,7 @@ def diffusion_loss_l2(field):
     """L2 diffusion (Tikhonov) smoothness regularizer ‖∇u‖² on a displacement field.
 
     Mean of SQUARED in-plane (H, W) neighbor differences over a (B, S, H, W, C) field.
-    Unlike `tv_loss` (L1, edge-preserving, ∝|ω|), the squared gradient is ∝ω² and
-    smoothness-promoting — the VoxelMorph diffusion regularizer that actively suppresses
+    The squared gradient is ∝ω² and smoothness-promoting — the VoxelMorph diffusion regularizer that actively suppresses
     high-frequency (e.g. ViT-patch-period) ripples in the predicted warp. fp32-forced so
     the reduction stays accurate under autocast(bf16).
     """
@@ -189,7 +188,7 @@ def _splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res=None)
                            weight=(inten > 1e-3).to(inten.dtype))
 
 
-def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
+def compute_volume_intensity_loss(predictions, batch,
                                   diffusion_weight=0.0, gather_weight=0.0,
                                   heart_weight=0.0, splat_res=None,
                                   **kwargs):
@@ -208,7 +207,6 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         batch: dict with "images" (B, S, 3, H, W), "gt_target_volume" (B, D, H, W), "z_scale" (B,).
             grid_shape is DERIVED from gt_target_volume's own shape (docs/58, native-z) — D varies
             per subject, so it can no longer be a fixed config constant.
-        tv_weight: weight for the spatial smoothness regularizer on pos_pred.
     """
     if "gt_target_volume" not in batch:
         raise RuntimeError("compute_volume_intensity_loss requires batch['gt_target_volume'].")
@@ -297,15 +295,6 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
         # heart_weight is then a straight relative weight.
         loss_heart = ((V_canon - V_gt).abs() * roi).sum() / roi.sum().clamp(min=1) * heart_weight
 
-    # Plain TV on pos_pred — mean absolute difference between H/W neighbors. fp32-forced
-    # so the reduction stays accurate under autocast(bf16).
-    with torch.amp.autocast("cuda", enabled=False):
-        pos_fp = pos_pred.float()
-        loss_pos_tv = (
-            (pos_fp[:, :, 1:, :, :] - pos_fp[:, :, :-1, :, :]).abs().mean()
-            + (pos_fp[:, :, :, 1:, :] - pos_fp[:, :, :, :-1, :]).abs().mean()
-        ) * tv_weight
-
     # Optional L2 diffusion regularizer ‖∇u‖² on the DISPLACEMENT field (VoxelMorph-style).
     # Penalizes squared in-plane gradients of the residual DVF (the true displacement u),
     # not the absolute world position — so a smooth warp pays nothing and the ViT-patch
@@ -341,7 +330,6 @@ def compute_volume_intensity_loss(predictions, batch, tv_weight=0.1,
 
     out = {
         "loss_volume": loss_volume,
-        "loss_pos_tv": loss_pos_tv,
         "loss_diffusion": loss_diffusion,
         "loss_gather": loss_gather,
         "loss_heart": loss_heart,   # ARM heart-L1 (already scaled by heart_weight)
