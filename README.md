@@ -1,6 +1,6 @@
 # Cardiac 4D MRI Slice-to-Volume Reconstruction
 
-Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupervised slice-to-volume reconstruction of cardiac cine MRI**. Given S=12 scattered 2D slices at arbitrary `(cardiac phase t, z-position)` pairs, the model reconstructs the full 3D volume at any chosen target phase. Trained on CMRxRecon2024 (`Cine_combined`, 301 subjects).
+Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupervised slice-to-volume reconstruction of cardiac cine MRI**. The input is one 2D slice per short-axis plane, each from an arbitrary cardiac phase, plus one reference slice at the target phase. The model reconstructs the full 3D volume at that target phase. Trained on the pooled curated-v2 split (`training/splits/pooled_curated_v2.txt`: 628 / 90 / 180 train / val / test subjects).
 
 ## Setup
 
@@ -8,6 +8,8 @@ Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupe
 micromamba activate svr
 pip install -r requirements.txt
 ```
+
+`batchaug` and `fused_ssim` are not on PyPI; see the comments at the bottom of `requirements.txt`.
 
 This repo is not installed as a package. Run everything **from the repo root** with
 `PYTHONPATH=training:.` — both entries matter. Python puts the *script's* directory on the
@@ -17,13 +19,18 @@ run `training/launch.py`; `training` is what lets the Hydra configs resolve thei
 
 ## Training
 
-Entry point: `training/launch.py` (Hydra). Active config: `mri_volume`.
+Entry point: `training/launch.py` (Hydra, single GPU). Config: `training/config/default.yaml`.
 
 ```bash
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default
 ```
 
-Cluster: `bash sbatch/_archive/train_mri_volume_reference.sh`.
+Cluster (paper recipe, self-submitting, auto-requeue): `ARM=diff1000 bash sbatch/train_final_518.sh`.
+`ARM` is one of `base | diff1000 | hw2 | hw0 | nogather | diff1000_nogather`; `diff1000` is the paper model.
+
+## Evaluation
+
+`sbatch sbatch/eval_pooled_val.sh` scores a checkpoint on the frozen gated + breathing-simulated bundles. See `evaluation/README.md`.
 
 ## Acknowledgements
 

@@ -4,7 +4,7 @@ Guidance for Claude Code working in this repo.
 
 ## Project
 
-VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D MRI slice-to-volume reconstruction** on CMRxRecon2024 (`Cine_combined`, 301 subjects split 240/30/31 train/val/test via `training/splits/_archive/random_8_1_1.txt`; the live split is now `training/splits/pooled_curated_v2.txt`, see `training/splits/README.md`).
+VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D MRI slice-to-volume reconstruction** on the pooled curated-v2 cohort (`training/splits/pooled_curated_v2.txt`, 628/90/180 train/val/test from ACDC, M&Ms and CMRxRecon 2023/2024/2025; see `training/splits/README.md`).
 
 **Research goal:** real-time free-breathing cine — reconstruct the full 3D heart at any target cardiac phase from a few scattered single-frame-per-slice acquisitions. No real-time training data exists, so we **simulate** the sparse scattered acquisition from gated cine + motion aug and aim to generalize to true real-time cine. **Information contract:** the model may know only `z` per input slice — input cardiac `t` and respiratory `r` are unavailable (design stance, not fully implemented) — `docs/04`. Full statement: docs/65.
 
@@ -16,7 +16,7 @@ VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D 
 
 - MRI data: `/scratch/data/CMRxRecon2024/` (symlinked, GPFS)
 - Env: `micromamba activate svr`
-- SLURM: `spgpu` partition for training (A40 GPUs), `standard` for CPU jobs. **Account: `jjparkcv0` is the default and every `sbatch/*.sh` header now says so** (`jjparkcv98` frequently hits `AssocGrpSubmitJobsLimit`; a few GPU-heavy recon jobs use `jjparkcv_owned1` for spgpu2/L40S).
+- SLURM: `spgpu` partition for training (A40 GPUs), `standard` for CPU jobs. **Accounts:** most `sbatch/*.sh` headers use `jjparkcv98` (spgpu/A40); GPU-heavy jobs incl. `train_final_518.sh` use `jjparkcv_owned1` (spgpu2/L40S). Check the header before submitting.
 
 ## Setup
 
@@ -52,7 +52,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
     --config default optim.base_lr=1e-4
 ```
 
-**Cluster submission**: `bash sbatch/_archive/train_mri_volume_reference.sh` — self-submits via embedded `sbatch`, `WANDB_MODE=online`, SLURM auto-requeue (SIGUSR1 → checkpoint-and-resume). Resume modes (vars at the top of the script):
+**Cluster submission**: `ARM=<arm> bash sbatch/train_final_518.sh` (the paper recipe; `ARM=diff1000` is the paper model) — self-submits via embedded `sbatch`, `WANDB_MODE=online`, SLURM auto-requeue (SIGUSR1 → checkpoint-and-resume). Resume modes (vars at the top of the script):
 - both `RESUME_FROM`/`CKPT_ONLY` empty (**default**) → **fresh-from-base VGGT-1B** (config's base-weights resume path, `strict=false`), fresh exp dir + new wandb run.
 - `RESUME_FROM=<exp_dir>` → continue same exp_name + reuse same wandb run id (crash/requeue recovery).
 - `CKPT_ONLY=<ckpt_path>` → **fresh** exp dir + new wandb run, loading from `<ckpt_path>` via `checkpoint.resume_checkpoint_path` (`strict=false`). **GOTCHA (docs/37):** this is a **FULL resume** (weights + optimizer + `prev_epoch`), NOT weights-only — a full `checkpoint_last.pt` can silently do zero training. For a real warm-start, strip to `{"model": ...}` first (`torch.save({'model': torch.load(ckpt)['model']}, out)`). Full mechanics: docs/37 + docs/65.
@@ -178,7 +178,7 @@ Multiple agents share this single working tree — a bare `git switch` with unco
 - Don't pipe `torchrun` through `| tail -N` in background — buffering. Redirect to file: `... > /tmp/run.log 2>&1 &`, then `tail -F /tmp/run.log`.
 - **Checkpoint loads auto-stage to node-local `/tmp`** (`vggt/utils/checkpoint_stage.py`, docs/50) — GPFS `torch.load` is ~266s vs ~5s from `/tmp`. Training stages only immutable base/seed weights; inference stages every load. Byte-identical; falls back to the original path on failure.
 - Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
-- Local pilots: `WANDB_MODE=offline`. The cluster scripts (`sbatch/train_mri_volume_*.sh`) set `WANDB_MODE=online`.
+- Local pilots: `WANDB_MODE=offline`. The cluster script (`sbatch/train_final_518.sh`) sets `WANDB_MODE=online`.
 - Hydra custom resolvers (`rev_ts:`, `basename:`, `phase_mode:`) are registered in `training/launch.py`. For standalone `compose()`: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`; `OmegaConf.register_new_resolver('basename', lambda p: os.path.basename(p))`; `OmegaConf.register_new_resolver('phase_mode', lambda t: 'multiphase' if t is None else f't{int(t)}')`.
 
 ## Testing
