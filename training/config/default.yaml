@@ -364,7 +364,6 @@ model:
   img_size: ${img_size}
   patch_size: ${patch_size}
   backbone: ${backbone}
-  enable_point: true
   # 224 fits on an A40 without activation checkpointing and runs faster. Keep this enabled
   # for higher input resolutions: 518 without checkpointing OOMs, and 294 is near the A40 limit.
   gradient_checkpointing: true

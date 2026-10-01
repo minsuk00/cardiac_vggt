@@ -5,13 +5,13 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
+from vggt.heads.dpt_head import DPT_INTERMEDIATE_LAYERS
 from vggt.layers.block import Block
 from vggt.layers.rope import PositionGetter, RotaryPositionEmbedding2D
 from vggt.layers.vision_transformer import vit_large
@@ -57,7 +57,6 @@ class Aggregator(nn.Module):
         num_heads (int): Number of attention heads.
         mlp_ratio (float): Ratio of MLP hidden dim to embedding dim.
         num_register_tokens (int): Number of register tokens.
-        block_fn (nn.Module): The block type used for attention (Block by default).
         qkv_bias (bool): Whether to include bias in QKV projections.
         proj_bias (bool): Whether to include bias in the output projection.
         ffn_bias (bool): Whether to include bias in MLP layers.
@@ -65,7 +64,7 @@ class Aggregator(nn.Module):
         aa_order (list[str]): The order of alternating attention, e.g. ["frame", "global"].
         aa_block_size (int): How many blocks to group under each attention type before switching. If not necessary, set to 1.
         qk_norm (bool): Whether to apply QK normalization.
-        rope_freq (int): Base frequency for rotary embedding. -1 to disable.
+        rope_freq (int): Base frequency for rotary embedding.
         init_values (float): Init scale for layer scale.
     """
 
@@ -78,7 +77,6 @@ class Aggregator(nn.Module):
         num_heads=16,
         mlp_ratio=4.0,
         num_register_tokens=4,
-        block_fn=Block,
         qkv_bias=True,
         proj_bias=True,
         ffn_bias=True,
@@ -89,8 +87,6 @@ class Aggregator(nn.Module):
         rope_freq=100,
         init_values=0.01,
         gradient_checkpointing=True,
-        cached_layer_indices=(4, 11, 17, 23),
-        **kwargs,
     ):
         super().__init__()
         logger.info(f"Initializing Aggregator: patch_embed={patch_embed}, embed_dim={embed_dim}, depth={depth}")
@@ -103,17 +99,16 @@ class Aggregator(nn.Module):
         # content; this token just says "slot 0 is the anchor". No new module — reuses the
         # pretrained `self.camera_token` (built below).
         self.gradient_checkpointing = gradient_checkpointing
-        self.cached_layer_indices = set(cached_layer_indices)
+        self.cached_layer_indices = set(DPT_INTERMEDIATE_LAYERS)
 
-        self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
+        self._build_patch_embed(patch_embed, img_size, patch_size, num_register_tokens)
 
-        # Initialize rotary position embedding if frequency > 0
-        self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
-        self.position_getter = PositionGetter() if self.rope is not None else None
+        self.rope = RotaryPositionEmbedding2D(frequency=rope_freq)
+        self.position_getter = PositionGetter()
 
         self.frame_blocks = nn.ModuleList(
             [
-                block_fn(
+                Block(
                     dim=embed_dim,
                     num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
@@ -130,7 +125,7 @@ class Aggregator(nn.Module):
 
         self.global_blocks = nn.ModuleList(
             [
-                block_fn(
+                Block(
                     dim=embed_dim,
                     num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
@@ -174,16 +169,7 @@ class Aggregator(nn.Module):
 
         self.use_reentrant = False  # hardcoded to False
 
-    def __build_patch_embed__(
-        self,
-        patch_embed,
-        img_size,
-        patch_size,
-        num_register_tokens,
-        interpolate_antialias=True,
-        init_values=1.0,
-        embed_dim=1024,
-    ):
+    def _build_patch_embed(self, patch_embed, img_size, patch_size, num_register_tokens):
         """Build the patch embed backbone (DINOv2 ViT-L/14 or DINOv3 ViT-L/16)."""
 
         if patch_embed == "dinov3_vitl16":
@@ -208,21 +194,20 @@ class Aggregator(nn.Module):
                 img_size=518,
                 patch_size=patch_size,
                 num_register_tokens=num_register_tokens,
-                interpolate_antialias=interpolate_antialias,
-                init_values=init_values,
+                interpolate_antialias=True,
+                init_values=1.0,
             )
 
             # Disable gradient updates for mask token
-            if hasattr(self.patch_embed, "mask_token"):
-                self.patch_embed.mask_token.requires_grad_(False)
+            self.patch_embed.mask_token.requires_grad_(False)
 
-    def forward(self, images: torch.Tensor, z_indices: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
+    def forward(self, images: torch.Tensor, z_indices: torch.Tensor) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
                 B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
-            z_indices (torch.Tensor, optional): Normalized z-index values for sinusoidal embedding.
-                Shape [B, S, 1].
+            z_indices (torch.Tensor): Normalized z-index values for sinusoidal embedding.
+                Shape [B, S, 1]. Required; None raises ValueError.
 
         Returns:
             (list[torch.Tensor], int):
@@ -260,16 +245,13 @@ class Aggregator(nn.Module):
         # Concatenate special tokens with patch tokens
         tokens = torch.cat([camera_token, register_token, patch_tokens], dim=1)
 
-        pos = None
-        if self.rope is not None:
-            pos = self.position_getter(B * S, H // self.patch_size, W // self.patch_size, device=images.device)
+        pos = self.position_getter(B * S, H // self.patch_size, W // self.patch_size, device=images.device)
 
-        if self.patch_start_idx > 0:
-            # do not use position embedding for special tokens (camera and register tokens)
-            # so set pos to 0 for the special tokens
-            pos = pos + 1
-            pos_special = torch.zeros(B * S, self.patch_start_idx, 2).to(images.device).to(pos.dtype)
-            pos = torch.cat([pos_special, pos], dim=1)
+        # do not use position embedding for special tokens (camera and register tokens)
+        # so set pos to 0 for the special tokens
+        pos = pos + 1
+        pos_special = torch.zeros(B * S, self.patch_start_idx, 2).to(images.device).to(pos.dtype)
+        pos = torch.cat([pos_special, pos], dim=1)
 
         # update P because we added special tokens
         _, P, C = tokens.shape

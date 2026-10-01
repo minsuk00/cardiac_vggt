@@ -6,25 +6,21 @@
 
 import torch
 import torch.nn as nn
-from huggingface_hub import PyTorchModelHubMixin  # used for model hub
 
 from vggt.heads.dpt_head import DPTHead
 from vggt.models.aggregator import Aggregator
 
 
-class VGGT(nn.Module, PyTorchModelHubMixin):
+class VGGT(nn.Module):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True,
+        self, img_size=518, patch_size=14, embed_dim=1024,
         gradient_checkpointing=True, backbone="dinov2_vitl14_reg",
     ):
         super().__init__()
         self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, gradient_checkpointing=gradient_checkpointing)
 
-        # The head predicts a residual DVF; world_points = scanner_coords + DVF.
-        if not enable_point:
-            self.point_head = None
-        else:
-            self.point_head = DPTHead(dim_in=2 * embed_dim, patch_size=patch_size, output_dim=4, activation="linear", conf_activation="expp1")
+        # The head predicts a residual displacement Δ; world_points = scanner_coords + Δ.
+        self.point_head = DPTHead(dim_in=2 * embed_dim, patch_size=patch_size, output_dim=4, activation="linear", conf_activation="expp1")
 
     def forward(self, images: torch.Tensor, batch: dict = None):
         """
@@ -38,12 +34,11 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
 
         Returns:
             dict: A dictionary containing the following predictions:
-                - world_points (torch.Tensor): 3D world coordinates for each pixel with shape [B, S, H, W, 3]
-                  (scanner_coords + predicted DVF).
+                - world_points (torch.Tensor): Points in the normalized canonical frame, shape [B, S, H, W, 3]
+                  (scanner_coords + dvfs).
                 - world_points_conf (torch.Tensor): Confidence scores for world points with shape [B, S, H, W].
-                - dvfs (torch.Tensor): The predicted normalized T→0 DVF [B, S, H, W, 3].
-                - images (torch.Tensor): Original input images, preserved for visualization. Only when
-                  not self.training (i.e. inference).
+                - dvfs (torch.Tensor): The predicted residual displacement Δ, in the same normalized
+                  units as scanner_coords, shape [B, S, H, W, 3].
         """
         # If without batch dimension, add it
         if len(images.shape) == 4:
@@ -55,21 +50,17 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         predictions = {}
 
         with torch.amp.autocast("cuda", enabled=False):
-            if self.point_head is not None:
-                head_output, head_conf = self.point_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx)
+            head_output, head_conf = self.point_head(aggregated_tokens_list, images=images, patch_start_idx=patch_start_idx)
 
-                # Head predicted normalized T→0 DVF. world_points = scanner_coords + dvf.
-                assert batch is not None and "scanner_coords" in batch, "scanner_coords required for residual DVF but not found in batch."
-                scanner_coords = batch["scanner_coords"]  # voxel position at time T, normalized mm
-                dvf = head_output  # predicted T→0 DVF, normalized
-                assert scanner_coords.shape == dvf.shape, f"scanner_coords {scanner_coords.shape} and dvf {dvf.shape} must share shape and normalization"
-                world_points = scanner_coords + dvf
-                predictions["dvfs"] = dvf
+            # world_points = scanner_coords + Δ, both in the same normalized units.
+            assert batch is not None and "scanner_coords" in batch, "scanner_coords required for residual DVF but not found in batch."
+            scanner_coords = batch["scanner_coords"]  # per-pixel scanner position, normalized
+            dvf = head_output  # predicted residual displacement Δ, normalized
+            assert scanner_coords.shape == dvf.shape, f"scanner_coords {scanner_coords.shape} and dvf {dvf.shape} must share shape and normalization"
+            world_points = scanner_coords + dvf
+            predictions["dvfs"] = dvf
 
-                predictions["world_points"] = world_points
-                predictions["world_points_conf"] = head_conf
-
-        if not self.training:
-            predictions["images"] = images  # store the images for visualization during inference
+            predictions["world_points"] = world_points
+            predictions["world_points_conf"] = head_conf
 
         return predictions

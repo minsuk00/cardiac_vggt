@@ -8,14 +8,15 @@
 # Inspired by https://github.com/DepthAnything/Depth-Anything-V2
 
 
-import os
-from typing import List, Dict, Tuple, Union
+from typing import List, Sequence, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from .head_act import activate_head
 from .utils import create_uv_grid, position_grid_to_embed
+
+# Aggregator layers the DPT head reads; the aggregator caches exactly these and drops the rest.
+DPT_INTERMEDIATE_LAYERS = (4, 11, 17, 23)
 
 
 class DPTHead(nn.Module):
@@ -47,7 +48,7 @@ class DPTHead(nn.Module):
         conf_activation: str = "expp1",
         features: int = 256,
         out_channels: List[int] = [256, 512, 1024, 1024],
-        intermediate_layer_idx: List[int] = [4, 11, 17, 23],
+        intermediate_layer_idx: Sequence[int] = DPT_INTERMEDIATE_LAYERS,
         pos_embed: bool = True,
     ) -> None:
         super(DPTHead, self).__init__()
@@ -80,10 +81,9 @@ class DPTHead(nn.Module):
             ]
         )
 
-        self.scratch = _make_scratch(out_channels, features, expand=False)
+        self.scratch = _make_scratch(out_channels, features)
 
         # Attach additional modules to scratch.
-        self.scratch.stem_transpose = None
         self.scratch.refinenet1 = _make_fusion_block(features)
         self.scratch.refinenet2 = _make_fusion_block(features)
         self.scratch.refinenet3 = _make_fusion_block(features)
@@ -109,7 +109,7 @@ class DPTHead(nn.Module):
         images: torch.Tensor,
         patch_start_idx: int,
         frames_chunk_size: int = 8,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the DPT head, supports processing by chunking frames.
         Args:
@@ -121,7 +121,7 @@ class DPTHead(nn.Module):
                 If None or larger than S, all frames are processed at once. Default: 8.
 
         Returns:
-            Tuple[Tensor, Tensor]: (predictions, confidence) both with shape [B, S, 1, H, W]
+            Tuple[Tensor, Tensor]: predictions [B, S, H, W, output_dim - 1] and confidence [B, S, H, W].
         """
         B, S, _, H, W = images.shape
 
@@ -156,7 +156,7 @@ class DPTHead(nn.Module):
         patch_start_idx: int,
         frames_start_idx: int = None,
         frames_end_idx: int = None,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Implementation of the forward pass through the DPT head.
 
@@ -170,7 +170,7 @@ class DPTHead(nn.Module):
             frames_end_idx (int, optional): Ending index for frames to process.
 
         Returns:
-            Tensor or Tuple[Tensor, Tensor]: Feature maps or (predictions, confidence).
+            Tuple[Tensor, Tensor]: predictions [B, S, H, W, output_dim - 1] and confidence [B, S, H, W].
         """
         if frames_start_idx is not None and frames_end_idx is not None:
             images = images[:, frames_start_idx:frames_end_idx].contiguous()
@@ -276,55 +276,23 @@ class DPTHead(nn.Module):
 ################################################################################
 
 
-def _make_fusion_block(features: int, size: int = None, has_residual: bool = True, groups: int = 1) -> nn.Module:
-    return FeatureFusionBlock(
-        features,
-        nn.ReLU(inplace=True),
-        deconv=False,
-        bn=False,
-        expand=False,
-        align_corners=True,
-        size=size,
-        has_residual=has_residual,
-        groups=groups,
-    )
+def _make_fusion_block(features: int, has_residual: bool = True) -> nn.Module:
+    return FeatureFusionBlock(features, nn.ReLU(inplace=True), has_residual=has_residual)
 
 
-def _make_scratch(in_shape: List[int], out_shape: int, groups: int = 1, expand: bool = False) -> nn.Module:
+def _make_scratch(in_shape: List[int], out_shape: int) -> nn.Module:
     scratch = nn.Module()
-    out_shape1 = out_shape
-    out_shape2 = out_shape
-    out_shape3 = out_shape
-    if len(in_shape) >= 4:
-        out_shape4 = out_shape
-
-    if expand:
-        out_shape1 = out_shape
-        out_shape2 = out_shape * 2
-        out_shape3 = out_shape * 4
-        if len(in_shape) >= 4:
-            out_shape4 = out_shape * 8
-
-    scratch.layer1_rn = nn.Conv2d(
-        in_shape[0], out_shape1, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
-    )
-    scratch.layer2_rn = nn.Conv2d(
-        in_shape[1], out_shape2, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
-    )
-    scratch.layer3_rn = nn.Conv2d(
-        in_shape[2], out_shape3, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
-    )
-    if len(in_shape) >= 4:
-        scratch.layer4_rn = nn.Conv2d(
-            in_shape[3], out_shape4, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
-        )
+    scratch.layer1_rn = nn.Conv2d(in_shape[0], out_shape, kernel_size=3, stride=1, padding=1, bias=False)
+    scratch.layer2_rn = nn.Conv2d(in_shape[1], out_shape, kernel_size=3, stride=1, padding=1, bias=False)
+    scratch.layer3_rn = nn.Conv2d(in_shape[2], out_shape, kernel_size=3, stride=1, padding=1, bias=False)
+    scratch.layer4_rn = nn.Conv2d(in_shape[3], out_shape, kernel_size=3, stride=1, padding=1, bias=False)
     return scratch
 
 
 class ResidualConvUnit(nn.Module):
     """Residual convolution module."""
 
-    def __init__(self, features, activation, bn, groups=1):
+    def __init__(self, features, activation):
         """Init.
 
         Args:
@@ -332,16 +300,10 @@ class ResidualConvUnit(nn.Module):
         """
         super().__init__()
 
-        self.bn = bn
-        self.groups = groups
-        self.conv1 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True, groups=self.groups)
-        self.conv2 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True, groups=self.groups)
-
-        self.norm1 = None
-        self.norm2 = None
+        self.conv1 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True)
+        self.conv2 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True)
 
         self.activation = activation
-        self.skip_add = nn.quantized.FloatFunctional()
 
     def forward(self, x):
         """Forward pass.
@@ -355,32 +317,17 @@ class ResidualConvUnit(nn.Module):
 
         out = self.activation(x)
         out = self.conv1(out)
-        if self.norm1 is not None:
-            out = self.norm1(out)
 
         out = self.activation(out)
         out = self.conv2(out)
-        if self.norm2 is not None:
-            out = self.norm2(out)
 
-        return self.skip_add.add(out, x)
+        return out + x
 
 
 class FeatureFusionBlock(nn.Module):
     """Feature fusion block."""
 
-    def __init__(
-        self,
-        features,
-        activation,
-        deconv=False,
-        bn=False,
-        expand=False,
-        align_corners=True,
-        size=None,
-        has_residual=True,
-        groups=1,
-    ):
+    def __init__(self, features, activation, has_residual=True):
         """Init.
 
         Args:
@@ -388,26 +335,13 @@ class FeatureFusionBlock(nn.Module):
         """
         super(FeatureFusionBlock, self).__init__()
 
-        self.deconv = deconv
-        self.align_corners = align_corners
-        self.groups = groups
-        self.expand = expand
-        out_features = features
-        if self.expand == True:
-            out_features = features // 2
-
-        self.out_conv = nn.Conv2d(
-            features, out_features, kernel_size=1, stride=1, padding=0, bias=True, groups=self.groups
-        )
+        self.out_conv = nn.Conv2d(features, features, kernel_size=1, stride=1, padding=0, bias=True)
 
         if has_residual:
-            self.resConfUnit1 = ResidualConvUnit(features, activation, bn, groups=self.groups)
+            self.resConfUnit1 = ResidualConvUnit(features, activation)
 
         self.has_residual = has_residual
-        self.resConfUnit2 = ResidualConvUnit(features, activation, bn, groups=self.groups)
-
-        self.skip_add = nn.quantized.FloatFunctional()
-        self.size = size
+        self.resConfUnit2 = ResidualConvUnit(features, activation)
 
     def forward(self, *xs, size=None):
         """Forward pass.
@@ -419,18 +353,13 @@ class FeatureFusionBlock(nn.Module):
 
         if self.has_residual:
             res = self.resConfUnit1(xs[1])
-            output = self.skip_add.add(output, res)
+            output = output + res
 
         output = self.resConfUnit2(output)
 
-        if (size is None) and (self.size is None):
-            modifier = {"scale_factor": 2}
-        elif size is None:
-            modifier = {"size": self.size}
-        else:
-            modifier = {"size": size}
+        modifier = {"scale_factor": 2} if size is None else {"size": size}
 
-        output = custom_interpolate(output, **modifier, mode="bilinear", align_corners=self.align_corners)
+        output = custom_interpolate(output, **modifier, mode="bilinear", align_corners=True)
         output = self.out_conv(output)
 
         return output

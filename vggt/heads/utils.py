@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-import torch.nn as nn
 
 
 def position_grid_to_embed(pos_grid: torch.Tensor, embed_dim: int, omega_0: float = 100) -> torch.Tensor:
@@ -45,8 +44,7 @@ def make_sincos_pos_embed(embed_dim: int, pos: torch.Tensor, omega_0: float = 10
     - emb: The generated 1D positional embedding.
     """
     assert embed_dim % 2 == 0
-    device = pos.device
-    omega = torch.arange(embed_dim // 2, dtype=torch.float32 if device.type == "mps" else torch.double, device=device)
+    omega = torch.arange(embed_dim // 2, dtype=torch.double, device=pos.device)
     omega /= embed_dim / 2.0
     omega = 1.0 / omega_0**omega  # (D/2,)
 

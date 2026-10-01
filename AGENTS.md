@@ -128,8 +128,8 @@ Checkpoints save the **full 941M state dict** (~3.8 GB each), not just the train
 ## Inference / inspection
 
 ```python
-from vggt.models.vggt import VGGT
-model = VGGT.from_pretrained("facebook/VGGT-1B").cuda().eval()
+from inference.load_run import load_model_from_run
+model, run_cfg = load_model_from_run("scratch/logs/<exp_dir>/ckpts/checkpoint_last.pt")
 preds = model(images, batch=batch)  # batch needs: z_indices, scanner_coords
 # To use compute_volume_intensity_loss: batch must also include gt_target_volume (already the t_target phase; t_target itself is only used for per-phase logging, not the loss).
 ```

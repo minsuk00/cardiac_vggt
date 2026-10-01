@@ -43,7 +43,8 @@ DEAD_MODEL_KWARGS = ("enable_camera", "enable_depth", "enable_track", "enable_re
                      "refiner_use_coverage", "grid_shape", "use_t_pose_embedding",
                      "use_target_t_pose_embedding", "_target_")
 # Flags that are now always on. A run that recorded one of them as false built a different model.
-ALWAYS_ON_MODEL_KWARGS = ("use_z_pose_embedding", "use_reference_token", "train_on_residual_dvf")
+ALWAYS_ON_MODEL_KWARGS = ("use_z_pose_embedding", "use_reference_token", "train_on_residual_dvf",
+                          "enable_point")
 
 # Pre-40b652a runs recorded neither; every such run was DINOv2/14.
 LEGACY_BACKBONE = "dinov2_vitl14_reg"

@@ -38,7 +38,7 @@ def _load_cfg():
 def _build_from_cfg(cfg):
     from vggt.models.vggt import VGGT
 
-    return VGGT(img_size=518, patch_size=14, embed_dim=1024, enable_point=cfg.model.enable_point)
+    return VGGT(img_size=518, patch_size=14, embed_dim=1024)
 
 
 @pytest.fixture(scope="module")
