@@ -49,7 +49,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 
 # Override
 PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
-    --config default optim.base_lr=1e-4
+    --config default optim.optimizer.lr=1e-4
 ```
 
 **Cluster submission**: `ARM=<arm> bash sbatch/train_final_518.sh` (the paper recipe; `ARM=diff1000` is the paper model) — self-submits via embedded `sbatch`, `WANDB_MODE=online`, SLURM auto-requeue (SIGUSR1 → checkpoint-and-resume). Resume modes (vars at the top of the script):
