@@ -267,7 +267,7 @@ class TrainerVizMixin:
             import wandb
             import numpy as np
             import matplotlib.pyplot as plt
-            from loss import compute_motion_mask, MOTION_MASK_TAU
+            from metrics import compute_motion_mask, MOTION_MASK_TAU
         except ImportError:
             return
 

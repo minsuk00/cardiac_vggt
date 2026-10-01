@@ -4,8 +4,7 @@ import torch.nn.functional as F
 
 from data.gpu_aug import extract_slices_from_phases
 from data.respiratory import extract_slices_with_respiratory_vec
-from loss import _splat_preds_native
-from vggt.utils.splat import splat_predictions, splat_to_volume
+from vggt.utils.splat import splat_predictions, splat_preds_native, splat_to_volume
 
 
 def _phases(seed=0, B=1, T=3, D=4, H=64, W=64):
@@ -51,7 +50,7 @@ def test_native_splat_matches_manual_and_falls_back():
              "images_splat": torch.rand(1, S, hn, hn, generator=g)}
     grid, z_scale = (D, hn, hn), (D - 1) / 2.0
 
-    V, _ = _splat_preds_native({"world_points": wp}, batch, grid, z_scale)
+    V, _ = splat_preds_native({"world_points": wp}, batch, grid, z_scale)
     x = F.interpolate(wp.permute(0, 1, 4, 2, 3).reshape(S, 3, hm, hm),
                       size=(hn, hn), mode="bilinear", align_corners=True)
     wp_n = x.reshape(1, S, 3, hn, hn).permute(0, 1, 3, 4, 2)
@@ -61,7 +60,7 @@ def test_native_splat_matches_manual_and_falls_back():
     assert V.shape == (1,) + grid and torch.allclose(V, Vm, atol=1e-6)
 
     b2 = {k: v for k, v in batch.items() if k != "images_splat"}
-    V2, _ = _splat_preds_native({"world_points": wp}, b2, grid, z_scale)
+    V2, _ = splat_preds_native({"world_points": wp}, b2, grid, z_scale)
     V3, _ = splat_predictions({"world_points": wp}, b2, grid, z_scale)
     assert torch.equal(V2, V3)
 
@@ -88,9 +87,9 @@ def test_splat_res_none_is_noop_and_native_res_is_identity():
     S, D, hn = 3, 4, 64
     batch = {"images": images, "images_splat": native}
     grid, z_scale = (D, hn, hn), (D - 1) / 2.0
-    V0, _ = _splat_preds_native({"world_points": wp}, batch, grid, z_scale)
-    V1, _ = _splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=None)
-    V2, _ = _splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=hn)
+    V0, _ = splat_preds_native({"world_points": wp}, batch, grid, z_scale)
+    V1, _ = splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=None)
+    V2, _ = splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=hn)
     assert torch.equal(V0, V1) and torch.equal(V0, V2)
 
 
@@ -102,11 +101,11 @@ def test_splat_res_at_model_res_reproduces_old_model_res_splat():
     S, D, hm, hn = 3, 4, 28, 64
     batch = {"images": images, "images_splat": native}
     grid, z_scale = (D, hn, hn), (D - 1) / 2.0
-    V_new, cov_new = _splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=hm)
+    V_new, cov_new = splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=hm)
     V_old, cov_old = splat_predictions({"world_points": wp}, {"images": images}, grid, z_scale)
     assert torch.allclose(V_new, V_old, atol=1e-6) and torch.allclose(cov_new, cov_old, atol=1e-6)
     # and it is NOT the native render (different point count -> different coverage)
-    V_nat, _ = _splat_preds_native({"world_points": wp}, batch, grid, z_scale)
+    V_nat, _ = splat_preds_native({"world_points": wp}, batch, grid, z_scale)
     assert not torch.allclose(V_nat, V_old, atol=1e-3)
 
 
@@ -117,7 +116,7 @@ def test_splat_res_supersample_matches_manual():
     S, D, hm, hn, R = 3, 4, 28, 64, 96
     batch = {"images": images, "images_splat": native}
     grid, z_scale = (D, hn, hn), (D - 1) / 2.0
-    V, _ = _splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=R)
+    V, _ = splat_preds_native({"world_points": wp}, batch, grid, z_scale, splat_res=R)
     x = F.interpolate(wp.permute(0, 1, 4, 2, 3).reshape(S, 3, hm, hm), size=(R, R),
                       mode="bilinear", align_corners=True)
     wp_r = x.reshape(1, S, 3, R, R).permute(0, 1, 3, 4, 2)

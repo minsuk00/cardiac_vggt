@@ -1,7 +1,8 @@
 """Tests for the cardiac-motion mask + motion-masked PSNR metric (val_motion panel)."""
 import torch
 
-from loss import compute_motion_mask, MOTION_MASK_TAU, compute_volume_intensity_loss
+from loss import compute_volume_intensity_loss
+from metrics import compute_motion_mask, MOTION_MASK_TAU
 
 
 def test_motion_mask_selects_only_moving_voxels():

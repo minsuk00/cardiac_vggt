@@ -180,6 +180,58 @@ def splat_predictions(predictions, batch, grid_shape, z_scale):
     return V_canon, coverage
 
 
+def resize_field(wp, Hn, Wn):
+    """Bilinear-resize a (B, S, h, w, 3) point field in-plane to (Hn, Wn). Exact w.r.t.
+    the scanner-coords convention (x = px/(R-1)*2-1 is linear; z is per-slot constant)."""
+    B, S, h, w, _ = wp.shape
+    if (h, w) == (Hn, Wn):
+        return wp
+    x = wp.permute(0, 1, 4, 2, 3).reshape(B * S, 3, h, w)
+    x = F.interpolate(x, size=(Hn, Wn), mode="bilinear", align_corners=True)
+    return x.reshape(B, S, 3, Hn, Wn).permute(0, 1, 3, 4, 2)
+
+
+def splat_inputs(batch, splat_res=None):
+    """The (B, S, R, R) [0,1] intensities the splat scatters, or None when the batch has no
+    `images_splat` (offline harness batches -> model-res fallback). splat_res=None keeps the
+    native grid (default, docs/73); an int R resamples the native slices to R² (bilinear,
+    align_corners=True — the same convention `extract_slices_from_phases` uses to build the
+    model input, so splat_res == img_size reproduces the pre-docs/73 model-res splat up to
+    float rounding)."""
+    imsp = batch.get("images_splat")
+    if imsp is None or splat_res is None or int(splat_res) == imsp.shape[-1]:
+        return imsp
+    B, S, H, W = imsp.shape
+    R = int(splat_res)
+    x = F.interpolate(imsp.reshape(B * S, 1, H, W).float(), size=(R, R),
+                      mode="bilinear", align_corners=True)
+    return x.view(B, S, R, R)
+
+
+def splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res=None):
+    """Native-render splat: resample the predicted point field to the native canonical
+    resolution and splat batch["images_splat"] (pre-model-resize slice content,
+    resp-corrupted where resp is on). Resampling the smooth FIELD is ~free (−0.12 dB,
+    docs/72 §3); resampling the IMAGE is lossy for img_size < 256. Falls back to the
+    model-resolution splat when images_splat is absent (batches built outside
+    gpu_augment_batch, e.g. the offline eval harnesses).
+
+    splat_res (loss.volume.splat_res): None = native grid; int R = splat R² points per
+    slice instead (field + native image both resampled to R). Training-time knob only —
+    it changes how many points feed the coverage-weighted average (and hence the loss
+    surface), not the rendered volume's grid. See `splat_inputs`."""
+    imsp = splat_inputs(batch, splat_res)
+    if imsp is None:
+        return splat_predictions(predictions, batch, grid_shape, z_scale)
+    Hn, Wn = imsp.shape[-2:]
+    wp = resize_field(predictions["world_points"], Hn, Wn)
+    B = wp.shape[0]
+    pos = wp.reshape(B, -1, 3)
+    inten = imsp.float().reshape(B, -1)
+    return splat_to_volume(pos, inten, tuple(grid_shape), z_scale,
+                           weight=(inten > 1e-3).to(inten.dtype))
+
+
 def sample_volume(volume, pos, z_scale):
     """Trilinear sample of a 3D volume at given normalized positions.
 

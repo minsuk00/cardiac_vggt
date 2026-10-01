@@ -71,8 +71,7 @@ def _val_batch(B=1, static_samples=(), device="cpu"):
 
 def _run(batch):
     pos = batch["scanner_coords"] + 0.01          # a small Δ, and NOT the same object
-    assert not pos.requires_grad                  # val gate: block only runs without grad
-    return compute_volume_intensity_loss({"world_points": pos}, batch)
+    return compute_volume_intensity_loss({"world_points": pos}, batch, val_metrics=True)
 
 
 DOCS38_KEYS = [
@@ -97,8 +96,8 @@ def test_docs38_ship_decision_metrics_present(caplog):
         assert torch.isfinite(out[k]).all(), f"{k} is not finite"
 
 
-def test_docs38_block_skipped_when_grad_enabled():
-    """Train path (world_points requires grad) must skip the extra splats entirely."""
+def test_docs38_block_skipped_without_val_metrics():
+    """Train path (val_metrics=False, the default) must skip the extra splats entirely."""
     batch = _val_batch()
     pos = (batch["scanner_coords"] + 0.01).requires_grad_(True)
     out = compute_volume_intensity_loss({"world_points": pos}, batch)

@@ -2,15 +2,15 @@
 
 Why this file exists
 --------------------
-`loss.py` computes the same "square the error, average over a mask, convert to dB" five
+`metrics.py` computes the same "square the error, average over a mask, convert to dB" five
 times, in two deliberately different styles:
 
-  * TRAIN-PATH blocks (bbox, motion) — vectorized `torch.where` + sum/count, BRANCHLESS.
-    The branchlessness is load-bearing: a Python-level `if` here costs 4 graph breaks
-    (measured, see the comment in loss.py), and these run every training step.
-  * VAL-ONLY blocks (heartseg, docs/38 heart, docs/38 seg) — a Python `for b in range(B)`
-    loop with boolean indexing. Gated on `not pos_pred.requires_grad`, so host syncs are
-    free and the loop is simply clearer.
+  * TRAIN-PATH blocks (bbox, motion; `base_metrics`) — vectorized `torch.where` + sum/count,
+    BRANCHLESS. The branchlessness is load-bearing: a Python-level `if` here costs 4 graph
+    breaks (measured, see the comment in metrics.py), and these run every training step.
+  * VAL-ONLY blocks (heartseg, docs/38 heart, docs/38 seg; `val_metrics`) — a Python
+    `for b in range(B)` loop with boolean indexing. Run only with `val_metrics=True`, so host
+    syncs are free and the loop is simply clearer.
 
 They also differ in clamping and in which samples count as valid. Merging them into shared
 helpers is therefore easy to get subtly wrong — and a wrong merge shifts a HEADLINE number
@@ -76,9 +76,10 @@ def _batch(seed=0, D_=D, non_finite_outside_mask=False):
 
 
 def _run(batch, requires_grad=False):
-    """Val mode by default (requires_grad False ⇒ the val-only blocks fire)."""
+    """Val mode by default (val_metrics=True ⇒ the val-only blocks fire)."""
     pos = batch["scanner_coords"].clone().requires_grad_(requires_grad)
-    return compute_volume_intensity_loss({"world_points": pos}, batch)
+    return compute_volume_intensity_loss({"world_points": pos}, batch,
+                                         val_metrics=not requires_grad)
 
 
 # Keys every masked block must produce in val mode.

@@ -1144,7 +1144,7 @@ class Trainer(TrainerVizMixin):
         y_hat = self.model(images=batch["images"], batch=batch)
 
         # Loss computation
-        loss_dict = self.loss(y_hat, batch)
+        loss_dict = self.loss(y_hat, batch, val_metrics=(phase == "val"))
         loss_dict["loss_objective"] = loss_dict["objective"]
 
         # Combine all data for logging
@@ -1309,7 +1309,7 @@ class Trainer(TrainerVizMixin):
         if (phase == "val"
                 and "V_canon" in data and "V_gt" in data and "t_target" in data):
             try:
-                from loss import compute_motion_mask
+                from metrics import compute_motion_mask
                 V_canon = data["V_canon"]
                 V_gt = data["V_gt"]
                 t_targets = data["t_target"]

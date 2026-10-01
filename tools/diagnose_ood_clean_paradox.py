@@ -124,7 +124,7 @@ def val_forward(model, mri_ds, rcfg, seq_index, breathing):
     V_canon, coverage = splat_predictions({"world_points": wp}, batch, GRID_SHAPE)
     # PSNR on the PROJECT-PRIMARY metric: motion voxels (dynamic across the cardiac cycle),
     # plus full for reference. Motion mask from the UNSHIFTED phases bundle (identical ON/OFF).
-    from loss import compute_motion_mask
+    from metrics import compute_motion_mask
     mmask = compute_motion_mask(batch["phases"])[0]          # (D,H,W) bool
     Vc, Vg = V_canon[0], phases[t_target]
     se = (Vc - Vg) ** 2
