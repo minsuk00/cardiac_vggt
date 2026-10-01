@@ -43,8 +43,9 @@ set -euo pipefail
 # Under sbatch the script runs from SLURM's spool copy, so BASH_SOURCE points at
 # /var/spool/... — use the submit dir there; the dirname fallback covers `bash <path>`.
 REPO=${REPO:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}
-CKPT=${CKPT:-$REPO/scratch/logs/213338187_augaggr224hw2_pooled1337/ckpts/checkpoint_last.pt}
-MODEL_NAME=${MODEL_NAME:-augaggr224hw2_ep300}
+# Default = the paper model.
+CKPT=${CKPT:-$REPO/scratch/logs/210823094_final518_diff1000_curated898/ckpts/checkpoint_last.pt}
+MODEL_NAME=${MODEL_NAME:-final518_diff1000_ep300}
 SPLIT=${SPLIT:-val}
 INPUT=${INPUT:-scatter}          # scatter (deliverable) | gated (diagnostic ceiling; MODEL_NAME must contain 'gated')
 SOURCES=${SOURCES:-"cmrx2023 cmrx2024 cmrx2025 acdc mnms miitt ocmr"}

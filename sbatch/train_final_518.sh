@@ -16,7 +16,7 @@
 
 # --- Configuration ---
 # ============================================================================================
-# FINAL-MODEL SWEEP, 2026-09-11 — five arms on the curated-v2 split (docs/97, 628/90/180).
+# FINAL-MODEL SWEEP, 2026-09-11 — six arms on the curated-v2 split (docs/97, 628/90/180).
 # Base recipe = the paper recipe (no-reg, gather 0.5, heart-L1 0.5, aggressive aug, resp on,
 # cosine 5e-5 -> 0 over 300 epochs, seed 42) at img_size=518 with the DENSE training splat
 # (loss.volume.splat_res=518). Rationale: on pooled1337 the 518-input + 518-splat combination
@@ -26,7 +26,9 @@
 #   ARM=base          diffusion 0, heart 0.5                    (the candidate ship recipe)
 #   ARM=diff1000      + loss.volume.diffusion_weight=1000       (old-518 / Run A regularizer)
 #   ARM=hw2           + loss.volume.heart_weight=2.0            (pooled1337: MAE 13.0->11.7, r held)
+#   ARM=hw0           + loss.volume.heart_weight=0.0            (heart-L1 ablation vs base)
 #   ARM=nogather      loss.volume.gather_weight=0.0                (gather-loss ablation vs base)
+#   ARM=diff1000_nogather  diff1000 + nogather
 # Score with sbatch/eval_pooled_val.sh (v2 val is the default split) -> sbatch/eval_ef_dice.sh.
 # Submit: ARM=<arm> bash $0  (from a login node, or `unset ${!SLURM_@}` first inside an
 # interactive job). ~30 min/epoch on an L40S at 518/518 -> ~6 days per arm.
@@ -35,7 +37,7 @@
 # Target-phase REFERENCE-SLICE conditioning (docs/24, docs/25); WARM-START fresh from base
 # VGGT-1B (config default resume path, strict=false) — leave RESUME_FROM and CKPT_ONLY empty.
 # aggft (only `*patch_embed*` frozen). ⚠️ LR: 5e-5 peak, never 3e-4 (killed two arms, see
-# train_pooled1337_dpt_augaggressive_224.sh).
+# sbatch/_archive/train_pooled1337_dpt_augaggressive_224.sh).
 CONFIG="default"
 PEAK_LR="5e-5"
 
