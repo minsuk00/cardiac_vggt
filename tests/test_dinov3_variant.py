@@ -28,11 +28,7 @@ def _compose(name):
     OmegaConf.register_new_resolver(
         "aug_tag",
         lambda enabled, tier: (
-            "noaug" if not enabled else {
-                "conservative": "aug_cons",
-                "moderate": "aug_mod",
-                "aggressive": "aug_agg",
-            }[str(tier)]
+            "noaug" if not enabled else {"aggressive": "aug_agg"}[str(tier)]
         ),
         replace=True,
     )

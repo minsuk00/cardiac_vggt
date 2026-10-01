@@ -58,29 +58,9 @@ def test_build_returns_none_when_disabled():
     assert build_gpu_transforms(None) is None
 
 def test_build_returns_compose_when_enabled():
-    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
     assert t is not None
-
-def test_build_moderate_tier_builds():
-    """Moderate tier: in-plane only, ±180° rotation. Gaussian noise is DISABLED (wrong artifact
-    model) and flip is AGGRESSIVE-ONLY as of 2026-08-01 (it was briefly on in every tier,
-    2026-07-31; moderate is the arm docs/46 §3 C2 measured and shipped, which had no flip), so
-    3 active transforms: affine, contrast, bias-field."""
-    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "moderate"}))
-    assert t is not None
-    assert len(t.transforms) == 3
-    assert type(t.transforms[0]).__name__ == "RandAffined"
-
-
-def test_flip_is_aggressive_only():
-    """Flip is a vector-field symmetry (needs a coupled Δx sign negation), so it is confined to
-    the aggressive tier; conservative/moderate must stay flip-free."""
-    for tier in ("conservative", "moderate"):
-        t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": tier}))
-        names = [type(x).__name__ for x in t.transforms]
-        assert "RandFlipd" not in names, f"{tier} tier must not flip"
-    agg = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
-    assert type(agg.transforms[0]).__name__ == "RandFlipd"
+    assert type(t.transforms[0]).__name__ == "RandFlipd"
 
 def test_build_unknown_tier_raises():
     with pytest.raises(ValueError):
@@ -97,11 +77,11 @@ def test_identity_passthrough_when_none():
         assert torch.equal(out[k], pre[k]), f"{k} changed under identity passthrough"
 
 
-# ── gpu_augment_batch with conservative pipeline ──────────────────────────────
+# ── gpu_augment_batch with the aggressive pipeline ────────────────────────────
 
 def test_aug_preserves_shapes_and_ranges():
     batch = _fake_batch()
-    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
     out = gpu_augment_batch(batch, t, DEVICE)
     B, S = 2, 8
     assert out["phases"].shape == (B, 12, 12, 256, 256)
@@ -113,13 +93,11 @@ def test_aug_preserves_shapes_and_ranges():
     assert float(out["images"].min()) >= 0.0 and float(out["images"].max()) <= 1.0
 
 @pytest.mark.parametrize("D", [5, 7, 12, 21])
-@pytest.mark.parametrize("tier", ["conservative", "moderate", "aggressive"])
-def test_aug_is_native_z_agnostic(D, tier):
-    """Under native-z every subject has its own D (5-21 across the pooled cohort, docs/58),
-    and augmentation is ON by default as of 2026-07-31 — so the aug path must carry D
-    through unchanged for every tier, not just the legacy D=12 cube."""
+def test_aug_is_native_z_agnostic(D):
+    """Under native-z every subject has its own D (5-21 across the pooled cohort), so the
+    aug path must carry D through unchanged, not just the legacy D=12 cube."""
     batch = _fake_batch(D=D)
-    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": tier}))
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
     out = gpu_augment_batch(batch, t, DEVICE)
     B, S = 2, 8
     assert out["phases"].shape == (B, 12, D, 256, 256)
@@ -134,7 +112,7 @@ def test_aug_is_native_z_agnostic(D, tier):
 
 def test_aug_recomputes_bbox_validly():
     batch = _fake_batch()
-    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
     out = gpu_augment_batch(batch, t, DEVICE)
     for b in range(out["anatomy_bbox"].shape[0]):
         z0, z1, y0, y1, x0, x1 = out["anatomy_bbox"][b].tolist()
@@ -143,10 +121,10 @@ def test_aug_recomputes_bbox_validly():
         assert 0 <= x0 < x1 <= 256
 
 
-def test_conservative_tier_has_no_through_plane_spatial_op():
+def test_spatial_aug_has_no_through_plane_op():
     """Regression guard for the through-plane rotation bug.
 
-    The conservative tier must never move intensity ACROSS Z (D) planes: no
+    The spatial aug must never move intensity ACROSS Z (D) planes: no
     through-plane rotation, translation, or scale. We confine content to a few
     D-planes, apply the spatial aug 10× at prob=1, and assert no mass leaks into
     the empty planes. (batchaug's rotate_range is positional by plane-of-rotation,
@@ -157,7 +135,7 @@ def test_conservative_tier_has_no_through_plane_spatial_op():
 
     keys = ["phases"]
     mode = {"phases": "bilinear"}
-    # Spatial-only conservative ops (drop photometric, which don't move mass).
+    # Spatial-only ops (drop photometric, which don't move mass).
     spatial = B.Compose(transforms=[
         B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
         B.RandAffined(keys=keys, prob=1.0,
@@ -303,7 +281,7 @@ def test_affine_plus_resp_single_extraction(monkeypatch):
     monkeypatch.setattr(gpu_aug, "extract_slices_from_phases", spy_plain)
     monkeypatch.setattr(gpu_aug, "extract_slices_with_respiratory_vec", spy_resp)
 
-    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "conservative"}))
+    t = build_gpu_transforms(OmegaConf.create({"enable": True, "tier": "aggressive"}))
     g = torch.Generator(device=DEVICE).manual_seed(1)
     out = gpu_augment_batch(_fake_batch(), t, DEVICE, respiratory_cfg=_resp_cfg(), train=True, resp_generator=g)
     # ONE resp extraction, at native resolution (-> images_splat); the model input is a
@@ -331,7 +309,7 @@ def test_missing_images_is_always_rebuilt(aug, resp):
     """All four augmentation combinations must yield a usable `images` tensor."""
     batch = _deferred_batch()
     transforms = build_gpu_transforms(
-        OmegaConf.create({"enable": True, "tier": "conservative"})) if aug else None
+        OmegaConf.create({"enable": True, "tier": "aggressive"})) if aug else None
     out = gpu_augment_batch(batch, transforms, DEVICE,
                             respiratory_cfg=_resp_cfg(enable=resp), train=True)
     assert "images" in out, f"images missing with aug={aug} resp={resp}"

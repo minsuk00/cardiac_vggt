@@ -318,16 +318,9 @@ data:
   # `phases_aug[b, t_target[b]]`, input slices are re-extracted at the original (t, z) pairs,
   # and `anatomy_bbox` is recomputed from the augmented content mask. Val never affine-augments.
   #
-  # `tier` — all three IN-PLANE ONLY: no through-plane rotation, no elastic, because z is
-  # coarse and anisotropic vs the 1.4 mm in-plane grid (each subject keeps its own 5-12 mm
-  # pitch, docs/58). The W-axis flip is AGGRESSIVE-ONLY (2026-08-01; briefly on in all tiers
-  # 2026-07-31, docs/58 §10c — but moderate is the arm docs/46 §3 C2 measured and shipped, and
-  # that arm had no flip). Gaussian noise is commented out in all tiers (i.i.d. noise is the
-  # wrong artifact model; real degradation is structured).
-  #   "conservative" — no flip; affine p=.5 (rotate ±45° in-plane, translate ±6 px,
-  #                    scale ±5%); gamma p=.4 (0.8-1.3); bias field p=.4 (±0.10).
-  #   "moderate"     — no flip; affine p=.6 (rotate ±180° FULL-CIRCLE, translate ±16 px,
-  #                    scale ±5%); gamma p=.6 (0.7-1.5); bias field p=.5 (±0.5).
+  # `tier` — IN-PLANE ONLY: no through-plane rotation, no elastic, because z is coarse and
+  # anisotropic vs the 1.4 mm in-plane grid (each subject keeps its own 5-12 mm pitch). No
+  # Gaussian noise (i.i.d. noise is the wrong artifact model; real degradation is structured).
   #   "aggressive"   — flip p=.5; affine p=.9 (rotate ±180°, translate ±32 px, NO per-axis
   #                    scale — replaced by isotropic zoom below); gamma p=.75 (0.6-1.5);
   #                    bias field p=.7 (±0.4). PLUS (2026-08-12, docs/63 §5) in-plane
@@ -346,14 +339,8 @@ data:
   # epoch, private RNG) AND val (deterministic per seq_index), so val measures the real
   # corrupted->clean task.
   augmentation:
-    enable: true                # ON by default as of 2026-07-31 (user decision). The W-axis
-                                # flip is NOT part of this default — aggressive-tier-only as of
-                                # 2026-08-01. (docs/05's "aggressive aug hurts in-dist" was
-                                # measured on the AGGRESSIVE tier at 294 subjects; the default
-                                # here is moderate and the cohort is 1337.)
-    tier: "aggressive"          # DEFAULT as of 2026-09-11: every arm since 2026-08-12 (the paper
-                                # recipe default_224, all pooled/curated sbatch scripts) trains
-                                # aggressive; moderate was the 2026-08-01 docs/46 §3 C2 default.
+    enable: true
+    tier: "aggressive"          # the only tier
     respiratory:
       enable: true              # the proven "resp, z-only" recipe (docs/05)
       # SI breath-depth mean/jitter from Burger & Meintjes, "Elliptical Subject-Specific

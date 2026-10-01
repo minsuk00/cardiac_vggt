@@ -72,7 +72,7 @@ def build_gpu_transforms(aug_cfg=None):
     Args:
         aug_cfg: object/dict with fields:
             enable (bool, default False)
-            tier   ("conservative" | "moderate", default "conservative")
+            tier   ("aggressive", the only tier)
 
     Returns:
         `batchaug.Compose` or `None`.
@@ -87,128 +87,49 @@ def build_gpu_transforms(aug_cfg=None):
             "Install via: pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/"
         )
 
-    tier = getattr(aug_cfg, "tier", "conservative")
+    tier = getattr(aug_cfg, "tier", "aggressive")
+    if tier != "aggressive":
+        raise ValueError(f"unknown aug tier: {tier!r} (only 'aggressive' exists)")
     logging.info(f"GPU augmentation enabled: tier={tier}")
     # ARM heart-L1 fix (2026-08-11): `heart_roi_canonical` MUST be warped by the same spatial
     # affine as `phases`/`content_mask` — the heart-L1 loss reads it at TRAIN time against the
     # augmented gt_target_volume, and an unwarped ROI is misaligned with the rotated heart
-    # (moderate tier rotates ±180°). batchaug tolerates missing keys (base.py `if key in d`),
+    # (rotation is ±180°). batchaug tolerates missing keys (base.py `if key in d`),
     # so subjects without an ROI pass through unchanged. Photometric ops stay phases-only.
     keys = ["phases", "content_mask", "heart_roi_canonical"]
     mode_dict = {"phases": "bilinear", "content_mask": "nearest",
                  "heart_roi_canonical": "nearest"}
 
-    if tier == "conservative":
-        # Conservative tier — IN-DISTRIBUTION-PRIORITY (mild). Broadens the natural orientation
-        # spread (rotate ±45°) WITHOUT chasing OOD tails, gentle photometric, modest fire-probs.
-        # NO through-plane rotation (slices are physically anisotropic 12 mm Z vs 1.4 mm X/Y),
-        # NO elastic. Gaussian noise is commented out for ALL tiers (rationale inline below).
-        # batchaug is POSITIONAL, not semantic: each tuple slot i maps to tensor
-        # spatial dim i+2 (our dims are D=0, H=1, W=2 after the channel). BUT
-        # `rotate_range` is special — its slots are PLANES of rotation, not axes:
-        #   slot 0 → rotation in the H-W plane (about D)  = IN-PLANE  ← what we want
-        #   slot 1 → rotation in the D-W plane            = through-plane
-        #   slot 2 → rotation in the D-H plane            = through-plane
-        # So in-plane rotation goes in rotate_range slot 0, NOT slot 2.
-        # (translate_range / scale_range ARE per-axis (D, H, W): slot 0 = D, so
-        #  freezing slot 0 there correctly disables through-plane shift/scale.)
-        transforms = [
-            # RandFlipd DISABLED here — flip lives in the AGGRESSIVE tier only (2026-08-01, user
-            # decision). It is the newest addition (re-enabled 2026-07-31, docs/58 §10c) and was
-            # NOT part of the moderate arm that docs/46 §3 C2 measured and shipped, so keeping
-            # conservative/moderate flip-free preserves the validated configuration. Rationale
-            # for having it at all (mirror-equivariant objective; 29% of the pooled CMRx cohort
-            # is mirrored on disk) is recorded at the aggressive tier below.
-            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
-            _B.RandAffined(
-                keys=keys,
-                prob=0.5,
-                rotate_range=(float(np.deg2rad(45)), 0.0, 0.0),  # in-plane (H-W); mild — broaden natural spread, don't chase OOD tails
-                translate_range=(0.0, 6.0, 6.0),                 # H, W only (D frozen)
-                scale_range=(0.0, 0.05, 0.05),                   # H, W only; small → anisotropy (independent H/W) stays negligible
-                padding_mode="zeros",
-            ),
-            # Photometric — apply ONLY to `phases`, not the mask.
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.4, gamma=(0.8, 1.3)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.4, degree=3, coeff_range=(-0.10, 0.10)),  # symmetric → zero-mean shading (both brighten & darken)
-            # RandGaussianNoised DISABLED (all tiers): models i.i.d. noise, but real OOD/real-time
-            # degradation is structured (aliasing/motion-blur); it mostly corrupts clean signal.
-            # _B.RandGaussianNoised(keys=["phases"], prob=0.3, std=(0.0, 0.02)),
-        ]
-        return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
-
-    if tier == "moderate":
-        # Moderate tier — RECOMMENDED OOD-AWARE DEFAULT (synthesized from a 2-stance debate).
-        # IN-PLANE ONLY. Headline = FULL-CIRCLE (±180°) rotation to cover the measured MIITT
-        # orientation gap (MIITT clusters ~180° off CMRx's mode), at moderate prob (0.6) so
-        # natural orientation is still anchored (~40% of samples). Gamma = the key contrast
-        # lever; bias-field models coil shading; scale kept small (near-isotropic); flip OFF,
-        # Gaussian noise OFF (see conservative note). Plane semantics as in conservative:
-        # rotate slot 0 = in-plane (H-W); translate/scale slots (D,H,W) with D frozen.
-        transforms = [
-            # RandFlipd DISABLED — see conservative note. This tier is the shipped docs/46 §3 C2
-            # arm, which was measured WITHOUT flip; flip is aggressive-only.
-            # _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
-            _B.RandAffined(
-                keys=keys,
-                prob=0.6,
-                rotate_range=(float(np.deg2rad(180)), 0.0, 0.0),  # FULL-CIRCLE: ±180° uniform IS the whole circle (angles mod 360°); 360° would just duplicate orientations
-                translate_range=(0.0, 16.0, 16.0),               # H, W only (D frozen)
-                scale_range=(0.0, 0.05, 0.05),                   # H, W only; small → near-isotropic (avoids ellipse distortion)
-                padding_mode="zeros",
-            ),
-            # Photometric — apply ONLY to `phases`, not the mask. Gamma = the key OOD contrast lever.
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.6, gamma=(0.7, 1.5)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.5, degree=3, coeff_range=(-0.5, 0.5)),  # symmetric → zero-mean shading (brighten & darken); clamp handles residual overshoot
-            # RandGaussianNoised DISABLED — see conservative note.
-            # _B.RandGaussianNoised(keys=["phases"], prob=0.5, std=(0.0, 0.03)),
-        ]
-        return _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
-
-    if tier == "aggressive":
-        # Aggressive tier — MAX OOD coverage. IN-PLANE ONLY. Full-circle rotation like moderate
-        # but at higher prob + wider gamma/bias-field and larger translate; scale still capped
-        # (±8%) to bound ellipse distortion; flip ON (this tier ONLY), Gaussian noise OFF. Same
-        # plane semantics (rotate slot 0 = in-plane H-W; translate/scale (D,H,W) with D frozen).
-        #
-        # 2026-08-12 (docs/63 §5, user decision: APPEND, keep the escalated affine as-is): this
-        # tier additionally runs 4 acquisition-artifact post-ops after the Compose — isotropic
-        # in-plane zoom, simulated low-res, Gibbs ringing, phase-encode ghosting — attached as
-        # `vggt_post_ops` and applied by gpu_augment_batch. See _build_ood_post_ops below for
-        # why they can't just be more entries in this transforms list.
-        transforms = [
-            # RandFlipd — AGGRESSIVE-ONLY as of 2026-08-01 (it was briefly on in all tiers,
-            # 2026-07-31, docs/58 §10c). Why it is justified at all: (1) the training objective
-            # is EXACTLY mirror-equivariant — inputs, `gt_target_volume` and `scanner_coords`
-            # all derive from the same array, so a consistent W-mirror is a measured no-op
-            # (splat residual 1.25e-06); RV location is observable in every input slice, not
-            # prior knowledge. (2) 29% of the pooled CMRx cohort is mirrored on disk anyway, so
-            # the cohort already contains both handednesses. Known cost, unmeasured: the head
-            # outputs a VECTOR field, so mirror-invariance needs a coupled spatial flip AND a Δx
-            # sign negation — a harder symmetry than nnU-Net's label-map mirroring, spent from a
-            # fixed capacity/step budget. That cost is why it is confined to this tier.
-            _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
-            _B.RandAffined(
-                keys=keys,
-                prob=0.9,
-                rotate_range=(float(np.deg2rad(180)), 0.0, 0.0),  # FULL-CIRCLE in-plane rotation (±180° = whole circle)
-                translate_range=(0.0, 32.0, 32.0),               # H, W only (D frozen); widened 20→32 px (2026-08-12, user tuning)
-                scale_range=None,                                # REPLACED by the isotropic zoom post-op (2026-08-12) — per-axis
-                                                                 # scale distorted the LV into an ellipse; zoom keeps it circular
-                padding_mode="zeros",
-            ),
-            # Photometric — apply ONLY to `phases`, not the mask. Maxes softened 2026-08-12
-            # (user tuning: gamma 1.7→1.5, bias ±0.6→±0.4 — the old maxes were too destructive).
-            _B.RandAdjustContrastd(keys=["phases"], prob=0.75, gamma=(0.6, 1.5)),
-            _B.RandBiasFieldd(keys=["phases"], prob=0.7, degree=3, coeff_range=(-0.4, 0.4)),  # symmetric → zero-mean shading
-            # RandGaussianNoised DISABLED — see conservative note.
-            # _B.RandGaussianNoised(keys=["phases"], prob=0.6, std=(0.0, 0.05)),
-        ]
-        compose = _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
-        compose.vggt_post_ops = _build_ood_post_ops(keys, mode_dict)
-        return compose
-
-    raise ValueError(f"unknown aug tier: {tier!r}")
+    # IN-PLANE ONLY: full-circle rotation, translate, flip, gamma and bias field; no
+    # through-plane rotation (slices are anisotropic, 12 mm Z vs 1.4 mm X/Y), no elastic, no
+    # Gaussian noise (real-time degradation is structured, not i.i.d.).
+    # batchaug is POSITIONAL: tuple slot i maps to spatial dim i+2 (D=0, H=1, W=2). But
+    # `rotate_range` slots are PLANES of rotation: slot 0 = H-W plane (about D) = in-plane.
+    # translate_range / scale_range are per-axis (D, H, W); slot 0 = D is frozen.
+    # Four acquisition-artifact post-ops run after the Compose — isotropic in-plane zoom,
+    # simulated low-res, Gibbs ringing, phase-encode ghosting — attached as `vggt_post_ops`
+    # and applied by gpu_augment_batch (see _build_ood_post_ops for why they are separate).
+    transforms = [
+        # W-flip: the objective is exactly mirror-equivariant (inputs, gt_target_volume and
+        # scanner_coords all derive from the same array), and ~29% of the pooled CMRx cohort is
+        # mirrored on disk anyway.
+        _B.RandFlipd(keys=keys, prob=0.5, spatial_axis=[2]),
+        _B.RandAffined(
+            keys=keys,
+            prob=0.9,
+            rotate_range=(float(np.deg2rad(180)), 0.0, 0.0),  # FULL-CIRCLE in-plane rotation (±180° = whole circle)
+            translate_range=(0.0, 32.0, 32.0),               # H, W only (D frozen)
+            scale_range=None,                                # replaced by the isotropic zoom post-op (per-axis
+                                                             # scale distorted the LV into an ellipse)
+            padding_mode="zeros",
+        ),
+        # Photometric — apply ONLY to `phases`, not the mask.
+        _B.RandAdjustContrastd(keys=["phases"], prob=0.75, gamma=(0.6, 1.5)),
+        _B.RandBiasFieldd(keys=["phases"], prob=0.7, degree=3, coeff_range=(-0.4, 0.4)),  # symmetric → zero-mean shading
+    ]
+    compose = _B.Compose(transforms=transforms, lazy=True, mode=mode_dict)
+    compose.vggt_post_ops = _build_ood_post_ops(keys, mode_dict)
+    return compose
 
 
 # ──────────────────────────────────────────────────────────────────────────────

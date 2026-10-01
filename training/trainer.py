@@ -234,8 +234,8 @@ class Trainer(TrainerVizMixin):
         # (module-scope) logging rather than logging here.
         aug_cfg = self.data_conf.get("augmentation", None) if self.data_conf is not None else None
         self.gpu_transforms = build_gpu_transforms(aug_cfg)
-        self._aug_tier = (aug_cfg.get("tier", "conservative")
-                          if aug_cfg is not None else "conservative")  # for the aug panel caption
+        self._aug_tier = (aug_cfg.get("tier", "aggressive")
+                          if aug_cfg is not None else "aggressive")  # for the aug panel caption
         self.val_gpu_transforms = None  # val never AFFINE-augments
 
         # ── Respiratory-motion augmentation (off by default) ───────────────
