@@ -42,7 +42,8 @@ def main():
         f"exp_name=golden_{a.arm}", f"logging.log_dir={os.path.abspath(a.out)}",
     ]
     if not a.paper_mode:
-        torch.use_deterministic_algorithms(True)
+        # warn_only: CUDA grid_sample 3D backward has no deterministic kernel; the rest does.
+        torch.use_deterministic_algorithms(True, warn_only=True)
         overrides.append("cuda.compile_attention_blocks=false")
 
     import launch

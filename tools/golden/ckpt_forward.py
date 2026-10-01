@@ -12,7 +12,7 @@ from common import REPO, dump, sha
 
 import torch
 
-torch.use_deterministic_algorithms(True)
+torch.use_deterministic_algorithms(True, warn_only=True)
 import sys  # noqa: E402
 
 sys.path.insert(0, os.path.join(REPO, "evaluation", "src", "engine"))
@@ -54,7 +54,7 @@ def main():
     out = {}
     for arm in a.arms:
         ckpt = staged_run_dir(arm)
-        model, cfg = load_model_from_run(ckpt, device="cuda")
+        model, cfg = load_model_from_run(ckpt, device="cuda:0")
         keys = sorted(model.state_dict().keys())
         res = {"n_keys": len(keys), "keys": sha(keys),
                "weights": sha([sha(v) for _, v in sorted(model.state_dict().items())])}
@@ -64,7 +64,7 @@ def main():
                 ds = make_dataset(cfg, subj, "val", tmp)
                 phases = ds.get_data(seq_index=12345, img_per_seq=ds.num_slices)["phases"]
                 phases = torch.as_tensor(phases).float().numpy()
-                vols, _, ed = reconstruct(model, ds, 12345, phases, "cuda", None,
+                vols, _, ed = reconstruct(model, ds, 12345, phases, "cuda:0", None,
                                           splat_res=splat_res, phases=PHASES)
             res[subj.rsplit("/", 1)[-1]] = {"V_canon": sha(vols), "delta_ed": sha(ed["delta"]),
                                            "images_ed": sha(ed["images"])}
