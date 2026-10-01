@@ -181,8 +181,6 @@ class Aggregator(nn.Module):
         patch_size,
         num_register_tokens,
         interpolate_antialias=True,
-        interpolate_offset=0.0,
-        block_chunks=0,
         init_values=1.0,
         embed_dim=1024,
     ):
@@ -211,8 +209,6 @@ class Aggregator(nn.Module):
                 patch_size=patch_size,
                 num_register_tokens=num_register_tokens,
                 interpolate_antialias=interpolate_antialias,
-                interpolate_offset=interpolate_offset,
-                block_chunks=block_chunks,
                 init_values=init_values,
             )
 

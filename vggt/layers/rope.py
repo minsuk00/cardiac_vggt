@@ -14,7 +14,6 @@
 #         https://github.com/naver-ai/rope-vit
 
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -93,19 +92,16 @@ class RotaryPositionEmbedding2D(nn.Module):
 
     Args:
         frequency: Base frequency for the position embeddings. Default: 100.0
-        scaling_factor: Scaling factor for frequency computation. Default: 1.0
 
     Attributes:
         base_frequency: Base frequency for computing position embeddings.
-        scaling_factor: Factor to scale the computed frequencies.
         frequency_cache: Cache for storing precomputed frequency components.
     """
 
-    def __init__(self, frequency: float = 100.0, scaling_factor: float = 1.0):
+    def __init__(self, frequency: float = 100.0):
         """Initializes the 2D RoPE module."""
         super().__init__()
         self.base_frequency = frequency
-        self.scaling_factor = scaling_factor
         self.frequency_cache: Dict[Tuple, Tuple[torch.Tensor, torch.Tensor]] = {}
 
     def _compute_frequency_components(
