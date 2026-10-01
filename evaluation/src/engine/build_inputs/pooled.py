@@ -78,11 +78,10 @@ import torch
 from omegaconf import OmegaConf
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
-sys.path.insert(0, os.path.join(ROOT, "training"))
 sys.path.insert(0, ROOT)
 
-from data.datasets.mri_dataset import MRIDataset                               # noqa: E402
-from data.respiratory import RespiratoryConfig, sample_resp_disp, reslice_volume_vec  # noqa: E402
+from training.data.datasets.mri_dataset import MRIDataset                      # noqa: E402
+from training.data.respiratory import RespiratoryConfig, sample_resp_disp, reslice_volume_vec  # noqa: E402
 import evaluation.paths as paths                                               # noqa: E402
 
 DATA_ROOT = os.path.join(ROOT, "scratch/data")

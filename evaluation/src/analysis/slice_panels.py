@@ -57,8 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))                   #
 import paths                                                                    # noqa: E402
 sys.path.insert(0, str(paths.EVAL_ROOT / "src" / "engine"))                    # evaluation/src/engine (run_vggt)
 import run_vggt as R                                                            # noqa: E402
-sys.path.insert(0, str(paths.EVAL_ROOT.parent / "training"))                   # training/ (preprocess)
-from data.preprocess import Z_HALF_MM                                           # noqa: E402
+from training.data.preprocess import Z_HALF_MM                                  # noqa: E402
 
 # normalized [-1,1] -> mm. Through-plane is Z_HALF_MM, a CONSTANT for every subject under physical
 # z (docs/58); the retired `MM_PER_NORM[2] = 66.0` encoded the old fixed 12-plane x 12 mm cube.

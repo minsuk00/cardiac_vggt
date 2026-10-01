@@ -8,5 +8,5 @@ module load gcc/11.2.0 cuda/13.1.0                       # nvcc matching svr's t
 export TORCH_CUDA_ARCH_LIST="8.6;8.9"                    # A40 (spgpu) + L40S (spgpu2) in one .so
 export GRID4D_BUILD_DIR="${GRID4D_BUILD_DIR:-$PWD/scratch/cinevol/grid4d_build}"
 export CINEVOL_PY="${CINEVOL_PY:-/home/minsukc/micromamba/envs/svr/bin/python}"
-export PYTHONPATH="$PWD/baselines/cinevol:$PWD/training:$PWD"
+export PYTHONPATH="$PWD/baselines/cinevol:$PWD"
 export PYTHONDONTWRITEBYTECODE=1

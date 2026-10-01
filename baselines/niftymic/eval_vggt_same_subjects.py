@@ -14,12 +14,11 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "training"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from data.datasets.mri_dataset import MRIDataset  # noqa: E402
+from training.data.datasets.mri_dataset import MRIDataset  # noqa: E402
 from vggt.models.vggt import VGGT  # noqa: E402
-from loss import compute_volume_intensity_loss  # noqa: E402
+from training.loss import compute_volume_intensity_loss  # noqa: E402
 
 CKPT = "/home/minsukc/vggt/scratch/logs/217721337_mri_volume_reference_dynamic_axial_Cine_combined/ckpts/checkpoint_last.pt"
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"

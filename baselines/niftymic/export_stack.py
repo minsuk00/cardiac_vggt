@@ -30,10 +30,9 @@ import nibabel as nib
 import numpy as np
 from omegaconf import OmegaConf
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "training"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from data.datasets.mri_dataset import MRIDataset  # noqa: E402
+from training.data.datasets.mri_dataset import MRIDataset  # noqa: E402
 
 DATA_ROOT = "/home/minsukc/vggt/scratch/data/CMRxRecon2024/Cine_combined"
 SPLIT_FILE = "/home/minsukc/vggt/training/splits/_archive/random_8_1_1.txt"  # legacy CMRx24-only split (bare ids)

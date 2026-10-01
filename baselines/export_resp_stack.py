@@ -30,15 +30,14 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from niftymic.export_stack import (  # noqa: E402
     DATA_ROOT, SPLIT_FILE, TARGET_PHASE, SUBJECT_INDICES, SPACING_XYZ, _affine,
 )
-from data.datasets.mri_dataset import MRIDataset  # noqa: E402
-from data.respiratory import RespiratoryConfig, sample_resp_disp, reslice_volume_vec  # noqa: E402
+from training.data.datasets.mri_dataset import MRIDataset  # noqa: E402
+from training.data.respiratory import RespiratoryConfig, sample_resp_disp, reslice_volume_vec  # noqa: E402
 
 OUT_DIR = "/home/minsukc/vggt/scratch/niftymic/data"  # same dir as the clean export
 N_CANON_Z = 12  # canonical grid depth D -- one "slot" per real z-plane

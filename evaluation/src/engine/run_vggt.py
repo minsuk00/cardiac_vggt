@@ -75,14 +75,13 @@ import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "training"))
 sys.path.insert(0, os.path.join(ROOT, "evaluation"))
 
 import paths                                                                   # noqa: E402
-from data.datasets.mri_dataset import MRIDataset                               # noqa: E402
-from data.gpu_aug import gpu_augment_batch                                     # noqa: E402
-from data.preprocess import Z_HALF_MM                                          # noqa: E402
-from loss import _splat_preds_native                                           # noqa: E402
+from training.data.datasets.mri_dataset import MRIDataset                      # noqa: E402
+from training.data.gpu_aug import gpu_augment_batch                            # noqa: E402
+from training.data.preprocess import Z_HALF_MM                                 # noqa: E402
+from training.loss import _splat_preds_native                                  # noqa: E402
 from inference.load_run import load_model_from_run, mri_dataset_kwargs         # noqa: E402
 from omegaconf import OmegaConf                                                # noqa: E402
 

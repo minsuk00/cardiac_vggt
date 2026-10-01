@@ -55,8 +55,8 @@ import numpy as np
 import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path[:0] = [os.path.join(ROOT, "training"), ROOT]
-from data.respiratory import lujan_displacement, reslice_volume_vec        # noqa: E402
+sys.path[:0] = [ROOT]
+from training.data.respiratory import lujan_displacement, reslice_volume_vec  # noqa: E402
 
 T = 12
 DT = 1.0 / T            # frame time, in units of the nominal R-R

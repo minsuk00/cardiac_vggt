@@ -19,7 +19,7 @@ Training pixels are restricted to the bundle's padded heart mask (every other ba
 the closest single-stack analogue of the paper's multi-stack intersection mask) by cropping to the
 mask's bounding box and writing NaN outside it, which cinevol.prepare drops -- its code is untouched.
 
-    PYTHONPATH=baselines/cinevol:training:. python baselines/cinevol/cinevol_prepare.py \
+    PYTHONPATH=baselines/cinevol:. python baselines/cinevol/cinevol_prepare.py \
         --dataset cmrx2023_af24 --subject CMRx23_Test_P005 --out /tmp/cinevol_prep/P005
 """
 import argparse
@@ -31,7 +31,7 @@ import nibabel as nib
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for p in ("evaluation", "evaluation/src/engine", "baselines/cinevol", "training"):
+for p in ("evaluation", "evaluation/src/engine", "baselines/cinevol", "."):
     sys.path.insert(0, os.path.join(ROOT, p))
 import paths  # noqa: E402
 from run_baselines import thickness_mm  # noqa: E402  (the harness's one slice-THICKNESS rule)
@@ -81,7 +81,7 @@ def cardiac_labels(man):
 
 def resp_labels(man):
     """(D, n_frames) breath level in [0,1]; identical to the factor `simulate` multiplies u*amp by."""
-    from data.respiratory import lujan_displacement
+    from training.data.respiratory import lujan_displacement
     r, P = man["rhythm"], man["rhythm"]["params"]
     n = int(man["breath"]["config"]["cos2n"])
     r0 = np.asarray(man["breath"]["r_per_plane"], float)

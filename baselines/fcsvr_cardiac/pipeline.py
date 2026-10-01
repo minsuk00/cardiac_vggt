@@ -36,7 +36,7 @@ RESPIRATORY_DEFAULTS = dict(
 
 def make_dataset(data_root: str, split_file: str, split: str):
     """Construct the read-only VGGT CMR cache adapter in fixed-ED/static mode."""
-    from data import MRIDataset
+    from training.data import MRIDataset
 
     return MRIDataset(
         common_conf={}, data_root=data_root, split=split, split_file=split_file,
@@ -47,7 +47,7 @@ def make_dataset(data_root: str, split_file: str, split: str):
 
 def prepare_sample(dataset, index: int, device: torch.device, *, seed: int):
     """Load native ED, draw one current-simulator displacement per z-plane, corrupt it."""
-    from data.respiratory import RespiratoryConfig, sample_resp_disp
+    from training.data.respiratory import RespiratoryConfig, sample_resp_disp
 
     item = dataset.get_data(seq_index=index, img_per_seq=20)
     dz_mm = float(item["dz_mm"][0])

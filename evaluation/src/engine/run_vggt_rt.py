@@ -43,7 +43,6 @@ import torch.nn.functional as F
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "training"))
 sys.path.insert(0, os.path.join(ROOT, "evaluation"))
 sys.path.insert(0, os.path.join(ROOT, "evaluation", "src", "engine"))
 sys.path.insert(0, os.path.join(ROOT, "evaluation", "src", "analysis"))
@@ -51,9 +50,9 @@ sys.path.insert(0, os.path.join(ROOT, "evaluation", "src", "analysis"))
 import paths                                                                   # noqa: E402
 import run_vggt as rv                                                          # noqa: E402
 import viz                                                                     # noqa: E402
-from data.gpu_aug import gpu_augment_batch                                     # noqa: E402
-from data.preprocess import Z_HALF_MM                                          # noqa: E402
-from loss import _splat_preds_native                                           # noqa: E402
+from training.data.gpu_aug import gpu_augment_batch                            # noqa: E402
+from training.data.preprocess import Z_HALF_MM                                 # noqa: E402
+from training.loss import _splat_preds_native                                  # noqa: E402
 from inference.load_run import load_model_from_run                             # noqa: E402
 
 RT_ROOT = os.path.join(ROOT, "scratch/data/MIITT/nifti")

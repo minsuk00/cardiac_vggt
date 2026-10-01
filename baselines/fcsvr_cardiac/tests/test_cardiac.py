@@ -12,7 +12,7 @@ from baselines.fcsvr_cardiac.cardiac import (
     reconstruct_native,
     stage1_flow_to_native_mm,
 )
-from data.respiratory import reslice_volume_vec
+from training.data.respiratory import reslice_volume_vec
 
 
 @pytest.mark.parametrize("depth", [6, 8, 10])
