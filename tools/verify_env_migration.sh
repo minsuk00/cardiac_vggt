@@ -67,18 +67,16 @@ echo "=============================================================="
 # `default.yaml` (= the old mri_volume_diffusion: tv=0, L2 diffusion=1000) + `exp_bspline`.
 # `mri_volume{,_diffusion,_bspline}` no longer exist, so every line here died at Hydra
 # compose — in the script the project designates for verifying dependency bumps.
-# The old `mri_volume` arm (L1 TV) is reproduced by overriding the two regularizer weights.
-TV_ARM="loss.volume.tv_weight=0.1 loss.volume.diffusion_weight=0.0"
-run_case dpt_tv            default $TV_ARM
-run_case diffusion         default
-run_case bspline           exp_bspline
-run_case gather05          default $TV_ARM loss.volume.gather_weight=0.5
-run_case one_frame         default $TV_ARM one_frame_per_slice=true
-run_case continuous_z      default $TV_ARM continuous_z=true
+# TV, B-spline, continuous_z and the non-aggressive aug tiers were removed in the cleanup.
+NOREG="loss.volume.diffusion_weight=0.0"
+run_case noreg             default $NOREG
+run_case diffusion         default loss.volume.diffusion_weight=1000
+run_case gather05          default $NOREG loss.volume.gather_weight=0.5
+run_case multi_frame       default $NOREG one_frame_per_slice=false
 run_case lowdiff100        default loss.volume.diffusion_weight=100
-run_case aug_moderate      default $TV_ARM data.augmentation.enable=true data.augmentation.tier=moderate
-run_case dino_unfrozen     default $TV_ARM 'optim.frozen_module_names=[]'
-run_case fixed_phase_ED    default $TV_ARM t_target_fixed=0
+run_case aug_aggressive    default $NOREG data.augmentation.enable=true data.augmentation.tier=aggressive
+run_case dino_unfrozen     default $NOREG 'optim.frozen_module_names=[]'
+run_case fixed_phase_ED    default $NOREG t_target_fixed=0
 
 echo
 echo "=============================================================="

@@ -51,7 +51,6 @@ def make_test_dataset(cfg, split="test"):
     kw.pop("_target_", None)
     kw["split"] = split
     kw["t_target_fixed"] = 0
-    kw["t_target_phases"] = None
     if kw.get("split_file") and not os.path.isabs(kw["split_file"]):
         kw["split_file"] = os.path.join(ROOT, kw["split_file"])   # MRIDataset silently returns [] if not found
     data_root = kw.pop("data_root")

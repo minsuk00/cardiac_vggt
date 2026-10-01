@@ -1,7 +1,7 @@
 """Read-only misalignment measurement library (scratch). Never writes under scratch/data."""
 import os, numpy as np, nibabel as nib
 ROOT="/home/minsukc/vggt"; DATA=os.path.join(ROOT,"scratch/data")
-POOLED=os.path.join(ROOT,"training/splits/pooled.txt")
+POOLED=os.path.join(ROOT,"training/splits/_archive/pooled.txt")
 
 def read_pooled(sections=("train","val","test")):
     out=[]; sec=None

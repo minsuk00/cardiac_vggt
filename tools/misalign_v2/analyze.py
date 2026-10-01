@@ -222,7 +222,7 @@ if __name__ == "__main__":
                       sev_gt5_but_prior_clean=float((j[j.severity > 5].interior_max_jump_mm <= 4).mean()))
     # ---------------- curated lists (pooled.txt format; ALL THREE sections filtered -- val/test GT carries the same
     # corruption, so a misaligned GT would penalise a correct reconstruction; unmeasurable subjects KEPT, listed in the header)
-    pooled = [l.rstrip("\n") for l in open(f"{ROOT}/training/splits/pooled.txt")]
+    pooled = [l.rstrip("\n") for l in open(f"{ROOT}/training/splits/_archive/pooled.txt")]
     def write_list(name, keep, note):
         kept = {}; dropped = {}; sec = None
         with open(f"{OUT}/{name}.txt", "w") as f:

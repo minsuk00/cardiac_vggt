@@ -23,11 +23,9 @@
 # is the only thing that reproduced the old-518 EF (MAE ~10.3 vs 12.9 for 224 no-reg); 224+518
 # splat and 518+native splat did not (session FINAL-MODEL-RUNS, real nnU-Net EF, n=144).
 # Every arm below differs from `base` by exactly the listed override(s):
-#   ARM=base          diffusion 0, heart 0.5, motion 0          (the candidate ship recipe)
+#   ARM=base          diffusion 0, heart 0.5                    (the candidate ship recipe)
 #   ARM=diff1000      + loss.volume.diffusion_weight=1000       (old-518 / Run A regularizer)
-#   ARM=motion10      + loss.volume.motion_l1_weight=10         (pooled1337: MAE 12.9->11.3, r -0.05)
 #   ARM=hw2           + loss.volume.heart_weight=2.0            (pooled1337: MAE 13.0->11.7, r held)
-#   ARM=motion10_hw2  + both
 #   ARM=nogather      loss.volume.gather_weight=0.0                (gather-loss ablation vs base)
 # Score with sbatch/eval_pooled_val.sh (v2 val is the default split) -> sbatch/eval_ef_dice.sh.
 # Submit: ARM=<arm> bash $0  (from a login node, or `unset ${!SLURM_@}` first inside an
@@ -45,13 +43,11 @@ ARM="${ARM:-base}"
 case "$ARM" in
   base)         ARM_OVERRIDES="" ;;
   diff1000)     ARM_OVERRIDES="loss.volume.diffusion_weight=1000.0" ;;
-  motion10)     ARM_OVERRIDES="loss.volume.motion_l1_weight=10.0" ;;
   hw2)          ARM_OVERRIDES="loss.volume.heart_weight=2.0" ;;
   hw0)          ARM_OVERRIDES="loss.volume.heart_weight=0.0" ;;
-  motion10_hw2) ARM_OVERRIDES="loss.volume.motion_l1_weight=10.0 loss.volume.heart_weight=2.0" ;;
   nogather)     ARM_OVERRIDES="loss.volume.gather_weight=0.0" ;;
   diff1000_nogather) ARM_OVERRIDES="loss.volume.diffusion_weight=1000.0 loss.volume.gather_weight=0.0" ;;
-  *) echo "ERROR: ARM must be base|diff1000|motion10|hw2|hw0|motion10_hw2|nogather|diff1000_nogather (got '$ARM')"; exit 1 ;;
+  *) echo "ERROR: ARM must be base|diff1000|hw2|hw0|nogather|diff1000_nogather (got '$ARM')"; exit 1 ;;
 esac
 
 # The full base recipe is spelled out (even where it equals default.yaml) so it persists
@@ -65,7 +61,6 @@ model.gradient_checkpointing=true \
 loss.volume.diffusion_weight=0.0 \
 loss.volume.gather_weight=0.5 \
 loss.volume.heart_weight=0.5 \
-loss.volume.motion_l1_weight=0.0 \
 loss.volume.splat_res=518 \
 optim.optimizer.lr=${PEAK_LR} \
 optim.options.lr.0.scheduler.schedulers.0.end_value=${PEAK_LR} \

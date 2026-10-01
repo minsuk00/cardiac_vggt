@@ -31,7 +31,7 @@ from collections import Counter, defaultdict
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPLITS = os.path.join(REPO, "training", "splits")
 MANIFEST = os.path.join(SPLITS, "manifest.csv")
-V1 = os.path.join(SPLITS, "pooled_curated_v1.txt")
+V1 = os.path.join(SPLITS, "_archive", "pooled_curated_v1.txt")
 OUT = os.path.join(SPLITS, "pooled_curated_v2.txt")
 SEED = 42
 FRACS = (0.70, 0.10, 0.20)
