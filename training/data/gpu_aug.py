@@ -323,138 +323,139 @@ def gpu_augment_batch(batch, transforms, device,
     # Model-input resolution: follow the batch's own scanner_coords (built at config
     # `img_size` by the dataset) so images always match the coords they are paired with.
     R = int(batch["scanner_coords"].shape[-2])
-    do_affine = transforms is not None
     do_resp = respiratory_cfg is not None and getattr(respiratory_cfg, "enable", False)
-    if not do_affine and not do_resp:
-        # Native slices for the loss splat — built on EVERY path through this function
-        # (even when `images` came from the dataset), so train and val always render
-        # from the same native content.
-        phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
-        native = extract_slices_from_phases(
-            phases_cur, batch["timesteps"], batch["slice_indices"],
-            out_size=phases_cur.shape[-1])[..., 0] / 255.0
-        batch["images_splat"] = native
-        # A missing `images` means the dataset deferred it to us (`defer_input_images`) —
-        # the model input is the native slice resampled to R, nothing more. (~1 ULP vs the
-        # dataset's own CPU extraction, same class of difference as docs/62 §3.)
-        if "images" not in batch:
-            batch["images"] = _resize_to_model_res(native, R)
-        return batch
+    affine_applied = transforms is not None and _apply_affine(batch, transforms, device)
 
+    # ── Extract the input slices EXACTLY ONCE ─────────────────────────────────
+    # Respiratory (if on) builds `images` from the breathing-shifted reslice; gt/bbox/
+    # scanner_coords above stay at the reference. Extracting once avoids a wasted (and
+    # immediately-discarded) affine extraction.
+    if do_resp:
+        _apply_respiratory(batch, respiratory_cfg, device, R, train, resp_generator)
+    else:
+        _extract_inputs(batch, device, R, rebuild_images=affine_applied)
+    return batch
+
+
+def _apply_affine(batch, transforms, device):
+    """Warp `phases`/`content_mask`/`heart_roi_canonical` with one draw per subject and
+    re-derive `gt_target_volume`/`anatomy_bbox`, in place. -> True if applied; False if the
+    pipeline raised (the batch is then left un-augmented)."""
     phases = batch["phases"]                 # (B, T, D, H, W) any float
     Bsize = phases.shape[0]
-    affine_applied = False
+    mask = batch["content_mask"]             # (B, D, H, W) uint8
+    phases_f = phases.to(device=device, dtype=torch.float32, non_blocking=True)
+    # batchaug grid_sample needs float; mask keeps 0/1 under nearest interp.
+    mask_f = mask.to(device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
+    aug_dict = {"phases": phases_f, "content_mask": mask_f}
+    # ARM heart-L1 fix: warp the train-time loss ROI with the same affine (nearest).
+    # get_data omits the key for subjects without a valid ROI — then nothing is added
+    # and the batchaug transforms skip it (missing keys are tolerated).
+    heart_roi = batch.get("heart_roi_canonical")
+    if heart_roi is not None:
+        aug_dict["heart_roi_canonical"] = heart_roi.to(
+            device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
+    # docs/63 acquisition-artifact post-ops (isotropic zoom / low-res / Gibbs /
+    # ghosting), stored on the Compose by build_gpu_transforms. Fetched OUTSIDE the
+    # try so a transforms object without them fails loudly instead of silently
+    # training un-augmented.
+    post_ops = transforms.vggt_post_ops
+    try:
+        aug_dict = transforms(aug_dict)
+        # Inside the try so a post-op failure falls back to the un-augmented batch,
+        # like the Compose.
+        aug_dict = post_ops(aug_dict)
+    except Exception as e:
+        # Aug must never crash training; log and fall through with identity affine.
+        logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
+        return False
 
-    # ── Affine/photometric (whole-subject) ───────────────────────────────────
-    if do_affine:
-        mask = batch["content_mask"]         # (B, D, H, W) uint8
-        phases_f = phases.to(device=device, dtype=torch.float32, non_blocking=True)
-        # batchaug grid_sample needs float; mask keeps 0/1 under nearest interp.
-        mask_f = mask.to(device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
-        aug_dict = {"phases": phases_f, "content_mask": mask_f}
-        # ARM heart-L1 fix: warp the train-time loss ROI with the same affine (nearest).
-        # get_data omits the key for subjects without a valid ROI — then nothing is added
-        # and the batchaug transforms skip it (missing keys are tolerated).
-        heart_roi = batch.get("heart_roi_canonical")
-        if heart_roi is not None:
-            aug_dict["heart_roi_canonical"] = heart_roi.to(
-                device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
-        # docs/63 acquisition-artifact post-ops (isotropic zoom / low-res / Gibbs /
-        # ghosting), stored on the Compose by build_gpu_transforms. Fetched OUTSIDE the
-        # try so a transforms object without them fails loudly instead of silently
-        # training un-augmented.
-        post_ops = transforms.vggt_post_ops
-        try:
-            aug_dict = transforms(aug_dict)
-            # Inside the try so a post-op failure falls back to the un-augmented batch,
-            # like the Compose.
-            aug_dict = post_ops(aug_dict)
-        except Exception as e:
-            # Aug must never crash training; log and fall through with identity affine.
-            logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
-        else:
-            # Photometric ops (esp. the multiplicative bias field) can push intensities
-            # above the [0,1] normalization range. The input-slice extractors clamp to
-            # [0,1], but gt_target_volume is derived here — so clamp the SHARED source ONCE
-            # to keep gt and the re-extracted inputs mutually consistent. Otherwise V_gt can
-            # exceed 1 while the splat's clamped inputs cap V_canon at ~1, leaving an
-            # unlearnable L1 residual (the point head predicts position, not intensity).
-            phases_aug = aug_dict["phases"].clamp(0.0, 1.0)    # (B, T, D, H, W) float32
-            mask_aug = aug_dict["content_mask"].squeeze(1)      # (B, D, H, W) float (0/1)
-            mask_aug_u8 = (mask_aug > 0.5).to(torch.uint8)
+    # Photometric ops (esp. the multiplicative bias field) can push intensities
+    # above the [0,1] normalization range. The input-slice extractors clamp to
+    # [0,1], but gt_target_volume is derived here — so clamp the SHARED source ONCE
+    # to keep gt and the re-extracted inputs mutually consistent. Otherwise V_gt can
+    # exceed 1 while the splat's clamped inputs cap V_canon at ~1, leaving an
+    # unlearnable L1 residual (the point head predicts position, not intensity).
+    phases_aug = aug_dict["phases"].clamp(0.0, 1.0)    # (B, T, D, H, W) float32
+    mask_aug = aug_dict["content_mask"].squeeze(1)      # (B, D, H, W) float (0/1)
+    mask_aug_u8 = (mask_aug > 0.5).to(torch.uint8)
 
-            t_target = batch["t_target"]
-            if t_target.ndim > 1:
-                t_target = t_target.squeeze(-1)  # (B,)
-            gt_target_volume = phases_aug[torch.arange(Bsize, device=device), t_target]
+    t_target = batch["t_target"]
+    if t_target.ndim > 1:
+        t_target = t_target.squeeze(-1)  # (B,)
+    gt_target_volume = phases_aug[torch.arange(Bsize, device=device), t_target]
 
-            # Same bbox computation the dataset runs pre-aug, on the moved content mask.
-            bboxes = torch.stack([compute_geometric_bbox(mask_aug_u8[b]) for b in range(Bsize)])
+    # Same bbox computation the dataset runs pre-aug, on the moved content mask.
+    bboxes = torch.stack([compute_geometric_bbox(mask_aug_u8[b]) for b in range(Bsize)])
 
-            batch["phases"] = phases_aug.to(phases.dtype)
-            batch["content_mask"] = mask_aug_u8
-            # ARM heart-L1 fix: write the warped ROI back (same 0.5-threshold → uint8 as the
-            # content mask; nearest interp keeps it 0/1 but the threshold is cheap insurance).
-            if heart_roi is not None and "heart_roi_canonical" in aug_dict:
-                batch["heart_roi_canonical"] = (
-                    aug_dict["heart_roi_canonical"].squeeze(1) > 0.5).to(torch.uint8)
-            batch["gt_target_volume"] = gt_target_volume
-            batch["anatomy_bbox"] = bboxes
-            affine_applied = True
+    batch["phases"] = phases_aug.to(phases.dtype)
+    batch["content_mask"] = mask_aug_u8
+    # ARM heart-L1 fix: write the warped ROI back (same 0.5-threshold → uint8 as the
+    # content mask; nearest interp keeps it 0/1 but the threshold is cheap insurance).
+    if heart_roi is not None and "heart_roi_canonical" in aug_dict:
+        batch["heart_roi_canonical"] = (
+            aug_dict["heart_roi_canonical"].squeeze(1) > 0.5).to(torch.uint8)
+    batch["gt_target_volume"] = gt_target_volume
+    batch["anatomy_bbox"] = bboxes
+    return True
 
-    # ── Re-extract input slices EXACTLY ONCE ──────────────────────────────────
-    # Respiratory (if on) overwrites `images` with the breathing-shifted reslice;
-    # gt/bbox/scanner_coords above stay at the reference. Extracting once avoids a
-    # wasted (and immediately-discarded) affine extraction. If affine failed AND
-    # respiratory is off, nothing changed → leave the dataset's `images` untouched.
-    if do_resp:
-        S = batch["timesteps"].shape[1]
-        seq_index = batch.get("seq_index")
-        if not train and seq_index is None:
-            raise ValueError(
-                "respiratory val augmentation requires batch['seq_index'] for determinism"
-            )
-        phases_cur = batch["phases"].to(device=device, non_blocking=True)
-        D = phases_cur.shape[2]                    # this subject's own native slice count (native-z)
-        # One scalar dz for the whole batch — valid only at batch_size==1. Guard it
-        # (docs/59 F7): same-D-different-dz subjects collate fine, and row 1 would then be
-        # breathed at row 0's scale, a silent through-plane geometry error.
-        _dz = batch["dz_mm"].reshape(-1)
-        if not bool((_dz == _dz[0]).all()):
-            raise RuntimeError(
-                f"dz_mm is not uniform across the batch: {_dz.tolist()}. One scalar dz is applied "
-                "to every row, so mixing slice pitches would breathe rows 1..B-1 at row 0's scale "
-                "— a silent through-plane geometry error (docs/59 F7)."
-            )
-        dz = float(batch["dz_mm"].reshape(-1)[0])   # this subject's own native z spacing (mm)
-        # z-plane per slot — the burst-grouping key for group_by_burst (one breath per plane).
-        # Ignored unless respiratory_cfg.group_by_burst is set (default → per-slot iid, unchanged).
-        group_ids = batch["slice_indices"].round().long().to(device)
-        disp, resp_r = sample_resp_disp(
-            Bsize, S, respiratory_cfg, device,
-            train=train, seq_index=seq_index, generator=resp_generator, group_ids=group_ids,
-            n_planes=D,
-        )                                                       # (B,S,3) mm, (B,S) phase
-        # Extract ONCE at native resolution (the resp-CORRUPTED slices — never clean
-        # phases[t, z]: that would leak the target); the model input is a resample of it.
-        native = extract_slices_with_respiratory_vec(
-            phases_cur, batch["timesteps"], batch["slice_indices"], disp,
-            spacing=(dz, 1.4, 1.4), out_size=phases_cur.shape[-1])[..., 0] / 255.0
-        batch["images_splat"] = native
+
+def _apply_respiratory(batch, respiratory_cfg, device, R, train, resp_generator):
+    """Breathing-shifted reslice of the INPUT slices only (`images_splat`, `images`, plus the
+    `resp_disp_mm`/`resp_r` diagnostics), in place. Target and geometry stay at the reference."""
+    Bsize = batch["phases"].shape[0]
+    S = batch["timesteps"].shape[1]
+    seq_index = batch.get("seq_index")
+    if not train and seq_index is None:
+        raise ValueError(
+            "respiratory val augmentation requires batch['seq_index'] for determinism"
+        )
+    phases_cur = batch["phases"].to(device=device, non_blocking=True)
+    D = phases_cur.shape[2]                    # this subject's own native slice count (native-z)
+    # One scalar dz for the whole batch — valid only at batch_size==1. Guard it
+    # (docs/59 F7): same-D-different-dz subjects collate fine, and row 1 would then be
+    # breathed at row 0's scale, a silent through-plane geometry error.
+    _dz = batch["dz_mm"].reshape(-1)
+    if not bool((_dz == _dz[0]).all()):
+        raise RuntimeError(
+            f"dz_mm is not uniform across the batch: {_dz.tolist()}. One scalar dz is applied "
+            "to every row, so mixing slice pitches would breathe rows 1..B-1 at row 0's scale "
+            "— a silent through-plane geometry error (docs/59 F7)."
+        )
+    dz = float(batch["dz_mm"].reshape(-1)[0])   # this subject's own native z spacing (mm)
+    # z-plane per slot — the burst-grouping key for group_by_burst (one breath per plane).
+    # Ignored unless respiratory_cfg.group_by_burst is set (default → per-slot iid, unchanged).
+    group_ids = batch["slice_indices"].round().long().to(device)
+    disp, resp_r = sample_resp_disp(
+        Bsize, S, respiratory_cfg, device,
+        train=train, seq_index=seq_index, generator=resp_generator, group_ids=group_ids,
+        n_planes=D,
+    )                                                       # (B,S,3) mm, (B,S) phase
+    # Extract ONCE at native resolution (the resp-CORRUPTED slices — never clean
+    # phases[t, z]: that would leak the target); the model input is a resample of it.
+    native = extract_slices_with_respiratory_vec(
+        phases_cur, batch["timesteps"], batch["slice_indices"], disp,
+        spacing=(dz, 1.4, 1.4), out_size=phases_cur.shape[-1])[..., 0] / 255.0
+    batch["images_splat"] = native
+    batch["images"] = _resize_to_model_res(native, R)
+    # Surface per-slot displacement (canonical D,H,W mm) + respiratory phase r for
+    # diagnostics only — captions + the resp scalar. Inert for model/loss (read-only).
+    batch["resp_disp_mm"] = disp
+    batch["resp_r"] = resp_r
+
+
+def _extract_inputs(batch, device, R, rebuild_images):
+    """Respiratory off: always build the native slices for the loss splat (`images_splat`),
+    so train and val render from the same native content; build the model input `images`
+    when `rebuild_images` (affine moved the anatomy) or when it is absent — the dataset
+    deferred it (`defer_input_images`), or affine failed on a deferred batch. Otherwise the
+    dataset's own `images` stay (~1 ULP vs this extraction, docs/62 §3)."""
+    # The fp32 cast is exact for fp16 phases, and extract_slices_from_phases promotes to fp32
+    # anyway, so this matches the uncast path bit for bit.
+    phases_cur = batch["phases"].to(device=device, dtype=torch.float32, non_blocking=True)
+    native = extract_slices_from_phases(
+        phases_cur, batch["timesteps"], batch["slice_indices"],
+        out_size=phases_cur.shape[-1])[..., 0] / 255.0
+    batch["images_splat"] = native
+    if rebuild_images or "images" not in batch:
         batch["images"] = _resize_to_model_res(native, R)
-        # Surface per-slot displacement (canonical D,H,W mm) + respiratory phase r for
-        # diagnostics only — captions + the resp scalar. Inert for model/loss (read-only).
-        batch["resp_disp_mm"] = disp
-        batch["resp_r"] = resp_r
-    else:
-        # Respiratory off: always build the native content for the loss splat; rebuild the
-        # model input only when needed (`affine_applied`, or deferred/affine-failed batches
-        # where `images` is absent — without it the batch would reach the model with no input).
-        phases_cur = batch["phases"].to(device=device, non_blocking=True)
-        native = extract_slices_from_phases(
-            phases_cur, batch["timesteps"], batch["slice_indices"],
-            out_size=phases_cur.shape[-1])[..., 0] / 255.0
-        batch["images_splat"] = native
-        if affine_applied or "images" not in batch:
-            batch["images"] = _resize_to_model_res(native, R)
-    return batch
