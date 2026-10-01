@@ -30,7 +30,7 @@ def main():
     p.add_argument("--out", required=True)
     a = p.parse_args()
 
-    from training.resolvers import register_all
+    from training.utils.resolvers import register_all
     from hydra import compose, initialize_config_dir
     register_all()
     txt = open(os.path.join(REPO, "sbatch", "train_final_518.sh")).read()

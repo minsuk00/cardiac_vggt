@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from training.train_utils.notify import GradientCollapseAlarm, send_email
+from training.utils.notify import GradientCollapseAlarm, send_email
 
 
 class _FakeSMTP:
@@ -29,7 +29,7 @@ def _no_real_mail(monkeypatch):
     """
     _FakeSMTP.sent = []
     monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
-    import training.train_utils.notify as notify
+    import training.utils.notify as notify
     monkeypatch.setattr(notify, "_SENT_KEYS", set())
     return _FakeSMTP.sent
 
@@ -84,12 +84,12 @@ def test_send_email_never_raises(monkeypatch):
         raise OSError("no route to host")
 
     monkeypatch.setattr("smtplib.SMTP", boom)
-    import training.train_utils.notify as notify
+    import training.utils.notify as notify
     assert notify.send_email("subject", "body") is False
 
 
 def test_send_email_once_key_dedupes(_no_real_mail):
-    import training.train_utils.notify as notify
+    import training.utils.notify as notify
     assert notify.send_email("s", "b", once_key="k") is True
     assert notify.send_email("s", "b", once_key="k") is False
     assert len(_no_real_mail) == 1

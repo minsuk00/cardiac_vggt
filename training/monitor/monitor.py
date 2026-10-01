@@ -27,13 +27,13 @@ from typing import Mapping
 
 import torch
 
-import training.monitor_panels as panels
+import training.monitor.panels as panels
 from training.data.gpu_aug import extract_slices_from_phases, gpu_augment_batch
 from training.data.preprocess import NUM_PHASES
-from training.ef_eval import IN_PLANE_MM
-from training.train_utils.general import safe_makedirs
-from training.train_utils.notify import GradientCollapseAlarm
-from training.train_utils.val_logging import (
+from training.monitor.ef_eval import IN_PLANE_MM
+from training.utils.general import safe_makedirs
+from training.utils.notify import GradientCollapseAlarm
+from training.utils.val_logging import (
     N_FILM_PLANES, load_subject_groups, pick_one_index_per_source, pick_planes, pick_visual_indices,
     resp_offslab_stats, seq_index_to_subject, to_float,
 )
@@ -987,7 +987,7 @@ class Monitor:
         if "V_canon" not in loss_dict:
             return
         try:
-            from training import ef_eval
+            from training.monitor import ef_eval
             vt = self.val_targets
             if vt is None:
                 return
@@ -1007,7 +1007,7 @@ class Monitor:
         predicted-vs-GT EF slope / Spearman / MAE (overall and per pathology group)."""
         try:
             import glob
-            from training import ef_eval
+            from training.monitor import ef_eval
             mri_ds = self.val_ds
             vt = self.val_targets
             csv_path = getattr(mri_ds, "cardiac_phase_csv", None)

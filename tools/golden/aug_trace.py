@@ -10,7 +10,7 @@ from common import ARMS, RECIPE, compose, dump, fingerprint, train_val_loaders
 import torch
 from training.data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from training.data.respiratory import RespiratoryConfig
-from training.train_utils.general import copy_data_to_device, set_seeds
+from training.utils.general import copy_data_to_device, set_seeds
 
 
 def main():

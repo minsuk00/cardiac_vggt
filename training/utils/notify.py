@@ -3,7 +3,7 @@
 Great Lakes compute nodes run a local postfix listener on 127.0.0.1:25, so a job can hand
 a message to it with no credentials and no outbound network config.
 
-    from training.train_utils.notify import send_email
+    from training.utils.notify import send_email
     send_email("training collapsed", "grad_aggregator < 1e-6 for 500 steps")
 
 Design rules, all load-bearing:

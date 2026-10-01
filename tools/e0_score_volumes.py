@@ -32,7 +32,7 @@ import numpy as np
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO)                              # `vggt.*` (checkpoint staging in ef_eval)
 sys.path.insert(0, os.path.join(_REPO, "training"))
-from ef_eval import LV_LABEL, _ef_stats, _lv_ml, _spearman, load_gt_ef, run_corseg  # noqa: E402
+from training.monitor.ef_eval import LV_LABEL, _ef_stats, _lv_ml, _spearman, load_gt_ef, run_corseg  # noqa: E402
 
 IN_PLANE_MM = 1.4
 _FNAME = re.compile(r"subj\d+_t(\d+)_(.+)_(pred|gt)\.nii\.gz$")

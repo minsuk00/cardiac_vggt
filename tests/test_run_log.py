@@ -1,4 +1,4 @@
-"""Tests for the on-disk run log (`training/train_utils/run_log.py`).
+"""Tests for the on-disk run log (`training/utils/run_log.py`).
 
 These files are the ONLY numeric record of a run that does not require wandb, so the
 properties that matter are: they append (never truncate), they survive a SLURM requeue
@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from training.train_utils.run_log import RunLog, file_md5
+from training.utils.run_log import RunLog, file_md5
 
 
 def _lines(path):

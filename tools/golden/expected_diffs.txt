@@ -11,3 +11,7 @@
 # C11: the repo is an installed package, so Hydra targets gained the `training.` prefix
 # (new value must be exactly "training." + old value).
 ^g0b\.json:/\w+/[\w/]*/_target_: ([\w.]+) -> training\.\1$
+
+# training/ regroup: train_utils/ became training/utils/ (new value must be exactly
+# "training.utils." + the old value minus its "train_utils." prefix).
+^g0b\.json:/\w+/[\w/]*/_target_: train_utils\.([\w.]+) -> training\.utils\.\1$

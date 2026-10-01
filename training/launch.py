@@ -11,7 +11,7 @@ import subprocess
 
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
-from training.resolvers import register_all
+from training.utils.resolvers import register_all
 from training.trainer import Trainer
 
 
@@ -43,7 +43,7 @@ def _install_requeue_handler():
 
     signal.signal(signal.SIGUSR1, _handler)
 
-# Custom resolvers (rev_ts, backbone_tag, aug_tag, backbone_ps) — see resolvers.py.
+# Custom resolvers (rev_ts, backbone_tag, aug_tag, backbone_ps) — see utils/resolvers.py.
 register_all()
 
 

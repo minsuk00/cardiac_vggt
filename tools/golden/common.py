@@ -45,7 +45,7 @@ def fingerprint(batch):
 
 
 def compose(overrides):
-    from training.resolvers import register_all
+    from training.utils.resolvers import register_all
     from hydra import compose as _compose, initialize_config_dir
     register_all()
     with initialize_config_dir(version_base=None, config_dir=os.path.join(REPO, "training", "config")):

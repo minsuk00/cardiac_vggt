@@ -1,4 +1,4 @@
-from training.resolvers import register_all
+from training.utils.resolvers import register_all
 
 from .datasets.mri_dataset import MRIDataset
 

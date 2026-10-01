@@ -16,7 +16,7 @@ class TestResumePriority(unittest.TestCase):
     """
 
     def _resolve(self, save_dir, seed):
-        from training.train_utils.general import resolve_resume_checkpoint
+        from training.utils.general import resolve_resume_checkpoint
         return resolve_resume_checkpoint(save_dir, seed)
 
     def test_cold_start_uses_seed(self):
@@ -45,7 +45,7 @@ class TestResumePriority(unittest.TestCase):
 class TestWandbResume(unittest.TestCase):
 
     def _init_kwargs(self, resume_id):
-        import training.train_utils.wandb_writer as ww
+        import training.utils.wandb_writer as ww
         mock_run = MagicMock()
         mock_run.get_url.return_value = "https://wandb.ai/fake"
         mock_wandb = MagicMock()

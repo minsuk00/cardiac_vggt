@@ -40,7 +40,7 @@ def build(lr, seed):
     from hydra import initialize_config_dir, compose
     from hydra.utils import instantiate
     from omegaconf import OmegaConf
-    from train_utils.freeze import freeze_modules
+    from training.utils.freeze import freeze_modules
     from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 
     for n, f in [("rev_ts", lambda: "0"), ("basename", lambda p: os.path.basename(p)),

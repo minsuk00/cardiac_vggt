@@ -148,7 +148,7 @@ def test_motion_mask_example_logs_under_val_motion():
     import matplotlib
     matplotlib.use("Agg")
     import numpy as np
-    from training.monitor_panels import log_motion_mask_example
+    from training.monitor.panels import log_motion_mask_example
 
     # No wandb → silent no-op.
     log_motion_mask_example(None, None, (0,), 0)  # must not raise

@@ -12,15 +12,15 @@ import pytest
 import torch
 import torch.nn as nn
 
-from training.train_utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
-from training.train_utils.optimizer import construct_optimizer
+from training.utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
+from training.utils.optimizer import construct_optimizer
 from training.trainer import train_step
 
 
 @pytest.fixture(scope="module")
 def optim_conf():
     from hydra import compose, initialize_config_dir
-    from training.resolvers import register_all
+    from training.utils.resolvers import register_all
 
     register_all()
     cfg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))

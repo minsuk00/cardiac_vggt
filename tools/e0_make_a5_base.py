@@ -42,7 +42,7 @@ def main():
     from hydra import compose, initialize_config_dir
     from hydra.utils import instantiate
     from omegaconf import OmegaConf
-    from train_utils.general import set_seeds
+    from training.utils.general import set_seeds
 
     for name, fn in [("rev_ts", lambda: "0"),
                      ("basename", lambda p: os.path.basename(p)),

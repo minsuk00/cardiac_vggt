@@ -77,7 +77,7 @@ def test_source_replaced_during_copy_is_not_published(stage_env, monkeypatch):
     def copy_then_replace_source(a, b, **kw):
         out = real_copyfile(a, b, **kw)
         # Simulate the trainer's atomic save landing right now: write a sibling temp and
-        # os.replace it over the source, exactly as train_utils/checkpoint.py does. That
+        # os.replace it over the source, exactly as training/utils/checkpoint.py does. That
         # allocates a NEW inode, which is what makes the swap detectable even when the new
         # checkpoint has the same byte size and lands inside one filesystem timestamp tick.
         newer = src.parent / "checkpoint_last.pt.tmp"

@@ -28,16 +28,16 @@ from training.data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from training.data.loader import build_loader
 from training.data.respiratory import RespiratoryConfig
 from training.monitor import Monitor
-from training.train_utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
+from training.utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
-from training.train_utils.freeze import freeze_modules
-from training.train_utils.general import (
+from training.utils.freeze import freeze_modules
+from training.utils.general import (
     AverageMeter, DurationMeter, ProgressMeter, copy_data_to_device, model_summary,
     resolve_resume_checkpoint, safe_makedirs, set_seeds,
 )
-from training.train_utils.logging import setup_logging
-from training.train_utils.optimizer import construct_optimizer
-from training.train_utils.run_log import RunLog, file_md5
+from training.utils.logging import setup_logging
+from training.utils.optimizer import construct_optimizer
+from training.utils.run_log import RunLog, file_md5
 
 # Fallback when `checkpoint.best_metric` is absent from a config. Heart-segmentation ROI
 # PSNR — a real anatomical mask; see the rationale in default.yaml's checkpoint block.
@@ -78,7 +78,7 @@ class Trainer:
 
     Builds the model, loss, data, optimizer and checkpoint state, then runs the epochs.
     Everything diagnostic — scalars, val metrics by phase/source, per-subject rows, volume
-    dumps, EF, wandb panels — lives in `self.monitor` (training/monitor.py).
+    dumps, EF, wandb panels — lives in `self.monitor` (training/monitor/monitor.py).
     """
 
     def __init__(

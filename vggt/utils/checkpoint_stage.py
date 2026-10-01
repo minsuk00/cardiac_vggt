@@ -25,7 +25,7 @@ def _src_identity(stat_result) -> dict:
     """The source fingerprint a staged copy is validated against.
 
     `st_ino` is what makes this robust rather than merely plausible. Every atomic save in
-    this repo publishes via `os.replace(tmp, final)` (see `train_utils/checkpoint.py`), and
+    this repo publishes via `os.replace(tmp, final)` (see `training/utils/checkpoint.py`), and
     `rsync -a`/`tar -x` also write-then-rename — all of which allocate a NEW inode. Size and
     mtime alone can miss such a swap: consecutive checkpoints of one model have identical
     byte size, and if the swap lands within the filesystem's timestamp granularity the mtime

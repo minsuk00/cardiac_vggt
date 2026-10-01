@@ -7,7 +7,7 @@ import torch.nn as nn
 
 def _compose(name):
     from hydra import compose, initialize_config_dir
-    from training.resolvers import register_all
+    from training.utils.resolvers import register_all
 
     register_all()
     config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
@@ -108,7 +108,7 @@ def test_dataset_accepts_default_and_dinov3_patch_grids():
 
 
 def test_patch_embed_freeze_pattern_with_fake_backbone():
-    from training.train_utils.freeze import freeze_modules
+    from training.utils.freeze import freeze_modules
 
     class FakeModel(nn.Module):
         def __init__(self):

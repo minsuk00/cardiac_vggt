@@ -33,7 +33,7 @@ IN_PLANE_MM = 1.4        # canonical in-plane spacing — FIXED for every subjec
 # acquired pitch (5-12 mm), so a fixed z spacing would make the dumped NIfTIs geometrically
 # false and every absolute mL wrong (and would change the segmentation itself under a
 # segmenter that resamples z). Pass each subject's own dz instead.
-_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _ENV_SH = os.path.join(_REPO, "evaluation", "src", "engine", "env.sh")
 
 
@@ -88,12 +88,12 @@ def run_corseg(in_dir, out_dir, device="cuda"):
     (`{stem}.nii.gz`).
     """
     import glob
-    from training.corseg.corseg_infer import load_corseg, segment_nifti
+    from training.monitor.corseg.corseg_infer import load_corseg, segment_nifti
 
     os.makedirs(out_dir, exist_ok=True)
     # Stage the 741 MB checkpoint to node-local /tmp: loading from GPFS is slow enough to
     # dominate an EF epoch (docs/50). Falls back to the original path on any failure.
-    from training.corseg.corseg_infer import CKPT_DEFAULT
+    from training.monitor.corseg.corseg_infer import CKPT_DEFAULT
     from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
     model, _ = load_corseg(stage_checkpoint_to_local(CKPT_DEFAULT), device=device)
     try:

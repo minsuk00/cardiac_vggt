@@ -57,7 +57,7 @@ def build(cfg_overrides=OVERRIDES):
     # Model (random init; skip checkpoint load) — instantiate exactly like trainer.py:345
     model = instantiate(cfg.model, _recursive_=False).cuda()
     # aggft freeze (trainer.py:355) — freeze_modules(["*patch_embed*"])
-    from train_utils.freeze import freeze_modules
+    from training.utils.freeze import freeze_modules
     if getattr(cfg.optim, "frozen_module_names", None):
         model = freeze_modules(model, patterns=cfg.optim.frozen_module_names)
     model.train()
@@ -67,7 +67,7 @@ def build(cfg_overrides=OVERRIDES):
     # Loss (trainer.py:346)
     loss_fn = instantiate(cfg.loss, _recursive_=False)
     # Optimizer (trainer.py:158)
-    from train_utils.optimizer import construct_optimizer
+    from training.utils.optimizer import construct_optimizer
     optims = [construct_optimizer(model, cfg.optim)]
     # Data (trainer.py:377) -> real DynamicTorchDataset -> real DataLoader
     train_ds = instantiate(cfg.data.train, _recursive_=False)

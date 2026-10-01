@@ -15,7 +15,7 @@ import logging
 import torch
 
 from training.data.preprocess import Z_HALF_MM
-from training.train_utils.val_logging import N_FILM_PLANES, pick_planes, subject_id
+from training.utils.val_logging import N_FILM_PLANES, pick_planes, subject_id
 
 
 def display_gamma(image, vmax: float, gamma: float = 0.7):

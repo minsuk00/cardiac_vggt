@@ -11,7 +11,7 @@ import numpy as np
 import nibabel as nib
 import pytest
 
-from training.ef_eval import compute_ef_metrics
+from training.monitor.ef_eval import compute_ef_metrics
 
 
 def _write_seg(path, n_lv_voxels, zooms=(1.4, 1.4, 10.0)):
@@ -134,7 +134,7 @@ def test_voxel_volume_comes_from_the_seg_header(tmp_path):
     """docs/59 F14: `_lv_ml` must read zooms from the seg, not a 12 mm constant — under
     native-z each subject has its own pitch. EF is a ratio so it cancels, but this pins
     that the reader is header-driven."""
-    from training.ef_eval import _lv_ml
+    from training.monitor.ef_eval import _lv_ml
     p = tmp_path / "s.nii.gz"
     _write_seg(p, 1000, zooms=(1.4, 1.4, 10.0))
     expected = 1000 * (1.4 * 1.4 * 10.0) / 1000.0

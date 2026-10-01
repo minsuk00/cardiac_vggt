@@ -20,7 +20,7 @@ import pytest
 
 def _load_cfg():
     from hydra import compose, initialize_config_dir
-    from training.resolvers import register_all
+    from training.utils.resolvers import register_all
 
     register_all()
 
@@ -37,7 +37,7 @@ def _build_from_cfg(cfg):
 
 @pytest.fixture(scope="module")
 def model_with_freeze():
-    from training.train_utils.freeze import freeze_modules
+    from training.utils.freeze import freeze_modules
 
     cfg = _load_cfg()
     model = _build_from_cfg(cfg)
