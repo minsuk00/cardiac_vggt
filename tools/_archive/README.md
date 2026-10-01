@@ -6,5 +6,9 @@ stopped accepting unknown kwargs. Every script here either passed a removed argu
 that did. Before that change those arguments were silently ignored, so these scripts built the
 current model, not the variant they were written for.
 
+Archived 2026-10-01: 7 more that used the removed dataloader stack (`get_loader`,
+`.base_dataset.datasets[0]`, `dataset_configs[0]`), removed aggregator kwargs or the old
+`GradientClipper(model)` call, or import one that did.
+
 Kept for provenance only (docs cite some of them). Paths mirror their old place under `tools/`.
 To see one as it last ran, `git log --follow -- tools/_archive/<path>`.
