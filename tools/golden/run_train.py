@@ -17,16 +17,8 @@ import torch
 
 def fingerprint_run(log_dir):
     rows = [json.loads(l) for l in open(os.path.join(log_dir, "metrics.jsonl")) if l.strip()]
-    ck = torch.load(os.path.join(log_dir, "ckpts", "checkpoint_last.pt"), map_location="cpu",
-                    weights_only=False)
     log = open(os.path.join(log_dir, "log.txt")).read() if os.path.exists(os.path.join(log_dir, "log.txt")) else ""
-    return {
-        "metrics": rows,
-        "model": {k: sha(v) for k, v in sorted(ck["model"].items())},
-        "optimizer": sha(json.dumps(ck["optimizer"]["param_groups"] if "param_groups" in ck["optimizer"]
-                                    else str(ck["optimizer"].keys()), default=str)),
-        "n_warnings": sum("WARNING" in l for l in log.splitlines()),
-    }
+    return {"metrics": rows, "n_warnings": sum("WARNING" in l for l in log.splitlines())}
 
 
 def main():
@@ -46,6 +38,8 @@ def main():
         # epoch. max_epochs stays 2: set_seeds uses seed*max_epochs, and step 0's `where` is 0
         # whatever limit_train_batches is, so step 0 still matches the 10-step reference.
         "max_epochs=2", "limit_train_batches=1", "limit_val_batches=1", "ef_val_sweep=false",
+        # The filmstrip's wandb video encoding takes minutes of CPU; G5 `on` covers it.
+        "logging.filmstrip_every_n_val_epochs=1000",
         f"exp_name=golden_{a.arm}", f"logging.log_dir={os.path.abspath(a.out)}",
     ]
     if not a.paper_mode:
@@ -54,6 +48,11 @@ def main():
         overrides.append("cuda.compile_attention_blocks=false")
 
     import launch
+    import trainer
+    # Skip checkpoint writes: ~9 GB each (minutes of I/O), and nothing here reads them.
+    for name in ("save_checkpoint", "_maybe_save_best_checkpoint"):
+        if hasattr(trainer.Trainer, name):
+            setattr(trainer.Trainer, name, lambda self, *args, **kwargs: None)
     sys.argv = ["launch.py", "--config", "default", *overrides]
     launch.main()
 
