@@ -33,6 +33,7 @@ import os
 
 import torch
 
+from vggt.models.backbones import backbone_patch_size
 from vggt.models.vggt import VGGT
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 
@@ -78,11 +79,6 @@ def read_run_config(ckpt_path):
 
 def model_kwargs_from_config(cfg):
     """-> the exact kwargs to build this run's VGGT, plus the resolved (img_size, backbone)."""
-    import sys
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                    "training"))
-    from data import backbone_patch_size          # noqa: E402  (also registers backbone_ps)
-
     m = dict(cfg.get("model") or {})
     for k in DEAD_MODEL_KWARGS:
         m.pop(k, None)

@@ -9,14 +9,21 @@ import torch.nn as nn
 
 from vggt.heads.dpt_head import DPTHead
 from vggt.models.aggregator import Aggregator
+from vggt.models.backbones import backbone_patch_size
 
 
 class VGGT(nn.Module):
     def __init__(
-        self, img_size=518, patch_size=14, embed_dim=1024,
+        self, img_size=518, patch_size=None, embed_dim=1024,
         gradient_checkpointing=True, backbone="dinov2_vitl14_reg",
     ):
         super().__init__()
+        # patch_size is derived from the backbone; an explicit value (old configs pass it) must agree.
+        derived = backbone_patch_size(backbone)
+        if patch_size is None:
+            patch_size = derived
+        elif patch_size != derived:
+            raise ValueError(f"{backbone} requires patch_size={derived}, got {patch_size}")
         self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, gradient_checkpointing=gradient_checkpointing)
 
         # The head predicts a residual displacement Δ; world_points = scanner_coords + Δ.

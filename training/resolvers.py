@@ -7,6 +7,8 @@ import time
 
 from omegaconf import OmegaConf
 
+from vggt.models.backbones import backbone_patch_size
+
 # Computed ONCE per process. `rev_ts` sorts runs reverse-chronologically; interpolations such as
 # `log_dir: ...${exp_name}` re-resolve on every read, so a resolver returning a fresh timestamp
 # would make exp_name, log_dir and the wandb name drift apart within one run.
@@ -23,17 +25,12 @@ def _aug_tag(enabled, tier):
     return "noaug" if not enabled else {"aggressive": "aug_agg"}[str(tier)]
 
 
-def _backbone_ps(backbone):
-    """Patch size derives from the backbone so config cannot express a mismatch (docs/77)."""
-    from data import backbone_patch_size
-    return backbone_patch_size(backbone)
-
-
 RESOLVERS = {
     "rev_ts": lambda: REVERSE_TS,
     "backbone_tag": _backbone_tag,
     "aug_tag": _aug_tag,
-    "backbone_ps": _backbone_ps,
+    # Patch size derives from the backbone so config cannot express a mismatch (docs/77).
+    "backbone_ps": backbone_patch_size,
 }
 
 
