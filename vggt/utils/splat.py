@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 # Sub-voxel tolerance on the in-bounds test, in voxel units. Absorbs the float32
 # round-trip residual of the physical-z encode/decode (~5e-7 voxels); see the comment
-# at the in-bounds mask below and docs/59 F1.
+# at the in-bounds mask below.
 EPS = 1e-3
 
 
@@ -16,13 +16,13 @@ def splat_to_volume(pos, intensity, grid_shape, z_scale, weight=None):
         pos: (B, N, 3) normalized in (x, y, z) order (grid_sample convention). x/y are
              [-1, 1] over the fixed in-plane extent (same for every subject). z is
              PHYSICAL (z_mm / Z_HALF_MM) — NOT index-normalized, since D (this call's
-             own grid_shape[0]) varies per subject under native-z (docs/58).
+             own grid_shape[0]) varies per subject.
         intensity: (B, N) scalar per point.
         grid_shape: (D, H, W) target voxel grid — D is THIS SUBJECT's own native slice count.
         z_scale: REQUIRED, no default. Converts the physical z coordinate to a voxel-index
             delta: `z_scale = Z_HALF_MM / dz` (dz = this subject's own slice pitch, mm).
-            A silent/wrong default would compress or stretch the volume with no error —
-            see docs/58 §6.2. Plain python float (batch_size is always 1 in this pipeline).
+            A silent/wrong default would compress or stretch the volume with no error.
+            Plain python float (batch_size is always 1 in this pipeline).
         weight: (B, N) optional per-point gate ∈ [0, 1]. Points with weight=0 contribute
                 to neither the intensity numerator nor the coverage denominator.
 
@@ -49,33 +49,22 @@ def splat_to_volume(pos, intensity, grid_shape, z_scale, weight=None):
 
     # In-bounds mask: check the CONTINUOUS position against the true valid domain
     # [0, size-1] (NOT the floored index against [0, size-2]). A point sitting EXACTLY
-    # on the last voxel (e.g. px == W-1) is fully valid and needs no "next" neighbor to
-    # interpolate — but the old floor-based check excluded it (no room for x0f+1 <= W-1),
-    # silently dropping the boundary plane/row/column of every splat. Usually invisible
-    # in x/y (518->256 oversampling covers for it) and harmless under the old fixed-12
-    # z-grid (the top plane was often zero-padding), but under native-z D is each
-    # subject's own real slice count, so the top z-plane is real anatomy for every
-    # subject. Points genuinely beyond the domain are still correctly dropped.
+    # on the last voxel (e.g. px == W-1) is fully valid and needs no "next" neighbor;
+    # a floor-based check would silently drop the boundary plane, and with native z
+    # the top z-plane is real anatomy for every subject.
     #
     # The test carries a sub-voxel EPS, and the continuous position is then CLAMPED into
-    # the domain. Reason (docs/59 F1): z_norm = (k-(D-1)/2)*dz/Z_HALF_MM and z_scale =
-    # Z_HALF_MM/dz round INDEPENDENTLY in float32, so the round trip does not cancel
-    # exactly at plane 0 — e.g. D=11, dz=9.6 gives pz = -4.77e-07. Every pixel of an input
-    # slot shares one z_val, so a bare `pz >= 0` discards the ENTIRE apex slice (measured:
-    # -9.6 dB identity PSNR), not a fractional weight. EPS=1e-3 voxels is ~2000x the
-    # observed residual and far below any real geometric offset. The clamp is what makes
-    # this symmetric: widening the test alone would let a point at pz = D-1+eps floor to
-    # z0 = D-1 with wz1 > 0 on a clamped z1 == z0, double-counting the top plane. Note a
-    # naive `+eps` nudge on z_val is NOT a fix — it trades the apex plane for the basal one.
+    # the domain: z_norm = (k-(D-1)/2)*dz/Z_HALF_MM and z_scale = Z_HALF_MM/dz round
+    # INDEPENDENTLY in float32, so the round trip does not cancel exactly at plane 0
+    # (e.g. D=11, dz=9.6 gives pz = -4.77e-07). Every pixel of an input slot shares one
+    # z_val, so a bare `pz >= 0` would discard the ENTIRE apex slice. The clamp keeps this
+    # symmetric: widening the test alone would let a point at pz = D-1+eps double-count the
+    # top plane. A naive `+eps` nudge on z_val is NOT a fix — it trades apex for base.
     #
-    # The mask is applied with `torch.where`, NOT by multiplying (docs/59 F15). In IEEE
-    # floating point `0.0 * NaN = NaN`, so a multiplied gate does NOT reject a non-finite
-    # coordinate: one NaN/+Inf among ~5.4M points yields 8 NaN voxels, and `V.mean()` — hence
-    # `loss_volume` and every full-volume metric — goes NaN for the whole batch instead of that
-    # point simply contributing zero weight. `where` selects a branch, so non-finite points are
-    # genuinely dropped. (Non-finite coords also fail every comparison above, so they are
-    # already outside `in_bounds_bool` — the only thing missing was a gate that survives them.)
-    # `loss.py` already uses this exact form for the same reason.
+    # The mask is applied with `torch.where`, NOT by multiplying: in IEEE `0.0 * NaN = NaN`,
+    # so a multiplied gate lets one non-finite coordinate poison the whole volume (and the
+    # loss). `where` selects a branch, so non-finite points are genuinely dropped.
+    # `loss.py` uses the same form for the same reason.
     in_bounds_bool = (
         (px >= -EPS) & (px <= W - 1 + EPS)
         & (py >= -EPS) & (py <= H - 1 + EPS)
@@ -90,7 +79,7 @@ def splat_to_volume(pos, intensity, grid_shape, z_scale, weight=None):
     # Clamp the CONTINUOUS positions (and recompute the interpolation weights) so the 8
     # corner weights remain a valid partition of unity for the epsilon-admitted points.
     #
-    # The `where` is the SECOND half of the F15 fix, and it is required: `clamp` propagates
+    # The `where` is required too: `clamp` propagates
     # NaN (torch returns NaN for clamp(NaN)), so a NaN coordinate would still give NaN
     # interpolation weights, and `in_bounds * NaN` re-poisons the scatter even though
     # in_bounds is 0 there. Substituting a dummy in-range position for every rejected point
@@ -163,7 +152,7 @@ def splat_predictions(predictions, batch, grid_shape, z_scale):
     # no `if intensity.max() > 2.0` host-device sync (which also graph-broke every torch.compile).
     # MULTIPLY by the reciprocal rather than divide by 255.0: eager lowers `x / 255.0` (a Python
     # scalar) to `x * (1/255.0)`, but `x / tensor(255.0)` does a true division, which differs from it
-    # by 1 ULP on ~74% of elements. Multiplying keeps this bit-identical to the pre-refactor pipeline.
+    # by 1 ULP. Multiplying keeps the eager `x / 255.0` numerics bit-for-bit.
     inv_scale = torch.where((images > 2.0).any(), 1.0 / 255.0, 1.0)
     intensity = images.float().mean(dim=2) * inv_scale
 
@@ -194,10 +183,9 @@ def resize_field(wp, Hn, Wn):
 def splat_inputs(batch, splat_res=None):
     """The (B, S, R, R) [0,1] intensities the splat scatters, or None when the batch has no
     `images_splat` (offline harness batches -> model-res fallback). splat_res=None keeps the
-    native grid (default, docs/73); an int R resamples the native slices to R² (bilinear,
+    native grid (default); an int R resamples the native slices to R² (bilinear,
     align_corners=True — the same convention `extract_slices_from_phases` uses to build the
-    model input, so splat_res == img_size reproduces the pre-docs/73 model-res splat up to
-    float rounding)."""
+    model input, so splat_res == img_size reproduces a model-res splat up to float rounding)."""
     imsp = batch.get("images_splat")
     if imsp is None or splat_res is None or int(splat_res) == imsp.shape[-1]:
         return imsp
@@ -211,8 +199,8 @@ def splat_inputs(batch, splat_res=None):
 def splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res=None):
     """Native-render splat: resample the predicted point field to the native canonical
     resolution and splat batch["images_splat"] (pre-model-resize slice content,
-    resp-corrupted where resp is on). Resampling the smooth FIELD is ~free (−0.12 dB,
-    docs/72 §3); resampling the IMAGE is lossy for img_size < 256. Falls back to the
+    resp-corrupted where resp is on). Resampling the smooth FIELD is ~free; resampling
+    the IMAGE is lossy for img_size < 256. Falls back to the
     model-resolution splat when images_splat is absent (batches built outside
     gpu_augment_batch, e.g. the offline eval harnesses).
 

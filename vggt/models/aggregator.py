@@ -94,10 +94,9 @@ class Aggregator(nn.Module):
         self.z_embedder = ZIndexEmbedder(embed_dim=embed_dim)
 
         # Reference-slice conditioning: mark slot 0 as the target-phase reference via VGGT's
-        # NATIVE two-token camera_token (index 0 = first frame, index 1 = the rest) instead of
-        # a content-free target_t index. The model reads the target phase from slot-0's image
-        # content; this token just says "slot 0 is the anchor". No new module — reuses the
-        # pretrained `self.camera_token` (built below).
+        # NATIVE two-token camera_token (index 0 = first frame, index 1 = the rest). The model
+        # reads the target phase from slot-0's image content; this token just says "slot 0 is
+        # the anchor". Reuses the pretrained `self.camera_token` (built below).
         self.gradient_checkpointing = gradient_checkpointing
         self.cached_layer_indices = set(DPT_INTERMEDIATE_LAYERS)
 
