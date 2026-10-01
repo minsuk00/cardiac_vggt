@@ -268,62 +268,13 @@ def test_multiframe_reference_slot0_is_target(synthetic_root, split_file, common
     assert len(zs) == 20 and set(zs) >= set(range(z0, z1)), "full coverage required with reference slot"
 
 
-# ── 6c. Continuous physical z (gated; default OFF) ────────────────────────────
+# ── 6c. Integer z planes ──────────────────────────────────────────────────────
 
-def _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir, split="val", **kw):
-    from data.datasets.mri_dataset import MRIDataset
-    return MRIDataset(common_conf, synthetic_root, split=split, split_file=split_file,
-                      mode="dynamic", mri_mode="axial", num_slices=20, continuous_z=True,
-                      cache_dir=monai_cache_dir, **kw)
-
-
-def test_continuous_z_off_is_integer(train_ds):
-    """Default (continuous_z=False): every z is integer-valued (discrete-grid, Phase A)."""
+def test_z_is_integer(train_ds):
+    """Every sampled z is an integer plane."""
     s = train_ds.get_data(0, img_per_seq=20)
     zs = [float(z) for z in s["slice_indices"]]
-    assert all(z == int(z) for z in zs), f"continuous_z off must keep integer planes, got {zs}"
-
-
-def test_continuous_z_on_is_fractional_within_grid(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """continuous_z=True: z stays in [0, D-1] and at least some slots are non-integer (jittered)."""
-    ds = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
-    s = ds.get_data(0, img_per_seq=20)
-    zs = [float(z) for z in s["slice_indices"]]
-    assert all(0.0 <= z <= 11.0 for z in zs), f"z must stay in [0, D-1=11], got {zs}"
-    assert any(z != int(z) for z in zs), f"continuous_z on must produce fractional z, got {zs}"
-
-
-def test_continuous_z_reference_slot0_stays_integer(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """continuous_z + reference: slot 0 stays the integer z_mid plane (filmstrip ref gather)."""
-    ds = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir, reference_slot=True)
-    s = ds.get_data(3, img_per_seq=20)
-    bb = np.asarray(s["anatomy_bbox"]).astype(np.int64)
-    z_mid = (int(bb[0]) + int(bb[1])) // 2
-    z0_slot = float(s["slice_indices"][0])
-    assert z0_slot == z_mid, f"reference slot 0 must stay integer z_mid={z_mid}, got {z0_slot}"
-
-
-def test_continuous_z_val_deterministic(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """continuous z val draws are reproducible per seq_index (seeded local rng)."""
-    a = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
-    b = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
-    for seq in (0, 2, 5):
-        za = [float(z) for z in a.get_data(seq, img_per_seq=20)["slice_indices"]]
-        zb = [float(z) for z in b.get_data(seq, img_per_seq=20)["slice_indices"]]
-        assert za == zb, f"continuous z not reproducible at seq {seq}: {za} vs {zb}"
-
-
-def test_continuous_z_coverage_preserved(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """±0.5 jitter preserves output-plane coverage: every integer plane in the bbox has a slot
-    within 0.5 of it, so the splat still deposits to it (no coverage holes)."""
-    ds = _cont_ds(synthetic_root, split_file, common_conf, monai_cache_dir)
-    s = ds.get_data(0, img_per_seq=20)
-    bb = np.asarray(s["anatomy_bbox"]).astype(np.int64)
-    z0, z1 = int(bb[0]), int(bb[1])
-    zs = [float(z) for z in s["slice_indices"]]
-    for plane in range(z0, z1):
-        assert any(abs(z - plane) <= 0.5 + 1e-6 for z in zs), \
-            f"plane {plane} has no slot within 0.5 (coverage hole), zs={sorted(zs)}"
+    assert all(z == int(z) for z in zs), f"z must be integer planes, got {zs}"
 
 
 # ── 7. Timesteps and frame indexing ──────────────────────────────────────────
@@ -365,91 +316,6 @@ def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, mon
         assert t_target == seq_index % SYN_T, \
             f"Val seq_index={seq_index} expected t_target={seq_index % SYN_T}, got {t_target}"
 
-def test_t_target_phases_val_cycles_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
-    pool = [0, 7]
-    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
-                    mode="dynamic", mri_mode="axial", num_slices=8,
-                    t_target_phases=pool, cache_dir=monai_cache_dir)
-    for seq_index in range(12):
-        s = ds.get_data(seq_index, img_per_seq=8)
-        t_target = int(np.asarray(s["t_target"]).item())
-        assert t_target == pool[seq_index % len(pool)], \
-            f"Val seq_index={seq_index} expected t_target={pool[seq_index % len(pool)]}, got {t_target}"
-
-def test_t_target_phases_train_only_from_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
-    pool = [0, 7]
-    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
-                    mode="dynamic", mri_mode="axial", num_slices=8,
-                    t_target_phases=pool, cache_dir=monai_cache_dir)
-    seen = set()
-    for seq_index in range(40):
-        s = ds.get_data(seq_index, img_per_seq=8)
-        t_target = int(np.asarray(s["t_target"]).item())
-        assert t_target in pool, f"Train t_target={t_target} not in pool {pool}"
-        seen.add(t_target)
-    assert seen == set(pool), f"Train never sampled the full pool {pool}; saw {seen}"
-
-def test_t_target_phases_inputs_span_beyond_pool(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """Restricting the pool restricts only the t_target QUERY; input slots (now ALL of them,
-    since slot 0 is decoupled) still draw from ALL phases, including ones outside the pool."""
-    from data.datasets.mri_dataset import MRIDataset
-    pool = [0, 7]
-    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
-                    mode="dynamic", mri_mode="axial", num_slices=12,
-                    t_target_phases=pool, cache_dir=monai_cache_dir)
-    input_phases = set()
-    for seq_index in range(30):
-        s = ds.get_data(seq_index, img_per_seq=8)
-        input_phases.update(int(t) for t in s["timesteps"])
-    outside = input_phases - set(pool)
-    assert len(outside) >= 3, \
-        f"Inputs should span phases beyond the target pool {pool}; only saw {sorted(input_phases)}"
-
-def test_t_target_phases_val_deterministic_across_instances(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """Val phase selection must be identical across two independent dataset objects
-    (the basis for stable per-phase val metrics across runs)."""
-    from data.datasets.mri_dataset import MRIDataset
-    pool = [0, 7]
-    def seq(ds):
-        return [int(np.asarray(ds.get_data(i, img_per_seq=8)["t_target"]).item()) for i in range(10)]
-    ds_a = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
-                      mode="dynamic", mri_mode="axial", num_slices=8,
-                      t_target_phases=pool, cache_dir=monai_cache_dir)
-    ds_b = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
-                      mode="dynamic", mri_mode="axial", num_slices=8,
-                      t_target_phases=pool, cache_dir=monai_cache_dir)
-    assert seq(ds_a) == seq(ds_b) == [pool[i % 2] for i in range(10)]
-
-def test_t_target_phases_single_element(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """A 1-element pool pins every sample to that phase, in both splits."""
-    from data.datasets.mri_dataset import MRIDataset
-    for split in ("train", "val"):
-        ds = MRIDataset(common_conf, synthetic_root, split=split, split_file=split_file,
-                        mode="dynamic", mri_mode="axial", num_slices=8,
-                        t_target_phases=[5], cache_dir=monai_cache_dir)
-        for seq_index in range(6):
-            t = int(np.asarray(ds.get_data(seq_index, img_per_seq=8)["t_target"]).item())
-            assert t == 5, f"{split}: 1-element pool should pin t_target=5, got {t}"
-
-def test_t_target_phases_out_of_range_wraps(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """Pool entries are taken mod T (defensive), so [12, 19] behaves like [0, 7] for T=12."""
-    from data.datasets.mri_dataset import MRIDataset
-    ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
-                    mode="dynamic", mri_mode="axial", num_slices=8,
-                    t_target_phases=[12, 19], cache_dir=monai_cache_dir)  # 12%12=0, 19%12=7
-    ts = [int(np.asarray(ds.get_data(i, img_per_seq=8)["t_target"]).item()) for i in range(6)]
-    assert ts == [0, 7, 0, 7, 0, 7], f"out-of-range pool should wrap mod {SYN_T}; got {ts}"
-
-def test_t_target_phases_empty_raises(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """An empty pool is a misconfig and must fail loudly at construction, not mid-training."""
-    from data.datasets.mri_dataset import MRIDataset
-    with pytest.raises(ValueError, match="non-empty"):
-        MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
-                   mode="dynamic", mri_mode="axial", num_slices=8,
-                   t_target_phases=[], cache_dir=monai_cache_dir)
-
 # ── 7b. Original t_target behavior must be preserved (regression) ──────────────
 
 def test_t_target_fixed_forces_phase(synthetic_root, split_file, common_conf, monai_cache_dir):
@@ -465,16 +331,6 @@ def test_t_target_fixed_forces_phase(synthetic_root, split_file, common_conf, mo
             assert t == 3, f"{split}: t_target_fixed=3 expected 3, got {t}"
             # NOTE: t_target_fixed fixes the QUERY phase only; input slots stay decoupled,
             # so slot 0 is NOT pinned to 3 anymore (that's the decoupled-target design).
-
-def test_t_target_fixed_overrides_phases(synthetic_root, split_file, common_conf, monai_cache_dir):
-    """PRIORITY: if both t_target_fixed and t_target_phases are set, fixed wins."""
-    from data.datasets.mri_dataset import MRIDataset
-    ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
-                    mode="dynamic", mri_mode="axial", num_slices=8,
-                    t_target_fixed=3, t_target_phases=[0, 7], cache_dir=monai_cache_dir)
-    for seq_index in range(12):
-        t = int(np.asarray(ds.get_data(seq_index, img_per_seq=8)["t_target"]).item())
-        assert t == 3, f"t_target_fixed must override t_target_phases; got {t}"
 
 def test_all_phases_train_spans_many(synthetic_root, split_file, common_conf, monai_cache_dir):
     """REGRESSION: with neither knob set, train samples t_target uniformly over all T phases."""

@@ -67,12 +67,6 @@ mri_data_mode: "dynamic"   # "static" or "dynamic"
 # Reference-slice conditioning: slot 0 is the target-phase reference slice. The model always
 # marks slot 0 with the camera_token anchor; this is the dataset half.
 reference_slot: true
-# Continuous physical z (docs/28): when true, non-reference slots are sampled at a CONTINUOUS
-# z (nominal plane + jitter ∈ [-z_jitter, +z_jitter]) and extracted by interpolation, teaching
-# z as a continuous physical coordinate. false ⇒ integer planes (numerically identical to the
-# discrete-grid pipeline).
-continuous_z: false
-z_jitter: 0.5
 # One-frame-per-slice (the sparse-acquisition extreme this project targets): S is forced per
 # subject to the in-FOV plane count, so every in-bbox z plane appears EXACTLY once. Under
 # native-z the bbox spans the whole stack ⇒ S == D (5-21 per subject). Set false for the
@@ -96,9 +90,6 @@ val_epoch_freq: 1
 # Target-phase control. null = uniform sampling per call (multi-phase). Set to an int (e.g. 0)
 # to force every sample to use that phase as the target — 0 reproduces the ED-only pipeline.
 t_target_fixed: null
-# Restrict the multi-phase target pool to a subset (e.g. [0, 7]). null → all phases. Train
-# picks uniformly; val cycles deterministically. Mutually exclusive with t_target_fixed.
-t_target_phases: null
 # EF-aware validation. `ef_val_sweep` replaces the coupled val sampler with a targeted
 # {ED, ES} sweep (each subject reconstructed at its GT ED + ES phase from cardiac_phase.csv),
 # so per-phase panels are honest AND we get the ED/ES volumes EF needs.
@@ -281,11 +272,8 @@ data:
           target_size: ${img_size}
           patch_size: ${patch_size}
           t_target_fixed: ${t_target_fixed}
-          t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
-          continuous_z: ${continuous_z}
           one_frame_per_slice: ${one_frame_per_slice}
-          z_jitter: ${z_jitter}
           intensity_percentiles: ${intensity_percentiles}
           # The trainer's gpu_augment_batch re-extracts every input slice on GPU, so building
           # them on the CPU worker first is ~64 MB/sample of pure waste. Only safe because the
@@ -313,11 +301,8 @@ data:
           target_size: ${img_size}
           patch_size: ${patch_size}
           t_target_fixed: ${t_target_fixed}
-          t_target_phases: ${t_target_phases}
           reference_slot: ${reference_slot}
-          continuous_z: ${continuous_z}
           one_frame_per_slice: ${one_frame_per_slice}
-          z_jitter: ${z_jitter}
           intensity_percentiles: ${intensity_percentiles}
           # NOT deferred on val (deliberately — see the train block). 12 scripts across
           # inference/ and tools/ instantiate THIS `data.val` node and then read

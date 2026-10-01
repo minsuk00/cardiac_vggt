@@ -250,7 +250,7 @@ The copied `models/flow_SNet4.py`, `models/losses.py`, and
 
 `pipeline.make_dataset()` imports `data.MRIDataset` from the repository's
 `training` path. It passes `t_target_fixed=0`, `mode="static"`,
-`one_frame_per_slice=True`, `continuous_z=False`, and
+`one_frame_per_slice=True`, and
 `defer_input_images=True`. Thus the target and every acquired slice are ED,
 all native z planes are used once, and no cached file is rewritten by this fork.
 

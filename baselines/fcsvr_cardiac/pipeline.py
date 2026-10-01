@@ -41,7 +41,7 @@ def make_dataset(data_root: str, split_file: str, split: str):
     return MRIDataset(
         common_conf={}, data_root=data_root, split=split, split_file=split_file,
         mode="static", num_slices=20, t_target_fixed=0, reference_slot=False,
-        continuous_z=False, one_frame_per_slice=True, defer_input_images=True,
+        one_frame_per_slice=True, defer_input_images=True,
     )
 
 

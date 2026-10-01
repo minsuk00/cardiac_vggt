@@ -161,7 +161,7 @@ def draw_scatter(rel_path, split, seed, D, T):
             f.write(f"[{split}]\n{rel_path}\n")
         ds = MRIDataset(common, DATA_ROOT, split=split, split_file=sf, mode="dynamic",
                         mri_mode="axial", num_slices=D, target_size=518, t_target_fixed=0,
-                        reference_slot=True, one_frame_per_slice=True, continuous_z=False)
+                        reference_slot=True, one_frame_per_slice=True)
         b = ds.get_data(seq_index=seed, img_per_seq=D)
     z = [int(round(float(v))) for v in b["slice_indices"]]
     t = [int(v) for v in b["timesteps"]]

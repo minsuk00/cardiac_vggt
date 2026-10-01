@@ -85,10 +85,7 @@ class ComposedDataset(Dataset, ABC):
         if "timesteps" in batch:
             sample["timesteps"] = torch.from_numpy(np.stack(batch["timesteps"]).astype(np.int64))
         if "slice_indices" in batch:
-            # float32 (not int64): z may be CONTINUOUS (continuous_z). Re-extraction paths
-            # (respiratory grid_sample, gpu_aug 2-plane blend) interpolate; integer-valued z
-            # is exact, so the discrete-grid pipeline is numerically unchanged. timesteps stays
-            # int64 — cardiac phase is always discrete.
+            # float32: the re-extraction paths (respiratory grid_sample, gpu_aug) take float z.
             sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.float32))
         if "gt_target_volume" in batch:
             sample["gt_target_volume"] = torch.from_numpy(batch["gt_target_volume"].astype(np.float32))

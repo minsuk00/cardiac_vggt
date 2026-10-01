@@ -111,11 +111,8 @@ class MRIDataset(Dataset):
         target_size=INPUT_IMG_SIZE,
         mri_mode="axial",
         t_target_fixed=None,
-        t_target_phases=None,
         reference_slot=False,
-        continuous_z=False,
         one_frame_per_slice=False,
-        z_jitter=0.5,
         cache_dir=None,
         ef_val_sweep=False,
         cardiac_phase_csv=None,
@@ -160,31 +157,20 @@ class MRIDataset(Dataset):
             )
         self.mri_mode = mri_mode
         self.t_target_fixed = t_target_fixed
-        self.t_target_phases = list(t_target_phases) if t_target_phases is not None else None
-        # Reference-slice conditioning (docs/25): when True, slot 0 is forced to OBSERVE the
+        # Reference-slice conditioning: when True, slot 0 is forced to OBSERVE the
         # target phase at the mid-ventricular plane (z = bbox z-center), and the remaining
         # slots are scattered with that plane excluded. The model reads the target phase from
         # slot-0's image content (via the native camera_token anchor) instead of a target_t
         # index. Default False → legacy decoupled sampling (slot 0 not special).
         self.reference_slot = bool(reference_slot)
-        # Continuous physical z (docs/28): when True, each non-reference input slot is sampled at
-        # a CONTINUOUS z (its nominal in-bbox plane + bounded jitter ∈ [-z_jitter, +z_jitter]),
-        # extracted by linear interpolation between the two bracketing planes. Teaches the model
-        # z as a continuous physical coordinate so off-grid inference slices splat correctly.
-        # Slot 0 (reference, when reference_slot) stays on its integer plane. Default False →
-        # integer planes (numerically identical to the discrete-grid pipeline).
-        self.continuous_z = bool(continuous_z)
         # One-frame-per-slice (the sparse-acquisition extreme): when True, S is forced per subject
         # to the subject's in-FOV plane count so every in-bbox z plane appears EXACTLY once (no
         # multi-frame extras, n_extra=0). Overrides the incoming img_per_seq / num_slices budget;
         # safe because each batch is a single subject (batch_size=1), so the per-slot count can
         # vary across iterations without any cross-subject padding. Default False → the fixed-S
-        # multi-frame sampler (bit-identical to before). Composes with reference_slot (slot 0 =
-        # target-phase z_mid = that plane's one frame) and continuous_z (per-plane off-grid jitter).
+        # multi-frame sampler. Composes with reference_slot (slot 0 = target-phase z_mid = that
+        # plane's one frame).
         self.one_frame_per_slice = bool(one_frame_per_slice)
-        self.z_jitter = float(z_jitter)
-        if self.t_target_phases is not None and len(self.t_target_phases) == 0:
-            raise ValueError("t_target_phases must be a non-empty list of phase indices, or null.")
 
         # ── Subject discovery (same split-file format as before) ──────────
         self.subjects = self._find_subjects()
@@ -374,17 +360,11 @@ class MRIDataset(Dataset):
         bbox_z_size = max(1, bbox_z1 - bbox_z0)  # at least 1 for fallback
 
         # ── Pick t_target ─────────────────────────────────────────────────
-        # Priority: EF-sweep forced phase > single fixed phase > restricted phase pool > all T phases.
+        # Priority: EF-sweep forced phase > single fixed phase > all T phases.
         if forced_t is not None:
             t_target = int(forced_t) % T_total
         elif self.t_target_fixed is not None:
             t_target = int(self.t_target_fixed) % T_total
-        elif self.t_target_phases is not None:
-            pool = [int(t) % T_total for t in self.t_target_phases]
-            if self.split != "train":
-                t_target = pool[seq_index % len(pool)]   # deterministic cycle for stable val
-            else:
-                t_target = random.choice(pool)
         elif self.split != "train":
             t_target = seq_index % T_total
         else:
@@ -480,28 +460,8 @@ class MRIDataset(Dataset):
             t_sequence = [t_target] * S
         else:
             t_sequence = [rng.randrange(T_total) for _ in range(S)]
-        # ABLATION HOOK (gated, default no-op): force the first n_forced_target slots
-        # to OBSERVE the target phase. Inference-only; training never passes it.
-        _n_forced = int(kwargs.get("n_forced_target", 0))
-        for _i in range(min(_n_forced, S)):
-            t_sequence[_i] = t_target
         if self.reference_slot:
             t_sequence[0] = t_target                            # slot 0 observes the target phase
-
-        # ── Continuous physical z (gated; default OFF → integer planes) ────
-        # Jitter each non-reference slot's nominal integer plane into a CONTINUOUS physical z
-        # so the model learns z as a continuous coordinate (real inference slices land off the
-        # discrete grid). Slot 0 (reference) stays on its integer plane so the filmstrip's
-        # integer reference gather is unaffected. Bounded to ±z_jitter and clamped to
-        # [0, D-1-eps] so the 2-plane blend and the splat in-bounds gate stay valid. Uses the
-        # LOCAL rng → val-deterministic, no global-RNG leak.
-        if self.continuous_z:
-            eps = 1e-3
-            z_sequence = [
-                z if (self.reference_slot and i == 0)
-                else float(min(max(0.0, z + rng.uniform(-self.z_jitter, self.z_jitter)), D - 1 - eps))
-                for i, z in enumerate(z_sequence)
-            ]
 
         # ── Build per-slot tensors ────────────────────────────────────────
         images_list = []
@@ -523,20 +483,8 @@ class MRIDataset(Dataset):
         # Pre-resize ALL S canonical slices in one batched F.interpolate call.
         # `to_resize` shape (S, 1, 256, 256) float32; output (S, 1, 518, 518).
         slot_ts = torch.tensor(t_sequence, dtype=torch.long)
-        if self.continuous_z:
-            # Continuous z → linear blend between the two bracketing planes. eps-clamp above
-            # guarantees floor ≤ D-2, so z0/z1 are valid indices. Reduces to the exact integer
-            # plane when z is integer-valued (frac = 0), so the OFF path is numerically identical.
-            z_f = torch.tensor(z_sequence, dtype=torch.float32)
-            z0 = torch.floor(z_f).long().clamp(0, D - 1)
-            z1 = (z0 + 1).clamp(0, D - 1)
-            frac = (z_f - z0.float()).view(-1, 1, 1)                 # (S, 1, 1)
-            s0 = phases_splat[slot_ts, z0].float()                  # (S, H, W)
-            s1 = phases_splat[slot_ts, z1].float()
-            canon_slices = (1.0 - frac) * s0 + frac * s1
-        else:
-            slot_indices = torch.tensor(z_sequence, dtype=torch.long)
-            canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
+        slot_indices = torch.tensor(z_sequence, dtype=torch.long)
+        canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
         # `defer_input_images` (training default): the trainer re-extracts every input slice
         # on GPU anyway — respiratory needs the breathing-displaced reslice, affine needs the
         # warped volume — and `gpu_augment_batch` overwrites `images` wholesale. Building it

@@ -68,7 +68,7 @@ class TrainerVizMixin:
             return torch.from_numpy(np.asarray(data[k]).astype(dt)).unsqueeze(0).to(self.device)
 
         timesteps = st("timesteps", np.int64)
-        slice_indices = st("slice_indices", np.float32)     # may be continuous z
+        slice_indices = st("slice_indices", np.float32)
 
         # These callers hit `get_data` DIRECTLY, so they bypass the trainer loop where
         # `gpu_augment_batch` would materialise a deferred `images`. Under

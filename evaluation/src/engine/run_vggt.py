@@ -138,7 +138,6 @@ def make_dataset(cfg, subject_rel, split, tmpdir):
     # t_target_fixed=0 pins slot 0 to ED for the base draw; the sweep overwrites slot-0's t per
     # queried phase, so the COMPANION slots stay fixed across the sweep (same inputs, varying query).
     kw["t_target_fixed"] = 0
-    kw["t_target_phases"] = None
     return MRIDataset(common, data_root, split=split, split_file=sf, **kw)
 
 
@@ -206,10 +205,10 @@ def pin_scatter(batch, ds, scatter):
     contract. The dataset's own draw reproduces it for the default sampler, but an arm with a
     different sampler (multi-frame, continuous z) would not, so the bundle is the authority.
     Returns the number of slots whose phase differed from the dataset's own draw (0 expected)."""
-    if not (ds.one_frame_per_slice and ds.reference_slot) or ds.continuous_z:
-        raise ValueError("same-input scatter needs one_frame_per_slice + reference_slot + integer z; "
+    if not (ds.one_frame_per_slice and ds.reference_slot):
+        raise ValueError("same-input scatter needs one_frame_per_slice + reference_slot; "
                          f"this arm has one_frame_per_slice={ds.one_frame_per_slice} "
-                         f"reference_slot={ds.reference_slot} continuous_z={ds.continuous_z}")
+                         f"reference_slot={ds.reference_slot}")
     ppp, ref = scatter["phase_per_plane"], int(scatter["ref_plane"])
     z = [int(round(float(v))) for v in batch["slice_indices"][0].tolist()]
     if z[0] != ref or sorted(z) != list(range(len(ppp))):
