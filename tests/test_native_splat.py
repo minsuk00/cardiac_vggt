@@ -2,8 +2,8 @@
 import torch
 import torch.nn.functional as F
 
-from data.gpu_aug import extract_slices_from_phases
-from data.respiratory import extract_slices_with_respiratory_vec
+from training.data.gpu_aug import extract_slices_from_phases
+from training.data.respiratory import extract_slices_with_respiratory_vec
 from vggt.utils.splat import splat_predictions, splat_preds_native, splat_to_volume
 
 
@@ -130,7 +130,7 @@ def test_splat_res_supersample_matches_manual():
 def test_splat_res_threads_through_loss_config():
     """`loss.volume.splat_res` reaches the splat: the loss must differ from the native default
     (different point set) and equal the model-res path when splat_res == model res."""
-    from loss import compute_volume_intensity_loss
+    from training.loss import compute_volume_intensity_loss
     wp, native, images = _field_and_native()
     S, D, hm, hn = 3, 4, 28, 64
     g = torch.Generator().manual_seed(4)

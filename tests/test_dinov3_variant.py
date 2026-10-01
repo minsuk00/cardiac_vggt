@@ -1,17 +1,13 @@
 import os
-import sys
 
 import pytest
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 
 def _compose(name):
     from hydra import compose, initialize_config_dir
-    from resolvers import register_all
+    from training.resolvers import register_all
 
     register_all()
     config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
@@ -98,21 +94,21 @@ def test_dpt_patch16_reshape_and_output():
 
 @pytest.mark.parametrize("target_size,patch_size", [(255, 16), (256, 0), (-256, 16)])
 def test_dataset_rejects_invalid_patch_grid(target_size, patch_size):
-    from data.datasets.mri_dataset import validate_patch_grid
+    from training.data.datasets.mri_dataset import validate_patch_grid
 
     with pytest.raises(ValueError):
         validate_patch_grid(target_size, patch_size)
 
 
 def test_dataset_accepts_default_and_dinov3_patch_grids():
-    from data.datasets.mri_dataset import validate_patch_grid
+    from training.data.datasets.mri_dataset import validate_patch_grid
 
     assert validate_patch_grid(518, 14) == (518, 14)
     assert validate_patch_grid(256, 16) == (256, 16)
 
 
 def test_patch_embed_freeze_pattern_with_fake_backbone():
-    from train_utils.freeze import freeze_modules
+    from training.train_utils.freeze import freeze_modules
 
     class FakeModel(nn.Module):
         def __init__(self):

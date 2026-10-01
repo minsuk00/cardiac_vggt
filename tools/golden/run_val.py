@@ -64,7 +64,7 @@ def main():
         "cuda.compile_attention_blocks=false",
     ]
 
-    import launch
+    from training import launch
     sys.argv = ["launch.py", "--config", "default", *overrides]
     launch.main()
 

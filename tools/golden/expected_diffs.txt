@@ -7,3 +7,7 @@
 # C4: data.train/data.val are the MRIDataset kwargs (was DynamicTorchDataset ->
 # ComposedDataset -> dataset_configs[0]); num_workers moved to data.num_workers. Values unchanged.
 ^g0b\.json:/\w+/data/(num_workers|(train|val)/[^:]+):
+
+# C11: the repo is an installed package, so Hydra targets gained the `training.` prefix
+# (new value must be exactly "training." + old value).
+^g0b\.json:/\w+/[\w/]*/_target_: ([\w.]+) -> training\.\1$

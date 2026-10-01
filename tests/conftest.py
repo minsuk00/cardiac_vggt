@@ -1,13 +1,11 @@
 import os
-import sys
 
 import nibabel as nib
 import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
-# Make training/ importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
+# `vggt`, `training` and `inference` come from the editable install (`pip install --no-deps -e .`).
 
 
 def pytest_configure(config):
@@ -75,7 +73,7 @@ def common_conf():
 
 @pytest.fixture(scope="module")
 def train_ds(synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     return MRIDataset(
         common_conf, synthetic_root,
         split="train", split_file=split_file,

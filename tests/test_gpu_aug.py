@@ -8,14 +8,14 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-import data.gpu_aug as gpu_aug
-from data.gpu_aug import (
+import training.data.gpu_aug as gpu_aug
+from training.data.gpu_aug import (
     build_gpu_transforms,
     extract_slices_from_phases,
     gpu_augment_batch,
 )
-from data.preprocess import compute_geometric_bbox
-from data.respiratory import RespiratoryConfig
+from training.data.preprocess import compute_geometric_bbox
+from training.data.respiratory import RespiratoryConfig
 
 DEVICE = "cpu"
 

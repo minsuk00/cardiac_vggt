@@ -14,8 +14,8 @@ import logging
 
 import torch
 
-from data.preprocess import Z_HALF_MM
-from train_utils.val_logging import N_FILM_PLANES, pick_planes, subject_id
+from training.data.preprocess import Z_HALF_MM
+from training.train_utils.val_logging import N_FILM_PLANES, pick_planes, subject_id
 
 
 def display_gamma(image, vmax: float, gamma: float = 0.7):
@@ -47,7 +47,7 @@ def log_motion_mask_example(writer, val_ds, subj_indices, step: int):
         import wandb
         import numpy as np
         import matplotlib.pyplot as plt
-        from metrics import compute_motion_mask, MOTION_MASK_TAU
+        from training.metrics import compute_motion_mask, MOTION_MASK_TAU
     except ImportError:
         return
 

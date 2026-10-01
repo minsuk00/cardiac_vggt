@@ -16,10 +16,10 @@ import numpy as np
 import pytest
 import torch
 
-import monitor as monitor_module
-from monitor import Monitor, pitch_bucket
-from monitor_panels import display_gamma
-from train_utils.val_logging import (
+import training.monitor as monitor_module
+from training.monitor import Monitor, pitch_bucket
+from training.monitor_panels import display_gamma
+from training.train_utils.val_logging import (
     pick_one_index_per_source,
     pick_planes,
     pick_visual_indices,

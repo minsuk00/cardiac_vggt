@@ -1,12 +1,7 @@
 """Unit tests for vggt.utils.splat."""
 
-import os
-import sys
-
 import pytest
 import torch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from vggt.utils.splat import sample_volume, splat_to_volume
 

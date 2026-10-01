@@ -21,7 +21,7 @@ import os
 
 import pytest
 
-from data.datasets.mri_dataset import MRIDataset
+from training.data.datasets.mri_dataset import MRIDataset
 
 NUM_PHASES = 12
 # Deliberately != ED and != each other, and both inside [0, NUM_PHASES) so

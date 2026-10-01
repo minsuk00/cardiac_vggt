@@ -21,7 +21,7 @@ Run on CPU — grid_sample works without CUDA.
 import pytest
 import torch
 
-from data.respiratory import (
+from training.data.respiratory import (
     SPACING_MM,
     RespiratoryConfig,
     extract_slices_with_respiratory_vec,
@@ -259,7 +259,7 @@ def test_gpu_aug_passes_native_pitch_and_plane_count(monkeypatch, dz, D):
     This is the integration half of F4 — the unit tests above prove the reslicer is
     correct GIVEN the right spacing; this proves the trainer path supplies it.
     """
-    import data.gpu_aug as gpu_aug
+    import training.data.gpu_aug as gpu_aug
 
     seen = {}
     real_extract = gpu_aug.extract_slices_with_respiratory_vec
@@ -307,7 +307,7 @@ def test_gpu_aug_rejects_mixed_pitch_batch():
     """docs/59 F7 guard, exercised through the real aug entry point: one scalar dz is
     applied to the whole batch, so a batch mixing pitches must RAISE, not silently
     breathe row 1 at row 0's scale."""
-    import data.gpu_aug as gpu_aug
+    import training.data.gpu_aug as gpu_aug
 
     B, T, D, S, H, W = 2, 12, 10, 4, 256, 256
     batch = {

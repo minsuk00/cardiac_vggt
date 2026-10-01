@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import torch
 
-from loss import compute_volume_intensity_loss, diffusion_loss_l2
+from training.loss import compute_volume_intensity_loss, diffusion_loss_l2
 
 
 def test_diffusion_helper_zero_on_constant():

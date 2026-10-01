@@ -1,11 +1,10 @@
 """Shared helpers for the golden-output harness (tools/golden/).
 
-Run everything from the repo root with PYTHONPATH=training:.
+Run everything from the repo root with the repo installed (`pip install --no-deps -e .`).
 """
 import hashlib
 import json
 import os
-import sys
 
 import numpy as np
 import torch
@@ -13,7 +12,6 @@ import torch
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")  # required by deterministic cuBLAS
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path[:0] = [os.path.join(REPO, "training"), REPO]
 
 # The four paper arms: default.yaml + RECIPE + ARM overrides (sbatch/train_final_518.sh).
 RECIPE = ["max_epochs=300", "loss.volume.splat_res=518",
@@ -47,7 +45,7 @@ def fingerprint(batch):
 
 
 def compose(overrides):
-    from resolvers import register_all
+    from training.resolvers import register_all
     from hydra import compose as _compose, initialize_config_dir
     register_all()
     with initialize_config_dir(version_base=None, config_dir=os.path.join(REPO, "training", "config")):
@@ -56,7 +54,7 @@ def compose(overrides):
 
 def train_val_loaders(cfg):
     """-> (get_train_loader(epoch), get_val_loader(epoch)) built the way the trainer builds them."""
-    from data.loader import build_loader
+    from training.data.loader import build_loader
     from hydra.utils import instantiate
     train = instantiate(cfg.data.train, _recursive_=False)
     val = instantiate(cfg.data.val, _recursive_=False)

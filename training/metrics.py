@@ -10,7 +10,7 @@ the val phase. Neither touches the objective: both run under no_grad.
 import logging
 
 import torch
-from data.preprocess import Z_HALF_MM
+from training.data.preprocess import Z_HALF_MM
 from vggt.utils.splat import (resize_field, sample_volume, splat_inputs,
                               splat_preds_native, splat_to_volume)
 

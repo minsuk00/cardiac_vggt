@@ -16,22 +16,20 @@ Labels out: 0=background, 1=LV myocardium, 2=LV cavity, 3=RV cavity  (CorSeg con
 NOTE this differs from nnU-Net Task114 (1=LV cavity, 2=myocardium, 3=RV) -- labels 1/2 are SWAPPED.
 
 Usage:
-  micromamba run -n svr python training/corseg/corseg_infer.py \
+  micromamba run -n svr python -m training.corseg.corseg_infer \
       --input <file.nii.gz | dir> --out <dir> [--mode paper] [--postproc] [--device cuda]
 """
 import argparse
 import glob
 import json
 import os
-import sys
 
 import nibabel as nib
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import corseg_postproc as cpp  # noqa: E402
+from training.corseg import corseg_postproc as cpp
 
 CKPT_DEFAULT = "/home/minsukc/vggt/scratch/data/corseg/ModelWeight-CorSeg-CineSAX_MedNextL.pth"
 LABEL_NAMES = {0: "background", 1: "LV_myo", 2: "LV_cav", 3: "RV_cav"}

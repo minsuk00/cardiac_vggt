@@ -4,21 +4,15 @@ Slot 0 = (t_target, mid-ventricular z); the remaining slots provide full z-cover
 LV-weighted extra frames (multi-frame; planes may repeat). The model half (the camera_token
 anchor on slot 0) is always on.
 """
-import os
-import sys
-
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Dataset: reference_slot
 # ──────────────────────────────────────────────────────────────────────────────
 def _make_ds(synthetic_root, split_file, common_conf, monai_cache_dir, split, reference_slot):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     return MRIDataset(
         common_conf, synthetic_root,
         split=split, split_file=split_file,

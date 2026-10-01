@@ -13,7 +13,7 @@ import os
 from common import REPO, dump
 
 import inference.load_run as lr
-from data.datasets.mri_dataset import MRIDataset
+from training.data.datasets.mri_dataset import MRIDataset
 from vggt.models.vggt import VGGT
 
 LOGS = os.path.join(REPO, "scratch", "logs")

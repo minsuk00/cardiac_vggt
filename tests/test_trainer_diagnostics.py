@@ -6,15 +6,10 @@
 A `Monitor` is cheap to build (no model, no dataloaders), so these tests construct a real
 one with stub logging collaborators.
 """
-import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 import torch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -42,7 +37,7 @@ def _make_data(t_targets, B=None, V_shape=(2, 4, 4)):
 
 def _make_monitor(t_target_fixed=None, val_ds=None, wandb_writer=None, log_dir="/tmp"):
     """A real Monitor with stub collaborators; scalars are captured in `m._logged`."""
-    from monitor import Monitor
+    from training.monitor import Monitor
     log_conf = SimpleNamespace(log_freq=1, log_dir=log_dir, scalar_keys_to_log=None)
     # The per-subject val record writes a row per sample; a missing run_log would raise
     # inside the per-sample loop, which the outer try/except swallows — silently
@@ -153,7 +148,7 @@ def test_motion_mask_example_logs_under_val_motion():
     import matplotlib
     matplotlib.use("Agg")
     import numpy as np
-    from monitor_panels import log_motion_mask_example
+    from training.monitor_panels import log_motion_mask_example
 
     # No wandb → silent no-op.
     log_motion_mask_example(None, None, (0,), 0)  # must not raise

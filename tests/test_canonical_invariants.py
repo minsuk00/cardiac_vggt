@@ -13,7 +13,7 @@ import pytest
 
 def _two_subject_dataset(synthetic_root, common_conf, monai_cache_dir, tmp_path):
     """Train split with BOTH synthetic subjects, so we can compare across subjects."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     sf = tmp_path / "both.txt"
     # Dataset is built with split="val", so list both subjects under [val].
     sf.write_text("[val]\nTrain_P001\nVal_P001\n")

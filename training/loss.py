@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-from metrics import base_metrics, val_metrics as _val_metrics
+from training.metrics import base_metrics, val_metrics as _val_metrics
 from vggt.utils.splat import sample_volume, splat_preds_native
 # Private aliases kept for importers that predate the move to vggt.utils.splat
 # (evaluation/src/engine/run_vggt*.py, tools/interp/*).
@@ -16,7 +16,7 @@ from vggt.utils.splat import resize_field as _resize_field  # noqa: F401
 class MultitaskLoss(torch.nn.Module):
     """The training objective: the unsupervised volume-intensity loss
     (`compute_volume_intensity_loss`). The upstream name and the
-    `_target_: loss.MultitaskLoss` config key are kept so existing configs keep resolving.
+    `_target_: training.loss.MultitaskLoss` config key are kept so existing configs keep resolving.
     """
 
     def __init__(self, volume=None):

@@ -11,8 +11,8 @@ import subprocess
 
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
-from resolvers import register_all
-from trainer import Trainer
+from training.resolvers import register_all
+from training.trainer import Trainer
 
 
 def _install_requeue_handler():

@@ -88,12 +88,12 @@ def run_corseg(in_dir, out_dir, device="cuda"):
     (`{stem}.nii.gz`).
     """
     import glob
-    from corseg.corseg_infer import load_corseg, segment_nifti
+    from training.corseg.corseg_infer import load_corseg, segment_nifti
 
     os.makedirs(out_dir, exist_ok=True)
     # Stage the 741 MB checkpoint to node-local /tmp: loading from GPFS is slow enough to
     # dominate an EF epoch (docs/50). Falls back to the original path on any failure.
-    from corseg.corseg_infer import CKPT_DEFAULT
+    from training.corseg.corseg_infer import CKPT_DEFAULT
     from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
     model, _ = load_corseg(stage_checkpoint_to_local(CKPT_DEFAULT), device=device)
     try:

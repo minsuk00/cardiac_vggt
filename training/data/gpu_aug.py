@@ -36,8 +36,8 @@ try:
 except ImportError:  # pragma: no cover — batchaug is a hard dep for aug
     _B = None
 
-from data.preprocess import compute_geometric_bbox
-from data.respiratory import (
+from training.data.preprocess import compute_geometric_bbox
+from training.data.respiratory import (
     extract_slices_with_respiratory_vec,
     sample_resp_disp,
 )

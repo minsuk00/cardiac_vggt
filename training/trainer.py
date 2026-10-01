@@ -24,20 +24,20 @@ from typing import Any, Dict, List, Optional
 
 import torch
 from hydra.utils import instantiate
-from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
-from data.loader import build_loader
-from data.respiratory import RespiratoryConfig
-from monitor import Monitor
-from train_utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
+from training.data.gpu_aug import build_gpu_transforms, gpu_augment_batch
+from training.data.loader import build_loader
+from training.data.respiratory import RespiratoryConfig
+from training.monitor import Monitor
+from training.train_utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
-from train_utils.freeze import freeze_modules
-from train_utils.general import (
+from training.train_utils.freeze import freeze_modules
+from training.train_utils.general import (
     AverageMeter, DurationMeter, ProgressMeter, copy_data_to_device, model_summary,
     resolve_resume_checkpoint, safe_makedirs, set_seeds,
 )
-from train_utils.logging import setup_logging
-from train_utils.optimizer import construct_optimizer
-from train_utils.run_log import RunLog, file_md5
+from training.train_utils.logging import setup_logging
+from training.train_utils.optimizer import construct_optimizer
+from training.train_utils.run_log import RunLog, file_md5
 
 # Fallback when `checkpoint.best_metric` is absent from a config. Heart-segmentation ROI
 # PSNR — a real anatomical mask; see the rationale in default.yaml's checkpoint block.
@@ -359,7 +359,7 @@ class Trainer:
             # ROI regeneration). split_md5 only hashes subject NAMES, so without this two
             # runs on different pixels look identical.
             try:
-                from data.preprocess import cache_signature
+                from training.data.preprocess import cache_signature
                 cache_sig = getattr(mri_ds, "cache_signature", cache_signature())
             except Exception:
                 cache_sig = None

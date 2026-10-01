@@ -27,13 +27,13 @@ from typing import Mapping
 
 import torch
 
-import monitor_panels as panels
-from data.gpu_aug import extract_slices_from_phases, gpu_augment_batch
-from data.preprocess import NUM_PHASES
-from ef_eval import IN_PLANE_MM
-from train_utils.general import safe_makedirs
-from train_utils.notify import GradientCollapseAlarm
-from train_utils.val_logging import (
+import training.monitor_panels as panels
+from training.data.gpu_aug import extract_slices_from_phases, gpu_augment_batch
+from training.data.preprocess import NUM_PHASES
+from training.ef_eval import IN_PLANE_MM
+from training.train_utils.general import safe_makedirs
+from training.train_utils.notify import GradientCollapseAlarm
+from training.train_utils.val_logging import (
     N_FILM_PLANES, load_subject_groups, pick_one_index_per_source, pick_planes, pick_visual_indices,
     resp_offslab_stats, seq_index_to_subject, to_float,
 )
@@ -272,7 +272,7 @@ class Monitor:
 
         try:
             import numpy as np
-            from loss import compute_volume_intensity_loss
+            from training.loss import compute_volume_intensity_loss
 
             num_slices = mri_ds.num_slices
             per_phase = {kind: defaultdict(list) for kind in PSNR_KINDS}
@@ -517,7 +517,7 @@ class Monitor:
         """Per-sample full / bbox / motion PSNR bucketed by t_target, plus the per-subject
         row. Runs in both phase modes; end_val decides which panels to emit."""
         try:
-            from metrics import compute_motion_mask
+            from training.metrics import compute_motion_mask
             V_canon = data["V_canon"]
             V_gt = data["V_gt"]
             t_targets = data["t_target"]
@@ -849,7 +849,7 @@ class Monitor:
         try:
             import numpy as np
             import torch.nn.functional as _F
-            from loss import compute_volume_intensity_loss
+            from training.loss import compute_volume_intensity_loss
         except ImportError:
             return
 
@@ -987,7 +987,7 @@ class Monitor:
         if "V_canon" not in loss_dict:
             return
         try:
-            import ef_eval
+            from training import ef_eval
             vt = self.val_targets
             if vt is None:
                 return
@@ -1007,7 +1007,7 @@ class Monitor:
         predicted-vs-GT EF slope / Spearman / MAE (overall and per pathology group)."""
         try:
             import glob
-            import ef_eval
+            from training import ef_eval
             mri_ds = self.val_ds
             vt = self.val_targets
             csv_path = getattr(mri_ds, "cardiac_phase_csv", None)

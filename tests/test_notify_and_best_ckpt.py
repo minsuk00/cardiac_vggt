@@ -4,13 +4,10 @@ The alarm is only worth having if it FIRES on the real failure and stays silent 
 so both directions are tested against the actual measured numbers from docs/64.
 """
 import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training")))
-
-from train_utils.notify import GradientCollapseAlarm, send_email  # noqa: E402
+from training.train_utils.notify import GradientCollapseAlarm, send_email
 
 
 class _FakeSMTP:
@@ -32,7 +29,7 @@ def _no_real_mail(monkeypatch):
     """
     _FakeSMTP.sent = []
     monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
-    import train_utils.notify as notify
+    import training.train_utils.notify as notify
     monkeypatch.setattr(notify, "_SENT_KEYS", set())
     return _FakeSMTP.sent
 
@@ -87,12 +84,12 @@ def test_send_email_never_raises(monkeypatch):
         raise OSError("no route to host")
 
     monkeypatch.setattr("smtplib.SMTP", boom)
-    import train_utils.notify as notify
+    import training.train_utils.notify as notify
     assert notify.send_email("subject", "body") is False
 
 
 def test_send_email_once_key_dedupes(_no_real_mail):
-    import train_utils.notify as notify
+    import training.train_utils.notify as notify
     assert notify.send_email("s", "b", once_key="k") is True
     assert notify.send_email("s", "b", once_key="k") is False
     assert len(_no_real_mail) == 1
@@ -111,7 +108,7 @@ def _bare_trainer(save_dir, mode="train"):
     """A Trainer with only the state the best-checkpoint code touches."""
     import torch
     from omegaconf import OmegaConf
-    from trainer import Trainer
+    from training.trainer import Trainer
     t = Trainer.__new__(Trainer)
     t.checkpoint_conf = OmegaConf.create({"save_dir": str(save_dir)})
     t.model = torch.nn.Linear(2, 2)

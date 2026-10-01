@@ -53,7 +53,7 @@ def main():
     p.add_argument("--out", required=True)
     a = p.parse_args()
 
-    from loss import MultitaskLoss, compute_volume_intensity_loss
+    from training.loss import MultitaskLoss, compute_volume_intensity_loss
     from vggt.models.vggt import VGGT
 
     torch.use_deterministic_algorithms(True)

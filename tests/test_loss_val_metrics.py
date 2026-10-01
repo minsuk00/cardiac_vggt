@@ -19,7 +19,7 @@ Two regressions motivated these:
 
 import torch
 
-from loss import compute_volume_intensity_loss
+from training.loss import compute_volume_intensity_loss
 
 D, HV, WV = 12, 64, 64
 S, H, W = 4, 32, 32

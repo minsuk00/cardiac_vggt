@@ -14,18 +14,13 @@ when reference conditioning became primary — the backward already traverses th
 so trainable embedders/camera_token are free. The model is built from the mri_volume config here
 so this test tracks the config's flags automatically.
 """
-import sys
 import os
 import pytest
-
-# Make training/ importable for direct imports.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "training"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 def _load_cfg():
     from hydra import compose, initialize_config_dir
-    from resolvers import register_all
+    from training.resolvers import register_all
 
     register_all()
 
@@ -42,7 +37,7 @@ def _build_from_cfg(cfg):
 
 @pytest.fixture(scope="module")
 def model_with_freeze():
-    from train_utils.freeze import freeze_modules
+    from training.train_utils.freeze import freeze_modules
 
     cfg = _load_cfg()
     model = _build_from_cfg(cfg)

@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 import torch
 
-from data.gpu_aug import extract_slices_from_phases
-from data.respiratory import (
+from training.data.gpu_aug import extract_slices_from_phases
+from training.data.respiratory import (
     SPACING_MM,
     RespiratoryConfig,
     extract_slices_with_respiratory,
@@ -127,7 +127,7 @@ def test_per_slot_flag_controls_amplitude_sharing(monkeypatch):
     """per_slot=False → ONE breath depth (amplitude A) shared across all slots;
     per_slot=True → independent A per slot. Patch lujan to return A directly (bypass
     the per-slot r modulation) so the amplitude broadcast is observable in isolation."""
-    import data.respiratory as R
+    import training.data.respiratory as R
     # d := A (broadcast to r's shape), isolating the amplitude from the r draw.
     monkeypatch.setattr(
         R, "lujan_displacement",

@@ -34,26 +34,26 @@ def test_find_subjects_train_path(train_ds):
     assert train_ds.subjects[0].endswith("Train_P001/sax")
 
 def test_find_subjects_val(synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", cache_dir=monai_cache_dir)
     assert len(ds.subjects) == 1
     assert "Val_P001" in ds.subjects[0]
 
 def test_find_subjects_empty_section(synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="test", split_file=split_file,
                     mode="dynamic", mri_mode="axial", cache_dir=monai_cache_dir)
     assert len(ds.subjects) == 0
 
 def test_find_subjects_no_split_file(synthetic_root, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=None,
                     mode="dynamic", mri_mode="axial", cache_dir=monai_cache_dir)
     assert len(ds.subjects) == 0
 
 def test_split_file_preserves_order(synthetic_root, common_conf, tmp_path, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     sf = tmp_path / "order_test.txt"
     sf.write_text("[train]\nVal_P001\nTrain_P001\n")
     ds = MRIDataset(common_conf, synthetic_root, split="train",
@@ -65,7 +65,7 @@ def test_split_file_preserves_order(synthetic_root, common_conf, tmp_path, monai
 
 def test_intensity_percentiles_are_configurable_and_validated(
         synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(
         common_conf, synthetic_root, split="val", split_file=split_file,
         mode="dynamic", mri_mode="axial", cache_dir=monai_cache_dir,
@@ -162,7 +162,7 @@ def test_multiframe_full_coverage_val(synthetic_root, split_file, common_conf, m
     """Multi-frame contract: requesting MORE slices than the in-FOV z extent FILLS the
     budget (S == img_per_seq) with FULL z-coverage (every in-bbox plane ≥once) + extra
     frames (planes may repeat), instead of capping S to bbox_z_size. Deterministic in val."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=20, cache_dir=monai_cache_dir)
     s = ds.get_data(0, img_per_seq=20)  # ask for 20 — more than the synthetic's z extent
@@ -193,7 +193,7 @@ def test_multiframe_full_coverage_train(train_ds):
 def test_one_frame_per_slice_exact_coverage(synthetic_root, split_file, common_conf, monai_cache_dir):
     """one_frame_per_slice overrides the requested budget: S == in-bbox plane count and every
     in-bbox plane appears EXACTLY once (no multi-frame extras/repeats). Deterministic in val."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=20,
                     one_frame_per_slice=True, cache_dir=monai_cache_dir)
@@ -210,7 +210,7 @@ def test_one_frame_per_slice_exact_coverage(synthetic_root, split_file, common_c
 def test_one_frame_per_slice_with_reference_slot(synthetic_root, split_file, common_conf, monai_cache_dir):
     """With reference_slot, one-frame-per-slice keeps slot 0 = the target-phase z_mid frame and
     still covers every in-bbox plane exactly once (z_mid's single frame IS the reference)."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=20,
                     reference_slot=True, one_frame_per_slice=True, cache_dir=monai_cache_dir)
@@ -227,7 +227,7 @@ def test_multiframe_extras_spread_across_planes(synthetic_root, split_file, comm
     """Extra frames are drawn UNIFORMLY at random over the in-bbox planes: aggregated over many
     val draws, every in-bbox plane is represented (no plane starved). Robust (not per-sample)."""
     from collections import Counter
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=20, cache_dir=monai_cache_dir)
     counts = Counter()
@@ -241,7 +241,7 @@ def test_multiframe_extras_spread_across_planes(synthetic_root, split_file, comm
 
 def test_multiframe_reference_slot0_is_target(synthetic_root, split_file, common_conf, monai_cache_dir):
     """Reference mode: slot 0 = (t_target, z_mid); full coverage still holds with extras."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=20, reference_slot=True,
                     cache_dir=monai_cache_dir)
@@ -295,7 +295,7 @@ def test_train_timesteps_in_range_and_may_equal_target(train_ds):
     assert len(all_phases) >= 6, f"train input phases should spread widely; saw {sorted(all_phases)}"
 
 def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, monai_cache_dir):
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     for seq_index in range(15):
@@ -308,7 +308,7 @@ def test_val_t_target_is_stratified(synthetic_root, split_file, common_conf, mon
 
 def test_t_target_fixed_forces_phase(synthetic_root, split_file, common_conf, monai_cache_dir):
     """REGRESSION: t_target_fixed=K forces every sample (train AND val) to phase K."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     for split in ("train", "val"):
         ds = MRIDataset(common_conf, synthetic_root, split=split, split_file=split_file,
                         mode="dynamic", mri_mode="axial", num_slices=8,
@@ -322,7 +322,7 @@ def test_t_target_fixed_forces_phase(synthetic_root, split_file, common_conf, mo
 
 def test_all_phases_train_spans_many(synthetic_root, split_file, common_conf, monai_cache_dir):
     """REGRESSION: with neither knob set, train samples t_target uniformly over all T phases."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     seen = {int(np.asarray(ds.get_data(i, img_per_seq=8)["t_target"]).item()) for i in range(60)}
@@ -339,7 +339,7 @@ def test_z_indices_in_range(train_ds):
 
 def test_static_mode_all_same_timestep(synthetic_root, split_file, common_conf, monai_cache_dir):
     """Static mode: every slot == t_target."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="train", split_file=split_file,
                     mode="static", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     s = ds.get_data(0, img_per_seq=8)
@@ -357,7 +357,7 @@ def test_val_sampling_makes_no_global_rng_calls(synthetic_root, split_file, comm
     `random.seed(...)` / module-level `random.*` creeping into the val branch (which a
     cross-instance equality check would MISS, since reseeding is reproducible)."""
     import random
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     random.seed(12345)
@@ -372,7 +372,7 @@ def test_val_sampling_deterministic_across_instances(synthetic_root, split_file,
     """Val get_data must be fully reproducible across two independent dataset objects for
     the SAME seq_index — the seeded local RNG (random.Random(seq_index)) makes the
     random-looking draw identical across runs (stable per-phase metrics)."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     def make():
         return MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                           mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
@@ -395,7 +395,7 @@ def test_val_consistent_across_simulated_epochs(synthetic_root, split_file, comm
     LOCAL random.Random(seq_index) and the val loader is shuffle=False (stable seq_index
     order). This is the 'consistent across runs AND epochs' guarantee."""
     import random
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     seq = 5
@@ -417,7 +417,7 @@ def test_val_inputs_vary_per_seq_index_no_duplicates(synthetic_root, split_file,
     (subject, t_target) — i.e. seq and seq+lcm(n_subj, T) — get DIFFERENT scattered inputs,
     not bit-identical duplicates. This is the whole point of seeding per seq_index."""
     import math
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     n_subj = len(ds.subjects)
@@ -437,7 +437,7 @@ def test_val_inputs_vary_per_seq_index_no_duplicates(synthetic_root, split_file,
 def test_val_inputs_decoupled_from_t_target(synthetic_root, split_file, common_conf, monai_cache_dir):
     """Val input phases are random (seeded) and decoupled from t_target — slot 0 is NOT pinned
     to t_target across the val sweep (the honest unobserved-phase regime)."""
-    from data.datasets.mri_dataset import MRIDataset
+    from training.data.datasets.mri_dataset import MRIDataset
     ds = MRIDataset(common_conf, synthetic_root, split="val", split_file=split_file,
                     mode="dynamic", mri_mode="axial", num_slices=8, cache_dir=monai_cache_dir)
     slot0_equals_target = 0

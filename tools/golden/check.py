@@ -22,7 +22,7 @@ CPU = ["g0b", "g1", "g1b", "g4", "g6", "g7"]
 
 def jobs(gate, out):
     """-> [(json name, argv)]"""
-    py = ["python"]
+    py = [sys.executable]   # the interpreter whose env has the repo installed
     if gate == "g0b":
         return [("g0b.json", py + ["tools/golden/compose_sbatch.py"])]
     if gate == "g1":
@@ -75,7 +75,8 @@ def main():
     import re
     expected = [re.compile(l.strip()) for l in open(EXPECTED)
                 if l.strip() and not l.startswith("#")] if os.path.exists(EXPECTED) else []
-    env = {**os.environ, "PYTHONPATH": f"{REPO}/training:{REPO}", "CUDA_VISIBLE_DEVICES": a.gpu}
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": a.gpu}
+    env.pop("PYTHONPATH", None)   # imports come from the editable install (`pip install --no-deps -e .`)
     failed = []
     for gate in a.gates:
         for name, argv in jobs(gate, a.out):

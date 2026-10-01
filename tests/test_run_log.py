@@ -13,7 +13,7 @@ import os
 
 import pytest
 
-from train_utils.run_log import RunLog, file_md5
+from training.train_utils.run_log import RunLog, file_md5
 
 
 def _lines(path):

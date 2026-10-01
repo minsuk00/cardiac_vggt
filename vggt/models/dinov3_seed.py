@@ -5,7 +5,7 @@ This intentionally has no automatic download/install path. The official DINOv3 r
 gated: accept its terms and authenticate first, then run only with the optional dependency
 installed and a GPFS-backed Hugging Face cache directory.
 
-Usage (from the repo root): PYTHONPATH=training:. python -m vggt.models.dinov3_seed --help
+Usage: python -m vggt.models.dinov3_seed --help
 """
 
 import argparse

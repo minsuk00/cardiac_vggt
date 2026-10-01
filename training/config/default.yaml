@@ -2,7 +2,7 @@
 # (ARM=diff1000 of sbatch/train_final_518.sh: 518 input, 518 training splat, diffusion 1000,
 # 300 epochs). Complete and runnable on its own:
 #
-#   PYTHONPATH=training:. python training/launch.py --config default
+#   python -m training.launch --config default
 #
 # The paper's ablation arms are `ablation_*.yaml`; other experiment variants (`exp_*.yaml`,
 # `default_224.yaml`) — all inherit this file, overriding only what they change.
@@ -107,7 +107,7 @@ logging:
   # Overwrites in place (constant ~360 MB disk). Identity affine (canonical voxel space).
   save_val_volumes: true
   wandb_writer:
-    _target_: train_utils.wandb_writer.WandbLogger
+    _target_: training.train_utils.wandb_writer.WandbLogger
     project: "vggt-mri"
     name: ${exp_name}
     dir: ${logging.log_dir}/wandb
@@ -211,7 +211,7 @@ data:
   # (training/data/loader.py: batch size 1, train reshuffled per epoch, val in order).
   num_workers: ${num_workers}
   train:
-    _target_: data.MRIDataset
+    _target_: training.data.MRIDataset
     data_root: ${data_root}
     split: ${split}
     split_file: ${split_file}
@@ -233,7 +233,7 @@ data:
     # "extract unconditionally". Leave false anywhere else.
     defer_input_images: true
   val:
-    _target_: data.MRIDataset
+    _target_: training.data.MRIDataset
     data_root: ${data_root}
     split: "val"
     split_file: ${split_file}
@@ -315,7 +315,7 @@ model:
 
 # ── Loss ──────────────────────────────────────────────────────────────────────────────────
 loss:
-  _target_: loss.MultitaskLoss
+  _target_: training.loss.MultitaskLoss
   volume:
     weight: 1.0
     # grid_shape is not a config param — compute_volume_intensity_loss derives it from
@@ -392,7 +392,7 @@ optim:
     modules: ["aggregator"]
 
   gradient_clip:
-    _target_: train_utils.gradient_clip.GradientClipper
+    _target_: training.train_utils.gradient_clip.GradientClipper
     configs:
       - module_name: ["aggregator"]
         max_norm: 1.0

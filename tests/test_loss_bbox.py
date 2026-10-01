@@ -2,7 +2,7 @@
 
 import torch
 
-from loss import compute_volume_intensity_loss
+from training.loss import compute_volume_intensity_loss
 
 
 def _fake_loss_inputs(B=2, S=4, H=64, W=64, D=12, Hv=256, Wv=256, device="cpu"):

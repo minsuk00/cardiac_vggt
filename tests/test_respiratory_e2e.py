@@ -13,8 +13,8 @@ import numpy as np
 import pytest
 import torch
 
-from data.gpu_aug import extract_slices_from_phases, gpu_augment_batch
-from data.respiratory import SPACING_MM, RespiratoryConfig, extract_slices_with_respiratory_vec
+from training.data.gpu_aug import extract_slices_from_phases, gpu_augment_batch
+from training.data.respiratory import SPACING_MM, RespiratoryConfig, extract_slices_with_respiratory_vec
 
 DEVICE = "cpu"
 

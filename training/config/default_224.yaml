@@ -1,7 +1,7 @@
 # The 224-px no-reg recipe: default.yaml at 224 input, native splat, no diffusion regularizer.
 # default.yaml carries the shared knobs (heart_weight=0.5, gather_weight=0.5, lr 5e-5, aggft
 # freeze, 300 epochs); the ONLY deltas are below.
-# Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default_224
+# Run: torchrun --nproc_per_node=1 -m training.launch --config default_224
 
 defaults:
   - default

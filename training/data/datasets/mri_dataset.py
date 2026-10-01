@@ -54,7 +54,7 @@ import torch.nn.functional as F
 from monai.data import PersistentDataset
 from torch.utils.data import Dataset
 
-from data.preprocess import (
+from training.data.preprocess import (
     NUM_PHASES,
     TARGET_SHAPE,
     TARGET_SPACING,

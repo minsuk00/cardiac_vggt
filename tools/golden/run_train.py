@@ -49,8 +49,7 @@ def main():
         torch.use_deterministic_algorithms(True, warn_only=True)
         overrides.append("cuda.compile_attention_blocks=false")
 
-    import launch
-    import trainer
+    from training import launch, trainer
     # Skip checkpoint writes: ~9 GB each (minutes of I/O), and nothing here reads them.
     for name in ("save_checkpoint", "_maybe_save_best_checkpoint"):
         if hasattr(trainer.Trainer, name):

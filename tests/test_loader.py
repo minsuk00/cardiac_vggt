@@ -2,7 +2,7 @@
 import torch
 from torch.utils.data import DistributedSampler
 
-from data.loader import epoch_order
+from training.data.loader import epoch_order
 
 
 def test_epoch_order_matches_single_replica_distributed_sampler():

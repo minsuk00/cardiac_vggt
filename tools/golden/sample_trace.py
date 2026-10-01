@@ -6,7 +6,7 @@ Mirrors Trainer: set_seeds(seed + epoch*100, max_epochs) then the epoch's loader
 import argparse
 
 from common import ARMS, RECIPE, compose, dump, fingerprint, train_val_loaders
-from train_utils.general import set_seeds
+from training.train_utils.general import set_seeds
 
 VARIANTS = {
     "paper": [],

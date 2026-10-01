@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from data.preprocess import (
+from training.data.preprocess import (
     TARGET_SHAPE,
     TARGET_SPACING,
     ScaleIntensityByT0PercentilesD,

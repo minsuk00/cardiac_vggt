@@ -27,7 +27,7 @@ import math
 import pytest
 import torch
 
-from loss import compute_volume_intensity_loss
+from training.loss import compute_volume_intensity_loss
 
 DEVICE = "cpu"
 B, S, D, H, W = 1, 4, 6, 16, 16
