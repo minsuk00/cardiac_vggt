@@ -16,7 +16,7 @@ Labels out: 0=background, 1=LV myocardium, 2=LV cavity, 3=RV cavity  (CorSeg con
 NOTE this differs from nnU-Net Task114 (1=LV cavity, 2=myocardium, 3=RV) -- labels 1/2 are SWAPPED.
 
 Usage:
-  micromamba run -n svr python tools/corseg/corseg_infer.py \
+  micromamba run -n svr python training/corseg/corseg_infer.py \
       --input <file.nii.gz | dir> --out <dir> [--mode paper] [--postproc] [--device cuda]
 """
 import argparse

@@ -92,15 +92,13 @@ def run_corseg(in_dir, out_dir, device="cuda"):
     baselines. Output filenames match the nnU-Net convention (`{stem}.nii.gz`).
     """
     import glob
-    import sys
-    sys.path.insert(0, os.path.join(_REPO, "tools", "corseg"))
-    from corseg_infer import load_corseg, segment_nifti
+    from corseg.corseg_infer import load_corseg, segment_nifti
 
     os.makedirs(out_dir, exist_ok=True)
     # Stage the 741 MB checkpoint to node-local /tmp: measured 44 s to load from GPFS vs
     # 0.28 s to segment a volume, so the load dominates an EF epoch. Same rationale as
     # docs/50 for the model weights. Falls back to the original path on any failure.
-    from corseg_infer import CKPT_DEFAULT
+    from corseg.corseg_infer import CKPT_DEFAULT
     from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
     model, _ = load_corseg(stage_checkpoint_to_local(CKPT_DEFAULT), device=device)
     try:

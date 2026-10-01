@@ -40,7 +40,7 @@ The release ships only a PyQt6 GUI, and its inference path contradicts the paper
 cp scratch/data/corseg/ModelWeight-CorSeg-CineSAX_MedNextL.pth /tmp/corseg_mednextl.pth
 
 # segment a directory of 3D/4D SAX NIfTIs
-micromamba run -n svr python tools/corseg/corseg_infer.py \
+micromamba run -n svr python training/corseg/corseg_infer.py \
     --input <dir-or-file> --out <seg_dir> --mode paper \
     --ckpt /tmp/corseg_mednextl.pth --device cuda [--postproc]
 
@@ -62,8 +62,8 @@ micromamba run -n svr python tools/corseg/bench_acdc.py score \
 
 | file | what |
 |---|---|
-| `corseg_infer.py` | paper-faithful headless inference; 3D/4D; batched over z; `--mode paper\|gui` |
-| `corseg_postproc.py` | the 3 anatomical post-processing steps, **extracted verbatim** from the upstream GUI (which can't be imported headlessly because PyQt6 is a top-level import) |
+| `training/corseg/corseg_infer.py` | paper-faithful headless inference; 3D/4D; batched over z; `--mode paper\|gui` (lives in `training/` because `training/ef_eval.py` imports it) |
+| `training/corseg/corseg_postproc.py` | the 3 anatomical post-processing steps, **extracted verbatim** from the upstream GUI (which can't be imported headlessly because PyQt6 is a top-level import) |
 | `bench_acdc.py` | `stage` ROI crops + `score` Dice vs human GT, with the label conventions above |
 | `render_corseg_panels.py` | all-z-slice panels on our canonical volumes: image vs CorSeg(paper) vs CorSeg(gui) vs nnU-Net |
 | `render_acdc_3way.py` | all-z-slice panels on ACDC: **human GT** vs CorSeg vs nnU-Net, with per-case Dice. Works for full-FOV *or* ROI-cropped inputs — just point `--img_dir/--gt_dir/--corseg_dir/--nnunet_dir` at the ROI dirs |
