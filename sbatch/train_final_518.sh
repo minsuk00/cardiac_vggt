@@ -41,7 +41,7 @@
 # sbatch/_archive/train_pooled1337_dpt_augaggressive_224.sh).
 PEAK_LR="5e-5"
 
-ARM="${ARM:-base}"
+ARM="${ARM:-diff1000}"   # the paper model (= default.yaml)
 case "$ARM" in
   base)         CONFIG="ablation_base" ;;
   diff1000)     CONFIG="default" ;;
