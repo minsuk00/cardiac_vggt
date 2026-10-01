@@ -179,8 +179,7 @@ _forward_usr1() {
 }
 trap _forward_usr1 USR1
 
-export PYTHONPATH=training:.
-python training/launch.py \
+python -m training.launch \
     --config $CONFIG $OVERRIDES &
 TRAIN_PID=$!
 wait "$TRAIN_PID"

@@ -27,7 +27,7 @@
 set -euo pipefail
 REPO=${REPO:-/home/minsukc/vggt}
 cd "$REPO"
-export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 PYTHONPATH=training:.
+export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
 
 for job in "val scatter" "test scatter" "val gated" "test gated"; do
   set -- $job

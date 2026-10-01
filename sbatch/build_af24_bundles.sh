@@ -46,7 +46,6 @@ set -uo pipefail
 REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 [ -d "$REPO/tools" ] || REPO=${SLURM_SUBMIT_DIR:-/home/minsukc/vggt-afsim}
 cd "$REPO" || exit 1
-export PYTHONPATH=training:.
 export SPLIT=${SPLIT:-test}
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-4}
 PY=${PY:-/home/minsukc/micromamba/envs/svr/bin/python}

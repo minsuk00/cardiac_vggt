@@ -43,14 +43,14 @@ echo "out     : $OUT"
 
 mkdir -p "$WORK/in" "$WORK/seg" "$REPO/temp"
 t0=$(date +%s)
-PYTHONPATH=training:. $PY evaluation/src/score/ef_dice.py dump "$WORK/in" \
+$PY evaluation/src/score/ef_dice.py dump "$WORK/in" \
     --method "$METHOD" --cohorts $SOURCES
 t1=$(date +%s); echo "[timing] dump: $((t1-t0))s  ($(ls "$WORK/in" | wc -l) volumes)"
 
 bash evaluation/src/engine/run_seg.sh "$WORK/in" "$WORK/seg"
 t2=$(date +%s); echo "[timing] seg: $((t2-t1))s"
 
-PYTHONPATH=training:. $PY evaluation/src/score/ef_dice.py score "$WORK/seg" --input "$WORK/in" --out "$OUT"
+$PY evaluation/src/score/ef_dice.py score "$WORK/seg" --input "$WORK/in" --out "$OUT"
 t3=$(date +%s); echo "[timing] score: $((t3-t2))s"
 
 rm -rf "$WORK"

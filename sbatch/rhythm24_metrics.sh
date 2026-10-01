@@ -34,7 +34,6 @@
 set -uo pipefail
 REPO=${REPO:-${SLURM_SUBMIT_DIR:-/home/minsukc/vggt-afsim}}
 cd "$REPO" || exit 1
-export PYTHONPATH=training:.
 PY=/home/minsukc/micromamba/envs/svr/bin/python
 
 ARM=${ARM:-af24}

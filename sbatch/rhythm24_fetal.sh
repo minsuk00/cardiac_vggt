@@ -31,7 +31,6 @@ set -uo pipefail
 REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 [ -d "$REPO/evaluation/src/engine" ] || REPO=${SLURM_SUBMIT_DIR:-/home/minsukc/vggt-afsim}
 cd "$REPO" || exit 1
-export PYTHONPATH=training:.
 PY=${PY:-/home/minsukc/micromamba/envs/svr/bin/python}
 export OMP=${OMP:-${SLURM_CPUS_PER_TASK:-16}} ROBUST=${ROBUST:-1} RES=${RES:-1.4}
 unset T                      # run_fetal4d.sh reads NF/NCP from the manifest only (docs/114)

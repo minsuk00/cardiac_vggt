@@ -23,7 +23,7 @@ micromamba activate svr
 cd /home/minsukc/vggt
 mkdir -p /home/minsukc/vggt/slurm_logs
 
-export PYTHONPATH=baselines/fcsvr_cardiac:training:.
+export PYTHONPATH=baselines/fcsvr_cardiac:.
 export WANDB_MODE=online
 
 python baselines/fcsvr_cardiac/train.py

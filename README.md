@@ -7,22 +7,18 @@ Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupe
 ```bash
 micromamba activate svr
 pip install -r requirements.txt
+pip install --no-deps -e .     # the vggt, training and inference packages (editable)
 ```
 
 `batchaug` and `fused_ssim` are not on PyPI; see the comments at the bottom of `requirements.txt`.
-
-This repo is not installed as a package. Run everything **from the repo root** with
-`PYTHONPATH=training:.` — both entries matter. Python puts the *script's* directory on the
-import path, never your working directory, so `.` is what makes `import vggt` resolve when you
-run `training/launch.py`; `training` is what lets the Hydra configs resolve their short
-`_target_` names such as `loss.MultitaskLoss`.
+`--no-deps` keeps pip from re-resolving the pinned torch stack that `requirements.txt` installed.
 
 ## Training
 
-Entry point: `training/launch.py` (Hydra, single GPU). Config: `training/config/default.yaml` = the paper recipe (the `diff1000` arm); ablation arms are `training/config/ablation_<arm>.yaml`.
+Entry point: `training.launch` (Hydra, single GPU). Config: `training/config/default.yaml` = the paper recipe (the `diff1000` arm); ablation arms are `training/config/ablation_<arm>.yaml`.
 
 ```bash
-PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default
+torchrun --nproc_per_node=1 -m training.launch --config default
 ```
 
 Cluster (paper recipe, self-submitting, auto-requeue): `ARM=diff1000 bash sbatch/train_final_518.sh`.

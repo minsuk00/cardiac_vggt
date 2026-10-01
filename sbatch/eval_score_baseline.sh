@@ -25,7 +25,6 @@
 set -euo pipefail
 REPO=${REPO:-${SLURM_SUBMIT_DIR:-/home/minsukc/vggt}}
 cd "$REPO"
-export PYTHONPATH=training:.
 PY=/home/minsukc/micromamba/envs/svr/bin/python
 METHODS=${METHODS:?set METHODS="nesvor nesvor_scatter"}
 SPLITS=${SPLITS:-"val test"}

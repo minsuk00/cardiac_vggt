@@ -37,7 +37,7 @@ set -uo pipefail
 REPO=${REPO:-${SLURM_SUBMIT_DIR:-/home/minsukc/vggt-afsim}}
 [ -d "$REPO/evaluation/src/score" ] || REPO=/home/minsukc/vggt-afsim
 cd "$REPO" || exit 1
-export PYTHONPATH=training:. SPLIT=test SEG_CFG=3d_fullres
+export SPLIT=test SEG_CFG=3d_fullres
 PY=/home/minsukc/micromamba/envs/svr/bin/python
 ARM=${ARM:-af24}
 METHOD=cinevol

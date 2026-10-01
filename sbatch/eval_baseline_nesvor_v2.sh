@@ -31,7 +31,6 @@ REPO=${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 [ -d "$REPO/evaluation/src/engine" ] || REPO=${SLURM_SUBMIT_DIR:-/home/minsukc/vggt}
 [ -d "$REPO/evaluation/src/engine" ] || REPO=/home/minsukc/vggt
 cd "$REPO"
-export PYTHONPATH=training:.
 PY=${PY:-/home/minsukc/micromamba/envs/svr/bin/python}
 export J=${J:-1}
 SPLITS=${SPLITS:-"val test"}

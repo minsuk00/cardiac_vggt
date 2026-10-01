@@ -40,21 +40,21 @@ echo "work    : $WORK"
 
 mkdir -p "$WORK/in" "$WORK/seg"
 t0=$(date +%s)
-PYTHONPATH=training:. $PY evaluation/src/score/ef_dice.py dump "$WORK/in" \
+$PY evaluation/src/score/ef_dice.py dump "$WORK/in" \
     --method "$METHOD" --cohorts $SOURCES
 t1=$(date +%s); echo "[timing] dump: $((t1-t0))s  ($(ls "$WORK/in" | wc -l) volumes)"
 
 bash evaluation/src/engine/run_seg.sh "$WORK/in" "$WORK/seg"
 t2=$(date +%s); echo "[timing] seg: $((t2-t1))s"
 
-PYTHONPATH=training:. $PY evaluation/src/score/ef_dice.py score "$WORK/seg" --input "$WORK/in"
+$PY evaluation/src/score/ef_dice.py score "$WORK/seg" --input "$WORK/in"
 t3=$(date +%s); echo "[timing] score: $((t3-t2))s"
 
 for S in $SOURCES; do
   # miitt/ocmr are val-only held-out datasets: aggregate.py exits nonzero on a test run there.
   [ "$SPLIT" = val ] || case "$S" in miitt|ocmr) echo "=== [$S] skipped: val-only dataset"; continue ;; esac
   echo "=== [$S] aggregate ==="
-  PYTHONPATH=training:. $PY evaluation/src/score/aggregate.py "$S" "$METHOD"
+  $PY evaluation/src/score/aggregate.py "$S" "$METHOD"
 done
 t4=$(date +%s)
 rm -rf "$WORK"

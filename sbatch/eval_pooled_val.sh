@@ -78,7 +78,6 @@ split_file_for() {
 }
 
 cd "$REPO"
-export PYTHONPATH=training:.
 export SPLIT                     # aggregate.py summarizes only subjects whose manifest split matches
 # Direct interpreter, NOT `micromamba run`: the assemble loop below is ~144 short invocations and
 # micromamba's lockfile deadlocks under exactly that pattern.

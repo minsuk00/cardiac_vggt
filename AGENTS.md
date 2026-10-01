@@ -24,31 +24,32 @@ VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D 
 micromamba activate svr
 pip install -r requirements.txt           # includes monai>=1.6,<1.7
 pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/  # GPU aug — see note below
+pip install --no-deps -e .                # this repo: packages vggt, training, inference
 ```
 
-**This repo is NOT installed as a package** — no `pip install -e .`. **Always run from the repo root with `PYTHONPATH=training:.`**. Both entries are load-bearing: `.` makes `from vggt…` imports resolve (the job an editable install would do), `training` makes Hydra `_target_` short names resolve (`loss.MultitaskLoss`, `data.*`, `train_utils.*`) and is required by the ~66 scripts in `tools/`/`baselines/`/`evaluation/` that import them directly. `tests/` needs neither (`tests/conftest.py` inserts both). Details/evidence: docs/65.
+**The repo is an editable package** (`pyproject.toml`; dependencies = `requirements.txt`, installed first, hence `--no-deps`). Import it as packages: `from training.loss import …`, `from training.data.datasets.mri_dataset import MRIDataset`, `from inference.load_run import …`; Hydra `_target_`s are `training.…`. Convention: absolute `training.`/`vggt.`/`inference.` imports everywhere (no bare `loss`/`data`/`train_utils` imports — mixing the two loads a module twice). `tests/`, `evaluation/`, `baselines/`, `sbatch/` and `tools/golden/` need no `PYTHONPATH`. **Exception: legacy `tools/` scripts** (everything outside `tools/golden/`) still use bare imports (`from loss import …`) and need `PYTHONPATH=training:.` from the repo root. Editable installs resolve to the tree they were installed from; a `python -m …` run puts the cwd first on `sys.path`, so from another worktree's root it uses that worktree's code.
 
 **Stack: torch 2.13.0+cu130 / torchvision 0.28.0 / triton 3.7.1 / monai 1.6.0 / numpy 2.2.6** (2026-07 upgrade — docs/49; pin rationale in the comment block at the bottom of `requirements.txt`). Re-verify any dependency bump with `bash tools/verify_env_migration.sh`. **batchaug** is not on PyPI — install editable from the MRI2CT clone with `--no-deps` (keeps pip from re-resolving the pinned torch stack); `gpu_aug.py` forces `batchaug.set_backend("pytorch")` for reproducibility. **fused_ssim** is a CUDA extension rebuilt against the active torch (`module load gcc/11.2.0 cuda/13.1.0`, then `pip install --no-build-isolation` from its pinned git commit).
 
 ## Training
 
-Entry point: `training/launch.py` (Hydra).
+Entry point: `training.launch` (Hydra; `python -m training.launch --config default` without torchrun).
 
 ```bash
 # Active config = the paper recipe (ablation arms: --config ablation_<arm>)
-PYTHONPATH=training:. torchrun --nproc_per_node=1 --master_port=29507 \
-    training/launch.py --config default
+torchrun --nproc_per_node=1 --master_port=29507 \
+    -m training.launch --config default
 
 # NOTE: single-GPU only. DDP was removed in 284992c (no process group, device hardcoded to
 # cuda:0, sampler pinned to num_replicas=1) — `--nproc_per_node>1` would run N duplicate
 # trainings on GPU 0, not a data-parallel job.
 
 # ED-only fallback (matches original pre-multi-phase behavior)
-PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
+torchrun --nproc_per_node=1 -m training.launch \
     --config default t_target_fixed=0
 
 # Override
-PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
+torchrun --nproc_per_node=1 -m training.launch \
     --config default optim.optimizer.lr=1e-4
 ```
 
@@ -180,14 +181,14 @@ Multiple agents share this single working tree — a bare `git switch` with unco
 - **Checkpoint loads auto-stage to node-local `/tmp`** (`vggt/utils/checkpoint_stage.py`, docs/50) — GPFS `torch.load` is ~266s vs ~5s from `/tmp`. Training stages only immutable base/seed weights; inference stages every load. Byte-identical; falls back to the original path on failure.
 - Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
 - Local pilots: `WANDB_MODE=offline`. The cluster script (`sbatch/train_final_518.sh`) sets `WANDB_MODE=online`.
-- Hydra custom resolvers (`rev_ts:`, `backbone_tag:`, `aug_tag:`, `backbone_ps:`) live in `training/resolvers.py`. For standalone `compose()`: `from resolvers import register_all; register_all()` (idempotent; `launch.py` and `data/__init__.py` call it too). Don't re-register `rev_ts` with your own lambda — its timestamp is computed once per process so `exp_name`/`log_dir` can't drift.
+- Hydra custom resolvers (`rev_ts:`, `backbone_tag:`, `aug_tag:`, `backbone_ps:`) live in `training/resolvers.py`. For standalone `compose()`: `from training.resolvers import register_all; register_all()` (idempotent; `launch.py` and `data/__init__.py` call it too). Don't re-register `rev_ts` with your own lambda — its timestamp is computed once per process so `exp_name`/`log_dir` can't drift.
 
 ## Testing
 
 ```bash
 micromamba run -n svr python -m pytest tests/
 ```
-Synthetic in-memory CMR dataset (`tests/conftest.py`, T=12) — no real data needed; each session gets an isolated monai cache dir. Per-file coverage map: docs/65.
+Requires the editable install (`tests/` no longer edits `sys.path`). Synthetic in-memory CMR dataset (`tests/conftest.py`, T=12) — no real data needed; each session gets an isolated monai cache dir. Per-file coverage map: docs/65.
 
 ## Docs
 
