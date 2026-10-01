@@ -1,12 +1,8 @@
 """Build a model from the run that produced the checkpoint — never from the live `default.yaml`.
 
-**This is the single most important design point in the eval rebuild.** Every previous eval script
-read its protocol by `compose(config_name="default")`, i.e. from whatever `training/config/` looks
-like today. That silently mis-scores any checkpoint trained before the config moved. Concretely, at
-the time of writing the live default resolves to `img_size 518` / aug tier `moderate`, while the
-checkpoint under test (`213338187_augaggr224hw2_pooled1337`) trained at `img_size 224` / tier
-`aggressive`. Nothing crashes — you just get a model fed at the wrong resolution and a val protocol
-that never matches training.
+Reading the protocol via `compose(config_name="default")` would take it from whatever
+`training/config/` looks like today, which silently mis-scores any checkpoint trained before the
+config moved (e.g. a model fed at the wrong `img_size`). Nothing crashes — the numbers are just wrong.
 
 Every run writes its own fully-resolved config to `<log_dir>/run_meta.jsonl` (the `event=="launch"`
 row), so the run IS its own source of truth. `load_model_from_run` reads that and nothing else.
@@ -116,7 +112,7 @@ def load_model_from_run(ckpt_path, device="cuda", verbose=True):
     kw = model_kwargs_from_config(cfg)
     model = VGGT(**kw)
 
-    # GPFS torch.load of an ~9 GB checkpoint is ~266 s vs ~5 s from node-local /tmp (docs/50).
+    # GPFS torch.load of a large checkpoint is far slower than from node-local /tmp (docs/50).
     ck = torch.load(stage_checkpoint_to_local(ckpt_path), map_location="cpu", weights_only=False)
     state = ck["model"] if "model" in ck else ck
     missing, unexpected = model.load_state_dict(state, strict=False)
