@@ -50,8 +50,7 @@ import torch
 
 HERE = Path(__file__).resolve()
 ROOT = str(next(p for p in HERE.parents if (p / "evaluation").is_dir()))
-sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "tools"),
-                os.path.join(ROOT, "evaluation", "src", "engine"),
+sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation", "src", "engine"),
                 os.path.join(ROOT, "evaluation"), os.path.join(ROOT, "baselines", "cinevol")]
 import paths                                                             # noqa: E402
 from build_af_bundle import breathing_model                              # noqa: E402

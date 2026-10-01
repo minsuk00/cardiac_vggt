@@ -1,7 +1,7 @@
 """CiNeVol baseline (Vogt et al. 2026) over a rhythm cohort: prepare -> fit -> 24-volume export.
 
 Per subject, from scratch (CiNeVol has no training set -- the fit IS its inference):
-  1. tools/cinevol_prepare.py   bundle -> observations + R-peak/breath states   (node-local /tmp)
+  1. baselines/cinevol/cinevol_prepare.py   bundle -> observations + R-peak/breath states   (node-local /tmp)
   2. cinevol.fit                published settings: 500 steps, 32768 px, 16 PSF samples, in-vivo
                                 loss profile, Grid4D CUDA encoder. `--microbatch` only chunks the
                                 SAME batch (exact gradient accumulation), it is not a hyperparameter.
@@ -30,7 +30,7 @@ import nibabel as nib
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.join(ROOT, "baselines", "cinevol"))
 import cinevol_prepare as cp  # noqa: E402  (also puts evaluation/, baselines/cinevol, training on sys.path)
 import paths  # noqa: E402
 

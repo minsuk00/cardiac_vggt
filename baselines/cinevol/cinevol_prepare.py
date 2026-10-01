@@ -1,4 +1,4 @@
-"""Rhythm bundle (tools/build_af_bundle.py, docs/110+115) -> CiNeVol input. READS the bundle only.
+"""Rhythm bundle (evaluation/src/engine/build_af_bundle.py, docs/110+115) -> CiNeVol input. READS the bundle only.
 
 CiNeVol (Vogt et al. 2026, baselines/cinevol/) is fitted per subject from every acquired frame plus
 two scalar states per frame. It never estimates those states; the paper takes them from an ECG and
@@ -19,7 +19,7 @@ Training pixels are restricted to the bundle's padded heart mask (every other ba
 the closest single-stack analogue of the paper's multi-stack intersection mask) by cropping to the
 mask's bounding box and writing NaN outside it, which cinevol.prepare drops -- its code is untouched.
 
-    PYTHONPATH=baselines/cinevol:training:. python tools/cinevol_prepare.py \
+    PYTHONPATH=baselines/cinevol:training:. python baselines/cinevol/cinevol_prepare.py \
         --dataset cmrx2023_af24 --subject CMRx23_Test_P005 --out /tmp/cinevol_prep/P005
 """
 import argparse
@@ -30,7 +30,7 @@ import sys
 import nibabel as nib
 import numpy as np
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 for p in ("evaluation", "evaluation/src/engine", "baselines/cinevol", "training"):
     sys.path.insert(0, os.path.join(ROOT, p))
 import paths  # noqa: E402
