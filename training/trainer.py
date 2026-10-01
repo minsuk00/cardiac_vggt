@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Mapping, Optional
 import torch
 from hydra.utils import instantiate
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
+from data.loader import build_loader
 from data.respiratory import RespiratoryConfig
 from train_utils.checkpoint import robust_torch_save
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
@@ -258,15 +259,13 @@ class Trainer(TrainerVizMixin):
         """Identify WHICH code and cohort produced this run's numbers. The git sha and the
         split md5 are the load-bearing fields, and neither is recoverable from wandb."""
         try:
-            def _subjects(ds_attr):
-                try:
-                    inner = getattr(self, ds_attr).dataset.base_dataset.datasets[0]
-                    return len(inner.subjects), getattr(inner, "split_file", None)
-                except (AttributeError, IndexError, TypeError):
+            def _subjects(ds):
+                if ds is None:
                     return None, None
+                return len(ds.subjects), getattr(ds, "split_file", None)
 
-            n_train, split_file = _subjects("train_dataset")
-            n_val, val_split_file = _subjects("val_dataset")
+            n_train, split_file = _subjects(self.train_ds)
+            n_val, val_split_file = _subjects(self.val_ds)
             split_file = split_file or val_split_file
             manifest = os.path.join(
                 os.path.dirname(split_file), "manifest.csv") if split_file else None
@@ -319,17 +318,8 @@ class Trainer(TrainerVizMixin):
             logging.warning(f"run_meta write failed (ignored): {e}")
 
     def _get_mri_dataset(self):
-        """Walk the wrapper chain (DynamicTorchDataset → ComposedDataset → TupleIndexedDataset)
-        to retrieve the underlying MRIDataset instance. Returns None if val_dataset is unset
-        or the chain doesn't match (e.g., non-MRI datasets)."""
-        try:
-            ds = self.val_dataset
-            if ds is None:
-                return None
-            inner = ds.dataset.base_dataset.datasets[0]
-            return inner
-        except (AttributeError, IndexError, TypeError):
-            return None
+        """The val MRIDataset, or None if no val dataset is configured."""
+        return self.val_ds
 
     def _setup_timers(self):
         """Initializes timers for tracking total elapsed time."""
@@ -507,18 +497,19 @@ class Trainer(TrainerVizMixin):
         logging.info("Successfully initialized training components.")
 
     def _setup_dataloaders(self):
-        """Initializes train and validation datasets and dataloaders."""
-        self.train_dataset = None
-        self.val_dataset = None
+        """Instantiates the train/val MRIDatasets; `_loader` wraps one per epoch."""
+        self.train_ds = None
+        self.val_ds = None
 
         if self.mode in ["train", "val"]:
-            self.val_dataset = instantiate(self.data_conf.get("val", None), _recursive_=False)
-            if self.val_dataset is not None:
-                self.val_dataset.seed = self.seed_value
+            self.val_ds = instantiate(self.data_conf.get("val", None), _recursive_=False)
 
         if self.mode in ["train"]:
-            self.train_dataset = instantiate(self.data_conf.train, _recursive_=False)
-            self.train_dataset.seed = self.seed_value
+            self.train_ds = instantiate(self.data_conf.train, _recursive_=False)
+
+    def _loader(self, dataset, shuffle):
+        return build_loader(dataset, seed=self.seed_value, epoch=int(self.epoch),
+                            shuffle=shuffle, num_workers=self.data_conf.num_workers)
 
     def _restore_best_val_metric(self):
         """Seed the best-so-far score from an existing `checkpoint_best.pt`, so a requeued
@@ -692,7 +683,7 @@ class Trainer(TrainerVizMixin):
         while self.epoch < self.max_epochs:
             set_seeds(self.seed_value + self.epoch * 100, self.max_epochs, 0)
 
-            dataloader = self.train_dataset.get_loader(epoch=int(self.epoch))
+            dataloader = self._loader(self.train_ds, shuffle=True)
             self.train_epoch(dataloader)
 
             # Save checkpoint after each training epoch
@@ -723,11 +714,11 @@ class Trainer(TrainerVizMixin):
 
     def run_val(self):
         """Runs a full validation epoch if a validation dataset is available."""
-        if not self.val_dataset:
+        if self.val_ds is None:
             logging.info("No validation dataset configured. Skipping validation.")
             return
 
-        dataloader = self.val_dataset.get_loader(epoch=int(self.epoch))
+        dataloader = self._loader(self.val_ds, shuffle=False)
         self.val_epoch(dataloader)
 
         del dataloader

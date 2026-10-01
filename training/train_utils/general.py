@@ -89,7 +89,7 @@ def copy_data_to_device(data, device: torch.device, *args: Any, **kwargs: Any):
     defaultdicts (preserving default_factory), dataclasses (with a second pass for
     non-`init` fields) and a `_CopyableData` Protocol — that generality existed for
     upstream's `FrameData` dataclass batches. Ours is a plain dict of tensors built by
-    `MRIDataset.get_data` + `ComposedDataset`, so only the dict/tensor paths ever ran.
+    `MRIDataset.get_data` + `to_tensors`, so only the dict/tensor paths ever ran.
     """
     if torch.is_tensor(data):
         return data.to(device, *args, **kwargs)

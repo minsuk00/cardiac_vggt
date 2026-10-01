@@ -96,11 +96,39 @@ def validate_patch_grid(target_size, patch_size):
     return target_size, patch_size
 
 
+def to_tensors(batch):
+    """`get_data`'s numpy dict -> the torch sample the trainer consumes (dtypes are part of
+    the contract). `images` is absent under `defer_input_images` — gpu_augment_batch builds
+    it on GPU instead; that missing key IS the signal, so it is passed straight through."""
+    sample = {"seq_name": batch["seq_name"]}
+    if "images" in batch:
+        images = torch.from_numpy(np.stack(batch["images"]).astype(np.float32)).contiguous()
+        # [0, 255] HWC -> [0, 1] CHW
+        sample["images"] = images.permute(0, 3, 1, 2).to(torch.get_default_dtype()).div(255)
+    sample["scanner_coords"] = torch.from_numpy(np.stack(batch["scanner_coords"]).astype(np.float32))
+    sample["z_indices"] = torch.from_numpy(np.stack(batch["z_indices"]).astype(np.float32))
+    sample["timesteps"] = torch.from_numpy(np.stack(batch["timesteps"]).astype(np.int64))
+    # float32: the re-extraction paths (respiratory grid_sample, gpu_aug) take float z.
+    sample["slice_indices"] = torch.from_numpy(np.stack(batch["slice_indices"]).astype(np.float32))
+    sample["gt_target_volume"] = torch.from_numpy(batch["gt_target_volume"].astype(np.float32))
+    sample["t_target"] = torch.from_numpy(batch["t_target"].astype(np.int64))
+    sample["seq_index"] = torch.from_numpy(batch["seq_index"].astype(np.int64))
+    sample["dz_mm"] = torch.from_numpy(batch["dz_mm"].astype(np.float32))
+    sample["z_scale"] = torch.from_numpy(batch["z_scale"].astype(np.float32))
+    sample["anatomy_bbox"] = torch.from_numpy(batch["anatomy_bbox"].astype(np.int64))
+    sample["content_mask"] = torch.from_numpy(batch["content_mask"].astype(np.uint8))
+    if "heart_roi_canonical" in batch:
+        sample["heart_roi_canonical"] = torch.from_numpy(batch["heart_roi_canonical"].astype(np.uint8))
+    # Full (T, D, H, W) canonical bundle, kept float16 to keep batch transfer cheap.
+    sample["phases"] = torch.from_numpy(np.asarray(batch["phases"]))
+    return sample
+
+
 class MRIDataset(Dataset):
     def __init__(
         self,
-        common_conf,
-        data_root,
+        common_conf=None,       # unused; kept so positional callers keep working
+        data_root=None,
         split="train",
         split_file=None,
         mode="static",
@@ -295,22 +323,13 @@ class MRIDataset(Dataset):
     def __len__(self):
         return self.len_train
 
-    def __getitem__(self, idx_N):
-        """
-        Get an item from the dataset.
+    def __getitem__(self, seq_index):
+        """One DataLoader sample: `get_data` at the slot budget `num_slices`, as tensors.
 
-        Args:
-            idx_N: Tuple containing (seq_index, img_per_seq). `img_per_seq` is the slot
-                BUDGET (the docs/59 F19 cap), not the slot count — under
-                `one_frame_per_slice` the count is this subject's own plane count D.
-                (A third `aspect_ratio` element was dropped 2026-08-01: it was always 1.0
-                and landed unread in `get_data(**kwargs)`.)
-
-        Returns:
-            Dataset item as returned by get_data()
+        The budget is passed explicitly (not left to `get_data`'s fallback) because that is
+        what arms the docs/59 F19 `S > budget` guard.
         """
-        seq_index, img_per_seq = idx_N
-        return self.get_data(seq_index=seq_index, img_per_seq=img_per_seq)
+        return to_tensors(self.get_data(seq_index=seq_index, img_per_seq=self.num_slices))
 
     # ── Main get_data ────────────────────────────────────────────────────
     def get_data(self, seq_index=0, img_per_seq=None):
@@ -403,12 +422,12 @@ class MRIDataset(Dataset):
             #
             # ⚠️ CONSEQUENCE (docs/59 F9): under native-z, z is never zero-padded, so
             # `anatomy_bbox` z-range is always [0, D) ⇒ **S == D exactly**. That makes
-            # `num_slices` / `img_nums` stale as descriptions of the slot budget, and — the
+            # `num_slices` stale as a description of the slot count, and — the
             # operationally important part — the memory budget is no longer a knob at all:
             # `max_img_per_gpu` was DELETED (docs/59 F9) and batch size is pinned to 1 in
-            # dynamic_dataloader, because under native-z two subjects with the same D but
+            # data/loader.py, because under native-z two subjects with the same D but
             # different pitch collate SILENTLY and would share one z_scale. To cut memory, cut
-            # D (or the model). `img_nums` survives as the S cap enforced just below.
+            # D (or the model). `num_slices` survives as the S cap enforced just below.
             budget = S
             S = len(z_sequence) + len(coverage)
             # docs/59 F19: S is now set by the DATA, so nothing else bounds it. Max D in the
@@ -416,15 +435,15 @@ class MRIDataset(Dataset):
             # test today) — a re-seeded split would silently request more slots than the
             # memory budget was sized for. Fail loudly instead of OOM-ing mysteriously.
             #
-            # Gated on `img_per_seq is not None`, i.e. only when the REAL dataloader supplied
-            # the budget (from img_nums). Standalone construction — tools, tests, the identity
-            # gate — falls back to `self.num_slices`, whose default (12) is NOT the training
-            # budget (20), so enforcing it there would reject perfectly valid D>12 subjects.
+            # Gated on `img_per_seq is not None`, i.e. only when the caller passed the budget
+            # explicitly (`__getitem__` always does). A bare `get_data()` — tools, tests, the
+            # identity gate — falls back to `self.num_slices`, whose default (12) is NOT the
+            # training budget (20), so enforcing it there would reject valid D>12 subjects.
             if img_per_seq is not None and S > budget:
                 raise ValueError(
                     f"one_frame_per_slice needs S={S} slots for this subject (D={S}), "
-                    f"exceeding the configured budget of {budget} (img_nums). Raise img_nums, "
-                    f"or exclude the subject."
+                    f"exceeding the configured budget of {budget} (num_slices). Raise "
+                    f"num_slices, or exclude the subject."
                 )
 
         room = S - len(z_sequence)
@@ -489,7 +508,7 @@ class MRIDataset(Dataset):
                 canon_slices, size=(R, R),
                 mode="bilinear", align_corners=True,
             )                                                        # (S, 1, R, R)
-            # Match ComposedDataset's `/255` contract — keep images in [0, 255].
+            # Match to_tensors' `/255` contract — keep images in [0, 255].
             upsampled = (upsampled.squeeze(1) * 255.0).clamp(0, 255).cpu().numpy()  # (S, R, R)
 
         for i in range(S):

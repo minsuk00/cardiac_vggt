@@ -56,12 +56,13 @@ def compose(overrides):
 
 def train_val_loaders(cfg):
     """-> (get_train_loader(epoch), get_val_loader(epoch)) built the way the trainer builds them."""
+    from data.loader import build_loader
     from hydra.utils import instantiate
     train = instantiate(cfg.data.train, _recursive_=False)
-    train.seed = cfg.seed_value
     val = instantiate(cfg.data.val, _recursive_=False)
-    val.seed = cfg.seed_value
-    return train.get_loader, val.get_loader
+    kw = dict(seed=cfg.seed_value, num_workers=cfg.data.num_workers)
+    return (lambda epoch: build_loader(train, epoch=epoch, shuffle=True, **kw),
+            lambda epoch: build_loader(val, epoch=epoch, shuffle=False, **kw))
 
 
 def dump(obj, path):

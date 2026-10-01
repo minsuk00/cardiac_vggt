@@ -141,18 +141,23 @@ def load_model_from_run(ckpt_path, device="cuda", verbose=True):
 def mri_dataset_kwargs(cfg, split="val"):
     """The run's own `MRIDataset` kwargs for `split`, straight out of its config.
 
-    Reads `data.<split>.dataset.dataset_configs[0]` — the ComposedDataset entry the run actually
-    built — so sampling knobs (`reference_slot`, `one_frame_per_slice`, `target_size`,
-    `num_slices`) come from the run rather than from today's default.yaml.
+    Reads `data.<split>` (the MRIDataset node) or, for runs before the plain-DataLoader refactor,
+    `data.<split>.dataset.dataset_configs[0]` (the old ComposedDataset entry) — so sampling knobs
+    (`reference_slot`, `one_frame_per_slice`, `target_size`, `num_slices`) come from the run
+    rather than from today's default.yaml.
     `_target_` and `defer_input_images` are dropped: the harness needs real `images` back, because
     unlike the trainer it does not always route through `gpu_augment_batch`. Removed sampling knobs
     are dropped too, after checking the run left them at their no-op values.
     """
     node = (cfg.get("data") or {}).get(split) or {}
-    dsc = ((node.get("dataset") or {}).get("dataset_configs") or [])
-    if not dsc:
-        raise ValueError(f"run config has no data.{split}.dataset.dataset_configs entry")
-    kw = {k: v for k, v in dsc[0].items() if k not in ("_target_", "defer_input_images")}
+    if "dataset" in node:   # old layout: DynamicTorchDataset -> ComposedDataset -> [MRIDataset]
+        dsc = (node.get("dataset") or {}).get("dataset_configs") or []
+        if not dsc:
+            raise ValueError(f"run config has no data.{split}.dataset.dataset_configs entry")
+        node = dsc[0]
+    elif not node:
+        raise ValueError(f"run config has no data.{split} entry")
+    kw = {k: v for k, v in node.items() if k not in ("_target_", "defer_input_images")}
     if kw.pop("continuous_z", False) or kw.pop("t_target_phases", None) is not None:
         raise ValueError("run config uses continuous_z or t_target_phases; those samplers are no longer supported")
     kw.pop("z_jitter", None)

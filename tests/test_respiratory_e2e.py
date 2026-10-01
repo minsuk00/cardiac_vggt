@@ -21,7 +21,7 @@ DEVICE = "cpu"
 
 def _batch_from_sample(s):
     """Assemble a (B=1) batch dict (the fields gpu_augment_batch touches) from a
-    raw MRIDataset.get_data() sample, mirroring composed_dataset's conversions."""
+    raw MRIDataset.get_data() sample, mirroring mri_dataset.to_tensors."""
     return {
         "phases": torch.from_numpy(np.asarray(s["phases"])).unsqueeze(0),               # (1,T,D,H,W) fp16
         "timesteps": torch.from_numpy(np.stack(s["timesteps"]).astype(np.int64)).unsqueeze(0),     # (1,S)

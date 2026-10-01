@@ -3,3 +3,7 @@
 
 # B2/B4/B5: config keys deleted because nothing read them.
 ^g0b\.json:/\w+/(model/enable_point|logging/all_ranks|logging/log_level_secondary|config_name|data/(train|val)/common_config/training|logging/log_visual_frequency/val|logging/visuals_keys_to_log): present -> <absent>$
+
+# C4: data.train/data.val are the MRIDataset kwargs (was DynamicTorchDataset ->
+# ComposedDataset -> dataset_configs[0]); num_workers moved to data.num_workers. Values unchanged.
+^g0b\.json:/\w+/data/(num_workers|(train|val)/[^:]+):

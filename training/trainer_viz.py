@@ -146,7 +146,7 @@ class TrainerVizMixin:
               # left the baseline unset — which silently changes every val metric NAME
               # (the `_base{b}` suffix disappears) mid-series. The realistic trigger is
               # the docs/59 F19 budget guard: `get_data` RAISES when S=D exceeds
-              # img_nums, and the pool holds D=19/20/21 subjects (currently all in test),
+              # num_slices, and the pool holds D=19/20/21 subjects (currently all in test),
               # so a re-seeded split would wipe the baseline. Skip the subject instead.
               try:
                 data = mri_ds.get_data(seq_index=i, img_per_seq=num_slices)
@@ -905,7 +905,7 @@ class TrainerVizMixin:
             vt = getattr(mri_ds, "val_targets", None)
             # Index by the SAMPLE's own seq_index (as _save_ef_volume does), not the
             # per-BATCH counter _val_iter. They coincide only while the val batch size is
-            # 1 (pinned in dynamic_dataloader; docs/59 F9) — a larger batch would other-
+            # 1 (pinned in data/loader.py; docs/59 F9) — a larger batch would other-
             # wise silently mislabel which subject/phase each stashed panel belongs to.
             seqs = batch.get("seq_index")
             i = int(seqs[0].flatten()[0].item()) if seqs is not None else int(self._val_iter)

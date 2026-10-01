@@ -250,7 +250,7 @@ def extract_slices_from_phases(phases, t_seq, z_seq, out_size=None):
     Returns:
         `(B, S, out_size, out_size, 3)` float in `[0, 255]` — RGB-replicated, ready to
         replace `batch["images"]` after a `permute(0, 1, 4, 2, 3) / 255` in
-        the trainer (matches the ComposedDataset contract).
+        the trainer (matches the mri_dataset.to_tensors contract).
     """
     if out_size is None:
         out_size = INPUT_IMG_SIZE

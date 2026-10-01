@@ -237,68 +237,52 @@ checkpoint:
 
 # ── Data ──────────────────────────────────────────────────────────────────────────────────
 data:
+  # `train` / `val` are the MRIDataset kwargs. The trainer wraps each in a plain DataLoader
+  # (training/data/loader.py: batch size 1, train reshuffled per epoch, val in order).
+  num_workers: ${num_workers}
   train:
-    _target_: data.dynamic_dataloader.DynamicTorchDataset
-    num_workers: ${num_workers}
-    shuffle: True
-    pin_memory: False
-    common_config:
-      # Slot BUDGET / cap, not a slot count: `one_frame_per_slice` sets S = this subject's
-      # own plane count D (5-21 under native-z), and mri_dataset raises if D exceeds this
-      # (docs/59 F19). Raise it only alongside the memory it implies.
-      img_nums: [20, 20]
-    dataset:
-      _target_: data.composed_dataset.ComposedDataset
-      dataset_configs:
-        - _target_: data.MRIDataset
-          data_root: ${data_root}
-          split: ${split}
-          split_file: ${split_file}
-          mode: ${mri_data_mode}
-          mri_mode: ${mri_mode}
-          num_slices: 20
-          target_size: ${img_size}
-          patch_size: ${patch_size}
-          t_target_fixed: ${t_target_fixed}
-          reference_slot: ${reference_slot}
-          one_frame_per_slice: ${one_frame_per_slice}
-          intensity_percentiles: ${intensity_percentiles}
-          # The trainer's gpu_augment_batch re-extracts every input slice on GPU, so building
-          # them on the CPU worker first is ~64 MB/sample of pure waste. Only safe because the
-          # trainer ALWAYS calls gpu_augment_batch, which treats a missing `images` key as
-          # "extract unconditionally". Leave false anywhere else.
-          defer_input_images: true
+    _target_: data.MRIDataset
+    data_root: ${data_root}
+    split: ${split}
+    split_file: ${split_file}
+    mode: ${mri_data_mode}
+    mri_mode: ${mri_mode}
+    # Slot BUDGET / cap, not a slot count: `one_frame_per_slice` sets S = this subject's
+    # own plane count D (5-21 under native-z), and mri_dataset raises if D exceeds this
+    # (docs/59 F19). Raise it only alongside the memory it implies.
+    num_slices: 20
+    target_size: ${img_size}
+    patch_size: ${patch_size}
+    t_target_fixed: ${t_target_fixed}
+    reference_slot: ${reference_slot}
+    one_frame_per_slice: ${one_frame_per_slice}
+    intensity_percentiles: ${intensity_percentiles}
+    # The trainer's gpu_augment_batch re-extracts every input slice on GPU, so building
+    # them on the CPU worker first is ~64 MB/sample of pure waste. Only safe because the
+    # trainer ALWAYS calls gpu_augment_batch, which treats a missing `images` key as
+    # "extract unconditionally". Leave false anywhere else.
+    defer_input_images: true
   val:
-    _target_: data.dynamic_dataloader.DynamicTorchDataset
-    num_workers: ${num_workers}
-    shuffle: False
-    pin_memory: False
-    common_config:
-      img_nums: [20, 20]     # slot BUDGET/cap; see the train block above
-    dataset:
-      _target_: data.composed_dataset.ComposedDataset
-      dataset_configs:
-        - _target_: data.MRIDataset
-          data_root: ${data_root}
-          split: "val"
-          split_file: ${split_file}
-          mode: ${mri_data_mode}
-          mri_mode: ${mri_mode}
-          num_slices: 20
-          target_size: ${img_size}
-          patch_size: ${patch_size}
-          t_target_fixed: ${t_target_fixed}
-          reference_slot: ${reference_slot}
-          one_frame_per_slice: ${one_frame_per_slice}
-          intensity_percentiles: ${intensity_percentiles}
-          # NOT deferred on val (deliberately — see the train block). 12 scripts across
-          # inference/ and tools/ instantiate THIS `data.val` node and then read
-          # `get_data()["images"]` directly, bypassing gpu_augment_batch; deferring here
-          # would break every one of them. Train is 628 of the 808 steps per epoch, so
-          # train-only deferral captures the bulk of the saving at zero blast radius.
-          defer_input_images: false
-          ef_val_sweep: ${ef_val_sweep}
-          cardiac_phase_csv: ${cardiac_phase_csv}
+    _target_: data.MRIDataset
+    data_root: ${data_root}
+    split: "val"
+    split_file: ${split_file}
+    mode: ${mri_data_mode}
+    mri_mode: ${mri_mode}
+    num_slices: 20               # slot BUDGET/cap; see the train block above
+    target_size: ${img_size}
+    patch_size: ${patch_size}
+    t_target_fixed: ${t_target_fixed}
+    reference_slot: ${reference_slot}
+    one_frame_per_slice: ${one_frame_per_slice}
+    intensity_percentiles: ${intensity_percentiles}
+    # NOT deferred on val (deliberately — see the train block). Scripts across inference/
+    # and tools/ build THIS `data.val` node and then read `get_data()["images"]` directly,
+    # bypassing gpu_augment_batch; deferring here would break every one of them. Train is
+    # 628 of the 808 steps per epoch, so train-only deferral captures the bulk of the saving.
+    defer_input_images: false
+    ef_val_sweep: ${ef_val_sweep}
+    cardiac_phase_csv: ${cardiac_phase_csv}
 
   # ── GPU augmentation (batchaug) ────────────────────────────────────────────────────────
   # Applied to the (B, T=12, D, H=256, W=256) canonical phases tensor in the trainer between

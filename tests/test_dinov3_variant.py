@@ -39,8 +39,8 @@ def test_default_and_dinov3_config_contracts():
     )
     assert dinov3.checkpoint.strict is True
     assert dinov3.checkpoint.resume_checkpoint_path.endswith("vggt1b_dinov3_vitl16_seed.pt")
-    assert dinov3.data.train.dataset.dataset_configs[0].patch_size == 16
-    assert dinov3.data.val.dataset.dataset_configs[0].patch_size == 16
+    assert dinov3.data.train.patch_size == 16
+    assert dinov3.data.val.patch_size == 16
     assert list(dinov3.logging.wandb_writer.tags) == ["dinov3", "aug_agg", 256]
 
 
