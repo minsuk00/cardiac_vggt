@@ -1,8 +1,7 @@
 """Email notifications for long-running jobs.
 
 Great Lakes compute nodes run a local postfix listener on 127.0.0.1:25, so a job can hand
-a message to it with no credentials and no outbound network config. Verified working from
-`gl1723` on 2026-08-04.
+a message to it with no credentials and no outbound network config.
 
     from train_utils.notify import send_email
     send_email("training collapsed", "grad_aggregator < 1e-6 for 500 steps")
@@ -80,15 +79,11 @@ def send_email(subject, body, to=None, once_key=None, prefix="[vggt]"):
 class GradientCollapseAlarm:
     """Fires once when a gradient norm stays at/below `threshold` for `patience` steps.
 
-    Motivated by docs/64: both pooled1337 runs had `grad_aggregator` sitting below 1e-6
-    for ~70 epochs (a dead ReLU in the DPT head severed the gradient path) while
-    `grad_point` looked healthy, so nothing in the standard logging flagged it and two
-    GPUs burned two days producing a frozen model.
+    Catches the docs/64 failure: a dead ReLU in the DPT head severs the gradient path to
+    the aggregator while `grad_point` still looks healthy, so standard logging misses it.
 
-    Threshold calibration (measured, docs/64): a HEALTHY run's `grad_aggregator` median is
-    1e-2..8e-2; even a badly degraded 3e-4 arm still reads ~6e-5. Sitting under 1e-6 for
-    hundreds of consecutive steps does not happen in a live run, so false positives are
-    not a practical concern.
+    Threshold: a healthy run's `grad_aggregator` sits orders of magnitude above 1e-6, so
+    hundreds of consecutive steps below it do not happen in a live run (docs/64).
     """
 
     def __init__(self, threshold=1e-6, patience=200, name="aggregator", enabled=True):

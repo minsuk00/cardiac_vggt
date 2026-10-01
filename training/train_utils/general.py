@@ -85,11 +85,8 @@ class ProgressMeter:
 def copy_data_to_device(data, device: torch.device, *args: Any, **kwargs: Any):
     """Recursively move a batch to `device`. Non-tensors pass through unchanged.
 
-    Simplified 2026-08-01. The upstream VGGT version also handled named tuples,
-    defaultdicts (preserving default_factory), dataclasses (with a second pass for
-    non-`init` fields) and a `_CopyableData` Protocol — that generality existed for
-    upstream's `FrameData` dataclass batches. Ours is a plain dict of tensors built by
-    `MRIDataset.get_data` + `to_tensors`, so only the dict/tensor paths ever ran.
+    Handles only dicts, lists/tuples and tensors: batches are plain dicts of tensors built
+    by `MRIDataset.get_data` + `to_tensors`.
     """
     if torch.is_tensor(data):
         return data.to(device, *args, **kwargs)

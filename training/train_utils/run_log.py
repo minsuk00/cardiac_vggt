@@ -1,12 +1,8 @@
 """On-disk run log — a structured mirror of everything we send to wandb.
 
-WHY THIS EXISTS. Until now the only machine-readable numeric artifact a finished run
-left behind was `baseline_identity.json` (822 bytes). Every other number lived either
-in wandb (needs network + auth + run-id discovery, and `run.history()` downsamples to
-500 points by default) or in `log.txt` as prose — `Loss/train_metric_mae_3d_full:
-0.0118 (0.0118)` — parseable only by regex, and mixing instantaneous with
-running-average values. Analysing a finished run therefore meant hitting the wandb API
-or re-running it.
+WHY THIS EXISTS. Without it, numbers live only in wandb (needs network + auth + run-id
+discovery, and `run.history()` downsamples) or in `log.txt` as prose parseable only by
+regex.
 
 This module writes three append-only files into `log_dir` so that ALL numeric analysis
 of a run can be done from disk alone:
@@ -18,8 +14,8 @@ of a run can be done from disk alone:
     metrics.jsonl         one line per scalar, mirroring `Trainer._log_scalar` — which is
                           the single chokepoint for scalars, so nothing scalar escapes.
     val_per_subject.csv   one row per val sample: subject id, D, dz, t_target + every
-                          metric. This is NEW information — it exists nowhere else, not
-                          even in wandb, because batch_size is pinned to 1 and the
+                          metric. This exists nowhere else, not even in wandb,
+                          because batch_size is pinned to 1 and the
                           per-subject value is averaged away by the AverageMeter.
 
 NOT covered (deliberately): the 8 `wandb.Image`/`wandb.Video` panels. Those are figures,
@@ -151,9 +147,8 @@ class RunLog:
 
         Columns GROW to fit: several metrics are per-sample conditional (the heart-ROI
         family needs a valid `heart_roi_canonical`; `recov_frac_heart` needs a non-degenerate
-        oracle span), so the first row is NOT a reliable schema. Freezing on it meant that if
-        val subject 0 happened to lack one, that column was dropped for the entire run —
-        silently, including the headline heartseg metrics. Widening rewrites the file with
+        oracle span), so the first row is NOT a reliable schema: freezing on it would silently
+        drop a column for the whole run whenever val subject 0 lacks it. Widening rewrites the file with
         the union header; it is rare (the set stabilises within one val epoch) and the file
         is small.
         """
@@ -189,7 +184,7 @@ class RunLog:
         # rewrite raises (ENOSPC on GPFS, say), subject_row's handler just warns, and a
         # field list already widened in memory would then write N+k-field rows under the
         # old N-field header forever — never retried, since the next call sees no new keys.
-        # pandas(on_bad_lines="skip") drops those rows silently. docs/62 §5.4.
+        # pandas(on_bad_lines="skip") drops those rows silently.
         new_fields = self._subject_fields + sorted(new_keys)
         if os.path.exists(path) and os.path.getsize(path) > 0:
             with open(path, newline="") as f:
@@ -217,10 +212,9 @@ class RunLog:
                 header = None
             if header:
                 return header
-            # Unreadable/empty header on a NON-empty file. Falling straight through used to
-            # invent a fresh field list while `subject_row` still saw `new_file == False`
-            # and wrote NO header — so every later row was appended under whatever the first
-            # line happens to be, silently misaligned (docs/62 §5.4, "related"). Move the
+            # Unreadable/empty header on a NON-empty file. Falling straight through would
+            # invent a fresh field list while `subject_row` still sees `new_file == False`
+            # and writes NO header — so every later row would be silently misaligned. Move the
             # damaged file aside instead: the next write then legitimately creates a new file
             # WITH a header, and nothing is destroyed (renamed, never deleted).
             try:

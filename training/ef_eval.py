@@ -7,7 +7,7 @@ scratch/data/whs/cardiac_phase.csv. Reports slope / Spearman / MAE over the clea
 
 TWO SEGMENTER BACKENDS, selected by `logging.ef_seg_backend`:
   "corseg" (default) — CorSeg-CineSAX, in-env, ~0.28 s/volume. Better at exactly what this file
-      reports (docs/57: EF MAE 2.51 vs 4.67 pp, LV volume MAE 4.4 vs 8.9 mL).
+      reports (EF and LV volume error; docs/57).
   "nnunet"           — Task114 5-fold + TTA via a subprocess into the isolated `nnunet` env. This
       is the operator that produced the GT labels, so it is method-matched to the GT; it is also
       ~8.5x slower and the cross-env hop is flaky (hence `retries`).
@@ -28,14 +28,11 @@ import numpy as np
 import nibabel as nib
 import torch
 
-IN_PLANE_MM = 1.4        # canonical in-plane spacing — FIXED for every subject (native-z, docs/58)
-# NOTE (docs/59 F14): there is deliberately NO canonical z spacing constant. Under native-z each
-# subject keeps its own acquired pitch (5-12 mm), so a module-level `CANON_SPACING=(1.4,1.4,12.0)`
-# stamped 12 mm onto every written volume regardless of the subject — up to 2.4x wrong at 5 mm.
-# That was harmless for the REPORTED metric (EF is a ratio, so the voxel volume cancels; and
-# nnU-Net `-m 2d` preserves input geometry verbatim, measured), but it made the dumped NIfTIs
-# geometrically false and every absolute mL wrong by dz/12 — and it would have started changing
-# the segmentation itself the moment anyone switched to `3d_fullres`, which DOES resample z.
+IN_PLANE_MM = 1.4        # canonical in-plane spacing — FIXED for every subject
+# NOTE: there is deliberately NO canonical z spacing constant. Each subject keeps its own
+# acquired pitch (5-12 mm), so a fixed z spacing would make the dumped NIfTIs geometrically
+# false and every absolute mL wrong (and would change the segmentation itself under a
+# segmenter that resamples z). Pass each subject's own dz instead.
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ENV_SH = os.path.join(_REPO, "evaluation", "src", "engine", "env.sh")
 
@@ -81,23 +78,21 @@ LV_LABEL = {"nnunet": 1, "corseg": 2}
 def run_corseg(in_dir, out_dir, device="cuda"):
     """Segment every `*_0000.nii.gz` in `in_dir` with CorSeg-CineSAX (docs/57).
 
-    Chosen over nnU-Net for the training-time EF metric because, on the only cohort here
-    with human GT, it is clearly better at exactly what this file computes — EF MAE
-    2.51 vs 4.67 pp, LV volume MAE 4.4 vs 8.9 mL — while being ~8.5x cheaper and running
-    IN `svr`, so it replaces a flaky cross-env `micromamba run -n nnunet` subprocess hop.
+    Chosen over nnU-Net for the training-time EF metric because it is better at exactly
+    what this file computes (EF and LV volume error), ~8.5x cheaper, and runs IN `svr`
+    (no cross-env subprocess hop).
 
     Safe here specifically because we feed the FULL canonical cube: CorSeg collapses on
-    heart-ROI-cropped input (Dice 0.889 -> 0.413, its fixed 224^2 canvas ends up 17% full),
-    which is why docs/57 restricts it to canonical-cube arms and keeps nnU-Net for the SVR
-    baselines. Output filenames match the nnU-Net convention (`{stem}.nii.gz`).
+    heart-ROI-cropped input (its fixed 224^2 canvas ends up mostly empty), which is why
+    nnU-Net is kept for the SVR baselines. Output filenames match the nnU-Net convention
+    (`{stem}.nii.gz`).
     """
     import glob
     from corseg.corseg_infer import load_corseg, segment_nifti
 
     os.makedirs(out_dir, exist_ok=True)
-    # Stage the 741 MB checkpoint to node-local /tmp: measured 44 s to load from GPFS vs
-    # 0.28 s to segment a volume, so the load dominates an EF epoch. Same rationale as
-    # docs/50 for the model weights. Falls back to the original path on any failure.
+    # Stage the 741 MB checkpoint to node-local /tmp: loading from GPFS is slow enough to
+    # dominate an EF epoch (docs/50). Falls back to the original path on any failure.
     from corseg.corseg_infer import CKPT_DEFAULT
     from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
     model, _ = load_corseg(stage_checkpoint_to_local(CKPT_DEFAULT), device=device)
@@ -122,12 +117,10 @@ def segment(in_dir, out_dir, backend="corseg"):
 
 
 def _lv_ml(seg_path, lv_label=1):
-    # Voxel volume comes from the seg's OWN header, not a module constant (docs/59 F14), so this
-    # is automatically right for every subject's native pitch and cannot drift from what
-    # `save_pred_volume` wrote. Safe because nnU-Net `-m 2d` reproduces the input geometry
-    # verbatim — MEASURED over 133 real ED/ES pairs: zooms and shape identical in/out, including
-    # D=8..13 passing through unresampled.
-    # CorSeg preserves geometry too: segment_nifti propagates the input header verbatim.
+    # Voxel volume comes from the seg's OWN header, not a module constant, so this is
+    # automatically right for every subject's native pitch and cannot drift from what
+    # `save_pred_volume` wrote. Safe because nnU-Net `-m 2d` and CorSeg's segment_nifti both
+    # reproduce the input geometry verbatim.
     im = nib.load(seg_path)
     vox_ml = float(np.prod(im.header.get_zooms()[:3])) / 1000.0
     return float((np.asarray(im.dataobj) == lv_label).sum()) * vox_ml
@@ -169,11 +162,8 @@ def _ef_stats(gts, preds):
     constant input), so a healthy group of 3 subjects at EF 54/55/56 yields a large,
     finite, meaningless slope. Groups this narrow are exactly what `by_group` targets.
 
-    The spread threshold is 1.0 EF percentage points. It was `1e-6` until 2026-08-01
-    (docs/62 §5.5), which rejected only an EXACTLY constant GT, so the 54/55/56 example above
-    (sigma = 0.82) sailed through and returned slope = 10.0. Latent, not live: today's groups
-    are sigma 6.2 (healthy, n=60) and 16.2 (diseased, n=73), so nothing currently reported
-    changes — this only guards the narrow groups a re-seeded split or finer `by_group` creates.
+    The spread threshold is 1.0 EF percentage points; a near-zero threshold would let the
+    54/55/56 example above (sigma = 0.82) through with a meaningless slope.
     """
     if len(preds) < 3 or np.std(np.asarray(gts, dtype=float)) < 1.0:
         return None
@@ -194,10 +184,10 @@ def compute_ef_metrics(pred_seg_dir, subjects_ed_es, csv_path, groups=None, lv_l
     groups: optional {subject_id: group_name}. When given, the same statistics are ALSO
     computed per group and returned under "by_group". This exists because slope is a
     regression over the cohort's GT-EF spread, and the pooled cohort's spread is dominated
-    by its diseased half — measured on val, GT-EF sigma is 16.2 for diseased (n=73) versus
-    6.2 for healthy (n=60). A slope estimated over a 6-point spread is attenuated by range
-    restriction no matter how good the model is, so a pooled slope silently drifts with the
-    val health mix. Splitting is what stops that being misread as a model regression.
+    by its diseased subjects (healthy GT-EF is much narrower). A slope estimated over a narrow
+    spread is attenuated by range restriction no matter how good the model is, so a pooled
+    slope silently drifts with the val health mix. Splitting is what stops that being
+    misread as a model regression.
     """
     gt = load_gt_ef(csv_path)
     rows, skipped = [], []

@@ -13,8 +13,7 @@ checkpoint:
   resume_checkpoint_path: "./scratch/base_weights/vggt1b_dinov3_vitl16_seed.pt"
   strict: true
 
-# Pinned to the values default.yaml had before it became the 518 paper recipe, so this
-# experiment is unchanged (max_epochs also seeds set_seeds: seed * max_epochs).
+# No-reg, native-splat, 200 epochs (max_epochs also seeds set_seeds: seed * max_epochs).
 max_epochs: 200
 loss:
   volume:

@@ -1,19 +1,14 @@
-# THE 224 NO-REG RECIPE (docs/92 index note; the paper model before the final 518 sweep):
-# default.yaml specialized to the exact configuration the no-reg 224 checkpoint was trained with
-# (awrobewn/augaggr224 recipe, verified against
-# scratch/logs/212682843_noreg224_pooled1337/run_meta.jsonl — NOT hand-copied).
+# The 224-px no-reg recipe: default.yaml at 224 input, native splat, no diffusion regularizer.
 # default.yaml carries the shared knobs (heart_weight=0.5, gather_weight=0.5, lr 5e-5, aggft
-# freeze, 300 epochs); the ONLY deltas are below. default.yaml became the 518 paper recipe
-# (diffusion 1000, splat_res 518), so this file pins the no-reg / native-splat values it had.
+# freeze, 300 epochs); the ONLY deltas are below.
 # Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default_224
 
 defaults:
   - default
   - _self_
 
-# 224 = 16² tokens: ≈3-6× faster, half the VRAM vs 518 (docs/72). The no-reg r=0.837 result
-# and every arm compared against it (docs/90/91 on their branches) are on THIS resolution —
-# metrics are not comparable across img_size (fresh numeric series per docs/72).
+# 224 = 16² tokens: several × faster, about half the VRAM vs 518 (docs/72). Metrics are not
+# comparable across img_size.
 img_size: 224
 max_epochs: 300
 

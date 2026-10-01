@@ -144,11 +144,10 @@ def to_float(v):
 def resp_offslab_stats(batch, b=0):
     """How much of subject `b`'s stack the simulated breathing pushed off the slab.
 
-    docs/59 F16 is accepted-not-fixed: the shift is one-sided, so basal slots run off the
-    end and `padding_mode="zeros"` blanks or dims them. The damaged FRACTION is
-    `d/((D-1)*dz)`, which is far worse for short stacks — exactly the fine-pitch subjects
-    native-z was added to support. Unrecoverable after the fact (applied on GPU, never
-    persisted), which is why it is recorded per subject.
+    Known limitation: the shift is one-sided, so basal slots run off the end and
+    `padding_mode="zeros"` blanks or dims them. The damaged FRACTION is `d/((D-1)*dz)`,
+    which is far worse for short stacks. Unrecoverable after the fact (applied on GPU,
+    never persisted), which is why it is recorded per subject.
 
     Landing plane = `z_i + d_D/dz`. Returns {} when breathing is off.
     """
@@ -168,13 +167,8 @@ def resp_offslab_stats(batch, b=0):
     # "Dimmed" = the PARTIAL subset of `off`: one bracketing plane is real and the other is
     # zero-padding, so retained is in (0, 1). Beyond [-1, D] both brackets are padding and
     # the slot is fully blank. `dimmed ⊂ off`, so blanked-fraction = offslab - dimmed.
-    #
-    # This band was WRONG until 2026-08-01 (docs/62 §5.3): it read
-    # `((landing > 0) & (landing < 1)) | ((landing > D-2) & (landing < D-1))`, one plane too
-    # low at BOTH ends. Those ranges interpolate between two REAL planes and retain 1.0000,
-    # so the metric had ZERO true positives while reporting a 7-35% rate. The old comment
-    # justified it as "inside the slab but not on an exact end plane" — trilinear only mixes
-    # in padding once a bracket falls OUTSIDE [0, D-1], which is `off`, not "not exact".
+    # (Landings inside (0, 1) or (D-2, D-1) interpolate between two REAL planes and are NOT
+    # dimmed: trilinear only mixes in padding once a bracket falls outside [0, D-1].)
     dimmed = ((landing > -1) & (landing < 0)) | ((landing > D - 1) & (landing < D))
     extent_mm = max((D - 1) * dz, 1e-6)
     return {

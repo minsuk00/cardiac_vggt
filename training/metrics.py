@@ -1,8 +1,8 @@
-"""Reconstruction metrics for the volume-intensity objective (split out of loss.py).
+"""Reconstruction metrics for the volume-intensity objective.
 
 `base_metrics` runs on every call of `compute_volume_intensity_loss` (train, val, identity
-baseline, filmstrip). `val_metrics` is the VAL-ONLY block (heart-seg PSNR + the docs/38
-ship-decision and breathing metrics); the caller opts in explicitly via
+baseline, filmstrip). `val_metrics` is the VAL-ONLY block (heart-seg PSNR + the
+ship-decision and breathing metrics, docs/38); the caller opts in explicitly via
 `compute_volume_intensity_loss(..., val_metrics=True)`, which the trainer passes only in
 the val phase. Neither touches the objective: both run under no_grad.
 """
@@ -54,7 +54,7 @@ def _masked_stats_vec(err, mask):
     """Per-sample masked MSE / MAE / voxel-count — VECTORIZED and BRANCHLESS.
 
     For the TRAIN-PATH metrics (bbox, motion), which run every step. Branchless is
-    load-bearing: a Python-level decision here costs 4 graph breaks (measured), and the
+    load-bearing: a Python-level decision here costs graph breaks, and the
     `torch.where` (rather than `err * mask.float()`) is what keeps a single non-finite voxel
     ANYWHERE in the cube from poisoning the metric — NaN * 0.0 == NaN.
 
@@ -72,7 +72,7 @@ def _masked_stats_vec(err, mask):
 def _masked_mse(a, b, mask):
     """Masked MSE for ONE sample, via boolean indexing.
 
-    For the VAL-ONLY metrics (heartseg, docs/38 heart + seg), which already run inside a
+    For the VAL-ONLY metrics (heartseg, heart + seg), which already run inside a
     `for b in range(B)` loop. Boolean indexing never reads outside the mask, so it is
     NaN-safe by construction, and the host syncs it costs are free off the train path.
     Callers must guard `mask.any()` themselves — `a[empty].mean()` is NaN.
@@ -101,20 +101,10 @@ def base_metrics(V_canon, V_gt, coverage, pos_pred, batch):
         out["metric_mean_disp_norm"] = (pos_pred - batch["scanner_coords"]).abs().sum(-1).mean()
     if V_canon.is_cuda:
         try:
-            # PER-SLICE 2D SSIM. REPLACES the old `metric_ssim_3d_full` (docs/59 F11):
-            # `fused_ssim3d` slides an 11-tap (radius-5) window in ALL three dims with zero
-            # padding, so the fraction of z-planes contaminated by the padded edge depends on
-            # D — which under native-z varies 5-21 ACROSS SUBJECTS. Measured on one structured
-            # volume cropped to different depths (same content, same error field, so only D
-            # changes): 3D reads 0.9929@D=5 -> 0.9939@D=32, while this per-slice form reads
-            # 0.9947 -> 0.9946 (~10x flatter). Reshaping (B,D,H,W) -> (B*D,1,H,W) treats z as
-            # a batch dim, removing the z-padding entirely: the window is only ever in-plane
-            # and D just sets how many slices are averaged.
-            #
-            # The 3D metric was DROPPED rather than kept alongside: its only argument was
-            # continuity with pre-native-z runs, but those are not comparable anyway (V_gt
-            # frame, normalization and grid all changed), so logging both would just be two
-            # numbers where one is knowingly wrong.
+            # PER-SLICE 2D SSIM, not 3D: a 3D window with zero padding contaminates a
+            # D-dependent fraction of z-planes, and D varies 5-21 across subjects. Reshaping
+            # (B,D,H,W) -> (B*D,1,H,W) treats z as a batch dim: the window is only ever
+            # in-plane and D just sets how many slices are averaged.
             from fused_ssim import fused_ssim
             # (B, D, H, W) -> (B*D, 1, H, W): every slice is an independent 2D image.
             pred_s = V_canon.reshape(-1, 1, *V_canon.shape[-2:]).float().contiguous()
@@ -129,12 +119,10 @@ def base_metrics(V_canon, V_gt, coverage, pos_pred, batch):
     # from intensity thresholding. For small-FOV subjects this excludes the
     # padded zeros that inflate the full-volume PSNR; for large-FOV subjects
     # (bbox = full cube) bbox metrics ≡ full metrics. Bbox SSIM is skipped
-    # because per-sample shape varies and `fused_ssim3d` wants a fixed size.
+    # because per-sample shape varies.
     if "anatomy_bbox" in batch:
         # Vectorized with spatial coordinate masks instead of a per-sample Python loop, so
-        # the metric costs no `.tolist()` host-device syncs. (This code never runs inside a
-        # compiled region — only the aggregator's attention blocks are compiled — so the
-        # motivation is eager sync removal, not graph breaks.)
+        # the metric costs no `.tolist()` host-device syncs.
         bboxes = batch["anatomy_bbox"].to(V_canon.device)   # (B, 6) int64
         D, H, W = V_canon.shape[1], V_canon.shape[2], V_canon.shape[3]
         z_idx = torch.arange(D, device=V_canon.device).view(1, -1, 1, 1)
@@ -167,8 +155,7 @@ def base_metrics(V_canon, V_gt, coverage, pos_pred, batch):
         # A sample with zero moving voxels has mse_m == 0 ⇒ psnr_m == 100 dB (the clamp
         # floor), which would silently inflate the batch mean, so average over valid
         # samples only. Kept branchless (no `if n_valid > 0`) to preserve the sync-free /
-        # zero-graph-break property of the whole train step: a Python-level decision here
-        # costs 4 graph breaks, measured. The degenerate case where NO sample moves
+        # zero-graph-break property of the whole train step. The degenerate case where NO sample moves
         # therefore reports 0.0 rather than omitting the keys; it cannot occur for real
         # cardiac data (it needs a subject whose 12 phases are identical), and consumers
         # that aggregate this metric filter it via `metric_motion_frac == 0` — see
@@ -183,11 +170,11 @@ def base_metrics(V_canon, V_gt, coverage, pos_pred, batch):
 
 @torch.no_grad()
 def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=None):
-    """VAL-ONLY metrics: heart-seg PSNR + the docs/38 ship-decision and breathing metrics.
+    """VAL-ONLY metrics: heart-seg PSNR + the ship-decision and breathing metrics.
 
     Run only when the caller passes `val_metrics=True` (the trainer's val phase with real
-    predictions) — never in train, so training cost + numerics are untouched. Each docs/38
-    part is try/except-wrapped ⇒ never raises into the loop. Returns an ordered dict.
+    predictions) — never in train, so training cost + numerics are untouched. Each
+    ship-decision part is try/except-wrapped ⇒ never raises into the loop. Returns an ordered dict.
     """
     out = {}
     B = V_canon.shape[0]
@@ -213,14 +200,14 @@ def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=Non
             out["metric_mae_3d_heartseg"] = torch.stack(mae_seg_list).mean()
             out["metric_heartseg_frac"] = seg_roi.float().mean()
 
-    # ── VAL-ONLY ship-decision + breathing metrics (docs/37) ─────────────────
+    # ── VAL-ONLY ship-decision + breathing metrics (docs/38) ─────────────────
     # These quantify targeted improvements that aggregate PSNR buries: an oracle-
     # normalized recoverable-fraction (rescales out the un-fixable appearance wall),
     # a heart/static PSNR split, a coverage-hole tripwire, and breathing through-
     # plane recovery vs the EXACT simulated shift. Extra splats run only here.
     # The cardiac-motion mask (compute_motion_mask) is the heart ROI — no segmentation
-    # needed. See docs/37 for the design + the stop-grad test. To surface in wandb, the
-    # metric_* keys below must be listed in `logging.scalar_keys_to_log.val.keys_to_log`.
+    # needed. To surface in wandb, the metric_* keys below must be listed in
+    # `logging.scalar_keys_to_log.val.keys_to_log`.
     if "phases" in batch and "scanner_coords" in batch:
         # (1) recov_frac_heart + psnr_static + hole_frac_heart (vs GT, heart ROI)
         try:
@@ -228,7 +215,7 @@ def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=Non
             # identity splat (Δ=0, real corrupted input content) — exact forward path
             V_id, _ = splat_preds_native({"world_points": batch["scanner_coords"]}, batch, grid_shape, z_scale, splat_res)
             # oracle splat (Δ=0, TRUE target-phase content sampled at each pixel's home) —
-            # the recoverable ceiling; the model→oracle gap is the appearance wall (docs 19-21).
+            # the recoverable ceiling; the model→oracle gap is the appearance wall.
             # Same point set / weight gate as V_id and V_canon (native when images_splat
             # exists, at splat_res when set), so the recov_frac ratio compares one splat
             # pipeline throughout.
@@ -255,11 +242,8 @@ def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=Non
                     span = mse_id - mse_or                          # recoverable span (identity → ceiling)
                     if float(span) > 1e-6:                          # skip if oracle ≯ identity (recov undefined;
                                                                     # signed clamp on a signed denom is wrong)
-                        # UNCLAMPED as of 2026-08-01, matching recov_frac_seg. The old
-                        # `.clamp(-0.5, 1.5)` censored 98.9% of rows to -0.5 early in
-                        # training — it destroyed data, and the only reason it survived
-                        # was continuity with wandb curves that native-z had already
-                        # invalidated. The `span > 1e-6` guard above keeps the
+                        # UNCLAMPED, matching recov_frac_seg: a clamp would censor most rows
+                        # early in training. The `span > 1e-6` guard above keeps the
                         # denominator positive, which is the part that actually matters.
                         recov.append((mse_id - mse_mo) / span)
                 st = (V_gt[b] > 1e-3) & (~heart[b])                 # content that does NOT beat (control)
@@ -277,9 +261,8 @@ def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=Non
 
             # Same floor/ceiling on the SEGMENTATION ROI (docs/60). Two reasons:
             #  1. `metric_psnr_3d_heartseg` is a fine per-subject number but is NOT
-            #     comparable ACROSS subjects — measured, 79% of its between-subject
-            #     spread is shared with the whole-volume PSNR, i.e. intrinsic scan
-            #     difficulty rather than model quality. Referencing it to each
+            #     comparable ACROSS subjects — much of its between-subject spread is
+            #     intrinsic scan difficulty rather than model quality. Referencing it to each
             #     subject's OWN identity floor removes that shared term, so
             #     `psnr_seg_gain_db` can be averaged over a heterogeneous cohort.
             #  2. `recov_frac_heart` uses the motion mask while `psnr_heartseg` uses
@@ -304,9 +287,8 @@ def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=Non
                     gain.append(10.0 * torch.log10(mse_id / mse_mo))
                     span = mse_id - mse_or
                     if float(span) > 1e-6:
-                        # NOT clamped, unlike recov_frac_heart: the `span > 0` guard
-                        # already makes the denominator positive, and the clamp there
-                        # censors 98.9% of rows to -0.5 early in training.
+                        # NOT clamped: the `span > 0` guard already makes the
+                        # denominator positive.
                         recov_s.append((mse_id - mse_mo) / span)
                 if gain:
                     out["metric_psnr_seg_gain_db"] = torch.stack(gain).mean()
@@ -320,20 +302,16 @@ def val_metrics(V_canon, V_gt, coverage, pos_pred, batch, z_scale, splat_res=Non
 
         # (2) breathing through-plane recovery vs the EXACT applied sim shift.
         # predicted Δz per slot (mm) vs applied SI (resp_disp_mm[...,0]) →
-        # slope/corr/EPE + deep-breath-ignored. Brings tools/_archive/exp_4wok_analysis.py online.
+        # slope/corr/EPE + deep-breath-ignored.
         # No-op when breathing is off (resp_disp_mm absent). Slot 0 (reference anchor) is
         # INCLUDED — matched to eval's run_vggt.py:resp_diag so the two numbers are comparable.
         # Per-subject then meter-averaged ⇒ EPE is the robust headline; slope is clamped so one
-        # low-applied-variance subject can't dominate; corr is SIGNED Pearson (differs from the
-        # offline abs-corr in exp_4wok_analysis.py — see docs/38).
+        # low-applied-variance subject can't dominate; corr is SIGNED Pearson.
         if "resp_disp_mm" in batch:
             try:
-                # Z_HALF_MM, NOT a per-subject (D-1)/2*dz: z_norm is now PHYSICAL
-                # (z_mm / Z_HALF_MM, docs/58), so one normalized z-unit is always exactly
-                # Z_HALF_MM mm for every subject by construction — unlike the old
-                # index-based scheme where it was each subject's own half-span (which
-                # only looked constant because D/dz never varied). Using the per-subject
-                # half-span here would systematically understate Δz in mm.
+                # Z_HALF_MM, NOT a per-subject (D-1)/2*dz: z_norm is PHYSICAL
+                # (z_mm / Z_HALF_MM), so one normalized z-unit is exactly Z_HALF_MM mm for
+                # every subject. Using the per-subject half-span would misstate Δz in mm.
                 through_mm = Z_HALF_MM
                 dvf = pos_pred - batch["scanner_coords"]           # (B,S,H,W,3) normalized residual
                 img_int = batch["images"].float().mean(dim=2)      # (B,S,H,W)
