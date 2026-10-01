@@ -106,10 +106,6 @@ def _target_shapes():
             backbone="dinov3_vitl16",
             embed_dim=1024,
             enable_point=True,
-            use_z_pose_embedding=True,
-            use_reference_token=True,
-            train_on_residual_dvf=True,
-            warp_head_type="dpt",
         )
     return {name: tuple(tensor.shape) for name, tensor in model.state_dict().items()}
 

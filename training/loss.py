@@ -50,7 +50,7 @@ class MultitaskLoss(torch.nn.Module):
     kept only so existing configs and checkpoints keep resolving.
     """
 
-    def __init__(self, volume=None, **kwargs):
+    def __init__(self, volume=None):
         super().__init__()
         # Volume-intensity loss configuration (the only active task).
         self.volume = volume
@@ -71,7 +71,8 @@ class MultitaskLoss(torch.nn.Module):
 
         # Direct volume-to-volume loss against the GT phase-0 volume loaded from disk.
         if "world_points" in predictions and self.volume is not None and self.volume.get("weight", 0) > 0:
-            vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **self.volume)
+            vol_kw = {k: v for k, v in self.volume.items() if k != "weight"}
+            vol_loss_dict = compute_volume_intensity_loss(predictions, batch, **vol_kw)
             vol_loss = (vol_loss_dict["loss_volume"]
                         + vol_loss_dict.get("loss_diffusion", 0.0)
                         + vol_loss_dict.get("loss_gather", 0.0)
@@ -190,8 +191,7 @@ def _splat_preds_native(predictions, batch, grid_shape, z_scale, splat_res=None)
 
 def compute_volume_intensity_loss(predictions, batch,
                                   diffusion_weight=0.0, gather_weight=0.0,
-                                  heart_weight=0.0, splat_res=None,
-                                  **kwargs):
+                                  heart_weight=0.0, splat_res=None):
     """Direct volume-to-volume loss: splat input pixels to V_canon, compare to V_gt.
 
     Pipeline:
@@ -569,7 +569,7 @@ def compute_volume_intensity_loss(predictions, batch,
 
             # (2) breathing through-plane recovery vs the EXACT applied sim shift.
             # predicted Δz per slot (mm) vs applied SI (resp_disp_mm[...,0]) →
-            # slope/corr/EPE + deep-breath-ignored. Brings tools/exp_4wok_analysis.py online.
+            # slope/corr/EPE + deep-breath-ignored. Brings tools/_archive/exp_4wok_analysis.py online.
             # No-op when breathing is off (resp_disp_mm absent). Slot 0 (reference anchor) is
             # INCLUDED — matched to eval's run_vggt.py:resp_diag so the two numbers are comparable.
             # Per-subject then meter-averaged ⇒ EPE is the robust headline; slope is clamped so one

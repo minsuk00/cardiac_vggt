@@ -711,7 +711,7 @@ class TrainerVizMixin:
 
     def _log_volume_and_dvf_to_wandb(self, batch: dict, name: str, step: int, caption: str,
                                      group: str = "media_others"):
-        """Log two figures per visual step (matching tools/test_sequential_sampling.py style):
+        """Log two figures per visual step (matching tools/_archive/test_sequential_sampling.py style):
           {name}_Volume : 4 rows × max(S,D) cols — input slices, V_gt, V_canon, signed diff (per z).
           {name}_DVF    : 4 rows × S cols       — input intensity + Δx/Δy/Δz per slot.
         Both use dpi=90 (≈0.6 MB each PNG). Logged under `{group}/`.

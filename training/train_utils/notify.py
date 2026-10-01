@@ -115,9 +115,7 @@ class GradientCollapseAlarm:
                f"This is the docs/64 failure signature: a dead ReLU in the DPT head "
                f"(point_head.scratch.output_conv2[1]) makes the head emit only its bias, so "
                f"the predicted DVF is constant and NO gradient reaches the aggregator. It is "
-               f"NOT recoverable -- the run is wasting GPU time from here on.\n\n"
-               f"Check: PYTHONPATH=training:. python tools/probe_aggft_collapse.py "
-               f"--ckpt <log_dir>/ckpts/checkpoint_last.pt\n{extra}")
+               f"NOT recoverable -- the run is wasting GPU time from here on.\n{extra}")
         logging.error(f"[ALARM] {msg}")
         send_email(f"GRADIENT COLLAPSE: grad_{self.name} dead", msg,
                    once_key=f"gradcollapse:{self.name}")

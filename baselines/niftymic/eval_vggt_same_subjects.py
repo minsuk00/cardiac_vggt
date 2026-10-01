@@ -112,7 +112,7 @@ def main():
         with torch.no_grad(), torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
 
-        out = compute_volume_intensity_loss(preds, batch, grid_shape=(12, 256, 256))
+        out = compute_volume_intensity_loss(preds, batch)
         V_canon = out["V_canon"][0].float()
         V_gt = out["V_gt"][0].float()
         m = _metrics(V_canon, V_gt)

@@ -5,18 +5,27 @@ code can be compared bit for bit where the GPU backward (grid_sample 3D) is nond
   python tools/golden/cpu_grad.py --out temp/golden/<tag>/g4.json
 """
 import argparse
+import inspect
 
 from common import dump, sha
 
 import torch
 
-# Old code needs the flags spelled out (its defaults were off); new code swallows them.
+# Old code needs the flags spelled out (its defaults were off); new code rejects them, so
+# `_accepted` drops whatever the current signature does not take.
 MODEL_KW = dict(img_size=518, patch_size=14, enable_point=True, gradient_checkpointing=True,
                 use_z_pose_embedding=True, use_reference_token=True, train_on_residual_dvf=True,
                 warp_head_type="dpt")
 # Paper diff1000 loss; tv/motion_l1 at their paper value 0 (old default tv_weight was 0.1).
 LOSS_KW = dict(weight=1.0, splat_res=518, diffusion_weight=1000.0, gather_weight=0.5,
                heart_weight=0.5, tv_weight=0.0, motion_l1_weight=0.0)
+
+
+def _accepted(fn, kw, extra=()):
+    params = inspect.signature(fn).parameters
+    if any(p.kind == p.VAR_KEYWORD for p in params.values()):
+        return kw
+    return {k: v for k, v in kw.items() if k in params or k in extra}
 
 
 def make_batch(S=3, R=224, D=6, N=256):
@@ -44,15 +53,16 @@ def main():
     p.add_argument("--out", required=True)
     a = p.parse_args()
 
-    from loss import MultitaskLoss
+    from loss import MultitaskLoss, compute_volume_intensity_loss
     from vggt.models.vggt import VGGT
 
     torch.use_deterministic_algorithms(True)
     torch.manual_seed(0)
-    model = VGGT(**MODEL_KW).train()
+    model = VGGT(**_accepted(VGGT.__init__, MODEL_KW)).train()
     batch = make_batch()
     preds = model(batch["images"], batch=batch)
-    out = MultitaskLoss(volume=LOSS_KW)(preds, batch)
+    loss_kw = _accepted(compute_volume_intensity_loss, LOSS_KW, extra=("weight",))
+    out = MultitaskLoss(volume=loss_kw)(preds, batch)
     out["objective"].backward()
 
     res = {"losses": {k: sha(v) for k, v in sorted(out.items())

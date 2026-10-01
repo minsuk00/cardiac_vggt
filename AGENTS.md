@@ -134,7 +134,7 @@ preds = model(images, batch=batch)  # batch needs: z_indices, scanner_coords
 # To use compute_volume_intensity_loss: batch must also include gt_target_volume (already the t_target phase; t_target itself is only used for per-phase logging, not the loss).
 ```
 
-Handy tools (full descriptions: docs/65): `tools/preview_canonical_preprocess.py` (canonical resample sanity-check), `tools/render_augmentation_examples.py`, `tools/render_volume_example.py`, `tools/test_sequential_sampling.py`, `baselines/eval_within_body_mask.py` (identity-Δ PSNR floor).
+Handy tools (full descriptions: docs/65): `tools/preview_canonical_preprocess.py` (canonical resample sanity-check), `tools/render_augmentation_examples.py`. Identity-Δ PSNR floor: each run's `baseline_identity.json`.
 
 **Where new scripts go** (sort by *reuse potential*, not temp-vs-permanent):
 - **Throwaway** one-off probe / sanity-check you won't rerun → scratchpad dir, NOT the repo.

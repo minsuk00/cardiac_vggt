@@ -151,9 +151,8 @@ The passages below were **compressed, not removed** — CLAUDE.md keeps a shorte
 > Tools:
 > - `tools/preview_canonical_preprocess.py` — sanity-check the canonical resample on shape-extreme subjects (min/max Z, min/max H, typical); native vs canonical mid-z slice + content-mask + bbox overlay → `result/canonical_preview/`.
 > - `tools/render_augmentation_examples.py` — per-op + combined aug variant PNGs and a cardiac-cycle GIF → `result/augmentation_examples/`.
-> - `tools/render_volume_example.py` — random val sample, per-z V_gt/V_canon/diff panel.
-> - `tools/test_sequential_sampling.py` — diagonal `(t=k+offset, z=k)` for one subject; PNGs to `result/`.
-> - `baselines/eval_within_body_mask.py` — PSNR sweep over the val set (identity-Δ floor, etc.). (`eval_all_baselines.py` archived 2026-08-01, could no longer run — docs/65.)
+> - `tools/_archive/` (2026-09-30) — 88 legacy scripts that passed removed `VGGT` / loss kwargs (or import one that did), incl. the former `render_volume_example.py` and `test_sequential_sampling.py`; see its README.
+> - `baselines/_archive/eval_within_body_mask.py` — legacy elastix-vs-model PSNR sweep, archived 2026-09-30 (pre-reference-slot ckpt, could no longer run; identity floor now in each run's `baseline_identity.json`). (`eval_all_baselines.py` archived 2026-08-01, could no longer run — docs/65.)
 >
 > **Evaluation & SVR baselines** (external datasets / occasional runs — not the training loop): the inference/eval harness lives in `inference/` (`run_cmrxrecon.py` in-distribution EF/Dice, `run_rtfb.py` real-time free-breathing inference, `adapters/`, `seg_metrics_cmrxrecon.py`); classical SVR baselines (NiftyMIC / NeSVoR / fetal_cmr_4d) live in `baselines/`. Rationale, protocol, results: `docs/24` + `docs/29–35` (index in `docs/README.md`). The frozen breathing-simulated baseline harness is now git-tracked in **`evaluation/`** (`evaluation/README.md`; the heavy data stays on gitignored GPFS via `evaluation/volumes` → `scratch/eval`). Standing analysis/figure scripts live in `evaluation/analysis/` — but per the off-limits rule above, **never add to `evaluation/` on your own initiative; write to `tools/` and ask.**
 

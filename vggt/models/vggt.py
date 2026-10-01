@@ -15,7 +15,7 @@ from vggt.models.aggregator import Aggregator
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
         self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True,
-        gradient_checkpointing=True, backbone="dinov2_vitl14_reg", **kwargs
+        gradient_checkpointing=True, backbone="dinov2_vitl14_reg",
     ):
         super().__init__()
         self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, gradient_checkpointing=gradient_checkpointing)
