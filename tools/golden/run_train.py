@@ -36,6 +36,9 @@ def main():
     p.add_argument("--paper_mode", action="store_true", help="keep torch.compile, no deterministic algos")
     a = p.parse_args()
 
+    if os.path.exists(a.out) and os.listdir(a.out):
+        # The trainer would auto-resume from <out>/ckpts and do no training.
+        sys.exit(f"--out {a.out} is not empty; refusing to reuse it")
     os.environ.setdefault("WANDB_MODE", "offline")
     overrides = RECIPE + ARMS[a.arm] + [
         # ef_val_sweep=false: the EF sweep ignores limit_val_batches (full 180-sample val).

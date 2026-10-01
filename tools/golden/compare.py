@@ -15,7 +15,10 @@ NOISE = re.compile(r"(time|_sec|sec_|_ms|mem|throughput|it_s)", re.I)
 
 
 def metric_map(rows):
-    return {(r.get("epoch"), r["step"], r["name"]): r["value"] for r in rows if not NOISE.search(r["name"])}
+    m = {(r.get("epoch"), r["step"], r["name"]): r["value"] for r in rows if not NOISE.search(r["name"])}
+    if len(m) != sum(not NOISE.search(r["name"]) for r in rows):
+        sys.exit("duplicate (epoch, step, name) rows: the run dir was reused")
+    return m
 
 
 def main():
