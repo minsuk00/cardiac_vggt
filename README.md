@@ -23,8 +23,8 @@ Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupe
    - `scratch/base_weights/vggt1b_base.pt` — the VGGT-1B weights,
      `https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt`.
    - `mkdir -p slurm_logs` (SLURM logs).
-3. **Logging.** `wandb login` once (the cluster script runs wandb online). Set `VGGT_NOTIFY_EMAIL`
-   to get the gradient-collapse alarm by email; unset, it is only logged.
+3. **Logging.** `wandb login` once (the cluster script runs wandb online). The gradient-collapse alarm
+   emails minsukc@umich.edu; set `VGGT_NOTIFY_EMAIL` to send it to yourself instead.
 
 The `sbatch/` scripts run the clone they are submitted from and use `$MAMBA_ROOT_PREFIX`
 (default `~/micromamba`) / `$MAMBA_EXE` (default `~/.local/bin/micromamba`); SLURM mails the

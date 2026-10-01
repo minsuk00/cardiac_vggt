@@ -21,7 +21,7 @@ import smtplib
 import time
 from email.message import EmailMessage
 
-DEFAULT_TO = os.environ.get("VGGT_NOTIFY_EMAIL")   # unset -> alarms are log-only
+DEFAULT_TO = os.environ.get("VGGT_NOTIFY_EMAIL", "minsukc@umich.edu")
 SMTP_HOST = os.environ.get("VGGT_SMTP_HOST", "localhost")
 SMTP_PORT = int(os.environ.get("VGGT_SMTP_PORT", "25"))
 TIMEOUT_S = 20
@@ -46,8 +46,7 @@ def send_email(subject, body, to=None, once_key=None, prefix="[vggt]"):
     Args:
         subject:  short subject line (``prefix`` is prepended).
         body:     message body; job context (host, SLURM id, cwd, time) is appended.
-        to:       recipient; defaults to $VGGT_NOTIFY_EMAIL. With neither, nothing is sent
-                  (logged only) and False is returned.
+        to:       recipient; defaults to $VGGT_NOTIFY_EMAIL, else minsukc@umich.edu.
         once_key: if given, only the FIRST call with this key in this process sends.
                   Use for per-step tripwires.
         prefix:   subject prefix.

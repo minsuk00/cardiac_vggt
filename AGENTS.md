@@ -169,7 +169,7 @@ Files in `log_dir`: `run_meta.jsonl` (one line per process launch), `metrics.jso
 
 - Stagger mamba activations in array jobs: `sleep $((SLURM_ARRAY_TASK_ID * 15))`.
 - Logs: `<repo>/slurm_logs/` (gitignored; the `sbatch/` scripts run the clone they are submitted from — submit from the repo root).
-- **No per-user paths in configs/scripts:** everything is repo-relative under `./scratch/` (data, base weights, logs); a teammate symlinks `scratch` to their own storage. Alarm email comes from `$VGGT_NOTIFY_EMAIL` (unset → log-only).
+- **No per-user paths in configs/scripts:** everything is repo-relative under `./scratch/` (data, base weights, logs); a teammate symlinks `scratch` to their own storage. Alarm email goes to `$VGGT_NOTIFY_EMAIL`, default minsukc@umich.edu.
 - **Monai cache is node-local `/tmp`, rebuilt per job** (`/tmp/vggt-mri_${USER}_monai_cache/`, ~55 MB/subject). Lazy first-epoch rebuild ~3–10 min for ~270 subjects, overlaps GPU compute. Intentionally not on GPFS — cached GPFS reads are ~18–20× slower than /tmp, so persisting would slow every epoch to save one rebuild.
 
 ## Git / branches (multi-agent hygiene)
