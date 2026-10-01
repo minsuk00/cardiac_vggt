@@ -182,6 +182,7 @@ class Trainer(TrainerVizMixin):
         )
         if ckpt_to_load is not None:
             self._load_resuming_checkpoint(ckpt_to_load)
+        self._restore_best_val_metric()
 
         # ── Diagnostics state (val-only; never touches training) ──────────
         # Cache the dataset's `t_target_fixed` setting so val-only diagnostics can gate on it.
@@ -534,6 +535,21 @@ class Trainer(TrainerVizMixin):
             self.train_dataset = instantiate(self.data_conf.train, _recursive_=False)
             self.train_dataset.seed = self.seed_value
 
+    def _restore_best_val_metric(self):
+        """Seed the best-so-far score from an existing `checkpoint_best.pt`, so a requeued
+        process does not overwrite a better checkpoint with its first val epoch."""
+        self._best_val_metric = None
+        path = os.path.join(self.checkpoint_conf.save_dir, "checkpoint_best.pt")
+        if not os.path.exists(path):
+            return
+        try:
+            # mmap: only the small pickle is read, not the ~3.8 GB of weights.
+            ck = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
+            self._best_val_metric = float(ck["best_metric_value"])
+            logging.info(f"[checkpoint] best so far {self._best_val_metric:.4f} (from {path})")
+        except Exception as e:
+            logging.warning(f"[checkpoint] could not read {path} (ignored): {e}")
+
     def _maybe_save_best_checkpoint(self):
         """Keep a WEIGHTS-ONLY `checkpoint_best.pt` for the best val epoch so far.
 
@@ -688,6 +704,7 @@ class Trainer(TrainerVizMixin):
                 self.run_train()
                 # Optionally run a final validation after all training is done
                 self.run_val()
+                self._maybe_save_best_checkpoint()
             else:
                 self.run_val()
         except BaseException as e:               # BaseException: also record KeyboardInterrupt
