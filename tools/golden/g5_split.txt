@@ -1,0 +1,13 @@
+# G5 golden split: 4 curated-v2 val subjects with cardiac_phase.csv rows (EF sweep -> 8 val batches).
+# The [train] section only has to exist; G5 never trains.
+[train]
+ACDC_sax/ACDC_patient020
+CMRxRecon2023/Cine_combined/CMRx23_Test_P002
+CMRxRecon2024/Cine_combined/CMRx24_Test_P012
+CMRxRecon2025/Cine_combined/CMRx25_R1val_Center004_Siemens_15T_Aera_P011
+
+[val]
+ACDC_sax/ACDC_patient020
+CMRxRecon2023/Cine_combined/CMRx23_Test_P002
+CMRxRecon2024/Cine_combined/CMRx24_Test_P012
+CMRxRecon2025/Cine_combined/CMRx25_R1val_Center004_Siemens_15T_Aera_P011

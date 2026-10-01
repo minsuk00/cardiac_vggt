@@ -48,7 +48,8 @@ def staged_run_dir(arm):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True)
-    p.add_argument("--arms", nargs="+", default=list(RUNS))
+    # diff1000 alone exercises the code path; the arms differ only in weights.
+    p.add_argument("--arms", nargs="+", default=["diff1000"])
     a = p.parse_args()
 
     out = {}
