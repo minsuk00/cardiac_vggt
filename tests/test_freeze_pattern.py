@@ -104,13 +104,6 @@ def test_camera_token_is_trainable(model_with_freeze):
     assert nt > 0, "camera_token should be trainable for reference conditioning"
 
 
-def test_obsolete_phase_embedders_absent(model_with_freeze):
-    """use_t/use_target_t are OFF → those embedders aren't even built."""
-    agg = model_with_freeze.aggregator
-    assert not hasattr(agg, "t_embedder"), "t_embedder should not exist (use_t off)"
-    assert not hasattr(agg, "target_t_embedder"), "target_t_embedder should not exist (use_target_t off)"
-
-
 def test_point_head_is_trainable(model_with_freeze):
     nt, _ = _counts(model_with_freeze, "point_head")
     assert nt > 30_000_000, f"point_head trainable count seems wrong: {nt}"

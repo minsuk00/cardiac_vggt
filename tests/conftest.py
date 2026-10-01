@@ -69,14 +69,8 @@ def monai_cache_dir(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def common_conf():
-    return OmegaConf.create({
-        "img_size": 518,
-        "patch_size": 14,
-        "rescale": True,
-        "rescale_aug": False,
-        "landscape_check": False,
-        "augs": {"scales": [1.0, 1.0]},
-    })
+    # MRIDataset ignores common_conf (kept as its first positional parameter for callers).
+    return OmegaConf.create({"img_size": 518, "patch_size": 14})
 
 
 @pytest.fixture(scope="module")

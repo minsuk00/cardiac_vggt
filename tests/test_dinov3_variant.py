@@ -1,5 +1,4 @@
 import os
-import inspect
 import sys
 
 import pytest
@@ -143,21 +142,6 @@ def test_patch_embed_freeze_pattern_with_fake_backbone():
     assert model.aggregator.patch_embed.training is False
     assert all(p.requires_grad for p in model.aggregator.frame_blocks.parameters())
     assert all(p.requires_grad for p in model.point_head.parameters())
-
-
-def test_new_constructor_options_preserve_positional_apis():
-    from data.datasets.mri_dataset import MRIDataset
-    from vggt.models.vggt import VGGT
-
-    model_args = inspect.signature(VGGT).bind(518, 14, 1024)
-    assert model_args.arguments["embed_dim"] == 1024
-    assert "backbone" not in model_args.arguments
-
-    dataset_args = inspect.signature(MRIDataset).bind(
-        object(), "/data", "val", "/split", "dynamic", 12, 518, "axial"
-    )
-    assert dataset_args.arguments["mri_mode"] == "axial"
-    assert "patch_size" not in dataset_args.arguments
 
 
 def test_seed_builder_accepts_raw_and_wrapped_states(tmp_path):

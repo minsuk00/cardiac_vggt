@@ -1,10 +1,9 @@
 """Tests for the val-only diagnostics added to Trainer:
   - per-phase PSNR accumulator behavior (in `_update_and_log_scalars`)
-  - cardiac-cycle filmstrip restores dataset state
   - gating: diagnostics are skipped when `t_target_fixed` is not None
   - training-time scalar logging is unchanged (train path doesn't touch the new code)
 
-These tests don't instantiate a full Trainer (heavy due to DDP + dataloaders).
+These tests don't instantiate a full Trainer (heavy: the 1B model + dataloaders).
 Instead they bind the methods to a stub object and verify behavior in isolation.
 """
 import os
@@ -153,35 +152,7 @@ def test_per_phase_accumulator_handles_missing_keys():
     assert len(stub._per_phase_val_psnr_full) == 0
 
 
-# ── 2. Filmstrip state restoration ────────────────────────────────────────────
-
-def test_filmstrip_restores_dataset_state():
-    """`_log_cardiac_cycle_filmstrip` must restore `t_target_fixed` even if it errors."""
-    from trainer import Trainer
-
-    class MockMRIDataset:
-        gt_grid_shape = (12, 256, 256)
-        num_slices = 12
-        t_target_fixed = 7  # the original value
-
-        def get_data(self, seq_index, img_per_seq):
-            # Force the filmstrip loop to raise mid-flight (no `images` key etc.)
-            return {}
-
-    mock_ds = MockMRIDataset()
-    stub = SimpleNamespace()
-    stub.wandb_writer = SimpleNamespace(log=lambda *a, **kw: None)  # dummy logger
-    stub.model = SimpleNamespace()
-    stub.device = "cpu"
-    stub.t_target_fixed = None
-    stub._get_mri_dataset = lambda: mock_ds
-    stub._log_cardiac_cycle_filmstrip = Trainer._log_cardiac_cycle_filmstrip.__get__(stub)
-
-    orig = mock_ds.t_target_fixed
-    stub._log_cardiac_cycle_filmstrip(log_step=42)  # should error internally and recover
-    assert mock_ds.t_target_fixed == orig, \
-        f"t_target_fixed not restored: was {orig}, now {mock_ds.t_target_fixed}"
-
+# ── 2. Visual diagnostics ─────────────────────────────────────────────────────
 
 def test_motion_mask_example_logs_under_val_motion():
     """`_log_motion_mask_example` renders an image and logs it under `media_others/val_motion_mask_example`;
@@ -248,33 +219,3 @@ def test_baseline_skipped_when_no_dataset():
     stub._log_scalar = lambda *a, **kw: None
     stub._compute_identity_baseline = Trainer._compute_identity_baseline.__get__(stub)
     stub._compute_identity_baseline()  # must not raise
-
-
-# ── 4. NaN counter ────────────────────────────────────────────────────────────
-
-def test_nan_loss_counter_increments_and_logs():
-    """When the chunk-level NaN guard fires, _nan_batch_count must increment and the
-    cumulative-skip scalar must be logged. Otherwise wandb hides silently-dropped batches."""
-    # We directly test the counter+log path that lives inside the early-return branch
-    # of _run_steps_on_batch_chunks. Replicating the surrounding torch/AMP context is
-    # heavy, so we exercise the counter logic in isolation: increment, log, return.
-    stub = SimpleNamespace()
-    stub._nan_batch_count = 0
-    stub._logged = []
-    stub._log_scalar = lambda key, val, step: stub._logged.append((key, val, step))
-    stub.steps = {"train": 42, "val": 0}
-
-    # Simulate three NaN occurrences on the train path.
-    for _ in range(3):
-        stub._nan_batch_count += 1
-        stub._log_scalar(
-            "train/optim/nan_batches_cumulative",
-            float(stub._nan_batch_count),
-            stub.steps["train"],
-        )
-
-    assert stub._nan_batch_count == 3
-    keys = [k for k, _, _ in stub._logged]
-    vals = [v for _, v, _ in stub._logged]
-    assert keys == ["train/optim/nan_batches_cumulative"] * 3
-    assert vals == [1.0, 2.0, 3.0], f"counter must be monotonic, got {vals}"

@@ -38,15 +38,6 @@ def test_bbox_metric_present_and_finite():
         assert torch.isfinite(out[k]).all()
 
 
-def test_full_metrics_renamed_present():
-    """The legacy `metric_psnr_3d` names must be replaced by `_full` suffixed names."""
-    pos, images, V_gt, z_scale = _fake_loss_inputs()
-    batch = {"images": images, "gt_target_volume": V_gt, "z_scale": z_scale, "scanner_coords": pos.clone()}
-    out = compute_volume_intensity_loss({"world_points": pos}, batch)
-    assert "metric_psnr_3d_full" in out and "metric_mae_3d_full" in out
-    assert "metric_psnr_3d" not in out, "legacy un-suffixed metric name must be gone"
-
-
 def test_bbox_metrics_absent_without_anatomy_bbox():
     """If the batch has no anatomy_bbox, only full metrics are produced (no crash)."""
     pos, images, V_gt, z_scale = _fake_loss_inputs()

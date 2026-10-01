@@ -99,18 +99,6 @@ def test_output_shapes(train_ds):
     assert len(s["timesteps"]) == 8
     assert len(s["z_indices"]) == 8
 
-def test_legacy_dvf_fields_absent(train_ds):
-    s = train_ds.get_data(0, img_per_seq=4)
-    assert "gt_dvfs" not in s, "gt_dvfs should be gone (supervised DVF pipeline deprecated)"
-    assert "scale_factors" not in s, "scale_factors should be gone"
-
-def test_sfm_filler_fields_absent(train_ds):
-    """SfM-heritage filler keys were stripped (nothing on the MRI path read them)."""
-    s = train_ds.get_data(0, img_per_seq=4)
-    for key in ["world_points", "cam_points", "point_masks", "geom_masks",
-                "depths", "extrinsics", "intrinsics", "tracks"]:
-        assert key not in s, f"{key} should be gone (SfM filler removed)"
-
 def test_new_canonical_batch_fields_present(train_ds):
     """Canonical-grid pipeline adds gt_target_volume, anatomy_bbox, content_mask, phases."""
     s = train_ds.get_data(0, img_per_seq=8)

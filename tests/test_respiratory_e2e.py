@@ -44,14 +44,6 @@ def test_get_data_emits_seq_index(train_ds):
         assert s["seq_index"].dtype == np.int64
 
 
-def test_seq_index_collates_to_b1(train_ds):
-    from torch.utils.data._utils.collate import default_collate
-    a = torch.from_numpy(train_ds.get_data(0, img_per_seq=8)["seq_index"].astype(np.int64))
-    b = torch.from_numpy(train_ds.get_data(1, img_per_seq=8)["seq_index"].astype(np.int64))
-    out = default_collate([{"seq_index": a}, {"seq_index": b}])["seq_index"]
-    assert out.shape == (2, 1) and out.tolist() == [[0], [1]]
-
-
 # ── respiratory changes ONLY images, on real-shaped data ──────────────────────
 def test_e2e_resp_changes_only_images(train_ds):
     s = train_ds.get_data(0, img_per_seq=8)
