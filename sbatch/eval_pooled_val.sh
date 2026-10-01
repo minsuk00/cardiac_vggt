@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --account=jjparkcv0
+#SBATCH --account=jjparkcv98
 #SBATCH --partition=spgpu
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1

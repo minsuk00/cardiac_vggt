@@ -23,13 +23,13 @@ VGGT (Visual Geometry Grounded Transformer, CVPR 2025) adapted for **cardiac 4D 
 ```bash
 micromamba activate svr
 pip install -r requirements.txt           # includes monai>=1.6,<1.7
-pip install --no-deps -e <MRI2CT clone>/batchaug/  # GPU aug — see note below
+pip install --no-deps git+https://github.com/halleewong/batchaug.git@52163bd15ca0ddaabca0ec3c71fbf09b9a883a4b  # GPU aug — see note below
 pip install --no-deps -e .                # this repo: packages vggt, training, inference
 ```
 
 **The repo is an editable package** (`pyproject.toml`; dependencies = `requirements.txt`, installed first, hence `--no-deps`). Import it as packages: `from training.loss import …`, `from training.data.datasets.mri_dataset import MRIDataset`, `from inference.load_run import …`; Hydra `_target_`s are `training.…`. Convention: absolute `training.`/`vggt.`/`inference.` imports everywhere (no bare `loss`/`data`/`utils` imports — mixing the two loads a module twice). `tests/`, `evaluation/`, `baselines/`, `sbatch/` and `tools/golden/` need no `PYTHONPATH`. **Exception: legacy `tools/` scripts** (everything outside `tools/golden/`) still use bare imports (`from loss import …`) and need `PYTHONPATH=training:.` from the repo root. Editable installs resolve to the tree they were installed from; a `python -m …` run puts the cwd first on `sys.path`, so from another worktree's root it uses that worktree's code.
 
-**Stack: torch 2.13.0+cu130 / torchvision 0.28.0 / triton 3.7.1 / monai 1.6.0 / numpy 2.2.6** (2026-07 upgrade — docs/49; pin rationale in the comment block at the bottom of `requirements.txt`). Re-verify any dependency bump with `bash tools/verify_env_migration.sh`. **batchaug** is not on PyPI — install editable from the MRI2CT clone with `--no-deps` (keeps pip from re-resolving the pinned torch stack); `gpu_aug.py` forces `batchaug.set_backend("pytorch")` for reproducibility. **fused_ssim** is a CUDA extension rebuilt against the active torch (`module load gcc/11.2.0 cuda/13.1.0`, then `pip install --no-build-isolation` from its pinned git commit).
+**Stack: torch 2.13.0+cu126 / torchvision 0.28.0 / triton 3.7.1 / monai 1.6.0 / numpy 2.2.6** (2026-07 upgrade — docs/49; pin rationale in the comment block at the bottom of `requirements.txt`). Re-verify any dependency bump with `bash tools/verify_env_migration.sh`. **batchaug** is not on PyPI — install the pinned GitHub commit (command above) with `--no-deps` (keeps pip from re-resolving the pinned torch stack); `gpu_aug.py` forces `batchaug.set_backend("pytorch")` for reproducibility. **fused_ssim** is a CUDA extension rebuilt against the active torch (`module load gcc/11.2.0 cuda/13.1.0`, then `pip install --no-build-isolation` from its pinned git commit).
 
 ## Training
 

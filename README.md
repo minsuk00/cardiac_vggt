@@ -4,16 +4,31 @@ Adapts [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025) for **unsupe
 
 ## Setup
 
-```bash
-micromamba activate svr
-pip install -r requirements.txt
-pip install --no-deps -e .     # the vggt, training and inference packages (editable)
-```
+1. **Environment** (Python 3.10; the sbatch scripts expect an env named `svr`):
+   ```bash
+   micromamba create -n svr python=3.10 -y && micromamba activate svr
+   pip install -r requirements.txt
+   pip install --no-deps git+https://github.com/halleewong/batchaug.git@52163bd15ca0ddaabca0ec3c71fbf09b9a883a4b
+   pip install --no-deps -e .     # the vggt, training and inference packages (editable)
+   ```
+   `--no-deps` keeps pip from re-resolving the pinned torch stack. Optional: `fused_ssim` (the
+   per-slice SSIM val metric; training runs without it, the metric is just skipped) —
+   `module load gcc/11.2.0 cuda/13.1.0 && pip install --no-build-isolation git+https://github.com/rahul-goel/fused-ssim/@a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38`.
+2. **Storage.** Every path in the configs and scripts is relative to the repo root, and runs always
+   launch from there. Data, base weights and run logs live under `./scratch/` (gitignored): make it a
+   symlink to your own storage, `ln -s /path/to/your/vggt-scratch scratch`, then
+   - `scratch/data/` — the prepared cohort (LPS, apex at z0, per-source trees named in
+     `training/splits/pooled_curated_v2.txt`) and `scratch/data/whs/cardiac_phase.csv`. Copy or link it
+     from the lab GPFS copy at `/gpfs/accounts/jjparkcv_root/jjparkcv98/minsukc/vggt/data`.
+   - `scratch/base_weights/vggt1b_base.pt` — the VGGT-1B weights,
+     `https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt`.
+   - `mkdir -p slurm_logs` (SLURM logs).
+3. **Logging.** `wandb login` once (the cluster script runs wandb online). Set `VGGT_NOTIFY_EMAIL`
+   to get the gradient-collapse alarm by email; unset, it is only logged.
 
-`batchaug` and `fused_ssim` are not on PyPI; see the comments at the bottom of `requirements.txt`.
-`--no-deps` keeps pip from re-resolving the pinned torch stack that `requirements.txt` installed.
-
-**Paths.** Every path in the configs and scripts is relative to the repo root, and runs always launch from there. Data, base weights and run logs live under `./scratch/` (`scratch/data`, `scratch/base_weights/vggt1b_base.pt`, `scratch/logs`), which is gitignored: make it a symlink to your own storage, e.g. `ln -s /path/to/your/vggt-scratch scratch`. SLURM logs go to `./slurm_logs/` (`mkdir -p slurm_logs`). The `sbatch/` scripts run the clone they are submitted from, use your `$MAMBA_ROOT_PREFIX` (default `~/micromamba`) `svr` env, and SLURM mails the submitting user. Set `VGGT_NOTIFY_EMAIL` to get the gradient-collapse alarm by email; unset, it is only logged.
+The `sbatch/` scripts run the clone they are submitted from and use `$MAMBA_ROOT_PREFIX`
+(default `~/micromamba`) / `$MAMBA_EXE` (default `~/.local/bin/micromamba`); SLURM mails the
+submitting user. Check the `#SBATCH --account` / partition lines match an allocation you belong to.
 
 ## Training
 
@@ -28,7 +43,7 @@ Cluster (paper recipe, self-submitting, auto-requeue): `ARM=diff1000 bash sbatch
 
 ## Evaluation
 
-`sbatch sbatch/eval_pooled_val.sh` (from the repo root) scores a checkpoint on the frozen gated + breathing-simulated bundles. See `evaluation/README.md`.
+`CKPT=<run>/ckpts/checkpoint_last.pt MODEL_NAME=<name> sbatch sbatch/eval_pooled_val.sh` (from the repo root) scores a checkpoint on the frozen gated + breathing-simulated bundles; without `CKPT` it scores the paper checkpoint. It writes under `evaluation/volumes/`, so first link that to storage: `ln -s ../scratch/eval evaluation/volumes`. See `evaluation/README.md`.
 
 ## Acknowledgements
 

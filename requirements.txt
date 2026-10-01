@@ -30,8 +30,8 @@ transformers==5.3.0          # DINOv3 backbone (exp_dinov3.yaml) only
 # `bash tools/verify_env_migration.sh` before being accepted.
 monai>=1.6,<1.7
 
-# batchaug is NOT on PyPI — install from the MRI2CT clone:
-#   pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/
+# batchaug is NOT on PyPI — install the pinned commit from GitHub:
+#   pip install --no-deps git+https://github.com/halleewong/batchaug.git@52163bd15ca0ddaabca0ec3c71fbf09b9a883a4b
 #
 # --no-deps still recommended so pip doesn't re-resolve the pinned torch stack.
 # batchaug ships a triton backend wanting `triton>=3.0`; torch 2.13 now provides
@@ -46,6 +46,8 @@ monai>=1.6,<1.7
 # to it is an optional, separately-verified optimization.
 #
 # torchaudio (unused) and triton are transitive: `pip install torch==2.13.0`
-# from PyPI pulls the cu130 build + triton 3.7.1 automatically. fused_ssim (the
-# optional refiner-SSIM loss / SSIM-3D metric) is a CUDA extension rebuilt from
-# git against the active torch — see docs on the torch-2.13 upgrade.
+# from PyPI pulls the default CUDA build (the svr env has +cu126) + triton 3.7.1.
+# fused_ssim (optional; the per-slice SSIM val metric) is a CUDA extension built
+# against the active torch:
+#   module load gcc/11.2.0 cuda/13.1.0
+#   pip install --no-build-isolation git+https://github.com/rahul-goel/fused-ssim/@a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38
