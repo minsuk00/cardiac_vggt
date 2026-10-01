@@ -524,7 +524,7 @@ This avoids the documented pathological small-read `torch.load` behavior on GPFS
 CUDA_VISIBLE_DEVICES='' \
 HF_HOME=/gpfs/accounts/jjparkcv_root/jjparkcv98/minsukc/vggt/huggingface \
 HF_HUB_CACHE=/gpfs/accounts/jjparkcv_root/jjparkcv98/minsukc/vggt/huggingface/hub \
-PYTHONPATH=training:. python tools/build_dinov3_seed.py \
+PYTHONPATH=training:. python -m vggt.models.dinov3_seed \
   --base /tmp/vggt1b_base.pt \
   --hf-cache scratch/huggingface \
   --output scratch/base_weights/vggt1b_dinov3_vitl16_seed.pt

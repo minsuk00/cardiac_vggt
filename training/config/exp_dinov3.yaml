@@ -8,7 +8,7 @@ backbone: "dinov3_vitl16"
 img_size: 256
 
 checkpoint:
-  # One-time exact VGGT-1B/DINOv3 hybrid built by tools/build_dinov3_seed.py.
+  # One-time exact VGGT-1B/DINOv3 hybrid built by `python -m vggt.models.dinov3_seed`.
   # Strict loading guards against a missing backbone or target-only z-embedder tensors.
   resume_checkpoint_path: "./scratch/base_weights/vggt1b_dinov3_vitl16_seed.pt"
   strict: true

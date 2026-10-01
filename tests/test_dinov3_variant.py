@@ -132,7 +132,7 @@ def test_patch_embed_freeze_pattern_with_fake_backbone():
 
 
 def test_seed_builder_accepts_raw_and_wrapped_states(tmp_path):
-    from tools.build_dinov3_seed import _load_model_state
+    from vggt.models.dinov3_seed import _load_model_state
 
     state = {"weight": torch.ones(2)}
     raw = tmp_path / "raw.pt"
@@ -144,7 +144,7 @@ def test_seed_builder_accepts_raw_and_wrapped_states(tmp_path):
 
 
 def test_seed_builder_filters_source_only_keys_and_injects_deterministic_z():
-    from tools.build_dinov3_seed import (
+    from vggt.models.dinov3_seed import (
         NEW_BACKBONE_PREFIX,
         _assemble_hybrid,
         _z_embedder_state,
@@ -173,7 +173,7 @@ def test_seed_builder_filters_source_only_keys_and_injects_deterministic_z():
 
 
 def test_seed_builder_no_clobber_is_enforced_at_publication(tmp_path):
-    from tools.build_dinov3_seed import _save_weights_only
+    from vggt.models.dinov3_seed import _save_weights_only
 
     output = tmp_path / "seed.pt"
     torch.save({"sentinel": True}, output)
