@@ -28,7 +28,7 @@ from hydra.utils import instantiate
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from data.loader import build_loader
 from data.respiratory import RespiratoryConfig
-from train_utils.checkpoint import robust_torch_save
+from train_utils.checkpoint import make_checkpoint, restore_checkpoint, robust_torch_save
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 from train_utils.freeze import freeze_modules
 from train_utils.general import *
@@ -59,6 +59,35 @@ STRATA_METRICS = (
 )
 
 
+def forward(model, loss_fn, batch, phase: str):
+    """Model forward + loss -> (predictions, loss dict). `loss_objective` aliases
+    `objective` so the scalar logs can name it like every other `loss_*` key."""
+    y_hat = model(images=batch["images"], batch=batch)
+    loss_dict = loss_fn(y_hat, batch, val_metrics=(phase == "val"))
+    loss_dict["loss_objective"] = loss_dict["objective"]
+    return y_hat, loss_dict
+
+
+def train_step(model, loss_fn, optim, clipper, batch, where: float, amp: bool):
+    """One optimizer step -> (predictions, loss dict, objective is finite, grad norms).
+
+    zero_grad -> forward under bf16 autocast -> backward -> schedulers set to `where` ->
+    per-group clipping -> optimizer step. A non-finite objective skips the backward; the
+    clipper and the optimizer step still run, but every gradient is None after
+    `zero_grad(set_to_none=True)`, so they leave the parameters and optimizer state as
+    they were. Gradient accumulation does not exist (batch size is pinned to 1)."""
+    optim.zero_grad(set_to_none=True)
+    with torch.amp.autocast("cuda", enabled=amp, dtype=torch.bfloat16):
+        y_hat, loss_dict = forward(model, loss_fn, batch, "train")
+    finite = math.isfinite(loss_dict["objective"].item())
+    if finite:
+        loss_dict["objective"].backward()
+    optim.step_schedulers(where)
+    grad_norms = clipper()
+    optim.optimizer.step()
+    return y_hat, loss_dict, finite, grad_norms
+
+
 class Trainer(TrainerVizMixin):
     """
     A single-GPU trainer. (The multi-GPU DDP apparatus was removed in 284992c —
@@ -80,7 +109,6 @@ class Trainer(TrainerVizMixin):
         checkpoint: Dict[str, Any],
         max_epochs: int,
         mode: str = "train",
-        device: str = "cuda",
         seed_value: int = 123,
         val_epoch_freq: int = 1,
         cuda: Dict[str, bool] = None,
@@ -101,7 +129,6 @@ class Trainer(TrainerVizMixin):
             checkpoint: Hydra config for checkpointing.
             max_epochs: Total number of epochs to train.
             mode: "train" for training and validation, "val" for validation only.
-            device: "cuda" or "cpu".
             seed_value: A random seed for reproducibility.
             val_epoch_freq: Frequency (in epochs) to run validation.
             cuda: Hydra config for CUDA-specific settings (e.g., cuDNN).
@@ -135,7 +162,9 @@ class Trainer(TrainerVizMixin):
         # 'where' tracks training progress from 0.0 to 1.0 for schedulers
         self.where = 0.0
 
-        self._setup_device(device)
+        # Single-GPU only: always cuda:0 (DDP was removed in 284992c).
+        self.device = torch.device("cuda", 0)
+        torch.cuda.set_device(0)
         self._setup_backends(cuda)
 
         # Setup logging directory and configure logger
@@ -161,8 +190,8 @@ class Trainer(TrainerVizMixin):
         self.time_elapsed_meter = DurationMeter("Time Elapsed", ":.4f")
 
         # Construct the optimizer (after moving model to device)
-        if self.mode != "val":
-            self.optim = construct_optimizer(self.model, self.optim_conf)
+        self.optim = (construct_optimizer(self.model, self.optim_conf)
+                      if self.mode != "val" else None)
 
         # Load checkpoint: a run's own latest checkpoint in save_dir wins (SLURM auto-requeue
         # / crash resume — epoch+steps+optimizer intact); the configured seed/base
@@ -359,14 +388,6 @@ class Trainer(TrainerVizMixin):
         """
         if not self.compile_attention_blocks:
             return
-        # Gate on the device this run actually uses, NOT on cuda.is_available(): with
-        # `device: cpu` on a GPU node the latter is True, so every block would compile
-        # against the Inductor CPU backend (minutes of C++ codegen, or an outright failure)
-        # on a run that works fine today, with no warning to explain the stall.
-        if self.device.type != "cuda":
-            logging.warning(f"compile_attention_blocks requested but device is "
-                            f"{self.device}; skipping compilation.")
-            return
         agg = getattr(self.model, "aggregator", None)
         if agg is None:
             logging.warning("compile_attention_blocks requested but model has no aggregator; skipping.")
@@ -403,41 +424,8 @@ class Trainer(TrainerVizMixin):
             load_path = stage_checkpoint_to_local(ckpt_path)
         with open(load_path, "rb") as f:
             checkpoint = torch.load(f, map_location="cpu")
-
-        # Load model state
-        model_state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
-        missing, unexpected = self.model.load_state_dict(model_state_dict, strict=self.checkpoint_conf.strict)
-        logging.info(f"Model state loaded. Missing keys count: {len(missing) if missing else 0}. Unexpected keys count: {len(unexpected) if unexpected else 0}.")
-
-        # Load optimizer state if available and in training mode (self.optim is only
-        # constructed when self.mode != "val"; skip otherwise to avoid AttributeError).
-        if "optimizer" in checkpoint and self.mode != "val":
-            logging.info("Loading optimizer state dict")
-            opt_state = checkpoint["optimizer"]
-            if isinstance(opt_state, list):     # multi-optimizer format; only [0] ever existed
-                opt_state = opt_state[0]
-            self.optim.optimizer.load_state_dict(opt_state)
-
-        # Load training progress
-        if "prev_epoch" in checkpoint:
-            self.epoch = checkpoint["prev_epoch"] + 1
-        elif "epoch" in checkpoint:
-            self.epoch = checkpoint["epoch"]
-        self.steps = checkpoint["steps"] if "steps" in checkpoint else {"train": 0, "val": 0}
-        self.ckpt_time_elapsed = checkpoint.get("time_elapsed", 0)
-        # Older checkpoints also carry a "scaler" entry (the disabled bf16 GradScaler's
-        # state); it is ignored.
-
-    def _setup_device(self, device: str):
-        """Sets up the device for training (CPU or CUDA)."""
-        # Single-GPU only: always device 0 (was read from torchrun's LOCAL_RANK env).
-        if device == "cuda":
-            self.device = torch.device("cuda", 0)
-            torch.cuda.set_device(0)
-        elif device == "cpu":
-            self.device = torch.device("cpu")
-        else:
-            raise ValueError(f"Unsupported device: {device}")
+        self.epoch, self.steps, self.ckpt_time_elapsed = restore_checkpoint(
+            checkpoint, self.model, self.optim, strict=self.checkpoint_conf.strict)
 
     def _setup_components(self):
         """Initializes all core training components using Hydra configs."""
@@ -581,13 +569,8 @@ class Trainer(TrainerVizMixin):
             if self.checkpoint_conf.save_freq > 0 and int(epoch) % self.checkpoint_conf.save_freq == 0 and (int(epoch) > 0 or self.checkpoint_conf.save_freq == 1):
                 checkpoint_names.append(f"checkpoint_{int(epoch)}")
 
-        checkpoint = {
-            "prev_epoch": epoch,
-            "steps": self.steps,
-            "time_elapsed": self.time_elapsed_meter.val,
-            "optimizer": self.optim.optimizer.state_dict(),
-            "model": self.model.state_dict(),
-        }
+        checkpoint = make_checkpoint(self.model, self.optim, epoch, self.steps,
+                                     self.time_elapsed_meter.val)
         for ckpt_name in checkpoint_names:
             checkpoint_path = os.path.join(checkpoint_folder, f"{ckpt_name}.pt")
             logging.info(f"Saving checkpoint at epoch {epoch} to {checkpoint_path}")
@@ -830,7 +813,8 @@ class Trainer(TrainerVizMixin):
             # compute output
             with torch.amp.autocast("cuda", enabled=self.optim_conf.amp.enabled,
                                     dtype=torch.bfloat16):
-                val_loss_dict = self._step(batch, phase, loss_meters)
+                y_hat, val_loss_dict = forward(self.model, self.loss, batch, phase)
+                self._log_step(y_hat, val_loss_dict, batch, phase, loss_meters)
 
             self._save_val_volumes(batch, val_loss_dict)
             if self._ef_this_epoch:
@@ -1038,12 +1022,24 @@ class Trainer(TrainerVizMixin):
             if data_iter == 0:
                 self._log_resp_disp_scalar(batch, self.steps["train"], "train")
 
-            self._run_step_and_backward(batch, phase, loss_meters)
-
             # Scheduler progress. Always < 1: epoch < max_epochs and data_iter < limit.
             exact_epoch = self.epoch + float(data_iter) / limit_train_batches
             self.where = float(exact_epoch) / self.max_epochs
-            self.optim.step_schedulers(self.where)
+            y_hat, loss_dict, finite, grad_norm_dict = train_step(
+                self.model, self.loss, self.optim, self.gradient_clipper, batch,
+                self.where, amp=self.optim_conf.amp.enabled)
+            self._log_step(y_hat, loss_dict, batch, phase, loss_meters)
+            if not finite:
+                # Without this count, skipped batches would vanish from the loss meters
+                # and the loss curve would look healthier than it is.
+                self._nan_batch_count += 1
+                logging.error(
+                    f"Loss is {loss_dict['objective'].item()} (phase={phase}, "
+                    f"step={self.steps[phase]}, cumulative_nan_batches={self._nan_batch_count}); "
+                    f"skipping backward."
+                )
+                self._log_scalar("train/optim/nan_batches_cumulative",
+                                 float(self._nan_batch_count), self.steps[phase])
 
             # Log schedulers
             if self.steps[phase] % self.logging_conf.log_freq == 0:
@@ -1067,9 +1063,6 @@ class Trainer(TrainerVizMixin):
                     self.steps[phase],
                 )
 
-            # Clipping gradients and detecting diverging gradients
-            grad_norm_dict = self.gradient_clipper()
-
             for key, grad_norm in grad_norm_dict.items():
                 meter_key = f"Grad/{key}"
                 if meter_key in loss_meters:
@@ -1084,9 +1077,6 @@ class Trainer(TrainerVizMixin):
                 if alarm is not None:
                     alarm.update(grad_norm, self.steps[phase], epoch=self.epoch)
 
-            # Optimizer step
-            self.optim.optimizer.step()
-
             # Measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
@@ -1096,64 +1086,16 @@ class Trainer(TrainerVizMixin):
             if data_iter % self.logging_conf.log_freq == 0:
                 progress.display(data_iter)
 
-    def _run_step_and_backward(self, batch: Mapping, phase: str,
-                               loss_meters: Dict[str, AverageMeter]):
-        """One forward + backward. Gradient accumulation was removed (2026-08-01): every
-        config sets `accum_steps: 1`, and B is hardcoded to 1 in the loader (the only
-        collation that is safe under native-z), so chunking a batch into N>1 pieces would
-        have produced EMPTY tensors — the feature was dead and unusable, not just unused."""
-        self.optim.zero_grad(set_to_none=True)
+    def _log_step(self, y_hat, loss_dict, batch, phase: str, loss_meters: dict):
+        """Meters, scalars and visuals for one step, then advance `steps[phase]`.
 
-        with torch.amp.autocast("cuda", enabled=self.optim_conf.amp.enabled, dtype=torch.bfloat16):
-            loss_dict = self._step(batch, phase, loss_meters)
-
-        loss = loss_dict["objective"]
-
-        if not math.isfinite(loss.item()):
-            self._nan_batch_count += 1
-            logging.error(
-                f"Loss is {loss.item()} (phase={phase}, step={self.steps[phase]}, "
-                f"cumulative_nan_batches={self._nan_batch_count}); skipping backward."
-            )
-            self._log_scalar(
-                "train/optim/nan_batches_cumulative",
-                float(self._nan_batch_count),
-                self.steps[phase],
-            )
-            return
-
-        loss.backward()
-
-    def _step(self, batch, phase: str, loss_meters: dict):
-        """
-        Performs a single forward pass, computes loss, and logs results.
-
-        Returns:
-            A dictionary containing the computed losses.
-        """
-        # Forward pass
-        y_hat = self.model(images=batch["images"], batch=batch)
-
-        # Loss computation
-        loss_dict = self.loss(y_hat, batch, val_metrics=(phase == "val"))
-        loss_dict["loss_objective"] = loss_dict["objective"]
-
-        # Combine all data for logging
+        A non-finite objective skips the logging only, so one NaN cannot poison the
+        epoch's AverageMeters (docs/60)."""
         log_data = {**{f"pred_{k}": v for k, v in y_hat.items()}, **loss_dict, **batch}
-
-        # Skip logging (only) for a non-finite batch, so one NaN can't poison the epoch's
-        # AverageMeters. The backward-skip logic in _run_step_and_backward runs later and is
-        # unchanged; val had no check at all. docs/60. (Named _run_steps_on_batch_chunks
-        # until 2026-08-01, when accumulation was removed — docs/62 §7.)
-        if not self._log_if_finite(log_data, phase):
-            self.steps[phase] += 1
-            return loss_dict
-
-        self._update_and_log_scalars(log_data, phase, self.steps[phase], loss_meters)
-        self._log_visuals_to_wandb(log_data, phase, self.steps[phase])
-
+        if self._log_if_finite(log_data, phase):
+            self._update_and_log_scalars(log_data, phase, self.steps[phase], loss_meters)
+            self._log_visuals_to_wandb(log_data, phase, self.steps[phase])
         self.steps[phase] += 1
-        return loss_dict
 
     @staticmethod
     def _pitch_bucket(dz):
