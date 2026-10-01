@@ -78,7 +78,8 @@ def main():
             if gate != "g5":
                 argv = argv + ["--out", path]
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            log = path.replace(".json", ".log")
+            # g5's run dir must start empty, so its log goes next to it, not inside.
+            log = (os.path.dirname(path) if gate == "g5" else path.replace(".json", "")) + ".log"
             r = subprocess.run(argv, cwd=REPO, env=env, stdout=open(log, "w"), stderr=subprocess.STDOUT)
             if r.returncode != 0:
                 failed.append(name)
