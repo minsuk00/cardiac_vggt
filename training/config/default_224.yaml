@@ -1,7 +1,7 @@
 # THE PAPER-MODEL RECIPE (no-reg, docs/92 index note): default.yaml specialized to the exact
 # configuration the shipped no-reg checkpoint was trained with (awrobewn/augaggr224 recipe,
 # verified against scratch/logs/212682843_noreg224_pooled1337/run_meta.jsonl — NOT hand-copied).
-# default.yaml already carries the shared knobs (diffusion_weight=0 since 2026-08-28, tv=0,
+# default.yaml already carries the shared knobs (diffusion_weight=0 since 2026-08-28,
 # heart_weight=0.5, gather_weight=0.5, lr 5e-5, aggft freeze); the ONLY deltas are below.
 # Run: PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py --config default_224
 

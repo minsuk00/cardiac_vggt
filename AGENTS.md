@@ -60,7 +60,7 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 **Configs** (`training/config/`) — **one complete config + thin experiment overrides** (flattened 2026-08-01):
 - `default.yaml` — **THE config.** Complete and runnable on its own (`--config default`): cohort, sampling, logging, loss, optimizer, augmentation, aggft freeze. One file, one truth.
 - `exp_dinov3.yaml`, `default_224.yaml` — thin overrides of `default.yaml` (DINOv3 backbone; 224-px input). Retired variants live in `training/config/_archive/`.
-- The old three-layer config chain (`default → mri_finetune → mri_volume`) is gone; `exp_name`/`config_name` deliberately keep the `mri_volume` family name (log-dir + wandb continuity). Why it was removed + flattening verification: docs/61 + docs/65.
+- The old three-layer config chain (`default → mri_finetune → mri_volume`) is gone; `exp_name` deliberately keeps the `mri_volume` family name (log-dir + wandb continuity). Why it was removed + flattening verification: docs/61 + docs/65.
 - Legacy variants (`mri_finetune_*`, `mri_p001_overfit`, `mri_volume_overfit`) and their sbatch scripts live under `_archive/legacy_configs/` and `_archive/legacy_sbatch/`.
 
 **Key knobs:**
@@ -179,7 +179,7 @@ Multiple agents share this single working tree — a bare `git switch` with unco
 - **Checkpoint loads auto-stage to node-local `/tmp`** (`vggt/utils/checkpoint_stage.py`, docs/50) — GPFS `torch.load` is ~266s vs ~5s from `/tmp`. Training stages only immutable base/seed weights; inference stages every load. Byte-identical; falls back to the original path on failure.
 - Initial VGGT-1B load takes ~9 min cold, ~1 min cached.
 - Local pilots: `WANDB_MODE=offline`. The cluster script (`sbatch/train_final_518.sh`) sets `WANDB_MODE=online`.
-- Hydra custom resolvers (`rev_ts:`, `basename:`, `phase_mode:`) are registered in `training/launch.py`. For standalone `compose()`: `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`; `OmegaConf.register_new_resolver('basename', lambda p: os.path.basename(p))`; `OmegaConf.register_new_resolver('phase_mode', lambda t: 'multiphase' if t is None else f't{int(t)}')`.
+- Hydra custom resolvers (`rev_ts:`, `backbone_tag:`, `aug_tag:`) are registered in `training/launch.py` (`backbone_ps:` in `training/data/__init__.py`). For standalone `compose()`: `import launch` registers them all, or at minimum `OmegaConf.register_new_resolver('rev_ts', lambda: '0')`.
 
 ## Testing
 

@@ -29,7 +29,6 @@ defaults:
 # `exp_name` keeps the "mri_volume" family name (it names log dirs / wandb runs and is the
 # continuity link to the existing run series) even though the FILE is now default.yaml.
 exp_name: "${rev_ts:}_mri_volume_${mri_data_mode}_${mri_mode}_${dataset_name}"
-config_name: "mri_volume"
 
 split: "train"
 mode: "train"
@@ -68,18 +67,19 @@ reference_slot: true
 # native-z the bbox spans the whole stack ⇒ S == D (5-21 per subject). Set false for the
 # legacy fixed-S multi-frame sampler (full coverage + random extras up to the img_nums budget).
 one_frame_per_slice: true
-# 935 pooled train subjects = one exact pass per epoch. TRUE as of 2026-08-01, when
+# 628 train subjects = one exact pass per epoch. TRUE as of 2026-08-01, when
 # `inside_random` was removed: the sampler's seeded permutation is now honoured, so an epoch
-# visits each subject EXACTLY once (verified: 935 draws, 935 unique, reshuffled per epoch).
+# visits each subject EXACTLY once (verified on the then-935-subject pooled.txt: 935 draws,
+# 935 unique, reshuffled per epoch).
 # Previously the index was discarded and a subject drawn at random, i.e. draws WITH
 # replacement (~37% of subjects unseen per epoch), so this line did not mean what it said.
 # Keep it equal to the train-split size: LOWER truncates the pass (a seed-dependent subset
 # each epoch); HIGHER is harmless but pointless — the sampler is exhausted at the split size
 # and the epoch simply ends there. 628 = pooled_curated_v2 train (was 935 for pooled.txt).
 limit_train_batches: 628
-# 90 curated val subjects x {ED, ES} = 180 entries under ef_val_sweep — one full deterministic
-# pass (was 266 for pooled.txt's 133 val subjects). Sized to the split: too LOW silently skips
-# the tail of the ES entries.
+# Val steps per epoch. IGNORED under ef_val_sweep (the default): the trainer then runs exactly
+# len(val_targets) = 90 val subjects x {ED, ES} = 180 entries. Only applies with
+# ef_val_sweep=false.
 limit_val_batches: 180
 max_epochs: 200
 val_epoch_freq: 1
@@ -108,7 +108,7 @@ logging:
   log_level_primary: DEBUG
   log_visual_frequency:
     train: 628  # once per epoch (matches limit_train_batches = train-split size)
-    val: 200    # UNUSED: val visuals log at fixed subject indices (trainer_viz._log_visuals_to_wandb), not by step
+    # (no `val` key: val visuals log at fixed subject indices, not by step — trainer_viz)
   # Nine source/vendor cardiac-cycle GIFs (12 forwards each) are expensive, so log less often.
   filmstrip_every_n_val_epochs: 5
   # Cheaper ED/ES and augmentation panels retain their original cadence.
@@ -117,8 +117,9 @@ logging:
   # skips the segmentation.
   ef_eval_enable: true
   # Every val epoch as of 2026-08-01: with the CorSeg backend the whole EF block — writing 266
-  # pred NIfTIs + segmenting + metrics — measures ~1.75 min on top of a ~4.2 min val loop
-  # (L40S, 133 subjects x {ED,ES}). The old `5` was sized for the slower nnU-Net hop.
+  # pred NIfTIs + segmenting + metrics — measured ~1.75 min on top of a ~4.2 min val loop
+  # (L40S, the old pooled.txt val: 133 subjects x {ED,ES}; curated v2 val is 90 x {ED,ES}).
+  # The old `5` was sized for the slower nnU-Net hop.
   ef_eval_every_n_val_epochs: 1
   # Segmenter for the EF metric. "corseg" (default, docs/57) runs IN `svr` and is clearly
   # better at what this metric reports — EF MAE 2.51 vs 4.67 pp, LV volume MAE 4.4 vs 8.9 mL —
@@ -208,13 +209,6 @@ logging:
         - metric_resp_corr_dz
         - metric_resp_epe_dz_mm
         - metric_resp_frac_deep_ignored
-  # Per-phase ON/OFF switch for the image panels, nothing more: the trainer only tests
-  # `is not None` and `phase in ...` (trainer_viz.py). The old payload (modality / images /
-  # world_points / pred_world_points) was never read — WHICH panels get logged is decided in
-  # code, not here.
-  visuals_keys_to_log:
-    train: {}
-    val: {}
 
 # ── Checkpointing ─────────────────────────────────────────────────────────────────────────
 checkpoint:
@@ -231,8 +225,9 @@ checkpoint:
   # metrics for selecting weights. NOTE docs/experiment_evaluation_instruction.md §3.3 warns
   # not to AVERAGE this ACROSS subjects (79% of its between-subject spread is intrinsic scan
   # difficulty). That caveat does not apply here: val is deterministic, so every epoch scores
-  # the identical 266 subject/phase pairs and the scan-difficulty term is a constant offset
-  # that cancels in an epoch-vs-epoch comparison. Measured 0% NaN over all 266 rows.
+  # the identical subject/phase pairs (180 on curated v2) and the scan-difficulty term is a
+  # constant offset that cancels in an epoch-vs-epoch comparison. Measured 0% NaN over all 266
+  # rows of the old pooled.txt val.
   # (`metric_psnr_seg_gain_db` — same ROI, referenced to each subject's own identity floor —
   # is the more robust choice if val composition ever stops being fixed.)
   best_metric: metric_psnr_3d_heartseg
@@ -246,7 +241,6 @@ data:
     shuffle: True
     pin_memory: False
     common_config:
-      training: True
       # Slot BUDGET / cap, not a slot count: `one_frame_per_slice` sets S = this subject's
       # own plane count D (5-21 under native-z), and mri_dataset raises if D exceeds this
       # (docs/59 F19). Raise it only alongside the memory it implies.
@@ -278,7 +272,6 @@ data:
     shuffle: False
     pin_memory: False
     common_config:
-      training: False
       img_nums: [20, 20]     # slot BUDGET/cap; see the train block above
     dataset:
       _target_: data.composed_dataset.ComposedDataset
@@ -299,7 +292,7 @@ data:
           # NOT deferred on val (deliberately — see the train block). 12 scripts across
           # inference/ and tools/ instantiate THIS `data.val` node and then read
           # `get_data()["images"]` directly, bypassing gpu_augment_batch; deferring here
-          # would break every one of them. Train is 935 of the 1201 steps per epoch, so
+          # would break every one of them. Train is 628 of the 808 steps per epoch, so
           # train-only deferral captures the bulk of the saving at zero blast radius.
           defer_input_images: false
           ef_val_sweep: ${ef_val_sweep}
@@ -429,8 +422,8 @@ loss:
     # At 0.5 the background retains only ~9% of the gradient, which is close to the masked
     # variant that produced ghost blobs. If that shows up in the V_canon-V_gt panel, drop to
     # ~0.05-0.10 rather than removing the term.
-    # NATIVE-Z ONLY: under the fixed12 hub wrapper the ROI stays at native D while phases are
-    # padded to 12, so get_data drops the key and loss.py raises rather than silently no-op.
+    # get_data drops the ROI key if its on-disk shape != the canonical grid (never seen on
+    # native-z); loss.py then raises rather than silently no-op.
     # ⚠️ Makes metric_psnr_3d_heartseg a training target — judge on amp_ratio / motion PSNR.
     # DEFAULT 0.5 per the docs/71 verdict: fastest measured amplitude bootstrap (~8.9k steps
     # vs 43.9k unweighted), offline amp_ratio 0.640 vs 0.114 control, best motion PSNR.

@@ -116,7 +116,6 @@ def test_ordinary_val_visuals_log_only_es_half_of_sweep():
         def __init__(self):
             self.logging_conf = SimpleNamespace(
                 log_visual_frequency={"val": 1}, log_visuals=True,
-                visuals_keys_to_log={"val": []},
             )
             self.steps = {"train": 7}
             self._val_iter = 0

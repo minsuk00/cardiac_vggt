@@ -1141,69 +1141,68 @@ class TrainerVizMixin:
             # per-source Volume/DVF/Lookup panels to the harder ES reconstruction only.
             is_es = _vt is None or sweep_idx >= len(_vt) // 2
             should_log = is_es and subj_idx in VAL_VISUAL_SUBJECT_INDICES
-        if not (self.logging_conf.log_visuals and should_log and (self.logging_conf.visuals_keys_to_log is not None)):
+        if not (self.logging_conf.log_visuals and should_log):
             return
 
-        if phase in self.logging_conf.visuals_keys_to_log:
-            # Build caption (subject + per-slot z/t info + t_target).
-            caption_parts = []
-            if "seq_name" in batch:
-                try:
-                    raw_seq = batch["seq_name"][0]
-                    # seq_name is "mri_{mri_mode}_{rel_path}"; strip to the bare subject id.
-                    subject = raw_seq.split("_", 2)[-1] if raw_seq.startswith("mri_") else raw_seq
-                    caption_parts.append(f"subj={subject}")
-                except Exception:
-                    pass
-            t_target_val = None
-            if "t_target" in batch:
-                try:
-                    t_target_val = int(batch["t_target"][0].item() if hasattr(batch["t_target"][0], "item") else batch["t_target"][0])
-                    caption_parts.append(f"t_target={t_target_val}")
-                except Exception:
-                    pass
-            if "slice_indices" in batch and "timesteps" in batch:
-                try:
-                    slices = batch["slice_indices"][0]
-                    timesteps = batch["timesteps"][0]
-                    S = slices.shape[0]
-                    # Per-slot respiratory phase r + displacement |d| (mm), if breathing on.
-                    resp = batch.get("resp_disp_mm")
-                    dmag = resp[0].norm(dim=-1) if resp is not None else None  # (S,)
-                    rphase = batch.get("resp_r")
-                    rphase = rphase[0] if rphase is not None else None         # (S,)
-                    def _slot(i):
-                        s = f"f{i}: z={slices[i].item()}, t={timesteps[i].item()}"
-                        if dmag is not None:
-                            s += f", r={rphase[i].item():.2f}, |d|={dmag[i].item():.0f}mm"
-                        return s
-                    per_slot = " | ".join([_slot(i) for i in range(S)])
-                    caption_parts.append(per_slot)
-                except Exception:
-                    pass
-            caption_parts.append(f"step={log_step}")
-            caption = "  ".join(caption_parts)
-
-            # Wandb key prefix. Train stays in the media_others/ bucket; val gets a per-subject
-            # section (media_val_subj{i}/) so each selected subject's panels group together.
-            if phase == "train":
-                name, group = "Train_Visuals", "media_others"
-            else:
-                # Patient id APPENDED to the index (not replacing it) so the section is
-                # both stable to sort and identifiable without a lookup.
-                name, group = "Val_Visuals", f"media_val_subj{subj_idx}_{val_sid or 'unknown'}"
-
-            # Render both figures and log. Diagnostic only — a render error (e.g. a
-            # shape regression in the per-slot r/|d| titles, or a matplotlib/wandb
-            # hiccup) must NEVER crash training/validation, so guard the whole call.
+        # Build caption (subject + per-slot z/t info + t_target).
+        caption_parts = []
+        if "seq_name" in batch:
             try:
-                self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption, group=group)
-            except Exception as e:
-                logging.warning(f"volume/DVF visual log failed (ignored): {e}")
+                raw_seq = batch["seq_name"][0]
+                # seq_name is "mri_{mri_mode}_{rel_path}"; strip to the bare subject id.
+                subject = raw_seq.split("_", 2)[-1] if raw_seq.startswith("mri_") else raw_seq
+                caption_parts.append(f"subj={subject}")
+            except Exception:
+                pass
+        t_target_val = None
+        if "t_target" in batch:
+            try:
+                t_target_val = int(batch["t_target"][0].item() if hasattr(batch["t_target"][0], "item") else batch["t_target"][0])
+                caption_parts.append(f"t_target={t_target_val}")
+            except Exception:
+                pass
+        if "slice_indices" in batch and "timesteps" in batch:
+            try:
+                slices = batch["slice_indices"][0]
+                timesteps = batch["timesteps"][0]
+                S = slices.shape[0]
+                # Per-slot respiratory phase r + displacement |d| (mm), if breathing on.
+                resp = batch.get("resp_disp_mm")
+                dmag = resp[0].norm(dim=-1) if resp is not None else None  # (S,)
+                rphase = batch.get("resp_r")
+                rphase = rphase[0] if rphase is not None else None         # (S,)
+                def _slot(i):
+                    s = f"f{i}: z={slices[i].item()}, t={timesteps[i].item()}"
+                    if dmag is not None:
+                        s += f", r={rphase[i].item():.2f}, |d|={dmag[i].item():.0f}mm"
+                    return s
+                per_slot = " | ".join([_slot(i) for i in range(S)])
+                caption_parts.append(per_slot)
+            except Exception:
+                pass
+        caption_parts.append(f"step={log_step}")
+        caption = "  ".join(caption_parts)
 
-            # Round-trip lookup panel — val-only (GT-referenced, in-distribution).
-            if phase != "train":
-                try:
-                    self._log_lookup_to_wandb(batch, name, log_step, caption, group=group)
-                except Exception as e:
-                    logging.warning(f"lookup visual log failed (ignored): {e}")
+        # Wandb key prefix. Train stays in the media_others/ bucket; val gets a per-subject
+        # section (media_val_subj{i}/) so each selected subject's panels group together.
+        if phase == "train":
+            name, group = "Train_Visuals", "media_others"
+        else:
+            # Patient id APPENDED to the index (not replacing it) so the section is
+            # both stable to sort and identifiable without a lookup.
+            name, group = "Val_Visuals", f"media_val_subj{subj_idx}_{val_sid or 'unknown'}"
+
+        # Render both figures and log. Diagnostic only — a render error (e.g. a
+        # shape regression in the per-slot r/|d| titles, or a matplotlib/wandb
+        # hiccup) must NEVER crash training/validation, so guard the whole call.
+        try:
+            self._log_volume_and_dvf_to_wandb(batch, name, log_step, caption, group=group)
+        except Exception as e:
+            logging.warning(f"volume/DVF visual log failed (ignored): {e}")
+
+        # Round-trip lookup panel — val-only (GT-referenced, in-distribution).
+        if phase != "train":
+            try:
+                self._log_lookup_to_wandb(batch, name, log_step, caption, group=group)
+            except Exception as e:
+                logging.warning(f"lookup visual log failed (ignored): {e}")

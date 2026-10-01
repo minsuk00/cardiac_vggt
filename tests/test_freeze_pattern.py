@@ -28,7 +28,6 @@ def _load_cfg():
     from hydra import compose, initialize_config_dir
 
     OmegaConf.register_new_resolver("rev_ts", lambda: "test", replace=True)
-    OmegaConf.register_new_resolver("basename", lambda p: p.rstrip("/").split("/")[-1], replace=True)
 
     cfg_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=cfg_dir):

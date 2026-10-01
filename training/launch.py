@@ -47,11 +47,6 @@ def _install_requeue_handler():
 # Use a fixed value per-run so all config accesses match
 REVERSE_TS = str(2000000000 - int(time.time()))
 OmegaConf.register_new_resolver("rev_ts", lambda: REVERSE_TS)
-OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p))
-# Wandb phase-mode tag: "multiphase" when t_target_fixed is null, else "tK".
-OmegaConf.register_new_resolver(
-    "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}"
-)
 # Compact WandB tags for experiment dimensions commonly compared in the dashboard.
 OmegaConf.register_new_resolver(
     "backbone_tag", lambda name: "dinov3" if str(name).startswith("dinov3_") else "dinov2"

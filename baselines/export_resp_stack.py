@@ -53,9 +53,6 @@ def _build_respiratory_config():
         torch.distributed.init_process_group(backend="gloo", rank=0, world_size=1)
     from hydra import compose, initialize_config_dir
     OmegaConf.register_new_resolver("rev_ts", lambda: "0", replace=True)
-    OmegaConf.register_new_resolver("basename", lambda p: os.path.basename(p), replace=True)
-    OmegaConf.register_new_resolver(
-        "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True)
     config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "config"))
     with initialize_config_dir(version_base=None, config_dir=config_dir):
         cfg = compose(config_name="default")

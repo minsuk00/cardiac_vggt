@@ -3,7 +3,6 @@ defaults:
   - _self_
 
 exp_name: "${rev_ts:}_mri_volume_dinov3_${mri_data_mode}_${mri_mode}_${dataset_name}"
-config_name: "mri_volume_dinov3"
 
 backbone: "dinov3_vitl16"
 img_size: 256

@@ -16,10 +16,6 @@ def _compose(name):
     import data  # noqa: F401  (registers the backbone_ps resolver)
 
     OmegaConf.register_new_resolver("rev_ts", lambda: "test", replace=True)
-    OmegaConf.register_new_resolver("basename", lambda p: p.rstrip("/").split("/")[-1], replace=True)
-    OmegaConf.register_new_resolver(
-        "phase_mode", lambda t: "multiphase" if t is None else f"t{int(t)}", replace=True
-    )
     OmegaConf.register_new_resolver(
         "backbone_tag",
         lambda name: "dinov3" if str(name).startswith("dinov3_") else "dinov2",
