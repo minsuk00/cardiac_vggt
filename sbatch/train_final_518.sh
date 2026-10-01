@@ -7,7 +7,6 @@
 #SBATCH --cpus-per-task=5
 #SBATCH --mem=48g
 #SBATCH --time=14-00:00:00
-#SBATCH --mail-user=minsukc@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE,TIME_LIMIT
 #SBATCH --gpu_cmode=shared
 #SBATCH --requeue
@@ -87,22 +86,33 @@ if [ -z "$SLURM_JOB_ID" ]; then
         JOB_NAME="${JOB_NAME}_ckptonly"
     fi
 
-    mkdir -p /home/minsukc/vggt/slurm_logs/
+    # The repo = this script's clone. Submitting FROM it makes SLURM_SUBMIT_DIR the repo, which
+    # the job (a spool copy of this script, so no usable BASH_SOURCE) reads back below — on
+    # first launch and on every requeue alike.
+    REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+    mkdir -p "$REPO/slurm_logs/"
 
     echo "Submitting: $JOB_NAME"
-    sbatch --job-name="$JOB_NAME" \
-           --output="/home/minsukc/vggt/slurm_logs/${TIMESTAMP}_${JOB_NAME}_%j.log" \
-           "$0"
+    cd "$REPO" && sbatch --job-name="$JOB_NAME" \
+           --chdir="$REPO" \
+           --output="$REPO/slurm_logs/${TIMESTAMP}_${JOB_NAME}_%j.log" \
+           "$REPO/sbatch/$(basename "${BASH_SOURCE[0]}")"
     exit
 fi
 
+REPO="$SLURM_SUBMIT_DIR"
+if [ ! -f "$REPO/training/launch.py" ]; then
+    echo "ERROR: submit dir $REPO is not the repo root — submit with \`bash sbatch/train_final_518.sh\`."
+    exit 1
+fi
+
 # --- Environment Setup ---
-export MAMBA_EXE='/home/minsukc/.local/bin/micromamba'
-export MAMBA_ROOT_PREFIX='/home/minsukc/micromamba'
+export MAMBA_EXE="${MAMBA_EXE:-$HOME/.local/bin/micromamba}"
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/micromamba}"
 eval "$("$MAMBA_EXE" shell hook --shell bash --root-prefix "$MAMBA_ROOT_PREFIX")"
 micromamba activate svr
 
-cd /home/minsukc/vggt
+cd "$REPO"
 
 sleep $((SLURM_PROCID * 2))  # stagger startup
 
@@ -113,7 +123,7 @@ export WANDB_MODE=online
 # finds checkpoint_last.pt instead of a fresh rev_ts dir. (See _archive/legacy_sbatch/train_mri_volume.sh for detail.)
 # State files written before CONFIG was pinned carry no CONFIG line; those runs used
 # CONFIG=default with every changed key (epochs, splat_res, loss weights) in EXTRA_OVERRIDES.
-REQUEUE_STATE="/home/minsukc/vggt/slurm_logs/.requeue_${SLURM_JOB_ID}.env"
+REQUEUE_STATE="${REPO}/slurm_logs/.requeue_${SLURM_JOB_ID}.env"
 
 if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
     # Requeue restart: reuse pinned exp_name, resume from THIS run's checkpoint_last.pt.

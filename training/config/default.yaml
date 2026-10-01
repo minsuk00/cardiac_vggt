@@ -38,7 +38,9 @@ num_workers: 4
 # 628/90/180 train/val/test (see training/splits/README.md). data_root is the shared parent,
 # and split-file lines are relative paths under it
 # (e.g. `CMRxRecon2024/Cine_combined/CMRx24_Train_P001`).
-data_root: "/home/minsukc/vggt/scratch/data"
+# Repo-relative like every other path here (runs launch from the repo root); point the
+# `scratch` symlink at your storage instead of editing this.
+data_root: "./scratch/data"
 split_file: "training/splits/pooled_curated_v2.txt"
 dataset_name: "curated898"
 # NATIVE SAX z-slicing (not anatomical axial). Only decorates `seq_name`.
@@ -73,7 +75,7 @@ t_target_fixed: null
 ef_val_sweep: true
 # ED/ES table for the sweep. Must be set explicitly: MRIDataset's fallback
 # `${data_root}/../../whs/cardiac_phase.csv` is wrong for the shared-parent data_root.
-cardiac_phase_csv: "/home/minsukc/vggt/scratch/data/whs/cardiac_phase.csv"
+cardiac_phase_csv: "./scratch/data/whs/cardiac_phase.csv"
 # Phase-0 nonzero-FOV percentiles used to normalize every phase to [0, 1]. Changing these
 # changes model inputs, targets, metrics, cache contents, and checkpoint comparability.
 intensity_percentiles: [0.5, 99.9]
@@ -384,7 +386,7 @@ optim:
   # the aggregator, so the run freezes while grad_point still LOOKS healthy (it is only the
   # final conv's bias). A healthy grad_aggregator sits orders of magnitude above 1e-6, so
   # <=1e-6 sustained for 200 steps does not happen in a live run.
-  # Alarms email $VGGT_NOTIFY_EMAIL (default minsukc@umich.edu) ONCE, then training continues.
+  # Alarms email $VGGT_NOTIFY_EMAIL ONCE (log-only if unset), then training continues.
   grad_collapse_alarm:
     enable: true
     threshold: 1.0e-6

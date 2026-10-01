@@ -175,7 +175,7 @@ class StripMetaD(MapTransform):
     chokes when a batch mixes the two states. Stripping at the end of the
     cached pipeline makes both states uniform.
 
-    Adapted from /home/minsukc/MRI2CT/src/common/data.py:227-247.
+    Adapted from MRI2CT src/common/data.py:227-247.
     """
 
     def __init__(self, keys):

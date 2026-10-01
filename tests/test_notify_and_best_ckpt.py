@@ -31,6 +31,7 @@ def _no_real_mail(monkeypatch):
     monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
     import training.utils.notify as notify
     monkeypatch.setattr(notify, "_SENT_KEYS", set())
+    monkeypatch.setattr(notify, "DEFAULT_TO", "test@example.invalid")
     return _FakeSMTP.sent
 
 
@@ -93,6 +94,16 @@ def test_send_email_once_key_dedupes(_no_real_mail):
     assert notify.send_email("s", "b", once_key="k") is True
     assert notify.send_email("s", "b", once_key="k") is False
     assert len(_no_real_mail) == 1
+
+
+def test_send_email_without_recipient_only_logs(_no_real_mail, monkeypatch):
+    """No VGGT_NOTIFY_EMAIL -> nothing is sent; the alarm still fires (it logs first)."""
+    import training.utils.notify as notify
+    monkeypatch.setattr(notify, "DEFAULT_TO", None)
+    assert notify.send_email("s", "b") is False
+    a = GradientCollapseAlarm(threshold=1e-6, patience=1)
+    assert a.update(0.0, step=0) is True
+    assert _no_real_mail == []
 
 
 def test_alarm_actually_sends_one_email(_no_real_mail):

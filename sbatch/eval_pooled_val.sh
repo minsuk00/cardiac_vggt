@@ -8,9 +8,8 @@
 #SBATCH --mem=48g
 #SBATCH --time=08:00:00
 #SBATCH --job-name=eval_pooled_val
-#SBATCH --mail-user=minsukc@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --output=/home/minsukc/vggt/slurm_logs/eval_pooled_val_%j.out
+#SBATCH --output=slurm_logs/eval_pooled_val_%j.out
 #SBATCH --open-mode=append
 
 # ============================================================================================
@@ -31,7 +30,9 @@
 # Covers all SEVEN sources by default, each with its own split file (see split_file_for below).
 # Narrow it with SOURCES="cmrx2024 ocmr"; force one split file for all with SPLIT_FILE=<path>.
 #
-# NOT self-submitting on purpose — submit it yourself with `sbatch sbatch/eval_pooled_val.sh`.
+# NOT self-submitting on purpose — submit it yourself FROM THE REPO ROOT with
+# `mkdir -p slurm_logs && sbatch sbatch/eval_pooled_val.sh` (the log path is relative to the
+# submit dir, and SLURM silently drops the log if slurm_logs/ does not exist).
 # ⚠️ From inside an interactive GPU allocation, clear the SLURM env first (`unset ${!SLURM_@}`)
 # or it runs INLINE on the interactive node instead of queueing.
 # ============================================================================================
@@ -39,7 +40,7 @@
 set -euo pipefail
 
 # Derived from THIS script's location, so running the copy in a worktree evaluates the worktree's
-# code. It used to hardcode /home/minsukc/vggt, which silently ran main-tree code from anywhere.
+# code. It used to hardcode the main clone's path, which silently ran main-tree code from anywhere.
 # Under sbatch the script runs from SLURM's spool copy, so BASH_SOURCE points at
 # /var/spool/... — use the submit dir there; the dirname fallback covers `bash <path>`.
 REPO=${REPO:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}
@@ -81,7 +82,7 @@ cd "$REPO"
 export SPLIT                     # aggregate.py summarizes only subjects whose manifest split matches
 # Direct interpreter, NOT `micromamba run`: the assemble loop below is ~144 short invocations and
 # micromamba's lockfile deadlocks under exactly that pattern.
-PY=${PY:-/home/minsukc/micromamba/envs/svr/bin/python}
+PY=${PY:-${MAMBA_ROOT_PREFIX:-$HOME/micromamba}/envs/svr/bin/python}
 
 echo "repo        : $REPO"
 echo "ckpt        : $CKPT"

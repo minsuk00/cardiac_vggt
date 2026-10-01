@@ -15,3 +15,7 @@
 # training/ regroup: train_utils/ became training/utils/ (new value must be exactly
 # "training.utils." + the old value minus its "train_utils." prefix).
 ^g0b\.json:/\w+/[\w/]*/_target_: train_utils\.([\w.]+) -> training\.utils\.\1$
+
+# No per-user paths: data_root / cardiac_phase_csv went from /home/minsukc/vggt/scratch/... to the
+# repo-relative ./scratch/... (same files through the repo's scratch symlink; suffix must match).
+^g0b\.json:/\w+/(data_root|cardiac_phase_csv): /home/minsukc/vggt/scratch/(\S*) -> \./scratch/\2$

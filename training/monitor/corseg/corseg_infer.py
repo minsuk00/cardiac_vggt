@@ -31,7 +31,9 @@ import torch.nn.functional as F
 
 from training.monitor.corseg import corseg_postproc as cpp
 
-CKPT_DEFAULT = "/home/minsukc/vggt/scratch/data/corseg/ModelWeight-CorSeg-CineSAX_MedNextL.pth"
+# Under the repo's `scratch` symlink; anchored to this file so it does not depend on the cwd.
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+CKPT_DEFAULT = os.path.join(_REPO, "scratch", "data", "corseg", "ModelWeight-CorSeg-CineSAX_MedNextL.pth")
 LABEL_NAMES = {0: "background", 1: "LV_myo", 2: "LV_cav", 3: "RV_cav"}
 
 

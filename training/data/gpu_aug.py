@@ -69,7 +69,7 @@ def build_gpu_transforms(aug_cfg=None):
     if _B is None:
         raise RuntimeError(
             "batchaug is not importable but aug is enabled. "
-            "Install via: pip install --no-deps -e /home/minsukc/MRI2CT/batchaug/"
+            "Install via: pip install --no-deps -e <your MRI2CT clone>/batchaug/"
         )
 
     tier = getattr(aug_cfg, "tier", "aggressive")

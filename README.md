@@ -13,6 +13,8 @@ pip install --no-deps -e .     # the vggt, training and inference packages (edit
 `batchaug` and `fused_ssim` are not on PyPI; see the comments at the bottom of `requirements.txt`.
 `--no-deps` keeps pip from re-resolving the pinned torch stack that `requirements.txt` installed.
 
+**Paths.** Every path in the configs and scripts is relative to the repo root, and runs always launch from there. Data, base weights and run logs live under `./scratch/` (`scratch/data`, `scratch/base_weights/vggt1b_base.pt`, `scratch/logs`), which is gitignored: make it a symlink to your own storage, e.g. `ln -s /path/to/your/vggt-scratch scratch`. SLURM logs go to `./slurm_logs/` (`mkdir -p slurm_logs`). The `sbatch/` scripts run the clone they are submitted from, use your `$MAMBA_ROOT_PREFIX` (default `~/micromamba`) `svr` env, and SLURM mails the submitting user. Set `VGGT_NOTIFY_EMAIL` to get the gradient-collapse alarm by email; unset, it is only logged.
+
 ## Training
 
 Entry point: `training.launch` (Hydra, single GPU). Config: `training/config/default.yaml` = the paper recipe (the `diff1000` arm); ablation arms are `training/config/ablation_<arm>.yaml`.
@@ -26,7 +28,7 @@ Cluster (paper recipe, self-submitting, auto-requeue): `ARM=diff1000 bash sbatch
 
 ## Evaluation
 
-`sbatch sbatch/eval_pooled_val.sh` scores a checkpoint on the frozen gated + breathing-simulated bundles. See `evaluation/README.md`.
+`sbatch sbatch/eval_pooled_val.sh` (from the repo root) scores a checkpoint on the frozen gated + breathing-simulated bundles. See `evaluation/README.md`.
 
 ## Acknowledgements
 
