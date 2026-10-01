@@ -67,8 +67,8 @@ def build(cfg_overrides=OVERRIDES):
     # Loss (trainer.py:346)
     loss_fn = instantiate(cfg.loss, _recursive_=False)
     # Optimizer (trainer.py:158)
-    from train_utils.optimizer import construct_optimizers
-    optims = construct_optimizers(model, cfg.optim)
+    from train_utils.optimizer import construct_optimizer
+    optims = [construct_optimizer(model, cfg.optim)]
     # Data (trainer.py:377) -> real DynamicTorchDataset -> real DataLoader
     train_ds = instantiate(cfg.data.train, _recursive_=False)
     train_ds.seed = 42

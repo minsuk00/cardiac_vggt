@@ -38,7 +38,7 @@ from train_utils.freeze import freeze_modules
 from train_utils.general import *
 from train_utils.logging import setup_logging
 from train_utils.notify import GradientCollapseAlarm, send_email
-from train_utils.optimizer import construct_optimizers
+from train_utils.optimizer import construct_optimizer
 
 # Fallback when `checkpoint.best_metric` is absent from a config. Heart-segmentation ROI
 # PSNR — a real anatomical mask; see the rationale in default.yaml's checkpoint block.
@@ -169,9 +169,9 @@ class Trainer(TrainerVizMixin):
         self.model.to(self.device)
         self.time_elapsed_meter = DurationMeter("Time Elapsed", self.device, ":.4f")
 
-        # Construct optimizers (after moving model to device)
+        # Construct the optimizer (after moving model to device)
         if self.mode != "val":
-            self.optims = construct_optimizers(self.model, self.optim_conf)
+            self.optim = construct_optimizer(self.model, self.optim_conf)
 
         # Load checkpoint: a run's own latest checkpoint in save_dir wins (SLURM auto-requeue
         # / crash resume — epoch+steps+optimizer+scaler intact); the configured seed/base
@@ -431,15 +431,14 @@ class Trainer(TrainerVizMixin):
         missing, unexpected = self.model.load_state_dict(model_state_dict, strict=self.checkpoint_conf.strict)
         logging.info(f"Model state loaded. Missing keys count: {len(missing) if missing else 0}. Unexpected keys count: {len(unexpected) if unexpected else 0}.")
 
-        # Load optimizer state if available and in training mode (self.optims is only
+        # Load optimizer state if available and in training mode (self.optim is only
         # constructed when self.mode != "val"; skip otherwise to avoid AttributeError).
         if "optimizer" in checkpoint and self.mode != "val":
             logging.info("Loading optimizer state dict")
-            opt_states = checkpoint["optimizer"]
-            if not isinstance(opt_states, list):
-                opt_states = [opt_states]
-            for optim, state in zip(self.optims, opt_states):
-                optim.optimizer.load_state_dict(state)
+            opt_state = checkpoint["optimizer"]
+            if isinstance(opt_state, list):     # multi-optimizer format; only [0] ever existed
+                opt_state = opt_state[0]
+            self.optim.optimizer.load_state_dict(opt_state)
 
         # Load training progress
         if "prev_epoch" in checkpoint:
@@ -611,11 +610,9 @@ class Trainer(TrainerVizMixin):
             "prev_epoch": epoch,
             "steps": self.steps,
             "time_elapsed": self.time_elapsed_meter.val,
-            "optimizer": [optim.optimizer.state_dict() for optim in self.optims],
+            "optimizer": self.optim.optimizer.state_dict(),
         }
 
-        if len(self.optims) == 1:
-            checkpoint_content["optimizer"] = checkpoint_content["optimizer"][0]
         if self.optim_conf.amp.enabled:
             checkpoint_content["scaler"] = self.scaler.state_dict()
 
@@ -1104,22 +1101,19 @@ class Trainer(TrainerVizMixin):
 
             assert self.where <= 1 + self.EPSILON
             if self.where < 1.0:
-                for optim in self.optims:
-                    optim.step_schedulers(self.where)
+                self.optim.step_schedulers(self.where)
             else:
                 logging.warning(f"Skipping scheduler update since the training is at the end, i.e, {self.where} of [0,1].")
 
             # Log schedulers
             if self.steps[phase] % self.logging_conf.log_freq == 0:
-                for i, optim in enumerate(self.optims):
-                    for j, param_group in enumerate(optim.optimizer.param_groups):
-                        for option in optim.schedulers[j]:
-                            optim_prefix = f"{i}_" if len(self.optims) > 1 else ("" + f"{j}_" if len(optim.optimizer.param_groups) > 1 else "")
-                            self._log_scalar(
-                                f"train/optim/{optim_prefix}{option}",
-                                param_group[option],
-                                self.steps[phase],
-                            )
+                param_group = self.optim.optimizer.param_groups[0]
+                for option in self.optim.schedulers:
+                    self._log_scalar(
+                        f"train/optim/{option}",
+                        param_group[option],
+                        self.steps[phase],
+                    )
                 self._log_scalar(
                     "train/optim/where",
                     self.where,
@@ -1135,8 +1129,7 @@ class Trainer(TrainerVizMixin):
 
             # Clipping gradients and detecting diverging gradients
             if self.gradient_clipper is not None:
-                for optim in self.optims:
-                    self.scaler.unscale_(optim.optimizer)
+                self.scaler.unscale_(self.optim.optimizer)
 
                 grad_norm_dict = self.gradient_clipper(model=self.model)
 
@@ -1155,8 +1148,7 @@ class Trainer(TrainerVizMixin):
                         alarm.update(grad_norm, self.steps[phase], epoch=self.epoch)
 
             # Optimizer step
-            for optim in self.optims:
-                self.scaler.step(optim.optimizer)
+            self.scaler.step(self.optim.optimizer)
             self.scaler.update()
 
             # Measure elapsed time
@@ -1176,8 +1168,7 @@ class Trainer(TrainerVizMixin):
         config sets `accum_steps: 1`, and B is hardcoded to 1 in the loader (the only
         collation that is safe under native-z), so chunking a batch into N>1 pieces would
         have produced EMPTY tensors — the feature was dead and unusable, not just unused."""
-        for optim in self.optims:
-            optim.zero_grad(set_to_none=True)
+        self.optim.zero_grad(set_to_none=True)
 
         amp_type = self._amp_dtype()
 
