@@ -59,28 +59,26 @@ PYTHONPATH=training:. torchrun --nproc_per_node=1 training/launch.py \
 
 **Configs** (`training/config/`) — **one complete config + thin experiment overrides** (flattened 2026-08-01):
 - `default.yaml` — **THE config.** Complete and runnable on its own (`--config default`): cohort, sampling, logging, loss, optimizer, augmentation, aggft freeze. One file, one truth.
-- `exp_bspline.yaml` — the one shipped experiment variant, inheriting `default.yaml`, ~20 lines, overriding only the warp head (and the only config still on the L1 TV regularizer, `tv=0.1`). There is **no `exp_diffusion.yaml`**: the L2-diffusion arm IS `default.yaml` (`tv=0`, `diffusion=1000`).
+- `exp_dinov3.yaml`, `default_224.yaml` — thin overrides of `default.yaml` (DINOv3 backbone; 224-px input). Retired variants live in `training/config/_archive/`.
 - The old three-layer config chain (`default → mri_finetune → mri_volume`) is gone; `exp_name`/`config_name` deliberately keep the `mri_volume` family name (log-dir + wandb continuity). Why it was removed + flattening verification: docs/61 + docs/65.
 - Legacy variants (`mri_finetune_*`, `mri_p001_overfit`, `mri_volume_overfit`) and their sbatch scripts live under `_archive/legacy_configs/` and `_archive/legacy_sbatch/`.
 
 **Key knobs:**
 - `img_nums: [20, 20]` → **slot BUDGET/cap, not a slot count**: with `one_frame_per_slice: true` (default), S == this subject's own D (5–21); `get_data` raises if a subject needs more. **To cut memory, cut D or the model, not this knob** — batch size is pinned to 1 (same-D-different-pitch subjects collate silently). docs/59 + docs/65.
-- `continuous_z: false` (default) | `true` → sample non-reference slots at **continuous physical z** (±`z_jitter`=0.5 off the integer plane + 2-plane interp); off ⇒ numerically identical to the discrete grid. docs/28.
 - `t_target_fixed: null` (default → multi-phase, uniform per train call) | `0` (reproduces ED-only behavior) | any int K (force `t_target=K`).
-- `t_target_phases: null` (default → all T phases) | list e.g. `[0,7]` → restrict the multi-phase target pool to that subset (train samples uniformly, val cycles it deterministically). **Mutually exclusive with `t_target_fixed`** (single-phase wins if both set).
 - `optim.frozen_module_names` — two regimes, guarded by `tests/test_freeze_pattern.py`: **head-only** (legacy) freezes the entire aggregator; **aggft** (all shipped configs) = `["*patch_embed*"]` — attention blocks, `z_embedder`, `camera_token`, `point_head` all train (~2.8× slower, ~27 GB/A40). Exact patterns: docs/65.
-- `model.train_on_residual_dvf: true` → point head outputs Δ; `world_points = scanner_coords + Δ`.
+- The point head always outputs a residual Δ; `world_points = scanner_coords + Δ`.
 - `logging.filmstrip_every_n_val_epochs: 5` → cadence for the per-subject 12-phase cardiac-cycle GIFs; the cheaper ED/ES + augmentation panels use the independent `logging.visual_panels_every_n_val_epochs: 3` (docs/74).
-- `data.augmentation.enable: true` (default since 2026-07-31) | `false` → opt out of GPU augmentation. `data.augmentation.tier: conservative|moderate|aggressive` (default `moderate` — the docs/46 §3 C2 shipped arm). See "Augmentation" below.
+- `data.augmentation.enable: true` (default since 2026-07-31) | `false` → opt out of GPU augmentation. `data.augmentation.tier: aggressive` (the only tier). See "Augmentation" below.
 
 ## Volume pipeline (one forward pass)
 
 0. **Preprocess (cached, one-time per subject; native-z, docs/58).** monai `PersistentDataset` (`training/data/preprocess.py`) resamples in-plane to `1.4`mm, crops/zero-pads to `256×256`; **z is never resampled or padded** (native `dz`, `D` kept). Intensity normalized against phase_00's 0.5/99.9 percentiles over non-zero FOV. Output: `(T=12, 256, 256, D)` float16 + `(256,256,D)` content mask + `dz_mm`, cached on `/tmp/vggt-mri_${USER}_monai_cache/`. Transform-level detail: docs/65.
-1. **Sample (ONE frame per slice, the default).** Every in-FOV plane appears exactly once, so **S == D** — the sparse extreme the research goal targets; full z-coverage keeps the full-volume L1 valid. Per-slot `t` is random and **used only to extract slice content** — never a model input. Slot 0 = `(t_target, z_mid)` reference. Train samples from global `random`; val from a private `random.Random(seq_index)` (reproducible). Legacy multi-frame sampler (`one_frame_per_slice: false`) and continuous-z: docs/28; full text: docs/65.
-2. **Aggregator.** DINOv2 patch_embed + 24× alternating frame/global attention. Per-slot special token = sinusoidal embeddings: `z_embedder(z_norm)` (linear, `z_norm = z_mm / Z_HALF_MM` — **physical**, `Z_HALF_MM=90` is a fixed constant shared by every subject regardless of that subject's own `D`/`dz`, docs/58) always on; reference default adds the two-token `camera_token` (slot 0 = target-phase anchor), legacy path adds `t_embedder`+`target_t_embedder` instead (see Project + Key knobs). Frozen vs aggft per the freeze-pattern note.
+1. **Sample (ONE frame per slice, the default).** Every in-FOV plane appears exactly once, so **S == D** — the sparse extreme the research goal targets; full z-coverage keeps the full-volume L1 valid. Per-slot `t` is random and **used only to extract slice content** — never a model input. Slot 0 = `(t_target, z_mid)` reference. Train samples from global `random`; val from a private `random.Random(seq_index)` (reproducible). Multi-frame sampler (`one_frame_per_slice: false`): docs/28; full text: docs/65.
+2. **Aggregator.** DINOv2 patch_embed + 24× alternating frame/global attention. Per-slot special token = sinusoidal embeddings: `z_embedder(z_norm)` (linear, `z_norm = z_mm / Z_HALF_MM` — **physical**, `Z_HALF_MM=90` is a fixed constant shared by every subject regardless of that subject's own `D`/`dz`, docs/58) plus the two-token `camera_token` (slot 0 = target-phase anchor), both always on. Frozen vs aggft per the freeze-pattern note.
 3. **Point head (trainable, DPT).** Outputs per-pixel residual Δ (3 channels) + confidence (1, unused). `world_points = scanner_coords + Δ`, all in normalized [-1, 1] (x/y index-normalized over the fixed 256×256 grid; z is physical, see above).
 4. **Splat.** `splat_to_volume(world_points, intensity, (D,256,256), z_scale)` → `V_canon`, where `D` is THIS subject's own native slice count and `z_scale = Z_HALF_MM/dz` is required (no default — a missed call site must crash, not silently compress the volume). Differentiable trilinear scatter; divides by accumulated coverage (`vggt/utils/splat.py`). **`splat_weight = intensity > 1e-3` is kept** — padded X/Y slots are all-zero, and the gate prevents their zero-intensity pixels from diluting V_canon if the model's Δ ever moves them into content planes.
-5. **Loss.** `loss_volume = (V_canon - V_gt).abs().mean()` + `0.1 * TV(pos_pred)` — **full-volume L1**, no anatomy mask.
+5. **Loss.** `loss_volume = (V_canon - V_gt).abs().mean()` (**full-volume L1**) + `heart_weight`·heart-ROI L1 + `gather_weight`·gather L1 + `diffusion_weight`·‖∇Δ‖².
 
 **Input slices:** each canonical `(256,256)` slice is bilinear-resized to `518×518` for DINOv2 (no letterbox/padding). `scanner_coords[py,px] = (px/517·2−1, py/517·2−1, z_norm)` with `z_norm = (z_i − (D−1)/2)·dz/Z_HALF_MM` — x/y purely geometric and identical for every subject, z physical (mm). Every pixel has a valid coord (no invalid sentinel). Full text: docs/65.
 
@@ -106,7 +104,7 @@ Native cine shapes and spacings vary per subject (T=12 always). **Gotcha: CMRxRe
 
 ## Augmentation
 
-GPU augmentation via `batchaug` (`training/data/gpu_aug.py`), **ON by default** (`data.augmentation.enable: true`, tier `moderate`), **train-only** (val never augments). One in-plane affine per subject across all 12 T-phases + content mask (phase-consistent); the trainer re-derives `gt_target_volume`, re-extracts input slices, and recomputes `anatomy_bbox` (`scanner_coords` unchanged — pure geometry). Tiers `conservative`/`moderate`/`aggressive` escalate affine + photometric; W-flip is **aggressive-tier-only**. Tier contents, flip history, and D-agnostic verification: docs/46 §3, docs/58 §10c, docs/65. Visual proof: `tools/render_augmentation_examples.py` → `result/augmentation_examples/`.
+GPU augmentation via `batchaug` (`training/data/gpu_aug.py`), **ON by default** (`data.augmentation.enable: true`, tier `aggressive`), **train-only** (val never augments). One in-plane affine per subject across all 12 T-phases + content mask (phase-consistent); the trainer re-derives `gt_target_volume`, re-extracts input slices, and recomputes `anatomy_bbox` (`scanner_coords` unchanged — pure geometry). The tier = W-flip + affine + photometric + acquisition-artifact post-ops (`training/data/gpu_aug.py`). History: docs/46 §3, docs/58 §10c, docs/65. Visual proof: `tools/render_augmentation_examples.py` → `result/augmentation_examples/`.
 
 **Respiratory-motion sim** (`training/data/respiratory.py`) is a SEPARATE toggle (`data.augmentation.respiratory.enable`), **ON by default**. Per-input-slice deform-then-reslice SI+AP shift applied **after** affine, overwriting **only the input slices** — targets stay at the unshifted end-expiration reference, so the model learns to **correct** breathing (blind to `r`). Applies in **both train AND val** (unlike affine): train iid per epoch, val deterministic per `seq_index`. Disabling ⇒ bit-identical to pre-respiratory. Parameter-level detail (per-subject tilt/azimuth/amplitude sampling): docs/01, docs/05, docs/65. Visual proof: `tools/render_respiratory_examples.py` → `_html/06_*.html`.
 
@@ -118,7 +116,7 @@ VGGT (vggt/models/vggt.py) — ~941M total, base weights at ./scratch/base_weigh
 │   ├── DINOv2 patch_embed (518² inputs, patch=14 → 37² tokens)    [FROZEN, ~304M]
 │   ├── 24× frame_blocks + 24× global_blocks (alternating attn)    [FROZEN, ~605M]
 │   ├── rope / camera_token / register_token                        [FROZEN, ~10K]
-│   └── ZIndexEmbedder, TIndexEmbedder (sinusoidal Fourier)         [FROZEN, ~28K — see Key knobs]
+│   └── ZIndexEmbedder (sinusoidal Fourier)                         [FROZEN, ~14K — see Key knobs]
 └── point_head — DPT upsampler → 4-channel (Δ, conf)                [TRAINABLE, ~32.65M]
 
 Camera / depth / track heads disabled in mri_volume config.
@@ -132,7 +130,7 @@ Checkpoints save the **full 941M state dict** (~3.8 GB each), not just the train
 ```python
 from vggt.models.vggt import VGGT
 model = VGGT.from_pretrained("facebook/VGGT-1B").cuda().eval()
-preds = model(images, batch=batch)  # batch needs: z_indices, t_indices, scanner_coords
+preds = model(images, batch=batch)  # batch needs: z_indices, scanner_coords
 # To use compute_volume_intensity_loss: batch must also include gt_target_volume (already the t_target phase; t_target itself is only used for per-phase logging, not the loss).
 ```
 
