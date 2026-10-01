@@ -60,7 +60,9 @@ def train_step(model, loss_fn, optim, clipper, batch, where: float, amp: bool):
     per-group clipping -> optimizer step. A non-finite objective skips the backward; the
     clipper and the optimizer step still run, but every gradient is None after
     `zero_grad(set_to_none=True)`, so they leave the parameters and optimizer state as
-    they were. Gradient accumulation does not exist (batch size is pinned to 1)."""
+    they were. A finite objective with a non-finite gradient norm (the splat drops NaN
+    points, so a NaN prediction need not reach the loss) skips the optimizer step and is
+    reported as non-finite. Gradient accumulation does not exist (batch size is pinned to 1)."""
     optim.zero_grad(set_to_none=True)
     with torch.amp.autocast("cuda", enabled=amp, dtype=torch.bfloat16):
         y_hat, loss_dict = forward(model, loss_fn, batch, "train")
@@ -69,7 +71,10 @@ def train_step(model, loss_fn, optim, clipper, batch, where: float, amp: bool):
         loss_dict["objective"].backward()
     optim.step_schedulers(where)
     grad_norms = clipper()
-    optim.optimizer.step()
+    if all(math.isfinite(v) for v in grad_norms.values()):
+        optim.optimizer.step()
+    else:
+        finite = False
     return y_hat, loss_dict, finite, grad_norms
 
 

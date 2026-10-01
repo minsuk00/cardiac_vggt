@@ -427,8 +427,9 @@ class Monitor:
         if not finite:
             self.nan_batch_count += 1
             logging.error(
-                f"Loss is {loss_dict['objective'].item()} (phase=train, step={step}, "
-                f"cumulative_nan_batches={self.nan_batch_count}); skipping backward."
+                f"Non-finite loss or gradient: loss={loss_dict['objective'].item()}, "
+                f"grad norms={dict(grad_norms)} (phase=train, step={step}, "
+                f"cumulative_nan_batches={self.nan_batch_count}); skipping the update."
             )
             self.scalar("train/optim/nan_batches_cumulative", float(self.nan_batch_count), step)
 

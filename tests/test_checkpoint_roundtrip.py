@@ -166,6 +166,34 @@ def test_nonfinite_loss_skips_backward_and_leaves_params_unchanged(optim_conf):
     assert all(v == 0.0 for v in grad_norms.values())
 
 
+def masked_loss(y_hat, batch, val_metrics=False):
+    """Finite objective even when world_points holds NaN (like the splat, which drops them)."""
+    wp = y_hat["world_points"]
+    return {"objective": torch.where(torch.isfinite(wp), wp, torch.zeros_like(wp)).abs().mean()}
+
+
+def test_nonfinite_gradient_from_finite_loss_skips_the_update(optim_conf):
+    """A NaN input gives a finite (masked) loss but NaN weight gradients: the step is skipped."""
+    model, optim, clipper = _parts(optim_conf)
+    _run(model, optim, clipper, steps=1)
+    params = {k: v.clone() for k, v in model.state_dict().items()}
+    opt_state = optim.optimizer.state_dict()["state"]
+    opt_state = {k: {n: t.clone() for n, t in s.items()} for k, s in opt_state.items()}
+    batch = _batch(1)
+    batch["images"][0, 0] = float("nan")
+
+    _, loss_dict, finite, grad_norms = train_step(model, masked_loss, optim, clipper, batch,
+                                                  where=0.5, amp=False)
+
+    assert math.isfinite(loss_dict["objective"].item())
+    assert not all(math.isfinite(v) for v in grad_norms.values())
+    assert finite is False
+    _assert_state_equal(params, model.state_dict())
+    after = optim.optimizer.state_dict()["state"]
+    for k in opt_state:
+        _assert_state_equal(opt_state[k], after[k])
+
+
 def test_finite_loss_updates_params(optim_conf):
     model, optim, clipper = _parts(optim_conf)
     before = {k: v.clone() for k, v in model.state_dict().items()}
