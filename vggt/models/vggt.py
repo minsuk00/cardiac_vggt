@@ -9,30 +9,22 @@ import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin  # used for model hub
 
 from vggt.heads.dpt_head import DPTHead
-from vggt.heads.bspline_head import BSplineWarpHead
 from vggt.models.aggregator import Aggregator
 
 
 class VGGT(nn.Module, PyTorchModelHubMixin):
     def __init__(
         self, img_size=518, patch_size=14, embed_dim=1024, enable_point=True,
-        gradient_checkpointing=True,
-        warp_head_type="dpt", bspline_grid_size=32, backbone="dinov2_vitl14_reg", **kwargs
+        gradient_checkpointing=True, backbone="dinov2_vitl14_reg", **kwargs
     ):
         super().__init__()
         self.aggregator = Aggregator(img_size=img_size, patch_size=patch_size, embed_dim=embed_dim, patch_embed=backbone, gradient_checkpointing=gradient_checkpointing)
 
         # The head predicts a residual DVF; world_points = scanner_coords + DVF.
-        point_activation = "linear"
         if not enable_point:
             self.point_head = None
-        elif warp_head_type == "bspline":
-            # Smooth-by-construction warp head: coarse control grid + B-spline upsample.
-            self.point_head = BSplineWarpHead(dim_in=2 * embed_dim, patch_size=patch_size, grid_size=bspline_grid_size, output_dim=4, activation=point_activation, conf_activation="expp1")
-        elif warp_head_type == "dpt":
-            self.point_head = DPTHead(dim_in=2 * embed_dim, patch_size=patch_size, output_dim=4, activation=point_activation, conf_activation="expp1")
         else:
-            raise ValueError(f"Unknown warp_head_type: {warp_head_type!r} (expected 'dpt' or 'bspline')")
+            self.point_head = DPTHead(dim_in=2 * embed_dim, patch_size=patch_size, output_dim=4, activation="linear", conf_activation="expp1")
 
     def forward(self, images: torch.Tensor, batch: dict = None):
         """

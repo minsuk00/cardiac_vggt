@@ -35,16 +35,10 @@ def _load_cfg():
         return compose(config_name="default")
 
 
-def _build_from_cfg(cfg, warp_head_type=None):
+def _build_from_cfg(cfg):
     from vggt.models.vggt import VGGT
 
-    m = cfg.model
-    return VGGT(
-        img_size=518, patch_size=14, embed_dim=1024,
-        enable_point=m.enable_point,
-        warp_head_type=warp_head_type or m.warp_head_type,
-        bspline_grid_size=m.bspline_grid_size,
-    )
+    return VGGT(img_size=518, patch_size=14, embed_dim=1024, enable_point=cfg.model.enable_point)
 
 
 @pytest.fixture(scope="module")
@@ -121,25 +115,3 @@ def test_obsolete_phase_embedders_absent(model_with_freeze):
 def test_point_head_is_trainable(model_with_freeze):
     nt, _ = _counts(model_with_freeze, "point_head")
     assert nt > 30_000_000, f"point_head trainable count seems wrong: {nt}"
-
-
-@pytest.fixture(scope="module")
-def bspline_model_with_freeze():
-    """Same aggft contract, but with the B-spline warp head (warp_head_type='bspline')."""
-    from train_utils.freeze import freeze_modules
-
-    cfg = _load_cfg()
-    model = _build_from_cfg(cfg, warp_head_type="bspline")
-    freeze_modules(model, patterns=list(cfg.optim.frozen_module_names), recursive=True)
-    return model
-
-
-def test_bspline_head_trainable_and_patch_embed_frozen(bspline_model_with_freeze):
-    """The B-spline head stays trainable (named point_head) and is far smaller than the
-    32.65M DPT head; patch_embed frozen, aggregator blocks trainable (aggft)."""
-    nt, _ = _counts(bspline_model_with_freeze, "point_head")
-    assert 0 < nt < 5_000_000, f"bspline point_head trainable count unexpected: {nt}"
-    pe_t, pe_f = _counts(bspline_model_with_freeze, "aggregator.patch_embed")
-    assert pe_t == 0 and pe_f > 0, "patch_embed must stay frozen"
-    blk_t, _ = _counts(bspline_model_with_freeze, "aggregator.frame_blocks")
-    assert blk_t > 0, "aggregator blocks must be trainable under aggft"

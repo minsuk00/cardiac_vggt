@@ -90,6 +90,9 @@ def model_kwargs_from_config(cfg):
     for k in ALWAYS_ON_MODEL_KWARGS:
         if m.pop(k, True) is not True:
             raise ValueError(f"run config has model.{k}=false; that model variant is no longer supported")
+    if m.pop("warp_head_type", "dpt") != "dpt":
+        raise ValueError("run config uses a non-DPT warp head; that model variant is no longer supported")
+    m.pop("bspline_grid_size", None)
 
     def pick(key, default=None):
         """model block wins, then config top level, then the default. `None` counts as absent —
@@ -132,7 +135,7 @@ def load_model_from_run(ckpt_path, device="cuda", verbose=True):
             "The model kwargs do not match the checkpoint's architecture.")
     if verbose:
         print(f"  model: img_size={kw['img_size']} backbone={kw['backbone']} "
-              f"patch_size={kw['patch_size']} warp_head={kw.get('warp_head_type', 'dpt')}\n"
+              f"patch_size={kw['patch_size']}\n"
               f"  protocol from {os.path.relpath(meta_path)} "
               f"(exp {cfg.get('exp_name')})\n"
               f"  loaded {ckpt_path}  (missing={len(missing)}, unexpected={len(unexpected)})",

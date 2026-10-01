@@ -3,7 +3,7 @@
 #   PYTHONPATH=training:. python training/launch.py --config default
 #
 # Experiment variants live in `exp_*.yaml` and inherit this file, overriding only what they
-# change (see exp_bspline.yaml / exp_diffusion.yaml — ~20 lines each).
+# change.
 #
 # Flattened 2026-08-01 from the old three-layer chain `default -> mri_finetune -> mri_volume`.
 # That chain was a trap: `mri_finetune` was a HALF config (no `loss.volume` ⇒
@@ -402,10 +402,6 @@ model:
   # 224 fits on an A40 without activation checkpointing and runs faster. Keep this enabled
   # for higher input resolutions: 518 without checkpointing OOMs, and 294 is near the A40 limit.
   gradient_checkpointing: true
-  # Warp head: "dpt" (per-pixel DPT) or "bspline" (coarse control grid + B-spline upsample,
-  # smooth by construction). bspline_grid_size = control points per side.
-  warp_head_type: "dpt"
-  bspline_grid_size: 32
 
 # ── Loss ──────────────────────────────────────────────────────────────────────────────────
 loss:
