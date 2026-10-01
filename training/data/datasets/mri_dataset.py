@@ -5,7 +5,7 @@ monai `PersistentDataset` preprocess pipeline (see `training/data/preprocess.py`
 resamples every native NIfTI's IN-PLANE spacing to a fixed 1.4 mm and crops
 /zero-pads X/Y to 256×256 — but does NOT resample z: each subject keeps its own
 native z spacing/plane count (`dz_mm`, `D`). The cached output is a single
-`(T=12, 1, X=256, Y=256, Z=D)` float16 tensor per subject, plus a `(1, X, Y, Z)`
+`(T=12, X=256, Y=256, Z=D)` float16 tensor per subject, plus a `(1, X, Y, Z)`
 content mask and `dz_mm` (that subject's own z spacing). Cache lives in `/tmp`
 (node-local NVMe, fast).
 
@@ -13,10 +13,12 @@ At training time `get_data` just looks up the cached bundle, permutes to splat
 order `(T, D, H=256, W=256)`, samples (t_target, S=(t,z)-slots) per the
 multi-phase contract, and produces:
 
-    images          (S, 518, 518, 3)  float32, [0, 255]   — bilinear-upsampled
+    images          (S, R, R, 3)  float32, [0, 255]       — bilinear-upsampled
                                                             canonical slices, no
                                                             letterbox, no padding
-    scanner_coords  (S, 518, 518, 3)  float32, [-1, +1]   — purely geometric:
+                                                            (R = target_size; omitted
+                                                            when defer_input_images)
+    scanner_coords  (S, R, R, 3)  float32, [-1, +1]       — purely geometric:
                                                             (px, py, z_i) →
                                                             (x_norm, y_norm, z_norm);
                                                             x/y use the same formula
@@ -30,7 +32,7 @@ multi-phase contract, and produces:
     anatomy_bbox    (6,) int64  — (z0, z1, y0, y1, x0, x1) from content_mask
     content_mask    (D, H, W) uint8  — 1 = native FOV reached, 0 = zero-pad (x/y only now)
     phases          (T, D, H, W) float16 — full canonical bundle, needed by
-                                          the Phase 4 GPU aug to augment all 12
+                                          the GPU aug (gpu_aug.py) to augment all 12
                                           phases consistently then re-extract
                                           slices + V_gt + bbox.
     t_target        (1,) int64
@@ -46,7 +48,6 @@ Drops (vs the legacy implementation):
 
 from __future__ import annotations
 
-import glob
 import logging
 import os
 import random
@@ -56,6 +57,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from monai.data import PersistentDataset
 from torch.utils.data import Dataset
 
 from data.preprocess import (
@@ -69,11 +71,6 @@ from data.preprocess import (
     default_cache_dir,
     get_canonical_transforms,
 )
-
-try:
-    from monai.data import PersistentDataset
-except ImportError:  # pragma: no cover — monai is a hard dep after this refactor
-    PersistentDataset = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -210,10 +207,6 @@ class MRIDataset(Dataset):
             self.len_train = len(self.val_targets)
 
         # ── monai PersistentDataset cache ─────────────────────────────────
-        if PersistentDataset is None:
-            raise RuntimeError(
-                "monai is required for canonical-grid MRIDataset — pip install monai>=1.6,<1.7"
-            )
         # Subdir keyed by content-defining params (spacing/shape/normalization) so a
         # normalization change routes to a fresh cache instead of silently reusing a
         # stale one (PersistentDataset hashes only the input dict, not the transform).
@@ -320,7 +313,7 @@ class MRIDataset(Dataset):
         return self.get_data(seq_index=seq_index, img_per_seq=img_per_seq)
 
     # ── Main get_data ────────────────────────────────────────────────────
-    def get_data(self, seq_index=0, img_per_seq=None, **kwargs):
+    def get_data(self, seq_index=0, img_per_seq=None):
         forced_t = None
         if self.val_targets is not None:
             subj_idx, forced_t = self.val_targets[seq_index % len(self.val_targets)]
@@ -328,22 +321,19 @@ class MRIDataset(Dataset):
             subj_idx = seq_index % len(self.subjects)
         sub_dir = self.subjects[subj_idx]
 
-        # Val/test determinism: the val branch below makes NO random calls (the
-        # (t, z) slots are a pure function of seq_index + the subject's fixed
-        # bbox) and the val loader runs shuffle=False, so val get_data is fully
-        # reproducible across epochs and runs without any per-sample seeding.
+        # Val/test determinism: non-train splits draw only from a private
+        # `random.Random(seq_index)` (see `rng` below) — never the global RNG — and the
+        # val loader runs shuffle=False, so val get_data is reproducible across epochs/runs.
 
         # ── Cache lookup → splat-order tensors ────────────────────────────
         cached = self.cache[subj_idx]
         # ConcatItemsd(dim=0) stacks 12 × (1, X, Y, Z) → (T=12, X=256, Y=256, Z=D)
         # (the per-phase channel dim is absorbed into T; D = this subject's own native
         # slice count under native-z). content_mask keeps its channel dim: (1, 256, 256, D).
-        phases = cached["phases"]                # (T, X, Y, Z)  [or (T, 1, X, Y, Z) if shape ever changes]
+        phases = cached["phases"]                # (T, X, Y, Z)
         content_mask = cached["content_mask"]    # (1, X, Y, Z)
         dz = float(cached["dz_mm"])               # this subject's own native z spacing (mm)
         z_scale = Z_HALF_MM / dz
-        if phases.ndim == 5:                     # defensive: tolerate a channel dim
-            phases = phases.squeeze(1)
         # Axis-order conversion site (ONLY here). monai (X,Y,Z) → splat (D=Z,H=Y,W=X).
         phases_splat = phases.permute(0, 3, 2, 1).contiguous()              # (T, D, H=256, W=256)
         mask_splat = content_mask.squeeze(0).permute(2, 1, 0).contiguous()  # (D, H, W)
@@ -357,7 +347,6 @@ class MRIDataset(Dataset):
         # `z_sequence` block below.
         anatomy_bbox = compute_geometric_bbox(mask_splat).cpu().numpy().astype(np.int64)  # (6,)
         bbox_z0, bbox_z1 = int(anatomy_bbox[0]), int(anatomy_bbox[1])
-        bbox_z_size = max(1, bbox_z1 - bbox_z0)  # at least 1 for fallback
 
         # ── Pick t_target ─────────────────────────────────────────────────
         # Priority: EF-sweep forced phase > single fixed phase > all T phases.
@@ -439,7 +428,7 @@ class MRIDataset(Dataset):
                 )
 
         room = S - len(z_sequence)
-        if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < bbox_z_size)
+        if len(coverage) > room:                                # S < #planes (e.g. img_per_seq < in-bbox plane count)
             rng.shuffle(coverage)
             coverage = coverage[: max(0, room)]                 # can't fully cover; subsample
         n_extra = max(0, room - len(coverage))
@@ -470,7 +459,7 @@ class MRIDataset(Dataset):
         timesteps_list = []
         slice_indices_list = []
 
-        # Per-pixel canonical (x, y, z) coords for a 518×518 input image.
+        # Per-pixel canonical (x, y, z) coords for an R×R input image (R = target_size).
         # Bilinear resize 256→`self.target_size` with align_corners semantics: pixel
         # (py, px) of the R×R input corresponds to source 256×256 voxel index
         # (py·255/(R-1), px·255/(R-1)). Normalized [-1, +1]: y_norm = py/(R-1)·2 - 1;
@@ -481,7 +470,7 @@ class MRIDataset(Dataset):
         y_norm = (py_grid.astype(np.float32) / (R - 1)) * 2.0 - 1.0
 
         # Pre-resize ALL S canonical slices in one batched F.interpolate call.
-        # `to_resize` shape (S, 1, 256, 256) float32; output (S, 1, 518, 518).
+        # `to_resize` shape (S, 1, 256, 256) float32; output (S, 1, R, R).
         slot_ts = torch.tensor(t_sequence, dtype=torch.long)
         slot_indices = torch.tensor(z_sequence, dtype=torch.long)
         canon_slices = phases_splat[slot_ts, slot_indices].float()  # (S, H=256, W=256)
@@ -537,7 +526,7 @@ class MRIDataset(Dataset):
             timesteps_list.append(t_idx)
             slice_indices_list.append(z_i)
 
-        # ── V_gt + full phases bundle (for Phase 4 aug) ───────────────────
+        # ── V_gt + full phases bundle (for the GPU aug) ───────────────────
         # `anatomy_bbox` was already computed above (used to constrain z sampling).
         gt_target_volume = phases_splat[t_target].float().cpu().numpy()  # (D, H, W) [0, 1] float32
         # phases_full is the full (T, D, H, W) canonical bundle. Kept in float16 to

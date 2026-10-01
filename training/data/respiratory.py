@@ -15,7 +15,7 @@ Geometry (splat order, matching `gpu_aug.py` / `mri_dataset.py`):
     phases  (B, T=12, D, H=256, W=256)   spacing (D=Z=dz, H=Y=1.4, W=X=1.4) mm
     NOTE (native-z, docs/58): D is THIS SUBJECT's own slice count (5-21 across the pooled
     cohort) and the D-axis spacing is its own pitch `dz` (5-12 mm) — NOT a fixed 12/12.0.
-    `SPACING_MM`/`N_CANON_PLANES` below are legacy fallbacks; the live callers pass both.
+    Callers must pass both (`spacing`, and `n_planes` whenever group_ids are given).
     D = SI (through-plane)   H/W = in-plane (AP vs LR not recoverable → AP axis
     is configurable, default H).
 
@@ -34,8 +34,10 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-INPUT_IMG_SIZE = 518          # legacy default for standalone callers (gpu_augment_batch passes out_size)
-SPACING_MM = (12.0, 1.4, 1.4)  # (D=Z, H=Y, W=X) mm — canonical cube (Z=true CMRx pitch, was thickness 8.0)
+INPUT_IMG_SIZE = 518          # default out_size for standalone callers (gpu_augment_batch passes out_size)
+# (D=Z, H=Y, W=X) mm for a 12 mm-pitch CMRxRecon2024 subject. NOT a default anywhere (spacing is
+# required); only a convenience constant for tests and tools working on 12 mm stacks.
+SPACING_MM = (12.0, 1.4, 1.4)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -101,12 +103,11 @@ class RespiratoryConfig:
     # Optional fractional per-breath tidal variation on the per-subject amplitude scale (group_by_burst
     # mode): A = A_subject * (1 ± amplitude_breath_jitter), varied per z-plane. 0 → constant per subject.
     amplitude_breath_jitter: float = 0.0
-    seed: int | None = None        # int → deterministic sampling (val/report); None → global RNG
 
     @classmethod
     def from_cfg(cls, cfg):
         """Build from an OmegaConf node / dict / object, falling back to defaults
-        for any missing key (tolerant — ready for the deferred yaml block)."""
+        for any missing key; keys it does not know are ignored."""
         if cfg is None:
             return cls()
         def g(key, default):
@@ -126,21 +127,7 @@ class RespiratoryConfig:
             tilt_min_deg=(lambda x: None if x is None else float(x))(g("tilt_min_deg", cls.tilt_min_deg)),
             tilt_max_deg=(lambda x: None if x is None else float(x))(g("tilt_max_deg", cls.tilt_max_deg)),
             amplitude_breath_jitter=float(g("amplitude_breath_jitter", cls.amplitude_breath_jitter)),
-            seed=g("seed", cls.seed),
         )
-
-
-N_CANON_PLANES = 12   # FALLBACK canonical grid depth (D), consulted ONLY on the
-                       # `group_by_burst and group_ids is not None` path when a caller omits
-                       # n_planes. Correct for the legacy fixed-12 grid; native-z callers
-                       # (docs/58) must pass n_planes = this subject's real D.
-                       # Reachability, checked 2026-08-01 (docs/62 §7): the trainer path
-                       # (gpu_aug.py) passes n_planes, and `evaluation/`'s four adapters never
-                       # reach this line at all — none of them passes `group_ids`, so they take
-                       # the per-slot `else` branch where n_planes is unused. (cmrxrecon.py
-                       # passes n_planes=D anyway; acdc/miitt/ocmr pass neither. docs/62 §7
-                       # claimed all four passed n_planes — they do not; it does not matter.)
-                       # So no live caller can currently be mis-graded by this fallback.
 
 
 def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, group_ids=None,
@@ -155,23 +142,20 @@ def sample_displacements(B, S, cfg: RespiratoryConfig, device, generator=None, g
       `per_slot=False` (one breath depth per subject), else (B,S).
     - d_si = lujan(r, A, cos2n);  d_ap = ap_ratio * d_si.
 
-    Determinism: pass a `generator`, or set `cfg.seed` (a generator is then built
-    on `device`). Train leaves both unset → global RNG.
+    Determinism: pass a `generator`; None → global RNG.
 
     n_planes: this subject's actual D (native-z, docs/58), used ONLY by the
-        group_by_burst path to bound the z-plane group index. None → falls back to
-        N_CANON_PLANES (legacy fixed-12 assumption).
+        group_by_burst path to bound the z-plane group index. Required on that path.
     """
-    if generator is None and cfg.seed is not None:
-        generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
-
     def rand(shape):
         return torch.rand(shape, device=device, generator=generator, dtype=torch.float32)
 
     if cfg.group_by_burst and group_ids is not None:
         # Realistic: one breath per z-plane burst. Respiratory PHASE r is shared within a plane and
         # INDEPENDENT across planes (different slices = different breath MOMENTS). Draw per-plane, gather.
-        P = n_planes if n_planes is not None else N_CANON_PLANES
+        if n_planes is None:
+            raise ValueError("group_by_burst with group_ids requires n_planes (this subject's D)")
+        P = n_planes
         gid = group_ids.clamp(0, P - 1).long()                        # (B,S) z-plane per slot
         r = torch.gather(rand((B, P)), 1, gid)                        # (B,S) shared within plane
         # Amplitude SCALE is a per-SUBJECT property (one lung capacity): ONE baseline per subject, NOT
@@ -240,11 +224,6 @@ def sample_displacement_vectors(B, S, cfg: RespiratoryConfig, device, generator=
 
     n_planes: see `sample_displacements`.
     """
-    # Resolve the generator ONCE so SI/AP and θ/φ draw from the same stream
-    # (otherwise a cfg.seed would only seed the SI/AP draw, breaking determinism).
-    if generator is None and cfg.seed is not None:
-        generator = torch.Generator(device=device).manual_seed(int(cfg.seed))
-
     d_si, d_ap, r = sample_displacements(B, S, cfg, device, generator=generator,
                                          group_ids=group_ids, n_planes=n_planes)   # (B,S) each
     v = _build_disp_dhw(d_si, d_ap, cfg.ap_axis)                                   # (B,S,3)
@@ -282,9 +261,8 @@ def sample_resp_disp(B, S, cfg: RespiratoryConfig, device, *, train: bool,
       (mirrors the dataset's `random.Random(seq_index)` z/t determinism). Per-ROW (not
       per-batch) because `DynamicBatchSampler` groups variable rows per batch.
 
-    n_planes: see `sample_displacements`. None (default) preserves old behavior for callers
-        not yet migrated to native-z (docs/58). Inert unless `group_ids` is also passed —
-        `evaluation/`'s adapters pass neither, so they never consult it (docs/62 §7).
+    n_planes: see `sample_displacements`. Inert unless `group_ids` is also passed (and
+        `cfg.group_by_burst` is set), in which case it is required.
     """
     if train:
         return sample_displacement_vectors(B, S, cfg, device, generator=generator,

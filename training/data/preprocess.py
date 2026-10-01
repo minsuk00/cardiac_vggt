@@ -245,7 +245,7 @@ def get_canonical_transforms(
 ):
     """Build the deterministic monai pipeline for `PersistentDataset`.
 
-    Output dict has `phases`, of shape `(T=num_phases, 1, X, Y, Z)` in monai axis
+    Output dict has `phases`, of shape `(T=num_phases, X, Y, Z)` in monai axis
     order (Z = this subject's own native slice count, native-z), plus `dz_mm`
     (that subject's native z spacing, a plain float). `mri_dataset.get_data` is
     responsible for permuting `phases` to splat-order at load time.

@@ -22,7 +22,6 @@ import pytest
 import torch
 
 from data.respiratory import (
-    N_CANON_PLANES,
     SPACING_MM,
     RespiratoryConfig,
     extract_slices_with_respiratory_vec,
@@ -30,6 +29,7 @@ from data.respiratory import (
 )
 
 DEVICE = "cpu"
+LEGACY_N_PLANES = 12   # the old fixed-12 grid depth (the removed N_CANON_PLANES fallback)
 
 # Real pitches from the pooled cohort (training/splits/manifest.csv spans 5.0-12.0 mm).
 # 12.0 is included ONLY as the degenerate control where old and new agree.
@@ -174,7 +174,7 @@ def test_inplane_shift_uses_inplane_spacing_not_dz(dz):
 def test_group_by_burst_respects_n_planes_beyond_twelve():
     """With n_planes=D>12, planes 12..D-1 are INDEPENDENT breaths.
 
-    The legacy `clamp(0, N_CANON_PLANES-1)` collapsed every plane >= 12 onto plane 11, so
+    The legacy `clamp(0, 12-1)` collapsed every plane >= 12 onto plane 11, so
     a 21-slice subject's whole basal third shared one breath. Existing burst tests use
     plane ids <= 6 and so cannot see this.
     """
@@ -186,32 +186,36 @@ def test_group_by_burst_respects_n_planes_beyond_twelve():
     _, r = sample_resp_disp(1, D, cfg, DEVICE, train=False, seq_index=seq,
                             group_ids=gids, n_planes=D)
 
-    deep = r[0, N_CANON_PLANES:]                                  # planes 12..20
-    assert deep.numel() == D - N_CANON_PLANES
+    deep = r[0, LEGACY_N_PLANES:]                                 # planes 12..20
+    assert deep.numel() == D - LEGACY_N_PLANES
     # Independent breaths ⇒ these must not all be the same value.
     assert float(deep.max() - deep.min()) > 1e-3, (
         "planes >= 12 all share one breath phase — n_planes is being ignored"
     )
     # And no deep plane may simply echo plane 11 (the legacy clamp target).
-    assert not torch.allclose(deep, r[0, N_CANON_PLANES - 1].expand_as(deep), atol=1e-6)
+    assert not torch.allclose(deep, r[0, LEGACY_N_PLANES - 1].expand_as(deep), atol=1e-6)
 
 
 def test_n_planes_fault_injection_is_detectable():
-    """PROOF THE TEST ABOVE HAS TEETH: omitting n_planes (the legacy default) must
-    collapse every plane >= 12 onto plane 11's breath."""
+    """PROOF THE TEST ABOVE HAS TEETH: the legacy fixed-12 plane count must collapse every
+    plane >= 12 onto plane 11's breath; and omitting n_planes now raises instead of
+    silently falling back to it."""
     D = 21
     cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, group_by_burst=True)
     gids = torch.arange(D, dtype=torch.int64).view(1, D)
     seq = torch.tensor([[7]], dtype=torch.int64)
 
     _, r_legacy = sample_resp_disp(1, D, cfg, DEVICE, train=False, seq_index=seq,
-                                   group_ids=gids, n_planes=None)
+                                   group_ids=gids, n_planes=LEGACY_N_PLANES)
 
-    deep = r_legacy[0, N_CANON_PLANES:]
+    deep = r_legacy[0, LEGACY_N_PLANES:]
     # Legacy clamp ⇒ planes 12..20 all read plane 11.
-    assert torch.allclose(deep, r_legacy[0, N_CANON_PLANES - 1].expand_as(deep), atol=1e-6), (
-        "the legacy n_planes=None path no longer clamps — this fault injection is stale"
+    assert torch.allclose(deep, r_legacy[0, LEGACY_N_PLANES - 1].expand_as(deep), atol=1e-6), (
+        "n_planes=12 no longer clamps — this fault injection is stale"
     )
+    with pytest.raises(ValueError, match="requires n_planes"):
+        sample_resp_disp(1, D, cfg, DEVICE, train=False, seq_index=seq,
+                         group_ids=gids, n_planes=None)
 
 
 def test_group_by_burst_shares_one_breath_within_a_deep_plane():

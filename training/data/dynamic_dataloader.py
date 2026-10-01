@@ -8,9 +8,8 @@ from typing import Callable, Optional
 
 from hydra.utils import instantiate
 import random
-import numpy as np
-from torch.utils.data import DataLoader, Dataset, DistributedSampler, IterableDataset, Sampler
-from abc import ABC, abstractmethod
+from torch.utils.data import DataLoader, DistributedSampler, Sampler
+from abc import ABC
 
 from .worker_fn import get_worker_init_fn
 

@@ -13,8 +13,8 @@ from data.gpu_aug import (
     build_gpu_transforms,
     extract_slices_from_phases,
     gpu_augment_batch,
-    recompute_bbox_gpu,
 )
+from data.preprocess import compute_geometric_bbox
 from data.respiratory import RespiratoryConfig
 
 DEVICE = "cpu"
@@ -160,11 +160,11 @@ def test_spatial_aug_has_no_through_plane_op():
 def test_recompute_bbox_gpu_tight():
     mask = torch.zeros(12, 256, 256)
     mask[2:9, 50:200, 10:240] = 1
-    bb = recompute_bbox_gpu(mask)
+    bb = compute_geometric_bbox(mask)
     assert bb.tolist() == [2, 9, 50, 200, 10, 240]
 
 def test_recompute_bbox_gpu_empty_fallback():
-    bb = recompute_bbox_gpu(torch.zeros(12, 256, 256))
+    bb = compute_geometric_bbox(torch.zeros(12, 256, 256))
     assert bb.tolist() == [0, 12, 0, 256, 0, 256]
 
 def test_extract_slices_shapes_and_indexing():

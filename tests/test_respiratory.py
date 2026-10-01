@@ -25,6 +25,11 @@ from data.respiratory import (
 DEVICE = "cpu"
 
 
+def _g(seed):
+    """Fresh seeded generator — the deterministic-sampling handle (was cfg.seed)."""
+    return torch.Generator(device=DEVICE).manual_seed(seed)
+
+
 # ── 1. Lujan waveform ─────────────────────────────────────────────────────────
 def test_lujan_endpoints():
     A = 12.0
@@ -109,11 +114,11 @@ def test_offstack_shift_reads_zero():
 
 # ── 7. Determinism of the sampler ─────────────────────────────────────────────
 def test_sample_displacements_deterministic_with_seed():
-    cfg = RespiratoryConfig(enable=True, seed=123)
-    a_si, a_ap, _ = sample_displacements(2, 6, cfg, DEVICE)
-    b_si, b_ap, _ = sample_displacements(2, 6, cfg, DEVICE)
+    cfg = RespiratoryConfig(enable=True)
+    a_si, a_ap, _ = sample_displacements(2, 6, cfg, DEVICE, generator=_g(123))
+    b_si, b_ap, _ = sample_displacements(2, 6, cfg, DEVICE, generator=_g(123))
     assert torch.equal(a_si, b_si) and torch.equal(a_ap, b_ap)
-    c_si, _, _ = sample_displacements(2, 6, RespiratoryConfig(enable=True, seed=999), DEVICE)
+    c_si, _, _ = sample_displacements(2, 6, cfg, DEVICE, generator=_g(999))
     assert not torch.equal(a_si, c_si)
     # AP is the configured ratio of SI.
     assert torch.allclose(a_ap, cfg.ap_ratio * a_si, atol=1e-5)
@@ -128,12 +133,12 @@ def test_per_slot_flag_controls_amplitude_sharing(monkeypatch):
         R, "lujan_displacement",
         lambda r, A, n=3: torch.as_tensor(A, dtype=torch.float32) * torch.ones_like(r))
 
-    shared = RespiratoryConfig(enable=True, amplitude_jitter=8.0, per_slot=False, seed=5)
-    d_shared, _, _ = R.sample_displacements(1, 6, shared, DEVICE)
+    shared = RespiratoryConfig(enable=True, amplitude_jitter=8.0, per_slot=False)
+    d_shared, _, _ = R.sample_displacements(1, 6, shared, DEVICE, generator=_g(5))
     assert torch.allclose(d_shared, d_shared[:, :1].expand_as(d_shared))  # all slots == one A
 
-    perslot = RespiratoryConfig(enable=True, amplitude_jitter=8.0, per_slot=True, seed=5)
-    d_ps, _, _ = R.sample_displacements(1, 6, perslot, DEVICE)
+    perslot = RespiratoryConfig(enable=True, amplitude_jitter=8.0, per_slot=True)
+    d_ps, _, _ = R.sample_displacements(1, 6, perslot, DEVICE, generator=_g(5))
     assert not torch.allclose(d_ps, d_ps[:, :1].expand_as(d_ps))  # independent A per slot
 
 
@@ -153,9 +158,9 @@ def test_fp16_phases_ok():
 # ── 9. Direction randomization (3-vector + rotation) ──────────────────────────
 def test_zero_tilt_reduces_to_si_ap():
     """direction_jitter_deg=0 → the 3-vector is exactly (d_si, d_ap_on_axis, 0)."""
-    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=0.0, ap_axis="H", seed=42)
-    v, _ = sample_displacement_vectors(2, 6, cfg, DEVICE)         # (B,S,3)
-    d_si, d_ap, _ = sample_displacements(2, 6, cfg, DEVICE)       # same seed → same draw
+    cfg = RespiratoryConfig(enable=True, direction_jitter_deg=0.0, ap_axis="H")
+    v, _ = sample_displacement_vectors(2, 6, cfg, DEVICE, generator=_g(42))    # (B,S,3)
+    d_si, d_ap, _ = sample_displacements(2, 6, cfg, DEVICE, generator=_g(42))  # same seed → same draw
     assert torch.allclose(v[..., 0], d_si, atol=1e-6)            # D = SI
     assert torch.allclose(v[..., 1], d_ap, atol=1e-6)            # H = AP
     assert torch.allclose(v[..., 2], torch.zeros_like(v[..., 2]), atol=1e-6)  # W = 0
@@ -178,10 +183,10 @@ def test_zero_tilt_vec_matches_scalar_extractor():
 def test_tilt_preserves_mm_magnitude_and_adds_lr():
     """Rotation is rigid → mm magnitude preserved; tilt injects a nonzero LR (W)
     component and shrinks the D component vs the untilted vector (same seed)."""
-    base = RespiratoryConfig(enable=True, direction_jitter_deg=0.0, ap_axis="H", seed=7)
-    tilt = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, ap_axis="H", seed=7)
-    v0, _ = sample_displacement_vectors(4, 8, base, DEVICE)      # (d_si, d_ap, 0)
-    vt, _ = sample_displacement_vectors(4, 8, tilt, DEVICE)      # rotated
+    base = RespiratoryConfig(enable=True, direction_jitter_deg=0.0, ap_axis="H")
+    tilt = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, ap_axis="H")
+    v0, _ = sample_displacement_vectors(4, 8, base, DEVICE, generator=_g(7))   # (d_si, d_ap, 0)
+    vt, _ = sample_displacement_vectors(4, 8, tilt, DEVICE, generator=_g(7))   # rotated
     # Same seed → identical d_si/d_ap draw → identical mm magnitude per slot.
     assert torch.allclose(v0.norm(dim=-1), vt.norm(dim=-1), atol=1e-4)
     # Tilt actually moved the vector off the D/H plane (nonzero W somewhere).
@@ -233,7 +238,8 @@ def test_group_by_burst_shares_one_breath_per_plane():
     # 20 slots over planes {3,4,5,6}, planes repeated (multi-frame bursts).
     gids = torch.tensor([[6, 3, 3, 3, 4, 4, 5, 5, 5, 3, 4, 5, 3, 4, 5, 3, 4, 5, 6, 6]])
     seq = torch.tensor([[7]], dtype=torch.int64)
-    disp, r = sample_resp_disp(1, 20, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    disp, r = sample_resp_disp(1, 20, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids,
+                               n_planes=7)
     plane_r = {}
     for p in (3, 4, 5, 6):
         idx = (gids[0] == p).nonzero().flatten()
@@ -257,8 +263,8 @@ def test_group_by_burst_val_deterministic():
     cfg = RespiratoryConfig(enable=True, direction_jitter_deg=30.0, group_by_burst=True)
     gids = torch.tensor([[3, 3, 4, 4, 5, 6]])
     seq = torch.tensor([[7]], dtype=torch.int64)
-    a, ar = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
-    b, br = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    a, ar = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids, n_planes=7)
+    b, br = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids, n_planes=7)
     assert torch.equal(a, b) and torch.equal(ar, br)
 
 
@@ -267,10 +273,10 @@ def test_tilt_is_per_subject_not_per_plane():
     """Tilt (θ,φ) is drawn ONCE per subject → the per-slot UNIT direction is identical
     across ALL slices (different z-planes included); only magnitude varies with phase."""
     cfg = RespiratoryConfig(enable=True, tilt_min_deg=0.0, tilt_max_deg=45.0,
-                            group_by_burst=True, seed=3)
+                            group_by_burst=True)
     gids = torch.tensor([[6, 3, 3, 4, 4, 5, 5, 3, 4, 5]])
     seq = torch.tensor([[7]], dtype=torch.int64)
-    v, _ = sample_resp_disp(1, 10, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    v, _ = sample_resp_disp(1, 10, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids, n_planes=7)
     norms = v[0].norm(dim=-1, keepdim=True)
     big = norms[:, 0] > 0.5                              # ignore near-zero (exhale) slots
     units = v[0][big] / norms[big]
@@ -283,9 +289,9 @@ def test_tilt_min_floor_forces_off_axis_motion():
     """tilt_min_deg>0 guarantees a nonzero off-D (in-plane) component for every subject:
     with no AP, in-plane magnitude >= sin(tilt_min) * |d_si| wherever d_si>0."""
     cfg = RespiratoryConfig(enable=True, tilt_min_deg=20.0, tilt_max_deg=45.0,
-                            ap_ratio=0.0, seed=1)                          # ap=0 → pre-tilt vector pure D
-    v, _ = sample_displacement_vectors(8, 4, cfg, DEVICE)
-    d_si, _, _ = sample_displacements(8, 4, cfg, DEVICE)                   # same seed → same magnitudes
+                            ap_ratio=0.0)                                  # ap=0 → pre-tilt vector pure D
+    v, _ = sample_displacement_vectors(8, 4, cfg, DEVICE, generator=_g(1))
+    d_si, _, _ = sample_displacements(8, 4, cfg, DEVICE, generator=_g(1))  # same seed → same magnitudes
     inplane = (v[..., 1] ** 2 + v[..., 2] ** 2).sqrt()
     mask = d_si.abs() > 1e-3
     assert (inplane[mask] >= (math.sin(math.radians(20.0)) - 1e-3) * d_si.abs()[mask]).all()
@@ -295,10 +301,10 @@ def test_burst_amplitude_scale_is_per_subject():
     """group_by_burst: amplitude SCALE is one per subject — with amplitude_breath_jitter=0
     the breath DEPTH ceiling (peak, r->0.5) is shared across planes; only phase r differs."""
     cfg = RespiratoryConfig(enable=True, tilt_max_deg=0.0, amplitude_breath_jitter=0.0,
-                            group_by_burst=True, seed=8)                   # no tilt → v[...,0]=d_si
+                            group_by_burst=True)                           # no tilt → v[...,0]=d_si
     gids = torch.tensor([[3, 3, 4, 4, 5, 5]])
     seq = torch.tensor([[2]], dtype=torch.int64)
-    v, r = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids)
+    v, r = sample_resp_disp(1, 6, cfg, DEVICE, train=False, seq_index=seq, group_ids=gids, n_planes=6)
     d_si = v[0, :, 0]
     A_recovered = d_si / torch.sin(torch.pi * r[0]).clamp_min(1e-3).pow(2 * cfg.cos2n)
     ok = torch.sin(torch.pi * r[0]) > 0.2                                  # away from r=0/1 where recovery is unstable

@@ -52,6 +52,7 @@ try:
 except ImportError:  # pragma: no cover — batchaug is a hard dep for aug
     _B = None
 
+from data.preprocess import compute_geometric_bbox
 from data.respiratory import (
     extract_slices_with_respiratory_vec,
     sample_resp_disp,
@@ -107,8 +108,9 @@ def build_gpu_transforms(aug_cfg=None):
     # `rotate_range` slots are PLANES of rotation: slot 0 = H-W plane (about D) = in-plane.
     # translate_range / scale_range are per-axis (D, H, W); slot 0 = D is frozen.
     # Four acquisition-artifact post-ops run after the Compose — isotropic in-plane zoom,
-    # simulated low-res, Gibbs ringing, phase-encode ghosting — attached as `vggt_post_ops`
-    # and applied by gpu_augment_batch (see _build_ood_post_ops for why they are separate).
+    # simulated low-res, Gibbs ringing, phase-encode ghosting — stored on the returned
+    # Compose as `vggt_post_ops` (part of this function's contract; gpu_augment_batch
+    # requires it). See _build_ood_post_ops for why they are not Compose entries.
     transforms = [
         # W-flip: the objective is exactly mirror-equivariant (inputs, gt_target_volume and
         # scanner_coords all derive from the same array), and ~29% of the pooled CMRx cohort is
@@ -168,7 +170,7 @@ def _apply_ghosting(x, num_ghosts, intensity, axis):
 
 def _build_ood_post_ops(keys, mode_dict):
     """Build the docs/63 acquisition-artifact step that runs AFTER the affine
-    Compose (gpu_augment_batch applies it via the `vggt_post_ops` attribute,
+    Compose (gpu_augment_batch applies it as `transforms.vggt_post_ops`,
     inside the same try/except — a failure discards the whole aug_dict, so the
     batch reverts to fully UN-augmented, dropping the successful affine too).
 
@@ -216,15 +218,6 @@ def _build_ood_post_ops(keys, mode_dict):
         return out
 
     return _post_ops
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Helper: bbox of a 3D mask (GPU-friendly, no python loop over voxels)
-# ──────────────────────────────────────────────────────────────────────────────
-# The post-aug bbox is the SAME computation the dataset runs pre-aug — one implementation,
-# two call sites: `preprocess.compute_geometric_bbox` at cache-read time (mri_dataset.py),
-# and here after an affine has moved the content mask. It used to be duplicated verbatim.
-from data.preprocess import compute_geometric_bbox as recompute_bbox_gpu
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -366,15 +359,16 @@ def gpu_augment_batch(batch, transforms, device,
         if heart_roi is not None:
             aug_dict["heart_roi_canonical"] = heart_roi.to(
                 device=device, dtype=torch.float32, non_blocking=True).unsqueeze(1)
+        # docs/63 acquisition-artifact post-ops (isotropic zoom / low-res / Gibbs /
+        # ghosting), stored on the Compose by build_gpu_transforms. Fetched OUTSIDE the
+        # try so a transforms object without them fails loudly instead of silently
+        # training un-augmented.
+        post_ops = transforms.vggt_post_ops
         try:
             aug_dict = transforms(aug_dict)
-            # Aggressive tier only: docs/63 acquisition-artifact post-ops (isotropic
-            # zoom / low-res / Gibbs / ghosting), attached by build_gpu_transforms.
-            # Other tiers have no attribute → no-op. Runs inside this try so a
-            # post-op failure falls back to the un-augmented batch, like the Compose.
-            post_ops = getattr(transforms, "vggt_post_ops", None)
-            if post_ops is not None:
-                aug_dict = post_ops(aug_dict)
+            # Inside the try so a post-op failure falls back to the un-augmented batch,
+            # like the Compose.
+            aug_dict = post_ops(aug_dict)
         except Exception as e:
             # Aug must never crash training; log and fall through with identity affine.
             logging.warning(f"gpu_augment_batch: aug pipeline failed (ignored): {e}")
@@ -394,7 +388,8 @@ def gpu_augment_batch(batch, transforms, device,
                 t_target = t_target.squeeze(-1)  # (B,)
             gt_target_volume = phases_aug[torch.arange(Bsize, device=device), t_target]
 
-            bboxes = torch.stack([recompute_bbox_gpu(mask_aug_u8[b]) for b in range(Bsize)])
+            # Same bbox computation the dataset runs pre-aug, on the moved content mask.
+            bboxes = torch.stack([compute_geometric_bbox(mask_aug_u8[b]) for b in range(Bsize)])
 
             batch["phases"] = phases_aug.to(phases.dtype)
             batch["content_mask"] = mask_aug_u8
