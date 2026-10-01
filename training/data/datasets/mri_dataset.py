@@ -362,28 +362,72 @@ class MRIDataset(Dataset):
         # ── Geometric anatomy bbox (computed BEFORE z sampling) ───────────
         # Used to restrict z sampling to canonical planes that carry real data
         # (i.e., inside the subject's native FOV). Without this, small-Z subjects
-        # waste many slots on zero-padded Z planes — see explanation in the
-        # `z_sequence` block below.
+        # waste many slots on zero-padded Z planes — see `_sample_slots`.
         anatomy_bbox = compute_geometric_bbox(mask_splat).cpu().numpy().astype(np.int64)  # (6,)
         bbox_z0, bbox_z1 = int(anatomy_bbox[0]), int(anatomy_bbox[1])
 
-        # ── Pick t_target ─────────────────────────────────────────────────
-        # Priority: EF-sweep forced phase > single fixed phase > all T phases.
-        if forced_t is not None:
-            t_target = int(forced_t) % T_total
-        elif self.t_target_fixed is not None:
-            t_target = int(self.t_target_fixed) % T_total
-        elif self.split != "train":
-            t_target = seq_index % T_total
-        else:
-            t_target = random.randrange(T_total)
+        # RNG order is part of the data contract: in train, t_target is drawn from the global
+        # `random` BEFORE any slot draw.
+        t_target = self._pick_t_target(seq_index, forced_t, T_total)
+        t_sequence, z_sequence = self._sample_slots(
+            seq_index, t_target, T_total, bbox_z0, bbox_z1, img_per_seq)
+        slots = self._slot_arrays(phases_splat, t_sequence, z_sequence, D, dz)
 
+        # ── V_gt + full phases bundle (for the GPU aug) ───────────────────
+        # `anatomy_bbox` was already computed above (used to constrain z sampling).
+        gt_target_volume = phases_splat[t_target].float().cpu().numpy()  # (D, H, W) [0, 1] float32
+        # phases_full is the full (T, D, H, W) canonical bundle. Kept in float16 to
+        # keep batch transfer cheap; the trainer casts to float32 inside aug.
+        phases_full = phases_splat.cpu().numpy()  # (T, D, H, W) float16
+        content_mask_np = mask_splat.cpu().numpy().astype(np.uint8)  # (D, H, W)
+        heart_roi_np = self._heart_roi(sub_dir, (D, H_can, W_can))
+
+        rel_path = os.path.relpath(sub_dir, self.data_root)
+        seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
+
+        return {
+            **slots,
+            "seq_name": seq_name,
+            "gt_target_volume": gt_target_volume,
+            "t_target": np.array([t_target], dtype=np.int64),
+            "anatomy_bbox": anatomy_bbox,
+            "content_mask": content_mask_np,
+            **({"heart_roi_canonical": heart_roi_np} if heart_roi_np is not None else {}),
+            "phases": phases_full,
+            # This subject's own native z spacing (mm) and the derived voxel-index scale
+            # (z_scale = Z_HALF_MM / dz) — required by splat.py's push/pull, loss.py's direct
+            # splat/sample_volume call sites, and the respiratory mm->voxel conversion (docs/58).
+            "dz_mm": np.array([dz], dtype=np.float32),
+            "z_scale": np.array([z_scale], dtype=np.float32),
+            # Stable per-sample id → deterministic val respiratory seeding (mirrors
+            # the val `random.Random(seq_index)` z/t determinism). See gpu_aug.py.
+            "seq_index": np.array([seq_index], dtype=np.int64),
+        }
+
+    def _pick_t_target(self, seq_index, forced_t, T_total):
+        """Priority: EF-sweep forced phase > single fixed phase > all T phases. Only the
+        train branch draws (global `random`); val cycles `seq_index % T`."""
+        if forced_t is not None:
+            return int(forced_t) % T_total
+        if self.t_target_fixed is not None:
+            return int(self.t_target_fixed) % T_total
+        if self.split != "train":
+            return seq_index % T_total
+        return random.randrange(T_total)
+
+    def _sample_slots(self, seq_index, t_target, T_total, bbox_z0, bbox_z1, img_per_seq):
+        """-> (t_sequence, z_sequence), one entry per input slot.
+
+        Draw order (do not reorder — it defines the data stream): coverage shuffle (only if
+        it must be subsampled) → extras `choices` (only if any) → tail shuffle (always) →
+        per-slot phase `randrange` (only when mode != "static").
+        """
         # ── S = requested slot budget (multi-frame; NOT capped by T or bbox) ──
         # Multi-frame-per-slice allows phase reuse (t with replacement) and plane
         # reuse (LV-weighted extras), so S is no longer clamped to T_total or the
-        # in-FOV z extent. Full z-coverage is GUARANTEED in the slot-building block
-        # below (every in-bbox plane appears ≥once), so V_canon has no coverage
-        # holes and the full-volume L1 loss stays valid.
+        # in-FOV z extent. Full z-coverage is GUARANTEED below (every in-bbox plane
+        # appears ≥once), so V_canon has no coverage holes and the full-volume L1 loss
+        # stays valid.
         S = img_per_seq or self.num_slices
 
         # ── Build (t, z) slot sequences — multi-frame, full coverage ──────
@@ -470,8 +514,12 @@ class MRIDataset(Dataset):
             t_sequence = [rng.randrange(T_total) for _ in range(S)]
         if self.reference_slot:
             t_sequence[0] = t_target                            # slot 0 observes the target phase
+        return t_sequence, z_sequence
 
-        # ── Build per-slot tensors ────────────────────────────────────────
+    def _slot_arrays(self, phases_splat, t_sequence, z_sequence, D, dz):
+        """Per-slot arrays: `images` (unless deferred), `scanner_coords`, `timesteps`,
+        `slice_indices`, `z_indices` — each a list with one entry per slot."""
+        S = len(z_sequence)
         images_list = []
         scanner_coords_list = []
         z_indices_list = []
@@ -545,14 +593,19 @@ class MRIDataset(Dataset):
             timesteps_list.append(t_idx)
             slice_indices_list.append(z_i)
 
-        # ── V_gt + full phases bundle (for the GPU aug) ───────────────────
-        # `anatomy_bbox` was already computed above (used to constrain z sampling).
-        gt_target_volume = phases_splat[t_target].float().cpu().numpy()  # (D, H, W) [0, 1] float32
-        # phases_full is the full (T, D, H, W) canonical bundle. Kept in float16 to
-        # keep batch transfer cheap; the trainer casts to float32 inside aug.
-        phases_full = phases_splat.cpu().numpy()  # (T, D, H, W) float16
-        content_mask_np = mask_splat.cpu().numpy().astype(np.uint8)  # (D, H, W)
+        return {
+            # Omitted entirely when `defer_input_images` — an absent key is the signal
+            # gpu_augment_batch keys off, so a stale tensor can never masquerade as input.
+            **({} if self.defer_input_images else {"images": images_list}),
+            "scanner_coords": scanner_coords_list,
+            "timesteps": timesteps_list,
+            "slice_indices": slice_indices_list,
+            "z_indices": z_indices_list,
+        }
 
+    def _heart_roi(self, sub_dir, shape):
+        """(D, H, W) uint8 heart ROI, or None when the subject has none (or a stale one)."""
+        D, H_can, W_can = shape
         # Anatomy whole-heart ROI (nnU-Net seg, union-over-phases + dilation) resampled
         # onto the same canonical grid as the phases — a val-only metric mask that is
         # shared with the SVR baselines (vs the intensity-derived motion mask). Same axis
@@ -577,31 +630,4 @@ class MRIDataset(Dataset):
                     f"expected ({D}, {H_can}, {W_can}) for {sub_dir} — likely a stale "
                     f"pre-native-z ROI; skipping (heart_roi_canonical metric omitted this sample)."
                 )
-
-        rel_path = os.path.relpath(sub_dir, self.data_root)
-        seq_name = f"mri_{self.mri_mode}_{rel_path.replace(os.sep, '_')}"
-
-        return {
-            # Omitted entirely when `defer_input_images` — an absent key is the signal
-            # gpu_augment_batch keys off, so a stale tensor can never masquerade as input.
-            **({} if self.defer_input_images else {"images": images_list}),
-            "scanner_coords": scanner_coords_list,
-            "timesteps": timesteps_list,
-            "slice_indices": slice_indices_list,
-            "z_indices": z_indices_list,
-            "seq_name": seq_name,
-            "gt_target_volume": gt_target_volume,
-            "t_target": np.array([t_target], dtype=np.int64),
-            "anatomy_bbox": anatomy_bbox,
-            "content_mask": content_mask_np,
-            **({"heart_roi_canonical": heart_roi_np} if heart_roi_np is not None else {}),
-            "phases": phases_full,
-            # This subject's own native z spacing (mm) and the derived voxel-index scale
-            # (z_scale = Z_HALF_MM / dz) — required by splat.py's push/pull, loss.py's direct
-            # splat/sample_volume call sites, and the respiratory mm->voxel conversion (docs/58).
-            "dz_mm": np.array([dz], dtype=np.float32),
-            "z_scale": np.array([z_scale], dtype=np.float32),
-            # Stable per-sample id → deterministic val respiratory seeding (mirrors
-            # the val `random.Random(seq_index)` z/t determinism). See gpu_aug.py.
-            "seq_index": np.array([seq_index], dtype=np.int64),
-        }
+        return heart_roi_np
