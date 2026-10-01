@@ -38,7 +38,8 @@ def main():
 
     os.environ.setdefault("WANDB_MODE", "offline")
     overrides = RECIPE + ARMS[a.arm] + [
-        "max_epochs=2", "limit_train_batches=10", "limit_val_batches=3",
+        # ef_val_sweep=false: the EF sweep ignores limit_val_batches (full 180-sample val).
+        "max_epochs=2", "limit_train_batches=10", "limit_val_batches=3", "ef_val_sweep=false",
         f"exp_name=golden_{a.arm}", f"logging.log_dir={os.path.abspath(a.out)}",
     ]
     if not a.paper_mode:
