@@ -84,7 +84,7 @@ def setup():
     for src, s in SUBJECTS:
         by_src.setdefault(src, []).append(s)
     for src, subs in by_src.items():
-        subprocess.check_call([sys.executable, str(ROOT / "tools/build_af_bundle.py"), "--source", src,
+        subprocess.check_call([sys.executable, str(ROOT / "evaluation/src/engine/build_af_bundle.py"), "--source", src,
                                "--subjects", ",".join(subs), "--arms", "af48", "--eval-root", str(BUILD)])
     # The whole probe rests on this: af48 frames/GT 0..23 == the real af24 bundle.
     for src, s in SUBJECTS:

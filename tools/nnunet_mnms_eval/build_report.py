@@ -161,7 +161,7 @@ here); 3D-fullres alone is a fine ~2× cheaper proxy when iterating.</p>
 <h2>5. Reproduce</h2>
 <div class="box"><pre style="margin:0;white-space:pre-wrap;font-size:13px">
 # isolated env (svr untouched): nnunet 1.7.1 + torch 2.3.1+cu121
-micromamba run -n nnunet bash -c 'source tools/nnunet_mnms_eval/env.sh && \\
+micromamba run -n nnunet bash -c 'source evaluation/src/engine/env.sh && \\
   nnUNet_predict -i IN -o OUT -t 114 -m 3d_fullres -tr nnUNetTrainerV2_MMS'   # -m 2d for 2D; --save_npz + nnUNet_ensemble for ensemble
 
 # ACDC vs human GT

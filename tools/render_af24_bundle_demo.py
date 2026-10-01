@@ -24,7 +24,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation")]
+sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation"),
+                os.path.join(ROOT, "evaluation", "src", "engine")]
 
 ARMS = ("regular24", "hrv24", "af24")
 OUTDIR = os.path.join(ROOT, "temp", "af24_builder_demo")

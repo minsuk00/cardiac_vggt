@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation"),
-                os.path.join(ROOT, "tools")]
+                os.path.join(ROOT, "evaluation", "src", "engine")]
 import paths                                                              # noqa: E402
 from build_af_bundle import BURN, DT, N_BEATS, T, rr_sequence, render_phase   # noqa: E402
 

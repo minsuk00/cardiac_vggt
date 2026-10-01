@@ -27,7 +27,7 @@ import numpy as np                                                 # noqa: E402
 from scipy.ndimage import zoom                                     # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "tools")]
+sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation", "src", "engine")]
 from build_af_bundle import DT, T_BREATH, breathing_model                 # noqa: E402
 from data.respiratory import lujan_displacement                          # noqa: E402
 

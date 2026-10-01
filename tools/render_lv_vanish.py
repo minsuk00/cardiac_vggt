@@ -34,7 +34,7 @@ sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evalua
 import paths                                                       # noqa: E402
 import ef_dice                                                     # noqa: E402
 
-ENV_SH = "/home/minsukc/vggt/tools/nnunet_mnms_eval/env.sh"
+ENV_SH = "/home/minsukc/vggt/evaluation/src/engine/env.sh"
 COL = {1: (1.0, 0.25, 0.25), 2: (0.25, 0.9, 0.35), 3: (0.3, 0.55, 1.0)}     # LV, MYO, RV
 
 

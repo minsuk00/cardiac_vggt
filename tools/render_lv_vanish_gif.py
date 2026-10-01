@@ -35,7 +35,7 @@ sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evalua
 import paths                                                       # noqa: E402
 import ef_dice                                                     # noqa: E402
 
-ENV_SH = "/home/minsukc/vggt/tools/nnunet_mnms_eval/env.sh"
+ENV_SH = "/home/minsukc/vggt/evaluation/src/engine/env.sh"
 COL = {1: (1.0, 0.2, 0.2), 2: (0.2, 0.9, 0.3), 3: (0.3, 0.55, 1.0)}
 NAME = {"gt": "GT", "fetal_cmr_4d": "Fetal CMR 4D", "vggt_final518_diff1000_ep300": "VGGT diff1000",
         "vggt_final518_base_ep300": "VGGT base"}

@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "evaluation"))
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.join(ROOT, "evaluation", "src", "engine"))
 import paths            # noqa: E402
 from build_af_bundle import (BURN, DT, N_BEATS, T, rr_sequence, pos_physio,  # noqa: E402
                              pos_compress, render_phase)

@@ -36,7 +36,7 @@ import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "evaluation"))
-sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.join(ROOT, "evaluation", "src", "engine"))
 import paths  # noqa: E402
 from build_af_bundle import BURN, DT, N_BEATS, T, pos_physio, rr_sequence  # noqa: E402
 

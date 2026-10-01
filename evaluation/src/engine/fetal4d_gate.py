@@ -78,7 +78,7 @@ RR_NOMINAL_S = 1.0          # no timing in the source data; sets the engine's ti
 # CalculateAngularDifference, computes (cp-cp0) - 2pi*floor((cp-cp0)/2pi), a true modulo at any
 # magnitude, so angdiff(710) is bit-identical to angdiff(710 mod 2pi).
 CARDPHASE_COUNT_TOKEN = 710.0
-ENV_SH = os.path.join(ROOT, "tools/nnunet_mnms_eval/env.sh")
+ENV_SH = os.path.join(ROOT, "evaluation/src/engine/env.sh")
 
 
 def work_root(args):

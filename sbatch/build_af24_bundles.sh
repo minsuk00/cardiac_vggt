@@ -87,7 +87,7 @@ rc=0
 while read -r SRC SUBJ; do
   [ -z "$SRC" ] && continue
   echo "--- $SRC ($(echo "$SUBJ" | tr ',' '\n' | wc -l) subjects)"
-  $PY tools/build_af_bundle.py --source "$SRC" --subjects "$SUBJ" \
+  $PY evaluation/src/engine/build_af_bundle.py --source "$SRC" --subjects "$SUBJ" \
       --arms $ARMS --eval-root "${EVAL_ROOT:-scratch/eval}" || rc=$?
 done <<< "$WORK"
 

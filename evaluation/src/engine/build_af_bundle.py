@@ -37,9 +37,9 @@ volume nobody photographed (docs/110 section 7).
     are never overwritten. See the ARMS table for why 24 frames is the lever.
 
 Usage:
-    PYTHONPATH=training:. python tools/build_af_bundle.py --source cmrx2024 \
+    PYTHONPATH=training:. python evaluation/src/engine/build_af_bundle.py --source cmrx2024 \
         --subjects CMRx24_Test_P016,CMRx24_Test_P004,CMRx24_Test_P017
-    PYTHONPATH=training:. python tools/build_af_bundle.py --source cmrx2024 --check \
+    PYTHONPATH=training:. python evaluation/src/engine/build_af_bundle.py --source cmrx2024 --check \
         --subjects CMRx24_Test_P016
 """
 import argparse
@@ -54,7 +54,7 @@ import nibabel as nib
 import numpy as np
 import torch
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path[:0] = [os.path.join(ROOT, "training"), ROOT]
 from data.respiratory import lujan_displacement, reslice_volume_vec        # noqa: E402
 

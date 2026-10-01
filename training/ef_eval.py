@@ -37,7 +37,7 @@ IN_PLANE_MM = 1.4        # canonical in-plane spacing — FIXED for every subjec
 # geometrically false and every absolute mL wrong by dz/12 — and it would have started changing
 # the segmentation itself the moment anyone switched to `3d_fullres`, which DOES resample z.
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_ENV_SH = os.path.join(_REPO, "tools", "nnunet_mnms_eval", "env.sh")
+_ENV_SH = os.path.join(_REPO, "evaluation", "src", "engine", "env.sh")
 
 
 def save_pred_volume(V_dhw, out_dir, subject, t, dz_mm):

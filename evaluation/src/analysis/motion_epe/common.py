@@ -25,7 +25,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve()
 ROOT = str(next(p for p in HERE.parents if (p / "evaluation").is_dir()))
-sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "tools"), os.path.join(ROOT, "evaluation")]
+sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "evaluation", "src", "engine"), os.path.join(ROOT, "evaluation")]
 import paths                                                               # noqa: E402
 from build_af_bundle import breathing_model                                # noqa: E402
 from data.respiratory import lujan_displacement                            # noqa: E402

@@ -2,7 +2,7 @@
 # Step 2/3 of the EF/Dice chain — nnU-Net v1 Task114 (M&Ms) segmentation ACROSS THE ENV BOUNDARY.
 #
 # ef_dice.py runs in `svr`, but the segmenter is nnU-Net v1 in the SEPARATE `nnunet` env
-# (RESULTS_FOLDER etc. are set by tools/nnunet_mnms_eval/env.sh). This wrapper is git-tracked so the
+# (RESULTS_FOLDER etc. are set by evaluation/src/engine/env.sh). This wrapper is git-tracked so the
 # middle step is reproducible instead of living only in a driver sbatch. Like run_svrtk3d.sh /
 # run_nesvor.sh it crosses envs, so it is a shell wrapper, not an engine python step.
 #
@@ -17,7 +17,7 @@ set -euo pipefail
 VGGT=/home/minsukc/vggt
 IN=${1:?input_dir with ef_dice.py dump output (*_0000.nii.gz)}
 SEG=${2:?seg_dir (nnU-Net output)}
-ENV_SH=$VGGT/tools/nnunet_mnms_eval/env.sh
+ENV_SH=$VGGT/evaluation/src/engine/env.sh
 mkdir -p "$SEG"
 shopt -s nullglob   # empty globs expand to nothing (not a literal), so the count is honest under set -e
 
