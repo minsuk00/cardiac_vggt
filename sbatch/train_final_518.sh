@@ -63,8 +63,6 @@ loss.volume.gather_weight=0.5 \
 loss.volume.heart_weight=0.5 \
 loss.volume.splat_res=518 \
 optim.optimizer.lr=${PEAK_LR} \
-optim.options.lr.0.scheduler.schedulers.0.end_value=${PEAK_LR} \
-optim.options.lr.0.scheduler.schedulers.1.start_value=${PEAK_LR} \
 ${ARM_OVERRIDES} \
 ${EXPERIMENT_OVERRIDES:-}"
 
