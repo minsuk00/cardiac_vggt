@@ -14,6 +14,8 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Differences that are deliberate (one regex per line, matched against a diff line).
+EXPECTED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "expected_diffs.txt")
 G1_VARIANTS = ["paper", "multiframe", "static", "tfixed0", "noref"]
 CPU = ["g0b", "g1", "g1b", "g4", "g6", "g7"]
 
@@ -70,6 +72,9 @@ def main():
     p.add_argument("--gpu", default="")
     a = p.parse_args()
 
+    import re
+    expected = [re.compile(l.strip()) for l in open(EXPECTED)
+                if l.strip() and not l.startswith("#")] if os.path.exists(EXPECTED) else []
     env = {**os.environ, "PYTHONPATH": f"{REPO}/training:{REPO}", "CUDA_VISIBLE_DEVICES": a.gpu}
     failed = []
     for gate in a.gates:
@@ -90,7 +95,11 @@ def main():
                 ref.pop("strict_load", None)
                 new.pop("strict_load", None)
             d = diff(ref, new)
-            print(f"[{name}] {'PASS' if not d else f'{len(d)} DIFFERENCES'}")
+            n_expected = len(d)
+            d = [l for l in d if not any(e.search(f"{name}:{l}") for e in expected)]
+            n_expected -= len(d)
+            note = f" ({n_expected} expected diffs ignored)" if n_expected else ""
+            print(f"[{name}] {'PASS' if not d else f'{len(d)} DIFFERENCES'}{note}")
             for line in d[:30]:
                 print("   ", line)
             if d:

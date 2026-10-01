@@ -1,0 +1,5 @@
+# Deliberate differences vs temp/golden/ref (pre-B/C code). One regex per line, matched against
+# "<json name>:<diff line>". Add a line only for a change the commit message explains.
+
+# B2/B4/B5: config keys deleted because nothing read them.
+^g0b\.json:/\w+/(model/enable_point|logging/all_ranks|logging/log_level_secondary|config_name|data/(train|val)/common_config/training|logging/log_visual_frequency/val|logging/visuals_keys_to_log): present -> <absent>$
