@@ -14,12 +14,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["MKL_THREADING_LAYER"] = "GNU"
 # Provides full Hydra stack traces on error for easier debugging.
 os.environ["HYDRA_FULL_ERROR"] = "1"
-# Enables asynchronous error handling for NCCL, which can prevent hangs.
-os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
 
 import gc
-import json
 import logging
 import math
 import time
@@ -27,12 +24,10 @@ from collections import defaultdict
 from typing import Any, Dict, List, Mapping, Optional
 
 import torch
-import torch.nn as nn
 from hydra.utils import instantiate
-from iopath.common.file_io import g_pathmgr
 from data.gpu_aug import build_gpu_transforms, gpu_augment_batch
 from data.respiratory import RespiratoryConfig
-from train_utils.checkpoint import CheckpointSaver
+from train_utils.checkpoint import robust_torch_save
 from vggt.utils.checkpoint_stage import stage_checkpoint_to_local
 from train_utils.freeze import freeze_modules
 from train_utils.general import *
@@ -74,8 +69,6 @@ class Trainer(TrainerVizMixin):
     - Executing the main training and validation loops.
     - Logging metrics and visualizations to wandb.
     """
-
-    EPSILON = 1e-8
 
     def __init__(
         self,
@@ -149,10 +142,7 @@ class Trainer(TrainerVizMixin):
         setup_logging(
             __name__,
             output_dir=self.logging_conf.log_dir,
-            rank=0,
             log_level_primary=self.logging_conf.log_level_primary,
-            log_level_secondary=self.logging_conf.log_level_secondary,
-            all_ranks=self.logging_conf.all_ranks,
         )
         set_seeds(seed_value, self.max_epochs, 0)
 
@@ -167,14 +157,14 @@ class Trainer(TrainerVizMixin):
 
         # Move model to the correct device
         self.model.to(self.device)
-        self.time_elapsed_meter = DurationMeter("Time Elapsed", self.device, ":.4f")
+        self.time_elapsed_meter = DurationMeter("Time Elapsed", ":.4f")
 
         # Construct the optimizer (after moving model to device)
         if self.mode != "val":
             self.optim = construct_optimizer(self.model, self.optim_conf)
 
         # Load checkpoint: a run's own latest checkpoint in save_dir wins (SLURM auto-requeue
-        # / crash resume — epoch+steps+optimizer+scaler intact); the configured seed/base
+        # / crash resume — epoch+steps+optimizer intact); the configured seed/base
         # checkpoint (resume_checkpoint_path) is only the cold-start fallback. See
         # resolve_resume_checkpoint for why the priority must be this way round.
         ckpt_to_load = resolve_resume_checkpoint(
@@ -237,7 +227,6 @@ class Trainer(TrainerVizMixin):
         self.gpu_transforms = build_gpu_transforms(aug_cfg)
         self._aug_tier = (aug_cfg.get("tier", "aggressive")
                           if aug_cfg is not None else "aggressive")  # for the aug panel caption
-        self.val_gpu_transforms = None  # val never AFFINE-augments
 
         # ── Respiratory-motion augmentation (off by default) ───────────────
         # Unlike affine, respiratory applies in BOTH train and val: train draws
@@ -352,7 +341,6 @@ class Trainer(TrainerVizMixin):
         if env_variables_conf:
             for variable_name, value in env_variables_conf.items():
                 os.environ[variable_name] = value
-        logging.info(f"Environment:\n{json.dumps(dict(os.environ), sort_keys=True, indent=2)}")
 
     def _setup_backends(self, cuda_conf: Dict) -> None:
         """Configures PyTorch CUDA backends. Single-GPU: no process group is created."""
@@ -423,7 +411,7 @@ class Trainer(TrainerVizMixin):
         resume_cfg = self.checkpoint_conf.resume_checkpoint_path
         if resume_cfg and os.path.abspath(ckpt_path) == os.path.abspath(resume_cfg):
             load_path = stage_checkpoint_to_local(ckpt_path)
-        with g_pathmgr.open(load_path, "rb") as f:
+        with open(load_path, "rb") as f:
             checkpoint = torch.load(f, map_location="cpu")
 
         # Load model state
@@ -447,10 +435,8 @@ class Trainer(TrainerVizMixin):
             self.epoch = checkpoint["epoch"]
         self.steps = checkpoint["steps"] if "steps" in checkpoint else {"train": 0, "val": 0}
         self.ckpt_time_elapsed = checkpoint.get("time_elapsed", 0)
-
-        # Load AMP scaler state if available
-        if self.optim_conf.amp.enabled and "scaler" in checkpoint:
-            self.scaler.load_state_dict(checkpoint["scaler"])
+        # Older checkpoints also carry a "scaler" entry (the disabled bf16 GradScaler's
+        # state); it is ignored.
 
     def _setup_device(self, device: str):
         """Sets up the device for training (CPU or CUDA)."""
@@ -494,11 +480,11 @@ class Trainer(TrainerVizMixin):
             for name in watch:
                 self._grad_alarms[name] = GradientCollapseAlarm(
                     threshold=thr, patience=pat, name=name)
-        # GradScaler only helps fp16 (prevents underflow). bf16 has fp32 range, so loss
-        # scaling is dead weight — disable to keep the train loop honest.
-        self.scaler = torch.amp.GradScaler("cuda",
-            enabled=self.optim_conf.amp.enabled and self.optim_conf.amp.amp_dtype == "float16"
-        )
+        # bf16 only: it has fp32 range, so no GradScaler / loss scaling is needed (the fp16
+        # path that needed one was removed).
+        if self.optim_conf.amp.enabled:
+            assert self.optim_conf.amp.amp_dtype == "bfloat16", (
+                f"only bfloat16 AMP is supported, got {self.optim_conf.amp.amp_dtype}")
 
         # Freeze specified model parameters if any
         if getattr(self.optim_conf, "frozen_module_names", None):
@@ -577,14 +563,12 @@ class Trainer(TrainerVizMixin):
         try:
             path = os.path.join(self.checkpoint_conf.save_dir, "checkpoint_best.pt")
             safe_makedirs(self.checkpoint_conf.save_dir)
-            tmp = path + ".tmp"
             # Write-then-rename: a kill mid-write must not destroy the previous best.
-            torch.save({"model": self.model.state_dict(),
-                        "prev_epoch": int(self.epoch),
-                        "best_metric_name": self.checkpoint_conf.get(
-                            "best_metric", _BEST_METRIC_DEFAULT),
-                        "best_metric_value": float(value)}, tmp)
-            os.replace(tmp, path)
+            robust_torch_save({"model": self.model.state_dict(),
+                               "prev_epoch": int(self.epoch),
+                               "best_metric_name": self.checkpoint_conf.get(
+                                   "best_metric", _BEST_METRIC_DEFAULT),
+                               "best_metric_value": float(value)}, path)
             logging.info(f"[checkpoint] new best {self.checkpoint_conf.get('best_metric', _BEST_METRIC_DEFAULT)}"
                          f"={value:.4f} at epoch {int(self.epoch)} -> {path}")
         except Exception as e:
@@ -606,31 +590,17 @@ class Trainer(TrainerVizMixin):
             if self.checkpoint_conf.save_freq > 0 and int(epoch) % self.checkpoint_conf.save_freq == 0 and (int(epoch) > 0 or self.checkpoint_conf.save_freq == 1):
                 checkpoint_names.append(f"checkpoint_{int(epoch)}")
 
-        checkpoint_content = {
+        checkpoint = {
             "prev_epoch": epoch,
             "steps": self.steps,
             "time_elapsed": self.time_elapsed_meter.val,
             "optimizer": self.optim.optimizer.state_dict(),
+            "model": self.model.state_dict(),
         }
-
-        if self.optim_conf.amp.enabled:
-            checkpoint_content["scaler"] = self.scaler.state_dict()
-
-        saver = CheckpointSaver(
-            checkpoint_folder,
-            checkpoint_names=checkpoint_names,
-            epoch=epoch,
-        )
-
-        # Single-GPU: self.model is the bare module (no DDP wrap to unwrap).
-        model = self.model
-
-        saver.save_checkpoint(
-            model=model,
-            ema_models=None,
-            skip_saving_parameters=[],
-            **checkpoint_content,
-        )
+        for ckpt_name in checkpoint_names:
+            checkpoint_path = os.path.join(checkpoint_folder, f"{ckpt_name}.pt")
+            logging.info(f"Saving checkpoint at epoch {epoch} to {checkpoint_path}")
+            robust_torch_save(checkpoint, checkpoint_path)
 
     def _get_scalar_log_keys(self, phase: str) -> List[str]:
         """Retrieves keys for scalar values to be logged for a given phase."""
@@ -767,9 +737,9 @@ class Trainer(TrainerVizMixin):
 
     @torch.no_grad()
     def val_epoch(self, val_loader):
-        batch_time = AverageMeter("Batch Time", self.device, ":.4f")
-        data_time = AverageMeter("Data Time", self.device, ":.4f")
-        mem = AverageMeter("Mem (GB)", self.device, ":.4f")
+        batch_time = AverageMeter("Batch Time", ":.4f")
+        data_time = AverageMeter("Data Time", ":.4f")
+        mem = AverageMeter("Mem (GB)", ":.4f")
         phase = "val"
 
         # Fresh per-phase accumulators for this val epoch (diagnostic only; train unaffected).
@@ -785,7 +755,7 @@ class Trainer(TrainerVizMixin):
 
         loss_names = self._get_scalar_log_keys(phase)
         loss_names_prefixed = [f"Loss/{phase}_{name}" for name in loss_names]
-        loss_meters = {name: AverageMeter(name, self.device, ":.4f") for name in loss_names_prefixed}
+        loss_meters = {name: AverageMeter(name, ":.4f") for name in loss_names_prefixed}
 
         progress = ProgressMeter(
             num_batches=len(val_loader),
@@ -861,25 +831,20 @@ class Trainer(TrainerVizMixin):
             # Val never AFFINE-augments, but respiratory (if enabled) applies
             # deterministically per seq_index so val measures the real corrupted->clean task.
             batch = gpu_augment_batch(
-                batch, self.val_gpu_transforms, self.device,
+                batch, None, self.device,
                 respiratory_cfg=self.respiratory_cfg, train=False)
             if data_iter == 0:
                 self._log_resp_disp_scalar(batch, self.steps["train"], "val")
 
-            amp_type = self._amp_dtype()
-
             # compute output
-            with torch.no_grad():
-                with torch.amp.autocast("cuda",
-                    enabled=self.optim_conf.amp.enabled,
-                    dtype=amp_type,
-                ):
-                    val_loss_dict = self._step(batch, self.model, phase, loss_meters)
+            with torch.amp.autocast("cuda", enabled=self.optim_conf.amp.enabled,
+                                    dtype=torch.bfloat16):
+                val_loss_dict = self._step(batch, phase, loss_meters)
 
             self._save_val_volumes(batch, val_loss_dict)
-            if getattr(self, "_ef_this_epoch", False):
+            if self._ef_this_epoch:
                 self._save_ef_volume(batch, val_loss_dict)
-            if getattr(self, "_viz_ed_es", False):
+            if self._viz_ed_es:
                 self._stash_ed_es(batch, val_loss_dict)
 
             # measure elapsed time
@@ -892,12 +857,6 @@ class Trainer(TrainerVizMixin):
                 mem.update(torch.cuda.max_memory_allocated() // 1e9)
 
             if data_iter % self.logging_conf.log_freq == 0:
-                # Update progress display meters with current batch values
-                for name, meter in loss_meters.items():
-                    # Find the corresponding meter in progress for display
-                    for p_meter in progress.meters:
-                        if p_meter.name == f"Loss/{phase}_{name}":
-                            p_meter.update(meter.val)
                 progress.display(data_iter)
 
         # Log validation averages at the end of the epoch to WandB and TB
@@ -996,30 +955,28 @@ class Trainer(TrainerVizMixin):
                 self._log_cardiac_cycle_filmstrip(current_train_step, subj_idx)
 
         # ED-vs-ES per-subject panels (per-z; from the sweep's ED+ES reconstructions)
-        if getattr(self, "_viz_ed_es", False):
+        if self._viz_ed_es:
             self._log_ed_es_panels(current_train_step)
 
         # Predicted-EF metric (nnU-Net seg of the ED/ES pred volumes → slope/Spearman).
-        if getattr(self, "_ef_this_epoch", False):
+        if self._ef_this_epoch:
             self._compute_and_log_ef(current_train_step)
 
         logging.info(f"Validation Epoch {self.epoch} complete. Logged averages at train step {current_train_step}")
 
-        return True
-
     def train_epoch(self, train_loader):
-        batch_time = AverageMeter("Batch Time", self.device, ":.4f")
-        data_time = AverageMeter("Data Time", self.device, ":.4f")
-        mem = AverageMeter("Mem (GB)", self.device, ":.4f")
+        batch_time = AverageMeter("Batch Time", ":.4f")
+        data_time = AverageMeter("Data Time", ":.4f")
+        mem = AverageMeter("Mem (GB)", ":.4f")
         phase = "train"
 
         loss_names = self._get_scalar_log_keys(phase)
         loss_names = [f"Loss/{phase}_{name}" for name in loss_names]
-        loss_meters = {name: AverageMeter(name, self.device, ":.4f") for name in loss_names}
+        loss_meters = {name: AverageMeter(name, ":.4f") for name in loss_names}
 
         for config in self.gradient_clipper.configs:
             param_names = ",".join(config["module_names"])
-            loss_meters[f"Grad/{param_names}"] = AverageMeter(f"Grad/{param_names}", self.device, ":.4f")
+            loss_meters[f"Grad/{param_names}"] = AverageMeter(f"Grad/{param_names}", ":.4f")
 
         progress = ProgressMeter(
             num_batches=len(train_loader),
@@ -1039,9 +996,7 @@ class Trainer(TrainerVizMixin):
         iters_per_epoch = len(train_loader)
         limit_train_batches = iters_per_epoch if self.limit_train_batches is None else self.limit_train_batches
 
-        if self.gradient_clipper is not None:
-            # setup gradient clipping at the beginning of training
-            self.gradient_clipper.setup_clipping(self.model)
+        self.gradient_clipper.setup_clipping(self.model)
 
         for data_iter, batch in enumerate(train_loader):
             if data_iter >= limit_train_batches:
@@ -1094,16 +1049,10 @@ class Trainer(TrainerVizMixin):
 
             self._run_step_and_backward(batch, phase, loss_meters)
 
-            # compute gradient and do SGD step
-            assert data_iter <= limit_train_batches  # allow for off by one errors
+            # Scheduler progress. Always < 1: epoch < max_epochs and data_iter < limit.
             exact_epoch = self.epoch + float(data_iter) / limit_train_batches
             self.where = float(exact_epoch) / self.max_epochs
-
-            assert self.where <= 1 + self.EPSILON
-            if self.where < 1.0:
-                self.optim.step_schedulers(self.where)
-            else:
-                logging.warning(f"Skipping scheduler update since the training is at the end, i.e, {self.where} of [0,1].")
+            self.optim.step_schedulers(self.where)
 
             # Log schedulers
             if self.steps[phase] % self.logging_conf.log_freq == 0:
@@ -1128,28 +1077,24 @@ class Trainer(TrainerVizMixin):
                 )
 
             # Clipping gradients and detecting diverging gradients
-            if self.gradient_clipper is not None:
-                self.scaler.unscale_(self.optim.optimizer)
+            grad_norm_dict = self.gradient_clipper()
 
-                grad_norm_dict = self.gradient_clipper(model=self.model)
-
-                for key, grad_norm in grad_norm_dict.items():
-                    meter_key = f"Grad/{key}"
-                    if meter_key in loss_meters:
-                        loss_meters[meter_key].update(grad_norm)
-                    if self.steps[phase] % self.logging_conf.log_freq == 0:
-                        # Logged under train/optim/ alongside lr + where (gradient norms are optimizer diagnostics).
-                        self._log_scalar(f"train/optim/grad_{key}", grad_norm, self.steps[phase])
-                    # docs/64 tripwire: a dead ReLU in the DPT head silently severs the
-                    # gradient to the aggregator. Fed EVERY step (not on log_freq) so the
-                    # patience counter counts real steps.
-                    alarm = self._grad_alarms.get(key)
-                    if alarm is not None:
-                        alarm.update(grad_norm, self.steps[phase], epoch=self.epoch)
+            for key, grad_norm in grad_norm_dict.items():
+                meter_key = f"Grad/{key}"
+                if meter_key in loss_meters:
+                    loss_meters[meter_key].update(grad_norm)
+                if self.steps[phase] % self.logging_conf.log_freq == 0:
+                    # Logged under train/optim/ alongside lr + where (gradient norms are optimizer diagnostics).
+                    self._log_scalar(f"train/optim/grad_{key}", grad_norm, self.steps[phase])
+                # docs/64 tripwire: a dead ReLU in the DPT head silently severs the
+                # gradient to the aggregator. Fed EVERY step (not on log_freq) so the
+                # patience counter counts real steps.
+                alarm = self._grad_alarms.get(key)
+                if alarm is not None:
+                    alarm.update(grad_norm, self.steps[phase], epoch=self.epoch)
 
             # Optimizer step
-            self.scaler.step(self.optim.optimizer)
-            self.scaler.update()
+            self.optim.optimizer.step()
 
             # Measure elapsed time
             batch_time.update(time.time() - end)
@@ -1160,8 +1105,6 @@ class Trainer(TrainerVizMixin):
             if data_iter % self.logging_conf.log_freq == 0:
                 progress.display(data_iter)
 
-        return True
-
     def _run_step_and_backward(self, batch: Mapping, phase: str,
                                loss_meters: Dict[str, AverageMeter]):
         """One forward + backward. Gradient accumulation was removed (2026-08-01): every
@@ -1170,10 +1113,8 @@ class Trainer(TrainerVizMixin):
         have produced EMPTY tensors — the feature was dead and unusable, not just unused."""
         self.optim.zero_grad(set_to_none=True)
 
-        amp_type = self._amp_dtype()
-
-        with torch.amp.autocast("cuda", enabled=self.optim_conf.amp.enabled, dtype=amp_type):
-            loss_dict = self._step(batch, self.model, phase, loss_meters)
+        with torch.amp.autocast("cuda", enabled=self.optim_conf.amp.enabled, dtype=torch.bfloat16):
+            loss_dict = self._step(batch, phase, loss_meters)
 
         loss = loss_dict["objective"]
 
@@ -1190,17 +1131,9 @@ class Trainer(TrainerVizMixin):
             )
             return
 
-        self.scaler.scale(loss).backward()
-        loss_meters[f"Loss/{phase}_loss_objective"].update(
-            loss.item(), batch["images"].shape[0])
+        loss.backward()
 
-    def _amp_dtype(self):
-        """Resolve `optim.amp.amp_dtype` once (was open-coded identically in two places)."""
-        amp_type = self.optim_conf.amp.amp_dtype
-        assert amp_type in ["bfloat16", "float16"], f"Invalid Amp type: {amp_type}"
-        return torch.bfloat16 if amp_type == "bfloat16" else torch.float16
-
-    def _step(self, batch, model: nn.Module, phase: str, loss_meters: dict):
+    def _step(self, batch, phase: str, loss_meters: dict):
         """
         Performs a single forward pass, computes loss, and logs results.
 
@@ -1208,7 +1141,7 @@ class Trainer(TrainerVizMixin):
             A dictionary containing the computed losses.
         """
         # Forward pass
-        y_hat = model(images=batch["images"], batch=batch)
+        y_hat = self.model(images=batch["images"], batch=batch)
 
         # Loss computation
         loss_dict = self.loss(y_hat, batch)

@@ -5,29 +5,20 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
-import torch.nn as nn
 import os
 import math
 import random
 import numpy as np
-from typing import Union, Optional
 import logging
-from iopath.common.file_io import g_pathmgr
 from pathlib import Path
-from typing import Dict, Iterable, List
-
-
-
-from typing import Any, Mapping
-
-
+from typing import Any, Iterable, Mapping
 
 
 def get_resume_checkpoint(checkpoint_save_dir):
-    if not g_pathmgr.isdir(checkpoint_save_dir):
+    if not os.path.isdir(checkpoint_save_dir):
         return None
     ckpt_file = os.path.join(checkpoint_save_dir, "checkpoint_last.pt")
-    if not g_pathmgr.isfile(ckpt_file):
+    if not os.path.isfile(ckpt_file):
         return None
 
     return ckpt_file
@@ -52,9 +43,8 @@ def resolve_resume_checkpoint(checkpoint_save_dir, seed_checkpoint_path):
     return seed_checkpoint_path
 
 class DurationMeter:
-    def __init__(self, name, device, fmt=":f"):
+    def __init__(self, name, fmt=":f"):
         self.name = name
-        self.device = device
         self.fmt = fmt
         self.val = 0
 
@@ -151,14 +141,12 @@ class AverageMeter:
     """Computes and stores the average and current value.
     Args:
         name (str): Name of the metric being tracked
-        device (torch.device, optional): Device for tensor operations. Defaults to None.
         fmt (str): Format string for displaying values. Defaults to ":f"
     """
 
-    def __init__(self, name: str, device: Optional[torch.device] = None, fmt: str = ":f"):
+    def __init__(self, name: str, fmt: str = ":f"):
         self.name = name
         self.fmt = fmt
-        self.device = device
         self.reset()
 
     def reset(self):
@@ -228,9 +216,7 @@ def model_summary(model: torch.nn.Module,
     summary.append('='*60)
 
     for line in summary:
-        print(prefix + line)
-        if logging_func:
-            logging_func(line)
+        (logging_func or print)(prefix + line)
 
     # --- optional file dump -------------------------------------------------
     if log_file is None:

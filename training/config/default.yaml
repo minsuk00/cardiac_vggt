@@ -106,8 +106,6 @@ logging:
   log_freq: 5
   log_visuals: True
   log_level_primary: DEBUG
-  log_level_secondary: WARNING
-  all_ranks: False
   log_visual_frequency:
     train: 628  # once per epoch (matches limit_train_batches = train-split size)
     val: 200    # UNUSED: val visuals log at fixed subject indices (trainer_viz._log_visuals_to_wandb), not by step

@@ -6,14 +6,11 @@
 
 
 import logging
-import os
-import copy
 import sys
 import atexit
 
 import functools
 from .general import safe_makedirs
-from iopath.common.file_io import g_pathmgr
 
 
 # cache the opened file object, so that different calls
@@ -21,35 +18,21 @@ from iopath.common.file_io import g_pathmgr
 @functools.lru_cache(maxsize=None)
 def _cached_log_stream(filename):
     log_buffer_kb = 1 * 1024  # 1KB
-    io = g_pathmgr.open(filename, mode="a", buffering=log_buffer_kb)
+    io = open(filename, mode="a", buffering=log_buffer_kb)
     atexit.register(io.close)
     return io
 
 
 
-def setup_logging(
-    name,
-    output_dir=None,
-    rank=0,
-    log_level_primary="INFO",
-    log_level_secondary="ERROR",
-    all_ranks: bool = False,
-):
+def setup_logging(name, output_dir=None, log_level_primary="INFO"):
     """
-    Setup various logging streams: stdout and file handlers.
-    For file handlers, we only setup for the master gpu.
+    Setup the logging streams: stdout, plus `{output_dir}/log.txt` when output_dir is set.
     """
-    global LOGGING_STATE
-    LOGGING_STATE = copy.deepcopy(locals())
-
     # get the filename if we want to log to the file as well
     log_filename = None
     if output_dir:
         safe_makedirs(output_dir)
-        if rank == 0:
-            log_filename = f"{output_dir}/log.txt"
-        elif all_ranks:
-            log_filename = f"{output_dir}/log_{rank}.txt"
+        log_filename = f"{output_dir}/log.txt"
 
     logger = logging.getLogger(name)
     logger.setLevel(log_level_primary)
@@ -67,10 +50,7 @@ def setup_logging(
     # setup the console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
-    if rank == 0:
-        console_handler.setLevel(log_level_primary)
-    else:
-        console_handler.setLevel(log_level_secondary)
+    console_handler.setLevel(log_level_primary)
     logger.addHandler(console_handler)
 
     # we log to file as well if user wants

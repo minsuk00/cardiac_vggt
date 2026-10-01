@@ -4,51 +4,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-
-import logging
-from typing import (
-    Any,
-    Dict,
-    List,
-)
+import os
+from typing import Any, Dict
 
 import torch
-import torch.nn as nn
-import os
-from iopath.common.file_io import g_pathmgr
-
-
-
-
-class CheckpointSaver:
-    def __init__(
-        self,
-        checkpoint_folder: str,
-        checkpoint_names: List[str],
-        epoch: int,
-    ):
-        super().__init__()
-        self.checkpoint_folder = checkpoint_folder
-        self.checkpoint_names = checkpoint_names
-        self.epoch = epoch
-
-    def save_checkpoint(
-        self,
-        model: nn.Module,
-        **kwargs: Any,
-    ) -> None:
-        checkpoint = dict(**kwargs)
-        checkpoint["model"] = model.state_dict()
-
-        for ckpt_name in self.checkpoint_names:
-            checkpoint_path = os.path.join(
-                self.checkpoint_folder, f"{ckpt_name}.pt"
-            )
-            logging.info(
-                f"Saving checkpoint at epoch {self.epoch} to {checkpoint_path}"
-            )
-            robust_torch_save(checkpoint, checkpoint_path)
-
 
 
 def robust_torch_save(checkpoint: Dict[str, Any], checkpoint_path: str) -> None:
@@ -69,7 +28,7 @@ def robust_torch_save(checkpoint: Dict[str, Any], checkpoint_path: str) -> None:
     """
     tmp_checkpoint_path = checkpoint_path + ".tmp"
     try:
-        with g_pathmgr.open(tmp_checkpoint_path, "wb") as f:
+        with open(tmp_checkpoint_path, "wb") as f:
             torch.save(checkpoint, f)
         os.replace(tmp_checkpoint_path, checkpoint_path)
     except BaseException:
