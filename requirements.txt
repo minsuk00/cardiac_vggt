@@ -6,6 +6,18 @@ huggingface_hub
 einops
 safetensors
 
+# ── Training stack (versions = the known-good svr env) ────────────────────
+hydra-core==1.3.2
+omegaconf==2.3.0
+fvcore==0.1.5.post20221221   # LR / WD schedulers referenced by default.yaml
+iopath==0.1.10
+wcmatch==10.1                # freeze patterns
+wandb==0.25.0
+matplotlib==3.10.8
+nibabel==5.3.3
+scipy==1.15.3
+transformers==5.3.0          # DINOv3 backbone (exp_dinov3.yaml) only
+
 # ── MRI / data preprocessing & augmentation ───────────────────────────────
 # monai 1.6.x — requires torch>=2.8, so it rides with the torch 2.13 upgrade
 # (2026-07). It was previously pinned <1.5 only to hold torch at 2.3.1; that
@@ -14,7 +26,7 @@ safetensors
 # numpy 2.2.6 (migrated 2026-07-24, docs/49). Keep it BELOW 2.5 — scipy and numba
 # both cap at <2.5. Pinned exact rather than ranged because numpy 2 changed
 # np.percentile on float32 to interpolate in float32, which required a source fix
-# in inference/adapters/base.py; a future numpy bump should re-run
+# in inference/canonical_inplane.py; a future numpy bump should re-run
 # `bash tools/verify_env_migration.sh` before being accepted.
 monai>=1.6,<1.7
 
