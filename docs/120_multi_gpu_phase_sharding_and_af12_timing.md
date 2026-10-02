@@ -8,7 +8,9 @@
 > cu130 env, **equal to the existing 1-GPU af12 arm to float noise** (2160/2160 phases, max |diff|
 > ≤ 7.8e-7, ≥ 155 dB — the 40–48 dB discrepancy seen on caesar was its off-spec cu126 env, §4).
 > **af12 timing (§6, 180 test subjects, 4× L40S): VGGT `final518_diff1000` = 1.96 ± 0.54 s per
-> subject, 164 ms per volume, 4.16× the same-GPU-type 1-GPU forward time (8.16 ± 2.48 s).**
+> subject, 4.16× the same-GPU-type 1-GPU forward time (8.16 ± 2.48 s).**
+> **Reporting unit: seconds per subject** (all T=12 phases of one patient) — user decision
+> 2026-09-23; no per-volume column.
 > Pitfall (§6a): a first attempt read 3.10 s because the monai preprocess of each subject ran
 > lazily *inside* the timed span on a cold cache (~1 s); `run_vggt.py` now warms it before the
 > timer (`cache_warm_sec`), verified draw-identical. Batching phases on one GPU was measured and rejected
@@ -81,7 +83,8 @@ extraction + scatter pinning + copy to GPUs) + all T forwards + splats + stitchi
 model load (`model_load_sec`, once per process), the one-subject dataset build (`make_dataset`),
 reading the input bundle, writing outputs. This is the same span the pre-sharding script timed, and
 what `evaluation/src/score/aggregate.py:83` reads. With 3 GPUs the `per_phase_ms` overlap in time —
-**never sum them** for a per-subject time. Per-volume time = `total_sec / T`.
+**never sum them** for a per-subject time. The reported unit is seconds per subject (no per-volume
+time, user decision 2026-09-23).
 
 Note: on caesar each subject took ~11–15 s wall but only ~4 s is `total_sec`; the rest (dataset
 build, GPFS I/O) is harness overhead, **not profiled yet**.
@@ -134,20 +137,20 @@ build, GPFS I/O) is harness overhead, **not profiled yet**.
    ```
    Log dir `temp/af12_timing_<NAME>/`: `monitor.csv`, `gpu_pids.txt` (must list only the run's own
    `run_vggt.py` PIDs), per-cohort logs, `run.txt`. Check `monitor.csv` for load spikes too.
-4. **Average inference time** (180 subjects; report mean ± sd per subject, per volume = /T, and
+4. **Average inference time** (180 subjects; report mean ± sd per subject, and
    speedup vs the 1-GPU reference on the same machine):
    ```python
    import json, glob, numpy as np
    for name in ("final518_diff1000_ep300_3gpu_t", "final518_diff1000_ep300_1gpu_t"):
        t = np.array([json.load(open(f))["breath"]["total_sec"] for f in
                      glob.glob(f"evaluation/volumes/*_af12/out/*/vggt_{name}/timing.json")])
-       print(name, len(t), f"{t.mean():.2f} ± {t.std():.2f} s/subject", f"{t.mean()/12*1e3:.0f} ms/volume")
+       print(name, len(t), f"{t.mean():.2f} ± {t.std():.2f} s/subject")
    ```
    Consider excluding each cohort's first subject (GPU warm-up) and say so.
 5. **Volume check:** `PYTHONPATH=training:. python tools/compare_af12_recons.py vggt_<NAME>`. If it
    still shows max diff ~1.0 in the cu130 env, investigate before trusting either set (e.g. score
    both arms with `score/` and compare metrics; locate the differing voxels).
-6. **Write results into §6** (machine, GPU model, env, commit, n, mean ± sd, per-volume, speedup) and
+6. **Write results into §6** (machine, GPU model, env, commit, n, mean ± sd per subject, speedup) and
    add a line to `docs/README.md` (already added for this doc).
 
 ## 6. Results (other methods to be added under the §3 definition)
@@ -165,18 +168,18 @@ cmrx2024 38, cmrx2025 46, acdc 21, mnms 49), first subjects **included**. Logs
 §6a). The first attempt, arm `vggt_final518_diff1000_ep300_4gpu` (11:07–11:29), is **kept as a
 valid recon but its timings are cold-cache-inflated** (3.10 ± 0.84 s; §6a) — do not cite them.
 
-| method | machine / GPU(s) | env | n | per subject (mean ± sd) | per volume | notes |
-|---|---|---|---|---|---|---|
-| VGGT `final518_diff1000`, `--gpus 0,1,2,3` (`_4gpu_v2`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **1.96 ± 0.54 s** (median 1.78) | **164 ms** | 3 phases/GPU, sequential B=1 forwards; `cache_warm_sec` 0.06 s mean (outside the span) |
-| VGGT `final518_diff1000`, 1 GPU — forward+splat only (`vggt_final518_diff1000_ep300`, existing arm, Σ `per_phase_ms`) | Great Lakes, 1× L40S | torch 2.13.0+cu130 | 180 | 8.16 ± 2.48 s | 680 ms | reference: its `total_sec` (9.74 ± 3.07) is cold-cache-inflated (§6a), so the forward sum (+ ~0.1 s warm overhead) is the fair 1-GPU number; not re-run |
-| Dangi Stage A, `--gpus 0,1,2,3` (`dangi_scatter_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **0.132 ± 0.026 s** (median 0.123) | **11 ms** | 3 phases/GPU; span = preprocess+predict+translate; stack reads (0.68 s) / NIfTI writes (0.92 s) per subject are outside it (`io_load_sec`/`io_save_sec`); run 13:08–13:12, only our PID on the GPUs, existing files untouched. 1↔4 GPU outputs bit-identical (P001, 12/12) |
-| NeSVoR, `GPUS=0,1,2,3` (`nesvor_4gpu_scatter`) | gl1706, 4× L40S | nesvor-t2 (docs/90) | **126** (of 180; shards 0–6 of 10) | **323.1 ± 6.6 s** (median 322) | **26.9 s** | 12 independent per-phase fits, phase p on GPU p mod 4, 3 sequential per GPU; span = `total_wall.sec` (includes each `nesvor reconstruct` process start + stack read, inherent to the CLI). Run 2026-09-23 17:04 → 09-24 04:24 (job 61775706), 0 failed, only our PIDs on the GPUs (launcher check), GPU util 91 % mean. The other 54 subjects (shards 7–9, job 61785850) ran on **gl1708**, also 4× L40S, at **508.7 ± 9.1 s** with GPU util only 57 % — same GPU type, 1.57× slower, cause not measured (the launcher's foreign-PID check was not run for that job); excluded from the headline, like the §6c CPU-model rule. All 180 are scored (docs/119 §3d). The earlier P001 test (363 s) used the WRONG config — the first launcher called `run_nesvor.sh` directly (fallback `THICK=8`, unpadded `mask_heart.nii.gz`); deleted, and the cohort launcher goes through `run_baselines.py` |
-| CiNeVol, `--gpus 0,1,2,3` (`cinevol_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130, Grid4D cu130 build | **180** | **70.1 ± 3.9 s** (median 68.7) | **5.84 s** | one joint 4D INR per subject: data-parallel fit (one 8192-px microbatch per GPU, grads summed) + export 3 frames/GPU (docs/121). Span = `provenance.txt` total = prepare 1.2 + fit 63.9 ± 1.1 + export 5.0 s (fit+export alone 68.9 s, 5.74 s/volume); peak 2.51 GB/GPU. Run 2026-09-23 13:30–17:03 (job 61775706, `tools/af12_cinevol_timing.sh`), 180 ok / 0 failed, only our PID on the GPUs. The launcher's `rc=1` / "existing af12 files CHANGED" is from OTHER jobs writing concurrently (`niftymic_scatter`, `svrtk3d_*` recons, the deleted wrong-config NeSVoR P001) — no file under any `cinevol*` arm changed. This timing arm is not the scored CiNeVol fit (`cinevol` / `cinevol_motion`, docs/119 §3d) |
-| **CPU methods** (`standard`, 16 CPUs, 48 GB, one subject at a time — the §6c rule) | | | | | | |
-| SVRTK 3D (`svrtk3d_scatter`, `sbatch/af12_svrtk.sh`, job 61778231) | 13 nodes, Xeon Gold 6154 | mirtk `svrtk.sif`, J=8 phases × OMP=2, `DEBUG=0` | **113** (of 180, §6c) | **167.4 ± 21.8 s** | **13.9 s** | run 13:2x–14:03, 0 failed tasks. All 180: 151.2 ± 30.5 s; the 67 subjects the scheduler put on Xeon Gold 6254 ran 123.9 ± 22.7 s (same D: 110 vs 153 s at D=9, 120 vs 164 s at D=10) — excluded from the headline, §6c |
-| Fetal CMR 4D (`fetal_cmr_4d`, existing arm, docs/115) | Xeon Gold 6154 | mirtk, one joint 4D solve, OMP=16 | **152** (of 180) | **517.0 ± 142.0 s** | **43.1 s** | all 180: 505.6 ± 151.5 s; 28 subjects on 6254: 444.1 ± 183.1 s (excluded, §6c) |
-| NiftyMIC v2 (`niftymic_scatter`, `sbatch/af12_niftymic.sh`, job 61780493) | Xeon Gold 6154 | `niftymic.sif`, J=8 × OMP=2, iter-max 10 | **168** (of 180) | **232.5 ± 48.7 s** | **19.4 s** | run 14:4x–15:23, 0 failed tasks; all 180: 231.6 ± 48.9 s; 12 subjects on 6254: 218.6 ± 50.3 s (excluded, §6c). First submission (61779662) failed 180/180: the af12 bundles' `mask_heart*.nii.gz` are relative symlinks into the `_af24` cohort, dangling inside NiftyMIC's subject-dir-only container bind — fixed by binding the resolved mask (`6454088`) |
-| SVRTK 3D `-debug` (`svrtk3d_debug_scatter`, `sbatch/af12_svrtk_debug.sh`, job 61779663) | — | as SVRTK + `-debug` (.dof per slice) | — | not a timing arm (159 s/subject observed) | — | motion-EPE input and the SCORED SVRTK arm (docs/119 §3d); separate arm, never touches `svrtk3d_scatter`. **Its volumes equal the timing arm's**: 2156/2160 phases byte-identical, the other 4 differ by ≤ 3e-8 in ~2e-6 of voxels (float noise; checked 2026-09-24) — so the scored numbers apply to the timed run |
+| method | machine / GPU(s) | env | n | per subject (mean ± sd) | notes |
+|---|---|---|---|---|---|
+| VGGT `final518_diff1000`, `--gpus 0,1,2,3` (`_4gpu_v2`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **1.96 ± 0.54 s** (median 1.78) | 3 phases/GPU, sequential B=1 forwards; `cache_warm_sec` 0.06 s mean (outside the span) |
+| VGGT `final518_diff1000`, 1 GPU — forward+splat only (`vggt_final518_diff1000_ep300`, existing arm, Σ `per_phase_ms`) | Great Lakes, 1× L40S | torch 2.13.0+cu130 | 180 | 8.16 ± 2.48 s | reference: its `total_sec` (9.74 ± 3.07) is cold-cache-inflated (§6a), so the forward sum (+ ~0.1 s warm overhead) is the fair 1-GPU number; not re-run |
+| Dangi Stage A, `--gpus 0,1,2,3` (`dangi_scatter_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130 | 180 | **0.132 ± 0.026 s** (median 0.123) | 3 phases/GPU; span = preprocess+predict+translate; stack reads (0.68 s) / NIfTI writes (0.92 s) per subject are outside it (`io_load_sec`/`io_save_sec`); run 13:08–13:12, only our PID on the GPUs, existing files untouched. 1↔4 GPU outputs bit-identical (P001, 12/12) |
+| NeSVoR, `GPUS=0,1,2,3` (`nesvor_4gpu_scatter`) | gl1706, 4× L40S | nesvor-t2 (docs/90) | **126** (of 180; shards 0–6 of 10) | **323.1 ± 6.6 s** (median 322) | 12 independent per-phase fits, phase p on GPU p mod 4, 3 sequential per GPU; span = `total_wall.sec` (includes each `nesvor reconstruct` process start + stack read, inherent to the CLI). Run 2026-09-23 17:04 → 09-24 04:24 (job 61775706), 0 failed, only our PIDs on the GPUs (launcher check), GPU util 91 % mean. The other 54 subjects (shards 7–9, job 61785850) ran on **gl1708**, also 4× L40S, at **508.7 ± 9.1 s** with GPU util only 57 % — same GPU type, 1.57× slower, cause not measured (the launcher's foreign-PID check was not run for that job); excluded from the headline, like the §6c CPU-model rule. All 180 are scored (docs/119 §3d). The earlier P001 test (363 s) used the WRONG config — the first launcher called `run_nesvor.sh` directly (fallback `THICK=8`, unpadded `mask_heart.nii.gz`); deleted, and the cohort launcher goes through `run_baselines.py` |
+| CiNeVol, `--gpus 0,1,2,3` (`cinevol_4gpu`) | gl1706, 4× L40S | torch 2.13.0+cu130, Grid4D cu130 build | **180** | **70.1 ± 3.9 s** (median 68.7) | one joint 4D INR per subject: data-parallel fit (one 8192-px microbatch per GPU, grads summed) + export 3 frames/GPU (docs/121). Span = `provenance.txt` total = prepare 1.2 + fit 63.9 ± 1.1 + export 5.0 s (fit+export alone 68.9 s); peak 2.51 GB/GPU. Run 2026-09-23 13:30–17:03 (job 61775706, `tools/af12_cinevol_timing.sh`), 180 ok / 0 failed, only our PID on the GPUs. The launcher's `rc=1` / "existing af12 files CHANGED" is from OTHER jobs writing concurrently (`niftymic_scatter`, `svrtk3d_*` recons, the deleted wrong-config NeSVoR P001) — no file under any `cinevol*` arm changed. This timing arm is not the scored CiNeVol fit (`cinevol` / `cinevol_motion`, docs/119 §3d) |
+| **CPU methods** (`standard`, 16 CPUs, 48 GB, one subject at a time — the §6c rule) | | | | | |
+| SVRTK 3D (`svrtk3d_scatter`, `sbatch/af12_svrtk.sh`, job 61778231) | 13 nodes, Xeon Gold 6154 | mirtk `svrtk.sif`, J=8 phases × OMP=2, `DEBUG=0` | **113** (of 180, §6c) | **167.4 ± 21.8 s** | run 13:2x–14:03, 0 failed tasks. All 180: 151.2 ± 30.5 s; the 67 subjects the scheduler put on Xeon Gold 6254 ran 123.9 ± 22.7 s (same D: 110 vs 153 s at D=9, 120 vs 164 s at D=10) — excluded from the headline, §6c |
+| Fetal CMR 4D (`fetal_cmr_4d`, existing arm, docs/115) | Xeon Gold 6154 | mirtk, one joint 4D solve, OMP=16 | **152** (of 180) | **517.0 ± 142.0 s** | all 180: 505.6 ± 151.5 s; 28 subjects on 6254: 444.1 ± 183.1 s (excluded, §6c) |
+| NiftyMIC v2 (`niftymic_scatter`, `sbatch/af12_niftymic.sh`, job 61780493) | Xeon Gold 6154 | `niftymic.sif`, J=8 × OMP=2, iter-max 10 | **168** (of 180) | **232.5 ± 48.7 s** | run 14:4x–15:23, 0 failed tasks; all 180: 231.6 ± 48.9 s; 12 subjects on 6254: 218.6 ± 50.3 s (excluded, §6c). First submission (61779662) failed 180/180: the af12 bundles' `mask_heart*.nii.gz` are relative symlinks into the `_af24` cohort, dangling inside NiftyMIC's subject-dir-only container bind — fixed by binding the resolved mask (`6454088`) |
+| SVRTK 3D `-debug` (`svrtk3d_debug_scatter`, `sbatch/af12_svrtk_debug.sh`, job 61779663) | — | as SVRTK + `-debug` (.dof per slice) | — | not a timing arm (159 s/subject observed) | motion-EPE input and the SCORED SVRTK arm (docs/119 §3d); separate arm, never touches `svrtk3d_scatter`. **Its volumes equal the timing arm's**: 2156/2160 phases byte-identical, the other 4 differ by ≤ 3e-8 in ~2e-6 of voxels (float noise; checked 2026-09-24) — so the scored numbers apply to the timed run |
 
 ### 6c. CPU methods: allocation and the CPU-model rule
 
