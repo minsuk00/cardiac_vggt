@@ -133,6 +133,50 @@ def test_ordinary_val_visuals_log_only_es_half_of_sweep(monkeypatch):
     assert calls == []
 
 
+def test_val_visuals_log_only_on_visual_epochs_and_the_final_one(monkeypatch):
+    """Val Volume/DVF/Lookup used to ignore the epoch cadence and log every val epoch."""
+    calls = []
+    monkeypatch.setattr(monitor_module.panels, "log_volume_and_dvf",
+                        lambda *a, **k: calls.append(m.epoch))
+    monkeypatch.setattr(monitor_module.panels, "log_lookup", lambda *a, **k: None)
+    ds = SimpleNamespace(subjects=[ACDC], val_targets=[(0, 0), (0, 6)], t_target_fixed=None)
+    log_conf = SimpleNamespace(log_visual_frequency={}, log_visuals=True,
+                               visual_panels_every_n_val_epochs=25)
+    m = Monitor(log_conf, None, None, ds, "cpu", max_epochs=60)
+    m._visual_subjects = (0,)
+
+    for epoch in range(60):
+        m.epoch = epoch
+        m._log_visuals({"seq_index": torch.tensor([[1]])}, "val", 1, 7)
+    assert calls == [0, 25, 50, 59]
+    m.epoch = 60                      # val-only run on a finished run's last checkpoint
+    assert m._visual_panel_epoch()
+    m.epoch = 50
+    assert m._visual_epoch("filmstrip_every_n_val_epochs", 50)
+    m.epoch = 25
+    assert not m._visual_epoch("filmstrip_every_n_val_epochs", 50)
+
+
+def test_train_visuals_fire_once_per_visual_epoch_whatever_the_epoch_length(monkeypatch):
+    """The train trigger used the GLOBAL step % 628, which drifts off the epoch gate when an
+    epoch isn't 628 steps: at 100 steps/epoch the final-epoch panel never fired."""
+    calls = []
+    monkeypatch.setattr(monitor_module.panels, "log_volume_and_dvf",
+                        lambda *a, **k: calls.append(m.epoch))
+    ds = SimpleNamespace(subjects=[ACDC], val_targets=None, t_target_fixed=None)
+    log_conf = SimpleNamespace(log_visual_frequency={"train": 628}, log_visuals=True,
+                               visual_panels_every_n_val_epochs=25)
+    m = Monitor(log_conf, None, None, ds, "cpu", max_epochs=60)
+
+    steps_per_epoch = 100
+    for epoch in range(60):
+        m.epoch = epoch
+        for it in range(steps_per_epoch):
+            step = epoch * steps_per_epoch + it
+            m._log_visuals({}, "train", step, step, it)
+    assert calls == [0, 25, 50, 59]
+
+
 @pytest.mark.parametrize("D", [5, 6, 8, 11, 12, 18, 21])
 def test_pick_planes_always_includes_apex_and_base(D):
     """The old `mid±2` window never showed apex plane 0 at D=6 — the exact plane docs/59

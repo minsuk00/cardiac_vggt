@@ -197,6 +197,7 @@ class Trainer:
         self.monitor = Monitor(
             self.logging_conf, self.run_log, self.wandb_writer, self.val_ds, self.device,
             epoch=self.epoch,
+            max_epochs=self.max_epochs,
             respiratory_cfg=self.respiratory_cfg,
             gpu_transforms=self.gpu_transforms,
             aug_tier=aug_cfg.get("tier", "aggressive") if aug_cfg is not None else "aggressive",

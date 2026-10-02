@@ -70,7 +70,7 @@ torchrun --nproc_per_node=1 -m training.launch \
 - `t_target_fixed: null` (default → multi-phase, uniform per train call) | `0` (reproduces ED-only behavior) | any int K (force `t_target=K`).
 - `optim.frozen_module_names` — two regimes, guarded by `tests/test_freeze_pattern.py`: **head-only** (legacy) freezes the entire aggregator; **aggft** (all shipped configs) = `["*patch_embed*"]` — attention blocks, `z_embedder`, `camera_token`, `point_head` all train (~2.8× slower, ~27 GB/A40). Exact patterns: docs/65.
 - The point head always outputs a residual Δ; `world_points = scanner_coords + Δ`.
-- `logging.filmstrip_every_n_val_epochs: 5` → cadence for the per-subject 12-phase cardiac-cycle GIFs; the cheaper ED/ES + augmentation panels use the independent `logging.visual_panels_every_n_val_epochs: 3` (docs/74).
+- `logging.filmstrip_every_n_val_epochs: 50` → cadence for the per-subject 12-phase cardiac-cycle GIFs; every other image panel (val/train Volume/DVF/Lookup, ED/ES, augmentation) uses the independent `logging.visual_panels_every_n_val_epochs: 25` (docs/74). Both also fire on the final epoch.
 - `data.augmentation.enable: true` (default since 2026-07-31) | `false` → opt out of GPU augmentation. `data.augmentation.tier: aggressive` (the only tier). See "Augmentation" below.
 
 ## Volume pipeline (one forward pass)

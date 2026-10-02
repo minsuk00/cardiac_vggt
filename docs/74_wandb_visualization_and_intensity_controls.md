@@ -74,8 +74,11 @@ below, with five z-planes evenly spanning that subject's native stack. Subjects 
 native `D`, but the cardiac phase count remains 12. Unique keys prevent one subject or phase from
 replacing another.
 
-The default cadence is `logging.filmstrip_every_n_val_epochs: 5`. The cheaper ED/ES and
-augmentation panels use the independent `visual_panels_every_n_val_epochs: 3` cadence. The GIF
+The default cadence is `logging.filmstrip_every_n_val_epochs: 50`. Every other image panel (val
+and train Volume/DVF/Lookup, ED/ES, augmentation) uses the independent
+`visual_panels_every_n_val_epochs: 25` cadence; both also fire on the final epoch. (Was 5 and 3
+until 2026-10-02, when W&B media reached ~9 GB/run; val Volume/DVF/Lookup also ignored the
+cadence then.) The GIF
 cadence was chosen after measuring the exact renderer on an A40: the nine GIFs took **173.824 s
 (2m54s) total**, with individual subjects taking **14.39–25.81 s** depending primarily on native
 stack depth and model work.

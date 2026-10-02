@@ -89,12 +89,13 @@ logging:
   log_visuals: True
   log_level_primary: DEBUG
   log_visual_frequency:
-    train: 628  # once per epoch (matches limit_train_batches = train-split size)
-    # (no `val` key: val visuals log at fixed subject indices, not by step — trainer_viz)
-  # Nine source/vendor cardiac-cycle GIFs (12 forwards each) are expensive, so log less often.
-  filmstrip_every_n_val_epochs: 5
-  # Cheaper ED/ES and augmentation panels retain their original cadence.
-  visual_panels_every_n_val_epochs: 3
+    train: 628  # steps into the epoch, so once per epoch (its first step), on visual-panel epochs
+    # (no `val` key: val visuals log at fixed subject indices, not by step — monitor.py)
+  # W&B media cadence (was ~9 GB/run at 3/5). Both also fire on epoch 0 and the final epoch.
+  # Nine source/vendor cardiac-cycle GIFs (12 forwards each, 5–7 MB each).
+  filmstrip_every_n_val_epochs: 50
+  # Val Volume/DVF/Lookup, ED/ES, train Volume/DVF and augmentation panels.
+  visual_panels_every_n_val_epochs: 25
   # Predicted-EF metric (val-only; requires ef_val_sweep). false keeps the ED/ES sweep but
   # skips the segmentation.
   ef_eval_enable: true

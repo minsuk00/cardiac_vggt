@@ -93,14 +93,15 @@ class Monitor:
     `begin_train` / `begin_val`; it tags every scalar row on disk and drives the cadences."""
 
     def __init__(self, log_conf, run_log, wandb_writer, val_ds, device, *, epoch=0,
-                 respiratory_cfg=None, gpu_transforms=None, aug_tier="aggressive",
-                 splat_res=None, val_len=0, grad_alarm_cfg=None):
+                 max_epochs=None, respiratory_cfg=None, gpu_transforms=None,
+                 aug_tier="aggressive", splat_res=None, val_len=0, grad_alarm_cfg=None):
         self.log_conf = log_conf
         self.run_log = run_log
         self.wandb = wandb_writer
         self.val_ds = val_ds
         self.device = device
         self.epoch = epoch
+        self.max_epochs = max_epochs        # the final epoch always logs every visual
         self.respiratory_cfg = respiratory_cfg
         self.gpu_transforms = gpu_transforms
         self.aug_tier = aug_tier            # for the augmentation panel caption
@@ -373,8 +374,15 @@ class Monitor:
     def begin_train(self, epoch: int):
         self.epoch = epoch
 
+    def _visual_epoch(self, every_key: str, default: int) -> bool:
+        """Every `log_conf.<every_key>`-th epoch, plus the final one (each run ends with a full set)."""
+        # >=: a val-only run on a finished run's last checkpoint sits at epoch max_epochs.
+        if self.max_epochs is not None and self.epoch >= self.max_epochs - 1:
+            return True
+        return self.epoch % max(1, getattr(self.log_conf, every_key, default)) == 0
+
     def _visual_panel_epoch(self) -> bool:
-        return self.epoch % max(1, getattr(self.log_conf, "visual_panels_every_n_val_epochs", 3)) == 0
+        return self._visual_epoch("visual_panels_every_n_val_epochs", 25)
 
     def aug_snapshot(self, batch, data_iter: int):
         """On the augmentation-panel cadence, a read-only copy of the PRE-augmentation input
@@ -468,7 +476,7 @@ class Monitor:
         if not self._log_if_finite(log_data, phase, step, train_step):
             return
         self._update_and_log_scalars(log_data, phase, step, train_step, meters)
-        self._log_visuals(log_data, phase, step, train_step)
+        self._log_visuals(log_data, phase, step, train_step, data_iter)
 
     def _log_if_finite(self, log_data: Mapping, phase: str, step: int, train_step: int) -> bool:
         """True when the objective is finite; otherwise name the offending subject and
@@ -626,19 +634,22 @@ class Monitor:
             except Exception as e:
                 logging.warning(f"n_slots_at_target log failed (ignored): {e}")
 
-    def _log_visuals(self, batch: Mapping, phase: str, step: int, train_step: int) -> None:
+    def _log_visuals(self, batch: Mapping, phase: str, step: int, train_step: int,
+                     data_iter: int = 0) -> None:
         """Volume / DVF (and, in val, Lookup) panels.
 
-        train: every `log_visual_frequency.train` steps, whatever subject the loader drew.
+        train: every `log_visual_frequency.train` steps into the epoch (counted from the
+               epoch's first step, so it can't drift off the epoch gate), whatever subject.
         val:   the visual subjects only, at their ES sample (the ED/ES panel already shows
                both phases); keyed by the sample's own seq_index, mapped through the sweep.
+        Both only on visual-panel epochs.
         """
         freq = self.log_conf.log_visual_frequency.get(phase, 0)
         log_step = step if phase == "train" else train_step
 
         val_idx = None
         if phase == "train":
-            should_log = freq > 0 and (step % freq == 0)
+            should_log = freq > 0 and (data_iter % freq == 0)
         else:
             # Must not raise (runs before the per-figure guards below). _val_iter is the
             # fallback for a batch without seq_index; it equals seq_index at batch size 1.
@@ -655,7 +666,7 @@ class Monitor:
             val_sid, _ = seq_index_to_subject(self.val_ds, val_idx)
             is_es = _vt is None or sweep_idx >= len(_vt) // 2
             should_log = is_es and subj_idx in self.visual_subjects
-        if not (self.log_conf.log_visuals and should_log):
+        if not (self.log_conf.log_visuals and should_log and self._visual_panel_epoch()):
             return
 
         # Caption: subject + t_target + per-slot z/t (+ breathing r/|d|) + step.
@@ -764,7 +775,7 @@ class Monitor:
 
         # Cardiac-cycle filmstrip: cross-phase reconstruction (or, in fixed-phase mode,
         # what the model does at phases it never trained on).
-        if self.epoch % max(1, getattr(self.log_conf, "filmstrip_every_n_val_epochs", 5)) == 0:
+        if self._visual_epoch("filmstrip_every_n_val_epochs", 50):
             for subj_idx in self.visual_subjects:
                 self._log_cardiac_cycle_filmstrip(model, step, subj_idx)
 
