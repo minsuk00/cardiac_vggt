@@ -9,13 +9,13 @@
 >   - attention pooling;
 >   - a heart-ROI attention loss (97% of the attention mass on the heart).
 > - **Longer training.** 20k steps instead of 2k took val phase error from 1.81 to 0.91 (random = 3.0).
-> - **Test, best evaluated checkpoint** (B+ROI, step 5k of the 20k run):
->   - PSNR +0.83 / +0.99 dB, about half the oracle gain;
->   - EF MAE 4.79 / 4.52 pp, near the 4.2 ceiling;
->   - every arm vs diff1000: p ≤ 6e-8 (paired Wilcoxon).
+> - **Test, final selector** (B+ROI, 20k run, best step 18k; af12 / hrv12):
+>   - PSNR +1.05 / +1.28 dB (25.55 / 25.87), i.e. 63% / 70% of the oracle gain;
+>   - EF MAE 4.38 / 4.05 pp, statistically indistinguishable from the oracle (4.11 / 4.19 on the same subjects, p = 0.16 / 0.70);
+>   - phase error 1.54 / 1.26;
+>   - every selector arm vs diff1000: p ≤ 6e-8 (paired Wilcoxon).
 > - **Cost.** About +0.5 s per subject (measured: 7.9 vs 7.4 s) when the DINO tokens are shared with the reconstruction.
 > - **Shipped config** (branch `exp/frame-selector`, package `frame_selector/`): variant B + centering + slice-RMS norm + attention pooling, plus the optional `--roi-weight`. Variant A and the failed knobs were removed (§4 records them).
-> - **Pending.** Test PSNR/EF for the best checkpoint (step 18k). Its test phase error is already measured: 1.54 / 1.26, vs 1.88 / 1.64 at step 5k.
 > - **Main open problem.** The test phase error is 0.35–0.63 worse than val. It is worst on CMRx25, ACDC and M&Ms.
 
 ## 1. Problem and information contract
@@ -151,14 +151,17 @@ See docs/129:
 | diff1000 (scatter) | ~3.0 / ~3.0 | 24.50 / 24.60 | — | 0.715 / 0.719 | 7.49 / 7.88 |
 | B (2k) | 2.19 / 2.12 | 25.13 / 25.21 | +0.63 / +0.62 | 0.744 / 0.750 | 4.77 / 4.61 |
 | B + ROI (2k) | 2.14 / 2.03 | 25.17 / 25.32 | +0.67 / +0.72 | 0.746 / 0.755 | 4.94 / 4.55 |
-| B + ROI, 20k run @ step 5k | 1.88 / 1.64 | **25.33 / 25.58** | **+0.83 / +0.99** | 0.753 / 0.766 | 4.79 / 4.52 |
-| B + ROI, 20k run @ step 18k (best) | **1.54 / 1.26** | pending | pending | pending | pending |
+| B + ROI, 20k run @ step 5k | 1.88 / 1.64 | 25.33 / 25.58 | +0.83 / +0.99 | 0.753 / 0.766 | 4.79 / 4.52 |
+| **B + ROI, 20k run @ step 18k (final)** | **1.54 / 1.26** | **25.55 / 25.87** | **+1.05 / +1.28** | **0.765 / 0.779** | **4.38 / 4.05** |
 | oracle | 0.43 / 0.27 | 26.17 / 26.42 | +1.67 / +1.82 | 0.795 / 0.806 | 4.20 / 4.19 |
 
 - **Significance.** Every selector arm beats diff1000 on PSNR, SSIM and EF MAE: paired Wilcoxon p ≤ 6e-8 on every row. For PSNR/SSIM p ≤ 3e-21.
 - **EF n.** On af12, the learned-selector EF rows have n=179: one subject's EF is missing in those arms.
-- **EF.** Every learned selector already cuts EF MAE by 34–43%, to within 0.33–0.74 pp of the oracle. On hrv12 this is below the classical baselines (docs/123: Fetal 5.98, CiNeVol 5.58).
-- **PSNR** tracks the selector's phase error. The step-5k checkpoint recovers ~50% of the oracle gain.
+- **EF.**
+  - The 2k and step-5k selectors cut EF MAE by 34–43%. The final one cuts it by 42% (af12) and 49% (hrv12).
+  - Final vs oracle, paired on the same subjects: af12 4.38 vs 4.11 (n=179, p=0.16); hrv12 4.05 vs 4.19 (n=180, p=0.70). The two are not distinguishable, so EF is at the selection ceiling.
+  - On hrv12 every selector is below the classical baselines (docs/123: Fetal 5.98, CiNeVol 5.58).
+- **PSNR** tracks the selector's phase error (2k → 5k → 18k: phase error 2.1 → 1.8 → 1.4 averaged over arms; ΔPSNR +0.66 → +0.91 → +1.16). The final checkpoint recovers 63% / 70% of the oracle gain. PSNR, not EF, is where headroom is left (+0.62 / +0.55 dB).
 - **Per-source test phase error, best checkpoint** (`scratch/framesel/sel_tables/B_roi_20k/summary.json`):
 
 | | CMRx23 | CMRx24 | CMRx25 | ACDC | M&Ms |
@@ -170,7 +173,7 @@ See docs/129:
   - Standalone `frame_selector.predict` per subject: token pass ~1.2 s (all D×12 frames) + head ~0.2 s.
   - Inside `run_vggt --selector-run`, the token pass replaces the reconstruction's own DINO pass. The measured net extra cost is 0.4–0.5 s per subject (§7.1 item 8; RTX 6000 Ada). The cluster run notes said ~0.2 s, which was not re-measured here.
 - **Result sources:**
-  - `evaluation/metric_results/test/<cohort>/{,ef/}vggt_final518_diff1000_ep300_sel_{oracle,B,B_roi,B_roi_s5k}.json`;
+  - `evaluation/metric_results/test/<cohort>/{,ef/}vggt_final518_diff1000_ep300_sel_{oracle,B,B_roi,B_roi_s5k,B_roi_20k}.json` (B_roi_20k from `origin/exp/frame-select` `a0f30d0`);
   - the selection tables (`sel_tables/<run>/summary.json`).
   - The selector evals ran from tables (`--sel-dir`), produced by `frame_selector.predict` (then `tools/framesel_predict.py`).
 
@@ -178,8 +181,7 @@ See docs/129:
 1. **Val→test gap.** Best checkpoint: val 0.91 vs test 1.54 / 1.26. It is worst on CMRx25, ACDC and M&Ms (multi-vendor, pathology), which is also where further gains would come from. Candidate causes, none tested:
    - training on integer gated phases vs the arms' fractional AF/HRV positions (§3.3);
    - val episodes use 4 planes from the same cohort mix as train, while test subjects are new.
-2. **Best-checkpoint test PSNR/EF.** Running on the cluster. Add the row in §5 and the result JSONs when it lands.
-3. **Next steps.** Run the ladder in docs/129 §6: the training-free K-pass composite probe, then the set-aware selector.
+2. **Next steps.** Run the ladder in docs/129 §6: the training-free K-pass composite probe, then the set-aware selector.
 
 ## 7. Port and verification (2026-10-02)
 
