@@ -78,6 +78,7 @@ class AttnPool(nn.Module):
 
     def forward(self, x):                                   # (N, n, d) -> (N, d)
         w = torch.softmax(self.score(x).squeeze(-1), -1)
+        self.last_w = w                                     # (N, n), read by the heart-ROI attention loss
         return (w.unsqueeze(-1) * x).sum(1)
 
 

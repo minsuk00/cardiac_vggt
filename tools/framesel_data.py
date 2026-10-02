@@ -20,6 +20,7 @@ import sys
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "training"), ROOT, os.path.join(ROOT, "tools")]
@@ -110,7 +111,22 @@ def make_episode(sample, resp_cfg, rng, device, out_size=518, n_planes=3):
     imgs = render_frames(phases, all_planes, pos.ravel(), all_disp, dz, out_size)
     imgs = imgs.view(1 + len(planes), T, *imgs.shape[1:])
     pos = pos[1:]
+    roi_tok = None
+    if sample.get("heart_roi_canonical") is not None:
+        # Heart ROI of every rendered frame, breathed with that frame's displacement, as the
+        # fraction of each 37x37 DINO token cell inside the heart: (1+P, T, 37, 37).
+        roi = torch.as_tensor(np.asarray(sample["heart_roi_canonical"]), dtype=torch.float32,
+                              device=device)[None, None]                       # (1, T=1, D, H, W)
+        H = roi.shape[-1]
+        m = extract_slices_with_respiratory_vec(
+            roi, torch.zeros(1, len(all_planes), dtype=torch.long, device=device),
+            torch.as_tensor(all_planes, dtype=torch.long, device=device)[None],
+            torch.as_tensor(all_disp, dtype=torch.float32, device=device)[None],
+            (dz, INPLANE_MM, INPLANE_MM), out_size=H)[0, ..., 0] / 255.0       # (N, H, W)
+        g = out_size // 14
+        roi_tok = F.adaptive_avg_pool2d(m[:, None], g)[:, 0].view(1 + len(planes), T, g, g)
     return {
+        "roi_tok": roi_tok,
         "ref_img": imgs[0, f_ref:f_ref + 1], "ref_plane_img": imgs[0], "ref_idx": f_ref,
         "ref_pos": ref_pos,
         "ref_z": znorm[ref_z],

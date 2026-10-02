@@ -76,8 +76,8 @@ def select(sel, emb, stack, ref, dz, dev):
     return out, (t1 - t0) * 1e3, (t2 - t1) * 1e3
 
 
-def load_selector(run, dev):
-    ck = torch.load(os.path.join(run, "best.pt"), map_location=dev)
+def load_selector(run, dev, ckpt="best.pt"):
+    ck = torch.load(os.path.join(run, ckpt), map_location=dev)
     a = ck["args"]
     sel = FrameSelector(a["variant"], center=a.get("center", False), norm=a.get("norm", "ln"),
                         attn_pool=a.get("attn_pool", False)).to(dev).eval()
@@ -87,7 +87,8 @@ def load_selector(run, dev):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", required=True, help="selector run dir (best.pt)")
+    ap.add_argument("--run", required=True, help="selector run dir")
+    ap.add_argument("--ckpt", default="best.pt", help="checkpoint file inside --run (e.g. step005000.pt)")
     ap.add_argument("--cohorts", nargs="+", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--eval-root", default="scratch/eval")
@@ -97,7 +98,7 @@ def main():
     emb = FrozenPatchEmbed(vggt).to(dev)
     del vggt
     torch.cuda.empty_cache()
-    sel = load_selector(args.run, dev)
+    sel = load_selector(args.run, dev, args.ckpt)
     summary = {}
     for c in args.cohorts:
         os.makedirs(os.path.join(args.out, c), exist_ok=True)
@@ -117,7 +118,8 @@ def main():
             keep = np.arange(pos.shape[0]) != ref
             errs.append(e[:, keep].ravel()); orc.append(o[:, keep].ravel())
             tms.append((tok_ms, head_ms))
-            json.dump({"sel": s.tolist(), "err": e.round(4).tolist(), "selector": args.run,
+            json.dump({"sel": s.tolist(), "err": e.round(4).tolist(),
+                       "selector": os.path.join(args.run, args.ckpt),
                        "tokens_ms": tok_ms, "head_ms": head_ms},
                       open(os.path.join(args.out, c, f"{man['subject']}.json"), "w"))
         e, o = np.concatenate(errs), np.concatenate(orc)

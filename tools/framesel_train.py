@@ -16,6 +16,7 @@ import time
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,7 +55,34 @@ class Subjects(torch.utils.data.Dataset):
         else:
             s = i % len(self.ds.subjects) if self.seeded else random.randrange(len(self.ds.subjects))
         b = self.ds.get_data(seq_index=s, img_per_seq=self.ds.num_slices)
-        return {k: b[k] for k in ("phases", "dz_mm", "slice_indices", "z_indices")}
+        keep = ("phases", "dz_mm", "slice_indices", "z_indices", "heart_roi_canonical")
+        return {k: b.get(k) for k in keep}
+
+
+def attn_heart(sel, ep, thr=0.3):
+    """Heart-ROI attention term from the attention-pooling weights of the last forward.
+    Returns (loss = mean -log(attention mass on heart tokens), mean mass) over pooled frames whose
+    ROI is non-empty, or (None, None) without attention pooling / ROI."""
+    from framesel_model import AttnPool
+    if ep.get("roi_tok") is None or not isinstance(sel.cpool, AttnPool):
+        return None, None
+    roi = ep["roi_tok"]                                           # (1+P, F, 37, 37) heart fraction
+    pairs = [(sel.cpool.last_w, roi[1:].flatten(0, 1))]           # candidates (P*F, n)
+    if sel.variant == "A":
+        pairs.append((sel.rpool.last_w, roi[0, ep["ref_idx"]][None]))
+    losses, masses = [], []
+    for w, m in pairs:
+        if sel.variant == "B" and sel.pool > 1:                   # B pools tokens 37 -> 19 first
+            m = F.avg_pool2d(m[:, None], sel.pool, ceil_mode=True)[:, 0]
+        m = (m.flatten(1) > thr).float()
+        keep = m.sum(1) > 0
+        if keep.any():
+            mass = (w[keep] * m[keep]).sum(1)
+            losses.append(-torch.log(mass + 1e-6))
+            masses.append(mass.detach())
+    if not losses:
+        return None, None
+    return torch.cat(losses).mean(), float(torch.cat(masses).mean())
 
 
 def forward(sel, emb, ep, dev):
@@ -73,10 +101,13 @@ def forward(sel, emb, ep, dev):
 def evaluate(sel, emb, val_items, resp_cfg, dev, sigma, n_planes=4):
     """Phase error of the argmax frame on fixed val episodes (seed per subject)."""
     sel.eval()
-    err, rnd, losses = [], [], []
+    err, rnd, losses, heart = [], [], [], []
     for i, it in enumerate(val_items):
         ep = fd.make_episode(it, resp_cfg, np.random.default_rng(12345 + i), dev, n_planes=n_planes)
         logits, dist = forward(sel, emb, ep, dev)
+        _, hm = attn_heart(sel, ep)
+        if hm is not None:
+            heart.append(hm)
         d = dist.cpu().numpy()
         err += d[np.arange(d.shape[0]), logits.argmax(-1).cpu().numpy()].tolist()
         rnd += d.mean(-1).tolist()                    # expected error of a random frame
@@ -84,7 +115,8 @@ def evaluate(sel, emb, val_items, resp_cfg, dev, sigma, n_planes=4):
     sel.train()
     e = np.array(err)
     return {"err": float(e.mean()), "exact": float((e == 0).mean()), "le1": float((e <= 1).mean()),
-            "random": float(np.mean(rnd)), "loss": float(np.mean(losses))}
+            "random": float(np.mean(rnd)), "loss": float(np.mean(losses)),
+            "attn_heart_mass": float(np.mean(heart)) if heart else None}
 
 
 def main():
@@ -105,10 +137,14 @@ def main():
     ap.add_argument("--one-subject", type=int, default=None,
                     help="learnability test: train AND validate on this one train-split subject index "
                          "(val = fresh seeded draws of target phase, planes, breathing)")
+    ap.add_argument("--roi-weight", type=float, default=0.0,
+                    help="weight of the heart-ROI attention loss -log(attention mass on heart tokens); "
+                         "training only, needs --attn-pool")
     ap.add_argument("--val-every", type=int, default=500)
     ap.add_argument("--n-val", type=int, default=90)
     ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
+    assert args.roi_weight == 0 or args.attn_pool, "--roi-weight needs --attn-pool"
     os.makedirs(args.out, exist_ok=True)
     dev = torch.device("cuda")
     torch.manual_seed(0)
@@ -144,7 +180,12 @@ def main():
         for _ in range(args.accum):
             ep = fd.make_episode(next(it), resp_cfg, rng, dev, n_planes=args.n_planes)
             logits, dist = forward(sel, emb, ep, dev)
-            loss = selector_loss(logits, dist, args.sigma) / args.accum
+            loss = selector_loss(logits, dist, args.sigma)
+            if args.roi_weight > 0:
+                la, _ = attn_heart(sel, ep)
+                if la is not None:
+                    loss = loss + args.roi_weight * la
+            loss = loss / args.accum
             loss.backward()
             tot += float(loss)
         torch.nn.utils.clip_grad_norm_(sel.parameters(), 1.0)
@@ -158,6 +199,7 @@ def main():
             log.write(json.dumps(m) + "\n"); log.flush()
             ck = {"model": sel.state_dict(), "args": vars(args), "step": step}
             torch.save(ck, os.path.join(args.out, "last.pt"))
+            torch.save(ck, os.path.join(args.out, f"step{step:06d}.pt"))   # every val, ~8 MB each
             if m["err"] < best:
                 best = m["err"]
                 torch.save(ck, os.path.join(args.out, "best.pt"))
