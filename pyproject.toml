@@ -20,7 +20,7 @@ dependencies = {file = ["requirements.txt"]}
 # resolved inside the source tree.
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["vggt*", "training*", "inference*"]
+include = ["vggt*", "training*", "inference*", "frame_selector*"]
 exclude = ["*._archive*"]
 # Only directories with an __init__.py; the default namespace scan walks into scratch/ (GPFS).
 namespaces = false

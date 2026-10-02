@@ -233,7 +233,7 @@ def prepare_batch(ds, seq_index, phases_bundle, device, dz_bundle=None, scatter=
 
 @torch.no_grad()
 def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bundle=None, scatter=None,
-                splat_res=None, gated=False, phases=None, batch=None):
+                splat_res=None, gated=False, phases=None, batch=None, sel=None, tokcache=None):
     """Sweep the reference phase over T -> (pred_vols (T,D,H,W), per_phase_ms, ed_pack).
     `splat_res`: the run's own loss.volume.splat_res — render with the point density it trained on.
     `gated` (DIAGNOSTIC ONLY, default off): every companion slot is pinned to the queried phase `t`
@@ -242,7 +242,12 @@ def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bu
     `phases`: sweep only these phases (default all T) — the unit of work `reconstruct_sharded`
     hands each GPU. `pred_vols` then holds just those phases, in the given order; `ed_pack` is
     None unless ED_PHASE is among them. `batch`: an already-`prepare_batch`ed batch on `device`
-    (mutated in place), so shards need not rebuild it."""
+    (mutated in place), so shards need not rebuild it.
+    `sel` (frame selection, default off): (frames, D) int array; for queried frame `t` every
+    companion slot on plane z gets frame `sel[t][z]` of that plane — a per-slice frame selector's
+    output (oracle or learned, docs/130).
+    `tokcache` (default off): (D, frames, P, C) frozen patch tokens of every (plane, frame), already
+    computed by the selector; each slot's tokens are gathered from it instead of re-running DINO."""
     torch.cuda.set_device(device)   # the current device is per-thread; synchronize() below uses it
     if batch is None:
         batch = prepare_batch(ds, seq_index, phases_bundle, device, dz_bundle, scatter)
@@ -256,7 +261,13 @@ def reconstruct(model, ds, seq_index, phases_bundle, device, disp_applied, dz_bu
         batch["timesteps"][0, 0] = int(t)            # slot 0 = the reference at the queried phase
         if gated:
             batch["timesteps"][0, :] = int(t)        # diagnostic: all companions at the queried phase too
+        if sel is not None:
+            for i in range(1, batch["timesteps"].shape[1]):
+                batch["timesteps"][0, i] = int(sel[t][int(round(float(batch["slice_indices"][0, i])))])
         _extract(batch, device)
+        if tokcache is not None:
+            zi = batch["slice_indices"][0].round().long()
+            batch["patch_tokens"] = tokcache[zi, batch["timesteps"][0].long()]   # (S, P, C)
         torch.cuda.synchronize(); t0 = time.perf_counter()
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             preds = model(batch["images"], batch=batch)
@@ -414,12 +425,21 @@ def main():
                          "displacement slots, and slope is regressed against VARYING applied "
                          "displacement inside the breath arm, so a constant-dz model already "
                          "scores slope~0 there without any clean run.")
-    ap.add_argument("--input", default="scatter", choices=["scatter", "gated"],
+    ap.add_argument("--input", default="scatter", choices=["scatter", "gated", "sel"],
                     help="companion-slot phases. DEFAULT `scatter` = the bundle's frozen same-input "
                          "draw (the deliverable). `gated` = DIAGNOSTIC ONLY: every companion at the "
                          "queried phase (what SVRTK-gated sees) — a ceiling row isolating phase "
                          "scatter as an information limit, never a proposed regime. Requires "
-                         "'gated' in --model-name so it can never overwrite a scatter arm.")
+                         "'gated' in --model-name so it can never overwrite a scatter arm. `sel` = "
+                         "per-slice frame selection (docs/130); requires 'sel' in --model-name.")
+    ap.add_argument("--sel-dir", default=None,
+                    help="--input sel: dir holding <dataset>/<subject>.json with key 'sel' = "
+                         "(frames, D) frame index per (queried frame, plane)")
+    ap.add_argument("--selector-run", default=None,
+                    help="--input sel with a LIVE learned selector (frame_selector.train run dir) "
+                         "instead of --sel-dir tables: every (plane, frame) is embedded once by the "
+                         "frozen DINO patch embed, the selector picks from those tokens, and the "
+                         "reconstruction reuses them (one DINO pass; timed inside total_sec). 1 GPU.")
     ap.add_argument("--subjects", nargs="*", default=None, help="default: all built subjects")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--note", default="")
@@ -437,6 +457,10 @@ def main():
     if gated and "gated" not in args.model_name:
         sys.exit("--input gated is a diagnostic arm: put 'gated' in --model-name "
                  "(e.g. <slug>_gated_diag) so it cannot overwrite the scatter arm")
+    if args.input == "sel" and ("sel" not in args.model_name or not (args.sel_dir or args.selector_run)):
+        sys.exit("--input sel needs --sel-dir or --selector-run, and 'sel' in --model-name")
+    if args.selector_run and (args.input != "sel" or args.sel_dir or len(gpus) > 1):
+        sys.exit("--selector-run needs --input sel, no --sel-dir, and a single GPU")
     ds_name = args.dataset
     root = paths.dataset_root(ds_name)
     subjects = args.subjects or paths.subjects(ds_name)
@@ -458,6 +482,12 @@ def main():
         m, cfg = load_model_from_run(args.ckpt, device=d)
         models.append(m)
     model_load_s = time.perf_counter() - t0
+    selector = emb = None
+    if args.selector_run:
+        from frame_selector.model import FrozenPatchEmbed                            # noqa: E402
+        from frame_selector.predict import embed_all, load_selector, select_from_tokens  # noqa: E402
+        emb = FrozenPatchEmbed(models[0])        # the model's OWN patch embed (shared module)
+        selector = load_selector(args.selector_run, devices[0])
     splat_res = ((cfg.get("loss") or {}).get("volume") or {}).get("splat_res")   # None = native 256²
     metadata = {
         "method": method, "model_name": args.model_name, "date": args.date,
@@ -474,6 +504,8 @@ def main():
         "geometry": "native-z (docs/58): per-subject D and dz, z_scale=Z_HALF_MM/dz, no 12mm snap",
         "git_commit": _git_commit(), "note": args.note,
     }
+    if args.input == "sel":   # 'sel' = frame selector; keys absent otherwise (default output unchanged)
+        metadata.update(sel_dir=args.sel_dir, selector_run=args.selector_run)
     print(f"[run_vggt] {ds_name}: arm={method} subjects={len(subjects)} "
           f"(model load {model_load_s:.0f}s)", flush=True)
 
@@ -485,6 +517,11 @@ def main():
                            f"(pooled.py --add-scatter) so VGGT and the baselines share one input")
         T = man["T"]
         disp = np.asarray(man["breath"]["disp_dhw_mm"], dtype=np.float64)   # (D,3) per z-plane
+        sel = None
+        if args.input == "sel" and args.sel_dir:
+            sel = np.asarray(json.load(open(os.path.join(args.sel_dir, ds_name, f"{subject}.json")))["sel"])
+            if sel.shape != (T, man["D"]):
+                raise ValueError(f"{subject}: sel shape {sel.shape} != (frames={T}, D={man['D']})")
         md = str(paths.arm_dir(ds_name, subject, method))
         os.makedirs(md, exist_ok=True)
 
@@ -517,10 +554,18 @@ def main():
                 os.makedirs(rv, exist_ok=True)
                 bundle = load_bundle(subj_dir, T, "breath" if breathing else "clean")
                 ts = time.perf_counter()
+                tokcache, sel_sec = None, None
+                if selector is not None:       # one DINO pass for selector + reconstruction
+                    tokcache = embed_all(emb, bundle, devices[0])
+                    sel = select_from_tokens(selector, tokcache, int(man["scatter"]["ref_plane"]),
+                                             float(man["dz_mm"]))
+                    torch.cuda.synchronize(); sel_sec = time.perf_counter() - ts
+                    json.dump({"sel": sel.tolist(), "selector": args.selector_run},
+                              open(os.path.join(md, f"sel_{var}.json"), "w"))
                 pred_vols, per_phase_ms, ed_pack = reconstruct_sharded(
                     models, devices, dset, seq, bundle, disp if breathing else None,
                     dz_bundle=man["dz_mm"], scatter=man["scatter"], splat_res=splat_res,
-                    gated=gated)
+                    gated=gated, sel=sel, tokcache=tokcache)
                 wall = time.perf_counter() - ts
                 for t in range(T):
                     p = str(paths.recon(ds_name, subject, method, var, t))
@@ -534,6 +579,8 @@ def main():
                            "git_commit": metadata["git_commit"]},
                           open(str(paths.recon_stamp(ds_name, subject, method, var)), "w"), indent=2)
                 timing[var] = {"per_phase_ms": per_phase_ms, "total_sec": wall}
+                if args.input == "sel":
+                    timing[var]["selector_sec"] = sel_sec   # embed-all + select, inside total_sec
                 rdiag[var] = resp_diag(ed_pack, breathing)
                 if breathing:
                     np.savez_compressed(os.path.join(md, "ed_dvf.npz"),

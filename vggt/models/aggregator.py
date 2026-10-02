@@ -5,7 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -200,13 +200,17 @@ class Aggregator(nn.Module):
             # Disable gradient updates for mask token
             self.patch_embed.mask_token.requires_grad_(False)
 
-    def forward(self, images: torch.Tensor, z_indices: torch.Tensor) -> Tuple[List[torch.Tensor], int]:
+    def forward(self, images: torch.Tensor, z_indices: torch.Tensor,
+                patch_tokens: Optional[torch.Tensor] = None) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
                 B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
             z_indices (torch.Tensor): Normalized z-index values for sinusoidal embedding.
                 Shape [B, S, 1]. Required; None raises ValueError.
+            patch_tokens (torch.Tensor, optional): precomputed `patch_embed` output for these
+                images, [B*S, P, C] (inference only: lets the frame selector, which already
+                embedded every frame, share the frozen DINO pass, docs/130). None -> computed here.
 
         Returns:
             (list[torch.Tensor], int):
@@ -218,15 +222,16 @@ class Aggregator(nn.Module):
         if C_in != 3:
             raise ValueError(f"Expected 3 input channels, got {C_in}")
 
-        # Normalize images and reshape for patch embed
-        images = (images - self._resnet_mean) / self._resnet_std
+        if patch_tokens is None:
+            # Normalize images and reshape for patch embed
+            images = (images - self._resnet_mean) / self._resnet_std
 
-        # Reshape to [B*S, C, H, W] for patch embedding
-        images = images.view(B * S, C_in, H, W)
-        patch_tokens = self.patch_embed(images)
+            # Reshape to [B*S, C, H, W] for patch embedding
+            images = images.view(B * S, C_in, H, W)
+            patch_tokens = self.patch_embed(images)
 
-        if isinstance(patch_tokens, dict):
-            patch_tokens = patch_tokens["x_norm_patchtokens"]
+            if isinstance(patch_tokens, dict):
+                patch_tokens = patch_tokens["x_norm_patchtokens"]
 
         _, P, C = patch_tokens.shape
 
